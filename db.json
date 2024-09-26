@@ -1,0 +1,38 @@
+{
+  "AdminIds": [
+    ***REMOVED***,
+    ***REMOVED***
+  ],
+  "rules": [
+    {
+      "id": "bc82deda121649c1bed8ab7eb0ab86d6",
+      "from": 0,
+      "text": "\u0421\u043e\u0441\u0430\u043b?",
+      "response": "\u0414\u0430"
+    },
+    {
+      "id": "90d8aab0235349e3a79ac8ce5fb2d634",
+      "from": 0,
+      "text": "c\u043e\u0441\u0430\u043b?",
+      "response": "\u0414\u0430"
+    },
+    {
+      "id": "32531e116eb04e1b84e903b958cb6d5a",
+      "from": 0,
+      "text": "\u0441\u043e\u0441\u0430\u043b?",
+      "response": "\u0414\u0430"
+    },
+    {
+      "id": "48bab6d9746448aaa9e2f9b0abed4e86",
+      "from": ***REMOVED***,
+      "text": "\u0421\u043e\u0441\u0430\u043b?",
+      "response": "\u041d\u0435\u0442"
+    },
+    {
+      "id": "fa9f57670d2d43379a4595d0a609daff",
+      "from": ***REMOVED***,
+      "text": "\u0421\u043e\u0441\u0430\u043b?",
+      "response": "\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e"
+    }
+  ]
+}
