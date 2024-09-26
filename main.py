@@ -10,12 +10,12 @@ import uuid
 import random
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='main.log', level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = '***REMOVED***'
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
-popusk_user_id = ***REMOVED***
+
 
 db = json.loads(open('db.json').read())
 
@@ -26,52 +26,29 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     for url in urls:
         if 'tiktok' in url:
-            try:
-                logging.info("Пробуем скачать видео")
-                await load_video(url, update)
-            except:
-                try:
-                    logging.info("Пробуем скачать картинки")
-                    await load_images(url, update)
-                except Exception as e:
-                    logging.exception(e)
+            
+            async with aiohttp.ClientSession() as session:
+                logging.info('Запрос на получение информации')
+            
+                async with session.post("https://ttsave.app/download", data={'query': url, 'language_id': "1"}) as response:                             
+                    bs = BeautifulSoup(await response.text(), 'html.parser')
+                    
+                    video = [a.get('href') for a in bs.find_all('a', type="no-watermark") if a.get('href') is not None]
+                    if len(video) > 0:
+                        logging.info('Видео получено')
+                        await update.message.reply_video(video[0])
+                        logging.info('Видео отправлено')
+                        return
+                    
+                    images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]        
+                    if len(images) > 0:
+                        logging.info('Картинки получены')
+                        for i in range(0, len(images), 10):
+                            await update.message.reply_media_group(images[i:i+10])  
+                        logging.info('Картинки отправлены')
+                        return
+            
                     await update.message.reply_text("Ты плохой человек")
-    
-async def load_video(url: str, update: Update):
-    
-    async with aiohttp.ClientSession() as session:
-        logging.info('Запрос на загрузку видео')
-        
-        async with session.get(url, headers=headers) as response:
-            soap = BeautifulSoup(await response.text(), 'html.parser')
-            data_str = soap.find(id="__UNIVERSAL_DATA_FOR_REHYDRATION__")
-            data = json.loads(data_str.text)
-            new_url = data["__DEFAULT_SCOPE__"]["webapp.video-detail"]["itemInfo"]["itemStruct"]["video"]["playAddr"]
-            logging.info('Получена ссылка для скачивания')
-    
-        async with session.get(new_url, headers=headers) as response:                                    
-            if response.headers['content-type'] == 'video/mp4':
-                video_data = await response.read()
-                logging.info('Видео получено')
-                
-                await update.message.reply_video(video=video_data)
-                
-                logging.info('Видео отправлено')
-
-async def load_images(url: str, update: Update):
-    
-    async with aiohttp.ClientSession() as session:
-        logging.info('Запрос на загрузку картинок')
-        
-        async with session.post("https://ttsave.app/download", data={'query': url, 'language_id': "1"}) as response:                            
-            bs = BeautifulSoup(await response.text(), 'html.parser')
-            images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]
-            logging.info('Картинки получены')
-            
-            for i in range(0, len(images), 10):
-                await update.message.reply_media_group(images[i:i+10])  
-            
-            logging.info('Картинки отправлены')
     
     
     
