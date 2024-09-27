@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig( filename='main.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 """test token"""
-TOKEN = '***REMOVED***'
-
 """TOKEN = '***REMOVED***'"""
+
+TOKEN = '***REMOVED***'
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
 
