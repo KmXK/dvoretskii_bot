@@ -14,7 +14,11 @@ TOKEN = '***REMOVED***'
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
 
-db = json.loads(open('db.json').read())
+if not os.path.exists('db.json'):
+    with open('db.json', 'w') as f:
+        f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": []}')
+
+db =  json.loads(open('db.json').read())
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await db_message_response(update, context)
