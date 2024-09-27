@@ -1,21 +1,18 @@
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from bs4 import BeautifulSoup
 
-import re
-import json
-import aiohttp
-import logging
-import uuid
-import random
+import re, asyncio, aiohttp, os, json, logging, uuid, random
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig( filename='main.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+"""test token"""
 TOKEN = '***REMOVED***'
+
+"""TOKEN = '***REMOVED***'"""
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
 headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
-
 
 db = json.loads(open('db.json').read())
 
@@ -23,39 +20,38 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await db_message_response(update, context)
     
     urls = re.findall(regex, update.message.text)
-    
     for url in urls:
         if 'tiktok' in url:
-            
-            async with aiohttp.ClientSession() as session:
-                logging.info('Запрос на получение информации')
-            
-                async with session.post("https://ttsave.app/download", data={'query': url, 'language_id': "1"}) as response:                             
-                    bs = BeautifulSoup(await response.text(), 'html.parser')
-                    
-                    video = [a.get('href') for a in bs.find_all('a', type="no-watermark") if a.get('href') is not None]
-                    if len(video) > 0:
-                        logging.info('Видео получено')
-                        await update.message.reply_video(video[0])
-                        logging.info('Видео отправлено')
-                        return
-                    
-                    images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]        
-                    if len(images) > 0:
-                        logging.info('Картинки получены')
-                        for i in range(0, len(images), 10):
-                            await update.message.reply_media_group(images[i:i+10])  
-                        logging.info('Картинки отправлены')
-                        return
-            
-                    await update.message.reply_text("Ты плохой человек")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    logging.info('Запрос на получение информации')
+                
+                    async with session.post("https://ttsave.app/download", data={'query': url, 'language_id': "1"}) as response:                             
+                        bs = BeautifulSoup(await response.text(), 'html.parser')
+                        
+                        video = [a.get('href') for a in bs.find_all('a', type="no-watermark") if a.get('href') is not None]
+                        if len(video) > 0:
+                            logging.info('Видео получено')
+                            await update.message.reply_video(video[0])
+                            logging.info('Видео отправлено')
+                            return
+                        
+                        images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]        
+                        if len(images) > 0:
+                            logging.info('Картинки получены')
+                            for i in range(0, len(images), 10):
+                                await update.message.reply_media_group(images[i:i+10])  
+                            logging.info('Картинки отправлены')
+                            return
+                
+                        await update.message.reply_text("Ты плохой человек")
+            except Exception as e:
+                logging.exception(e)
     
     
     
 async def db_message_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logging.info(f"Id пользователя который отправил сообщение: {update.message.from_user.id}")
-    
-    rules_with_same_text = [rule for rule in db['rules'] if rule['text'] == update.message.text]
+    rules_with_same_text = [rule for rule in db['rules'] if re.match(rule['text'], update.message.text, re.IGNORECASE if rule['case_flag'] == 1 else 0)]
     rules_with_same_user_id = [rule for rule in rules_with_same_text if rule['from'] == update.message.from_user.id]
     rules_for_all = [rule for rule in rules_with_same_text if rule['from'] == 0]
     
@@ -74,13 +70,18 @@ async def db_message_response(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (update.message.from_user.id in db['AdminIds']):
         try:
-            from_user, text, response = update.message.text.strip().replace('/add_rule', '').split('|')
+            from_user, text, response, case_flag = update.message.text.strip().replace('/add_rule', '').split('%')
             id = uuid.uuid4().hex
-            db['rules'].append({'id': id, 'from': int(from_user), 'text': text, 'response': response})
+            db['rules'].append({'id': id, 'from': int(from_user), 'text': text, 'response': response, 'case_flag': int(case_flag)})
             open('db.json', 'w').write(json.dumps(db, indent=2))
             await update.message.reply_markdown(f'Правило добавлено c id `{id}`')
         except ValueError:
-            await update.message.reply_text('Ошибка. Правило должно быть строкой, разделенной "|" например: (0|Привет|Привет)')
+            string = 'Ошибка. Правило должно быть строкой, разделенной "%" например: (0%Привет%Привет%0) \n' \
+                'from - id пользователя, которому принадлежит правило, если 0 - для всех \n' \
+                'text - текст правила \n' \
+                'response - ответ на правило \n' \
+                'case_flag - 1 - регистр не учитывается, 0 - регистр учитывается'
+            await update.message.reply_text(text=string)
             return
 
 async def delete_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,15 +122,60 @@ async def delete_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text('Ошибка. Id пользователя должен быть числом')
 
+async def get_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if (update.message.from_user.id in db['AdminIds']):
+        string = 'Админы: \n\n'
+        for admin_id in db['AdminIds']:
+            string += f'{admin_id} \n'
+        await update.message.reply_text(text=string)
+
+
+
+PAGE_SIZE = 25
+def get_keyboard(start_item: int) -> InlineKeyboardMarkup:
+    log_len = len(open('main.log').readlines())
+    keyboard = [
+        [
+            InlineKeyboardButton('<<<', callback_data=f'logs_page|0'),
+            InlineKeyboardButton('<', callback_data=f'logs_page|{start_item - PAGE_SIZE if start_item - PAGE_SIZE > 0 else 0}'),
+            InlineKeyboardButton('>', callback_data=f'logs_page|{start_item + PAGE_SIZE if start_item + PAGE_SIZE < log_len else log_len - PAGE_SIZE}'),
+            InlineKeyboardButton('>>>', callback_data=f'logs_page|{log_len - PAGE_SIZE}'),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    return reply_markup
+
+async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_markup = get_keyboard(0)
+    with open('main.log') as f:
+        lines = f.readlines()[-PAGE_SIZE:]
+        await update.message.reply_text(''.join(lines), reply_markup=reply_markup)
+    
+async def show_logs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    start_item = int(update.callback_query.data.split('|')[1])
+    reply_markup = get_keyboard(start_item)
+    await update.callback_query.edit_message_text(open('main.log').readlines()[start_item:start_item + PAGE_SIZE], reply_markup=reply_markup)
+    await update.callback_query.answer()
+
+
+
+async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if os.path.exists('script.sh'):
+        process = await asyncio.create_subprocess_shell('sudo ./script.sh', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await process.communicate()
+
 
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     string = 'Список команд: \n\n'\
-        '/add_rule - добавить правило в формате (id|Текст|Ответ) \n'\
+        '/add_rule - добавить правило в формате (id%Текст%Ответ%Игнорировать ли регистр) \n'\
         '/delete_rule - удалить правило по id \n'\
         '/get_rules - получить все правила \n'\
         '/add_admin - добавить админа в формате (id) \n'\
         '/delete_admin - удалить админа по id \n'\
+        '/get_admins - получить всех админов \n'\
+        '/logs - получить логи \n' \
+        '/reload - перезагрузить бота \n' \
         '/help - помощь'
     await update.message.reply_text(string)
     
@@ -145,6 +191,10 @@ def main():
     application.add_handler(CommandHandler('get_rules', get_rules))
     application.add_handler(CommandHandler('add_admin', add_admin))
     application.add_handler(CommandHandler('delete_admin', delete_admin))
+    application.add_handler(CommandHandler('get_admins', get_admins))
+    application.add_handler(CommandHandler('logs', show_logs))
+    application.add_handler(CommandHandler('reload', reload))
+    application.add_handler(CallbackQueryHandler(show_logs_callback))
     application.add_handler(CommandHandler('help', help))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
