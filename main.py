@@ -99,7 +99,7 @@ async def get_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (update.message.from_user.id in db['AdminIds']):
         string = 'Правила: \n\n'
         for rule in db['rules']:
-            string += f'id: {rule["id"]} \nОт: {rule["from"]} \nТекст: {rule["text"]} \nОтвет: {rule["response"]} \n\n'
+            string += f'id: {rule["id"]} \nОт: {rule["from"]} \nТекст: {rule["text"]} \nОтвет: {rule["response"]} \nИгнорировать регистр: {rule["case_flag"]} \n\n'
         await update.message.reply_text(text=string)
     
     
