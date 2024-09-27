@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig( filename='main.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 """test token"""
-"""TOKEN = '***REMOVED***'"""
+# TOKEN = '***REMOVED***'
 
 TOKEN = '***REMOVED***'
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
@@ -91,7 +91,7 @@ async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (update.message.from_user.id in db['AdminIds']):
         try:
-            rule_id = update.message.text.strip().replace('/delete_rule', '')
+            rule_id = update.message.text.strip().replace('/delete_rule', '').strip()
             db['rules'] = [rule for rule in db['rules'] if rule['id'] != rule_id]
             open('db.json', 'w').write(json.dumps(db, indent=2))
             await update.message.reply_markdown('Правило удалено')
