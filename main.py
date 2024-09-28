@@ -1,6 +1,7 @@
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from bs4 import BeautifulSoup
+from pytube import YouTube
 
 import re, asyncio, aiohttp, os, json, logging, uuid, random
 
@@ -49,6 +50,14 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             return
                 
                         await update.message.reply_text("Ты плохой человек")
+            except Exception as e:
+                logging.exception(e)
+                
+        if 'youtube.com' or 'youtu.be' in url:
+            try:
+                filename = YouTube(url).streams.get_highest_resolution().download()
+                await update.message.reply_video(filename)
+                os.remove(filename)                
             except Exception as e:
                 logging.exception(e)
     
