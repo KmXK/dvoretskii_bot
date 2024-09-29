@@ -52,6 +52,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         await update.message.reply_text("Ты плохой человек")
             except Exception as e:
                 logging.exception(e)
+            return
                 
         if 'youtube.com' or 'youtu.be' in url:
             try:
@@ -60,6 +61,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 os.remove(filename)                
             except Exception as e:
                 logging.exception(e)
+            return
     
     
     
