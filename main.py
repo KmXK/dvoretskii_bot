@@ -1,7 +1,7 @@
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from bs4 import BeautifulSoup
-from pytube import YouTube
+from datetime import datetime
 
 import re, asyncio, aiohttp, os, json, logging, uuid, random
 
@@ -13,13 +13,23 @@ logging.basicConfig( filename='main.log', format='%(asctime)s - %(levelname)s - 
 
 TOKEN = '***REMOVED***'
 regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'}
-
-if not os.path.exists('db.json'):
-    with open('db.json', 'w') as f:
-        f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": []}')
 
 db =  json.loads(open('db.json').read())
+
+def init_db():
+    if not os.path.exists('db.json'):
+        with open('db.json', 'w') as f:
+            f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": [], "version": 1, "army": []}')
+
+def migrate_db():
+    if db.get('version') is None:
+        db['version'] = 1
+    if db.get('army') is None:
+        db['army'] = []    
+    open('db.json', 'w').write(json.dumps(db, indent=2))
+
+init_db()
+migrate_db()
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await db_message_response(update, context)
@@ -28,6 +38,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for url in urls:
         if 'tiktok' in url:
             try:
+                print("Тикток пошел")
                 async with aiohttp.ClientSession() as session:
                     logging.info('Запрос на получение информации')
                 
@@ -53,12 +64,55 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception as e:
                 logging.exception(e)
             return
-                
+            # try:
+            #     print("Тикток пошел")
+            #     async with aiohttp.ClientSession() as session:
+            #         async with session.get("http://8.215.8.243:1337/tiktok?url="+url) as response:                             
+            #             json = await response.json()
+                        
+            #             if not json['status']:
+            #                 await update.message.reply_text("Ты плохой человек")
+                        
+            #             result = json['result']
+            #             print(result)
+                        
+            #             if result.get('video') is not None:
+            #                 await update.message.reply_video(result.get('video'))
+            #             else:
+            #                 print("Картинки пошли")
+            #                 images = [InputMediaPhoto(image) for image in result.get('image')]
+            #                 if len(images) > 0:
+            #                     for i in range(0, len(images), 10):
+            #                         await update.message.reply_media_group(images[i:i+10])  
+                            
+            #                 audio = result.get('audio')
+            #                 if audio is not None:
+            #                     await update.message.reply_audio(audio)
+            # except Exception as e:
+            #     logging.exception(e)
+            # return
+        
+        if 'instagram.com' in url:    
+            try:
+                print("Инстаграм пошел")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://8.215.8.243:1337/instagram?url="+url) as response:                             
+                        json = await response.json()
+                        if json['status']:
+                            video = json['result'][0]
+                            await update.message.reply_video(video)
+                        
+            except Exception as e:
+                logging.exception(e)
+            return
+        
         if 'youtube.com' or 'youtu.be' in url:
             try:
-                filename = YouTube(url).streams.get_highest_resolution().download()
-                await update.message.reply_video(filename)
-                os.remove(filename)                
+                print("Youtube пошел")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://8.215.8.243:1337/youtube", params={'url': url, 'type': 'video'}) as response:
+                        print (await response.text())
+                        json = await response.json()
             except Exception as e:
                 logging.exception(e)
             return
@@ -181,6 +235,44 @@ async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+async def army(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if len(db['army']) == 0:
+            text += "В армейку никого не добавили"
+            
+        text = "Статус по армейке на сегодня: \n\n"
+        for army in db['army']:
+            day, month, year = army['date'].split('.')
+            count_days = (datetime(int(year), int(month), int(day)) - datetime.now()).days
+            if count_days > 0:
+                text += f"{army['name']} - осталось дней: {count_days}\n"
+            else:
+                text += f"{army['name']} - дембель\n"
+        await update.message.reply_markdown(text)
+    except Exception as e:
+        print(e)  
+    
+async def add_army(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if (update.message.from_user.id in db['AdminIds']):
+        try:
+            name, date = update.message.text.strip().replace('/add_army', '').split('%')
+            db['army'].append({'name': name.strip(), 'date': date.strip()})
+            open('db.json', 'w').write(json.dumps(db, indent=2))
+            await update.message.reply_markdown(f'Добавил человечка')
+        except ValueError:
+            string = 'Ошибка. Добавление должно быть строкой, разделенной "%" например: (Ваня%01.01.2022) \n' \
+                'name - Имя \n' \
+                'date - дата в формате дд.мм.гггг \n'
+            await update.message.reply_text(string)
+
+async def delete_army(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if (update.message.from_user.id in db['AdminIds']):
+        name = update.message.text.strip().replace('/delete_army', '').strip()
+        db['army'] = [rule for rule in db['army'] if rule['name'] != name]
+        open('db.json', 'w').write(json.dumps(db, indent=2))
+        await update.message.reply_markdown('Удалил человечка')
+        
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     string = 'Список команд: \n\n'\
         '/add_rule - добавить правило в формате (id%Текст%Ответ%Игнорировать ли регистр) \n'\
@@ -189,6 +281,9 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '/add_admin - добавить админа в формате (id) \n'\
         '/delete_admin - удалить админа по id \n'\
         '/get_admins - получить всех админов \n'\
+        '/army - получить статус по армейке \n' \
+        '/add_army - добавить человечка в формате (Имя%дата в формате дд.мм.гггг) \n' \
+        '/delete_army - удалить человечка по имени \n' \
         '/logs - получить логи \n' \
         '/reload - перезагрузить бота \n' \
         '/help - помощь'
@@ -207,6 +302,9 @@ def main():
     application.add_handler(CommandHandler('add_admin', add_admin))
     application.add_handler(CommandHandler('delete_admin', delete_admin))
     application.add_handler(CommandHandler('get_admins', get_admins))
+    application.add_handler(CommandHandler('army', army))
+    application.add_handler(CommandHandler('add_army', add_army))
+    application.add_handler(CommandHandler('delete_army', delete_army))
     application.add_handler(CommandHandler('logs', show_logs))
     application.add_handler(CommandHandler('reload', reload))
     application.add_handler(CallbackQueryHandler(show_logs_callback))
