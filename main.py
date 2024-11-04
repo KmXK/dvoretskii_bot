@@ -321,11 +321,10 @@ def main():
     application.add_handler(CommandHandler('update', update))
     application.add_handler(CallbackQueryHandler(show_logs_callback))
     application.add_handler(CommandHandler('help', help))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))PES)
-
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     logger.info('Bot started')
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    application.run_polling(allowed_updates=Update.ALL_TY
 
 if __name__ == '__main__':
     main()
