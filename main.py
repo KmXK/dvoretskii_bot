@@ -324,5 +324,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+    logger.info('Bot started')
+
 if __name__ == '__main__':
     main()
