@@ -12,7 +12,7 @@ from logging_filters import ReplaceFilter, StringFilter
 logging.basicConfig(format=LOGGING_FORMAT, level=logging.INFO)
 
 # add separate handler (console is still working)
-file_handler = logging.FileHandler('temp.log')
+file_handler = logging.FileHandler('main.log')
 file_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
 file_handler.addFilter(StringFilter('200 OK')) # dont write logs about successfull http request to file
 logging.getLogger().addHandler(file_handler)
