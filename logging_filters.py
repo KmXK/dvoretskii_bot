@@ -26,4 +26,4 @@ class StringFilter(logging.Filter):
         self.s = s
 
     def filter(self, record):
-        return not record.getMessage().find(self.s)
+        return self.s not in record.getMessage()
