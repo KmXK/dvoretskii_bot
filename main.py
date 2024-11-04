@@ -1,3 +1,4 @@
+import logging.handlers
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from bs4 import BeautifulSoup
@@ -5,14 +6,20 @@ from datetime import datetime
 
 import re, asyncio, aiohttp, os, json, logging, uuid, random
 
-logger = logging.getLogger(__name__)
-logging.basicConfig( filename='main.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+from consts import LOGGING_FORMAT, TOKEN, URL_REGEX
+from logging_filters import ReplaceFilter, StringFilter
 
-"""test token"""
-# TOKEN = '***REMOVED***'
+logging.basicConfig(format=LOGGING_FORMAT, level=logging.INFO)
 
-TOKEN = '***REMOVED***'
-regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+# add separate handler (console is still working)
+file_handler = logging.FileHandler('temp.log')
+file_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
+file_handler.addFilter(StringFilter('200 OK')) # dont write logs about successfull http request to file
+logging.getLogger().addHandler(file_handler)
+logger = logging.getLogger(__name__) # logger for current application
+
+# censor token in logs
+logging.getLogger('httpx').addFilter(ReplaceFilter(TOKEN, '<censored token>'))
 
 db =  json.loads(open('db.json').read())
 
@@ -32,35 +39,35 @@ def migrate_db():
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await db_message_response(update, context)
 
-    urls = re.findall(regex, update.message.text)
+    urls = re.findall(URL_REGEX, update.message.text)
     for url in urls:
         if 'tiktok' in url:
             try:
                 print("Тикток пошел")
                 async with aiohttp.ClientSession() as session:
-                    logging.info('Запрос на получение информации')
+                    logger.info('Запрос на получение информации')
 
                     async with session.post("https://ttsave.app/download", data={'query': url, 'language_id': "1"}) as response:                             
                         bs = BeautifulSoup(await response.text(), 'html.parser')
 
                         video = [a.get('href') for a in bs.find_all('a', type="no-watermark") if a.get('href') is not None]
                         if len(video) > 0:
-                            logging.info('Видео получено')
+                            logger.info('Видео получено')
                             await update.message.reply_video(video[0])
-                            logging.info('Видео отправлено')
+                            logger.info('Видео отправлено')
                             return
 
                         images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]        
                         if len(images) > 0:
-                            logging.info('Картинки получены')
+                            logger.info('Картинки получены')
                             for i in range(0, len(images), 10):
                                 await update.message.reply_media_group(images[i:i+10])  
-                            logging.info('Картинки отправлены')
+                            logger.info('Картинки отправлены')
                             return
 
                         await update.message.reply_text("Ты плохой человек")
             except Exception as e:
-                logging.exception(e)
+                logger.exception(e)
             return
             # try:
             #     print("Тикток пошел")
@@ -87,7 +94,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             #                 if audio is not None:
             #                     await update.message.reply_audio(audio)
             # except Exception as e:
-            #     logging.exception(e)
+            #     logger.exception(e)
             # return
 
         if 'instagram.com' in url:
@@ -101,7 +108,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                             await update.message.reply_video(video)
 
             except Exception as e:
-                logging.exception(e)
+                logger.exception(e)
             return
 
         if 'youtube.com' or 'youtu.be' in url:
@@ -112,7 +119,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                         print (await response.text())
                         json = await response.json()
             except Exception as e:
-                logging.exception(e)
+                logger.exception(e)
             return
 
 async def db_message_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,25 +225,25 @@ async def show_logs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in db['AdminIds']:
-        logging.info(f"Not admin is trying to update bot: {update.message.from_user}")
+        logger.info(f"Not admin is trying to update bot: {update.message.from_user}")
         return
 
     if not os.path.exists('update.sh'):
-        logging.info("no update script found")
+        logger.info("no update script found")
         return
 
-    logging.info("updating bot sources + reload")
+    logger.info("updating bot sources + reload")
     process = await asyncio.create_subprocess_exec('./update.sh', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     [stdout, stderr] = await process.communicate()
 
-    logging.info(f"Update command result: \nstdout: {stdout.decode()}\nstderr: {stderr.decode()}");
+    logger.info(f"Update command result: \nstdout: {stdout.decode()}\nstderr: {stderr.decode()}");
 
     if process.returncode != 0:
         await update.message.reply_markdown(f'Update script executed with errorcode {process.returncode}')
         return
 
     await update.message.reply_markdown('Updating has been finished successfully. Reloading...')
-    logging.info("Updating has been finished successfully. Reloading...")
+    logger.info("Updating has been finished successfully. Reloading...")
     process = await asyncio.create_subprocess_exec('./reload.sh')
     await process.communicate()
 
