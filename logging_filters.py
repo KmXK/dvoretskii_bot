@@ -1,8 +1,6 @@
 
 import logging
 
-from consts import TOKEN
-
 
 class ReplaceFilter(logging.Filter):
     def __init__(self, old: str = '', new: str = '') -> None:
