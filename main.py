@@ -6,7 +6,7 @@ from datetime import datetime
 
 import re, asyncio, aiohttp, os, json, logging, uuid, random
 
-from consts import LOGGING_FORMAT, TOKEN, URL_REGEX
+from consts import LOGGING_FORMAT, TOKEN, URL_REGEX, PAGE_SIZE
 from logging_filters import ReplaceFilter, StringFilter
 
 logging.basicConfig(format=LOGGING_FORMAT, level=logging.INFO)
@@ -21,22 +21,33 @@ logger = logging.getLogger(__name__) # logger for current application
 # censor token in logs
 logging.getLogger('httpx').addFilter(ReplaceFilter(TOKEN, '<censored token>'))
 
-db =  json.loads(open('db.json').read())
-
+db = json.loads(open('db.json', 'r').read())
+active_chat = {
+    'id': None,
+    'active': False
+}
 
 def init_db():
     if not os.path.exists('db.json'):
         with open('db.json', 'w') as f:
-            f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": [], "version": 1, "army": []}')
+            f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": [], "version": 1.1, "army": [], "chats": []}')
 
 def migrate_db():
     if db.get('version') is None:
         db['version'] = 1
     if db.get('army') is None:
         db['army'] = []
+    if db["army"] == 1:
+        db['chats'] = []
+        db["version"] = 1.1
     open('db.json', 'w').write(json.dumps(db, indent=2))
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if active_chat['active']:
+        await context.bot.copy_message(chat_id=active_chat['id'], from_chat_id=update.message.chat_id, message_id=update.message.message_id)
+        return
+    
+    await add_chat(update, context)
     await db_message_response(update, context)
 
     urls = re.findall(URL_REGEX, update.message.text)
@@ -137,6 +148,20 @@ async def db_message_response(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(random_rule['response'])
         return
 
+async def add_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = next((chat for chat in db["chats"] if chat["id"] == update.message.chat_id), None)
+    if chat is None and update.message.chat_id < 0:
+        db["chats"].append({"id": update.message.chat_id, "name": update.message.chat.title})
+        open('db.json', 'w').write(json.dumps(db, indent=2))
+        return
+
+async def show_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if (update.message.from_user.id in db['AdminIds']):
+        string = 'Чаты: \n\n'
+        for chat in db['chats']:
+            string += f'id: {chat["id"]} \nНазвание: {chat["name"]} \n\n'
+        await update.message.reply_text(text=string)
+
 async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (update.message.from_user.id in db['AdminIds']):
         try:
@@ -197,7 +222,7 @@ async def get_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
             string += f'{admin_id} \n'
         await update.message.reply_text(text=string)
 
-PAGE_SIZE = 25
+
 def get_keyboard(start_item: int) -> InlineKeyboardMarkup:
     log_len = len(open('main.log').readlines())
     keyboard = [
@@ -217,11 +242,31 @@ async def show_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = f.readlines()[-PAGE_SIZE:]
         await update.message.reply_text(''.join(lines), reply_markup=reply_markup)
 
-async def show_logs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    start_item = int(update.callback_query.data.split('|')[1])
-    reply_markup = get_keyboard(start_item)
-    await update.callback_query.edit_message_text(open('main.log').readlines()[start_item:start_item + PAGE_SIZE], reply_markup=reply_markup)
-    await update.callback_query.answer()
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    function = update.callback_query.data.split('|')[0]
+    if function == 'logs_page':
+        start_item = int(update.callback_query.data.split('|')[1])
+        reply_markup = get_keyboard(start_item)
+        await update.callback_query.edit_message_text(open('main.log').readlines()[start_item:start_item + PAGE_SIZE], reply_markup=reply_markup)
+        await update.callback_query.answer()
+    elif function == 'chat':
+        chat_id = int(update.callback_query.data.split('|')[1])
+        active_chat['id'] = chat_id
+        active_chat['active'] = True
+        keyboard = [[InlineKeyboardButton('Закончить пересылку', callback_data='chat_stop')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.callback_query.edit_message_text('Пересылка включена', reply_markup=reply_markup)
+        await update.callback_query.answer()
+    elif function == 'chat_stop':
+        active_chat['active'] = False
+        await update.callback_query.edit_message_text('Пересылка выключена')
+        await update.callback_query.answer()
+        
+async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id in db['AdminIds']:
+        keyboard = [[InlineKeyboardButton(chat['name'], callback_data=f'chat|{chat["id"]}')] for chat in db['chats']]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text('Выберите чат', reply_markup=reply_markup)
 
 async def update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in db['AdminIds']:
@@ -296,7 +341,9 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '/add_army - добавить человечка в формате (Имя%дата в формате дд.мм.гггг) \n' \
         '/delete_army - удалить человечка по имени \n' \
         '/logs - получить логи \n' \
-        '/reload - перезагрузить бота \n' \
+        '/update - обновить бота \n' \
+        '/reply - выбрать чат для пересылки \n' \
+        '/show_reply - показать чаты для пересылки \n' \
         '/help - помощь'
     await update.message.reply_text(string)
 
@@ -319,7 +366,9 @@ def main():
     application.add_handler(CommandHandler('delete_army', delete_army))
     application.add_handler(CommandHandler('logs', show_logs))
     application.add_handler(CommandHandler('update', update))
-    application.add_handler(CallbackQueryHandler(show_logs_callback))
+    application.add_handler(CommandHandler('reply', reply))
+    application.add_handler(CommandHandler('show_reply', show_reply))
+    application.add_handler(CallbackQueryHandler(callback))
     application.add_handler(CommandHandler('help', help))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
