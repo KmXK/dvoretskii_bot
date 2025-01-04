@@ -24,6 +24,7 @@ logging.getLogger('httpx').addFilter(ReplaceFilter(TOKEN, '<censored token>'))
 db = json.loads(open('db.json', 'r').read())
 active_chat = {
     'id': None,
+    'from': None,
     'active': False
 }
 
@@ -43,7 +44,7 @@ def migrate_db():
     open('db.json', 'w').write(json.dumps(db, indent=2))
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if active_chat['active']:
+    if active_chat['active'] and active_chat['from'] == update.message.from_user.id:
         await context.bot.copy_message(chat_id=active_chat['id'], from_chat_id=update.message.chat_id, message_id=update.message.message_id)
         return
     
@@ -252,6 +253,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif function == 'chat':
         chat_id = int(update.callback_query.data.split('|')[1])
         active_chat['id'] = chat_id
+        active_chat['from'] = update.callback_query.from_user.id
         active_chat['active'] = True
         keyboard = [[InlineKeyboardButton('Закончить пересылку', callback_data='chat_stop')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
