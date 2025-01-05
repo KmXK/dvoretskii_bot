@@ -1,7 +1,7 @@
 import uuid
 
-from Models.response import Response
-from Models.rule_pattern import RulePattern
+from models.response import Response
+from models.rule_pattern import RulePattern
 
 class Rule:
     def __init__(self, from_users: list[str], pattern: RulePattern, responses: list[Response], tags):

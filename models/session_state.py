@@ -7,5 +7,5 @@ class SessionState(enum.Enum):
     responses = 3
     probabilities = 4
     tags = 5
-    register_ignore = 6  
-    finish = 7 
+    register_ignore = 6
+    finish = 7

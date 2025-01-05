@@ -1,22 +1,28 @@
+import json
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 
 import logging
 
-from Controllers.downloadController import DownloadController
-from Controllers.rulesController import RulesController
-from repository import Repository 
+from handlers.delete_admin_handler import DeleteAdminHandler
+from handlers.add_admin_handler import AddAdminHandler
+from handlers.delete_rule_handler import DeleteRuleHandler
+from handlers.get_admins_handler import GetAdminsHandler
+from handlers.get_rules_handler import GetRulesHandler
+from handlers.help_handler import HelpHandler
+from handlers.download_handler import DownloadHandler
+from handlers.session_creation_handler import SessionCreationHandler
+
+from repository import Repository
 
 from consts import TOKEN, URL_REGEX
 from logging_filters import ReplaceFilter, StringFilter
 
 test = True
-logger = logging.getLogger(__name__)
-
 
 if (test):
     LOGGING_FORMAT='%(asctime)s - %(levelname)s - %(message)s'
-    logging.basicConfig(format=LOGGING_FORMAT, level=logging.WARNING)   
+    logging.basicConfig(format=LOGGING_FORMAT, level=logging.INFO)
     TOKEN = '***REMOVED***'
 else:
     LOGGING_FORMAT='%(asctime)s - %(levelname)s - %(message)s'
@@ -31,47 +37,53 @@ logging.getLogger('httpx').addFilter(ReplaceFilter(TOKEN, '<censored token>'))
 
 
 repository = Repository()
-rulesController = RulesController(repository)
-downloadController = DownloadController()
+
+handlers = [
+    SessionCreationHandler(repository),
+    DownloadHandler(),
+    GetRulesHandler(repository),
+    DeleteRuleHandler(repository),
+    GetAdminsHandler(repository),
+    AddAdminHandler(repository),
+    DeleteAdminHandler(repository),
+]
+
+handlers.append(HelpHandler(handlers, repository))
 
 
-def get_parameters(text: str):
-    return map(lambda text : text.strip(), text.split('%'))
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    for handler in handlers:
+        if hasattr(handler, 'chat') and await handler.chat(update, context):
+            return
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:    
-    await rulesController.process_message(update, context)
-    await downloadController.try_download(update, context)
-    
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await rulesController.process_callback(update, context)
-    await update.callback_query.answer()
+    for handler in handlers:
+        if hasattr(handler, 'callback') and await handler.callback(update, context):
+            await update.callback_query.answer()
+            return
 
-async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if (repository.is_admin(update.message.from_user.id)):
-        await rulesController.open_add_session(update, context)
-    
-    
+
 # async def response_on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    
+
 #     if (update.message.text is None):
 #         return
-    
-    
+
+
 #     rules_with_same_text = [rule for rule in repository.rules if re.match(rule['text'], update.message.text, re.IGNORECASE if rule['case_flag'] == 1 else 0)]
 #     rules_with_same_user_id = [rule for rule in rules_with_same_text if rule['from'] == update.message.from_user.id]
 #     rules_for_all = [rule for rule in rules_with_same_text if rule['from'] == 0]
-    
+
 #     if len(rules_with_same_user_id) > 0:
 #         random_rule = random.choice(rules_with_same_user_id)
 #         await update.message.reply_text(random_rule['response'])
 #         return
-    
+
 #     if len(rules_for_all) > 0:
 #         random_rule = random.choice(rules_for_all)
 #         await update.message.reply_text(random_rule['response'])
-#         return   
-            
-        
+#         return
+
+
 #         try:
 #             from_user, text, response, case_flag = update.message.text.strip().replace('/add_rule', '').split('%')
 #             id = uuid.uuid4().hex
@@ -149,7 +161,7 @@ async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     with open('main.log') as f:
 #         lines = f.readlines()[-PAGE_SIZE:]
 #         await update.message.reply_text(''.join(lines), reply_markup=reply_markup)
-    
+
 # async def show_logs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     start_item = int(update.callback_query.data.split('|')[1])
 #     reply_markup = get_keyboard(start_item)
@@ -169,7 +181,6 @@ async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     string = 'Список команд: \n\n'\
 #         '/add_rule - добавить правило в формате (id%Текст%Ответ%Игнорировать ли регистр) \n'\
 #         '/delete_rule - удалить правило по id \n'\
-#         '/get_rules - получить все правила \n'\
 #         '/add_admin - добавить админа в формате (id) \n'\
 #         '/delete_admin - удалить админа по id \n'\
 #         '/get_admins - получить всех админов \n'\
@@ -177,7 +188,7 @@ async def add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #         '/reload - перезагрузить бота \n' \
 #         '/help - помощь'
 #     await update.message.reply_text(string)
-    
+
 
 
 def main():
@@ -189,11 +200,12 @@ def main():
         .connect_timeout(300)\
         .media_write_timeout(300)\
         .build()
-    
-    application.add_handler(CommandHandler('add_rule_test', add_rule))
+
+    application.add_handler(MessageHandler(filters.ALL, chat))
     application.add_handler(CallbackQueryHandler(callback))
-    
-    
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
     # application.add_handler(CommandHandler('delete_rule', delete_rule))
     # application.add_handler(CommandHandler('get_rules', get_rules))
     # application.add_handler(CommandHandler('add_admin', add_admin))
@@ -203,11 +215,9 @@ def main():
     # application.add_handler(CommandHandler('reload', reload))
     # application.add_handler(CallbackQueryHandler(show_logs_callback))
     # application.add_handler(CommandHandler('help', help))
-    
-    
-    
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, chat))
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+
 
 if __name__ == '__main__':
     main()
