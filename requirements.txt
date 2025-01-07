@@ -2,3 +2,5 @@ aiohttp
 beautifulsoup4
 python-telegram-bot
 dacite
+humanize
+python-dateutil

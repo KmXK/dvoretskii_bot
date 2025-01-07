@@ -1,8 +1,12 @@
 from abc import abstractmethod
+from calendar import month
 from dataclasses import asdict
+import datetime
 import json
 
 from dacite import from_dict
+import dateutil
+import dateutil.relativedelta
 
 from models.db import Database
 
@@ -39,7 +43,7 @@ class JsonFileStorage(Storage):
 
     def write_dict(self, data):
         self.written = True
-        open('db.json', 'w', encoding='utf-8').write(json.dumps(data, default=list, sort_keys=True, indent=4))
+        open('db.json', 'w', encoding='utf-8').write(json.dumps(data, default=list, sort_keys=True, indent=4, ensure_ascii=False))
 
 
 class Repository:
@@ -91,6 +95,18 @@ class Repository:
                 } for rule in data['rules']]
 
             data['version'] = 2
+
+            for army in data['army']:
+                end = datetime.datetime.strptime(army['date'], '%d.%m.%Y')
+                start = datetime.datetime.strptime(army['date'], '%d.%m.%Y')
+                army['end_date'] = end.timestamp()
+                if end.month == 5:  # КОСТЫЛЬ
+                    start.month
+                    army['start_date'] = (end - dateutil.relativedelta.relativedelta(months=6)).timestamp()
+                else:
+                    army['start_date'] = (end - dateutil.relativedelta.relativedelta(years=1)).timestamp()
+
+                del army['date']
 
         for rule in data.get('rules', []):
             rule['from_users'] = set(rule['from_users'])

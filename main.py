@@ -10,6 +10,7 @@ from telegram.ext import (
 
 import logging
 
+from handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from handlers.delete_admin_handler import DeleteAdminHandler
 from handlers.add_admin_handler import AddAdminHandler
 from handlers.delete_rule_handler import DeleteRuleHandler
@@ -61,6 +62,10 @@ handlers = [
     GetAdminsHandler(repository),
     AddAdminHandler(repository),
     DeleteAdminHandler(repository),
+
+    AddArmyHandler(repository),
+    DeleteArmyHandler(repository),
+    ArmyHandler(repository),
 
     LogsHandler('./main.log', repository),
 
