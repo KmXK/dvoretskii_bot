@@ -1,4 +1,4 @@
-from math import e
+import argparse
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -26,28 +26,43 @@ from handlers.session_creation_handler import SessionCreationHandler
 from repository import JsonFileStorage, Repository
 
 from consts import TOKEN
-from logging_filters import ReplaceFilter
+from logging_filters import ReplaceFilter, SkipFilter
 
-test = False
 
-if test:
-    LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-    logging.basicConfig(format=LOGGING_FORMAT, level=logging.INFO)
-    TOKEN = "***REMOVED***"
-else:
-    LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+def configure_logging(is_test, token):
+    if is_test:
+        log_file_path = None
+    else:
+        log_file_path = "main.log"
+
     logging.basicConfig(
-        filename="main.log",
+        filename=log_file_path,
         format="%(asctime)s - %(levelname)s - %(message)s",
         level=logging.INFO,
     )
-    TOKEN = "***REMOVED***"
 
-# logging.getLogger().addFilter(StringFilter('200 OK'))
+    for filter in [
+        ReplaceFilter(token, "<censored token>"),
+        *[
+            SkipFilter(f"/{path} HTTP/1.1 200 OK")
+            for path in [
+                "getUpdates",
+                "getMe",
+                "deleteWebhook",
+            ]
+        ],
+    ]:
+        logging.getLogger("httpx").addFilter(filter)
+
+
+def get_token(is_test=False):
+    if is_test:
+        return "***REMOVED***"
+    else:
+        return "***REMOVED***"
+
+
 logger = logging.getLogger(__name__)  # logger for current application
-
-# censor token in logs
-logging.getLogger("httpx").addFilter(ReplaceFilter(TOKEN, "<censored token>"))
 
 
 repository = Repository(JsonFileStorage("db.json"))
@@ -55,23 +70,17 @@ repository = Repository(JsonFileStorage("db.json"))
 handlers = [
     SessionCreationHandler(repository),
     DownloadHandler(),
-
     GetRulesHandler(repository),
     DeleteRuleHandler(repository),
-
     GetAdminsHandler(repository),
     AddAdminHandler(repository),
     DeleteAdminHandler(repository),
-
     AddArmyHandler(repository),
     DeleteArmyHandler(repository),
     ArmyHandler(repository),
-
-    LogsHandler('./main.log', repository),
-
-    ScriptHandler('update', './update.sh', 'скачать изменения и обновить бота'),
-    ScriptHandler('reload', './reload.sh', 'перезапустить бота'),
-
+    LogsHandler("./main.log", repository),
+    ScriptHandler("update", "./update.sh", "скачать изменения и обновить бота"),
+    ScriptHandler("reload", "./reload.sh", "перезапустить бота"),
     RuleAnswerHandler(repository),
 ]
 
@@ -97,10 +106,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.exception(e)
 
 
-def main():
+def start_bot(token, drop_pending_updates):
     application = (
         Application.builder()
-        .token(TOKEN)
+        .token(token)
         .read_timeout(300)
         .write_timeout(300)
         .pool_timeout(300)
@@ -111,7 +120,23 @@ def main():
 
     application.add_handler(MessageHandler(filters.ALL, chat))
     application.add_handler(CallbackQueryHandler(callback))
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=test)
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=drop_pending_updates,
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser("bot")
+    parser.add_argument(
+        "--prod", help="Use production environment", action="store_false"
+    )
+    args = parser.parse_args()
+    is_test = not args.prod
+
+    token = get_token(is_test)
+    configure_logging(is_test, token)
+    start_bot(token, True)
 
 
 if __name__ == "__main__":

@@ -17,10 +17,10 @@ class ReplaceFilter(logging.Filter):
         return True
 
 
-class StringFilter(logging.Filter):
-    def __init__(self, s: str = '') -> None:
-        super().__init__('String filter')
-        self.s = s
+class SkipFilter(logging.Filter):
+    def __init__(self, template_for_skip: str) -> None:
+        super().__init__('SkipFilter')
+        self.template_for_skip = template_for_skip
 
     def filter(self, record):
-        return self.s not in record.getMessage()
+        return not record.getMessage().find(self.template_for_skip)
