@@ -2,4 +2,4 @@
 
 cd ~/download_bot
 git pull
-./reload.sh
+./reload.sh &
