@@ -1,3 +1,3 @@
 #!/bin/bash
 
-sudo systemctl restart bot
+echo "sleep 2; sudo systemctl restart bot" | at now
