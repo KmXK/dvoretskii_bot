@@ -52,7 +52,7 @@ class DeleteArmyHandler(Handler):
         return '/delete_army name%date - перестать отслеживать срок человека в армии'
 
 
-@CommandHandler('army', only_admin=True)
+@CommandHandler('army', only_admin=False)
 class ArmyHandler(Handler):
     def __init__(self, repository: Repository):
         self.repository = repository

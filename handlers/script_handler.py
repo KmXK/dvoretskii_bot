@@ -22,13 +22,13 @@ class ScriptHandler(Handler):
 
             [stdout, stderr] = await process.communicate()
 
-            logger.info(f"Update command result: \nstdout: {stdout.decode()}\nstderr: {stderr.decode()}");
+            logger.info(f"Update command result: \nstdout: {stdout.decode(errors='replace')}\nstderr: {stderr.decode(errors='replace')}");
 
             if process.returncode != 0:
                 await update.message.reply_markdown(f'Script executed with errorcode {process.returncode}')
-                return
+                return True
 
-            # FIX: Now bot is dying and we need to send this on restart or make grace shutdown (too hardw)
+            # FIX: Now bot is dying and we need to send this on restart or make grace shutdown (too hard)
             await update.message.reply_markdown('Script has been finished successfully')
             return True
 
