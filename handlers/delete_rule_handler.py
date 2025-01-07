@@ -9,14 +9,16 @@ class DeleteRuleHandler(Handler):
 
     async def chat(self, update, context):
         try:
-            rule_id = update.message.text.split()[1]
-            self.repository.db.rules.remove(next((x for x in self.repository.db.rules if x.id == rule_id), None))
-            self.repository.save()
-            await update.message.reply_markdown('Правило удалено')
-        except ValueError:
-            await update.message.reply_text('Ошибка. Правила с таким id не существует')
+            rules = update.message.text.split()[1:]
+            for rule_id in rules:
+                try:
+                    self.repository.db.rules.remove(next((x for x in self.repository.db.rules if x.id == rule_id), None))
+                    self.repository.save()
+                    await update.message.reply_markdown(f'Правило {rule_id} удалено')
+                except ValueError:
+                    await update.message.reply_text(f'Ошибка. Правила с id={rule_id} не существует')
         except IndexError:
-            await update.message.reply_text('Ошибка. Укажите id правила')
+            await update.message.reply_text('Ошибка. Укажите id правил(а)')
 
     def help(self):
-        return '/delete_rule - удалить правило по id'
+        return '/delete_rule - удалить правило(а) по id через пробел'
