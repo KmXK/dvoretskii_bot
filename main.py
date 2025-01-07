@@ -111,7 +111,7 @@ def main():
 
     application.add_handler(MessageHandler(filters.ALL, chat))
     application.add_handler(CallbackQueryHandler(callback))
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=test)
 
 
 if __name__ == "__main__":
