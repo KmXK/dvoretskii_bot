@@ -14,7 +14,7 @@ class SessionCreationHandler(Handler):
         self.sessions = []
 
     async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if validate_command_msg(update, 'add_rule_test'):
+        if validate_command_msg(update, 'add_rule'):
             session = Session(update.message.chat_id)  # TODO: add key for user_id too
             self.sessions.append(session)
             await session.next_message(update, context)
@@ -44,7 +44,7 @@ class SessionCreationHandler(Handler):
             return True
 
     def help(self):
-        return '/add_rule_test - добавить новое правило'
+        return '/add_rule - добавить новое правило'
 
     def _clear_sessions(self):
         finish_sessions = [session for session in self.sessions if session.state == SessionState.finish]
