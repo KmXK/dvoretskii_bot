@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from handlers.handler import Handler, validate_command_msg
 
+
+logger = logging.getLogger('ScriptHandler')
 
 class ScriptHandler(Handler):
     def __init__(self, command: str, script_path: str, help_text: str):
@@ -17,6 +20,17 @@ class ScriptHandler(Handler):
                 stderr=asyncio.subprocess.PIPE,
             )
             await process.communicate()
+
+            [stdout, stderr] = await process.communicate()
+
+            logger.info(f"Update command result: \nstdout: {stdout.decode()}\nstderr: {stderr.decode()}");
+
+            if process.returncode != 0:
+                await update.message.reply_markdown(f'Script executed with errorcode {process.returncode}')
+                return
+
+            # FIX: Now bot is dying and we need to send this on restart or make grace shutdown (too hardw)
+            await update.message.reply_markdown('Script has been finished successfully')
 
     def help(self):
         return f"/{self.command} - {self.help_text}"
