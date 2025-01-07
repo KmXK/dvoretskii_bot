@@ -39,7 +39,7 @@ else:
     logging.basicConfig(
         filename="main.log",
         format="%(asctime)s - %(levelname)s - %(message)s",
-        level=logging.WARNING,
+        level=logging.INFO,
     )
     TOKEN = "***REMOVED***"
 
