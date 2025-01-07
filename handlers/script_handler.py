@@ -19,7 +19,6 @@ class ScriptHandler(Handler):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await process.communicate()
 
             [stdout, stderr] = await process.communicate()
 
