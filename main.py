@@ -155,7 +155,6 @@ def main():
     is_test = not args.prod
 
     token = get_token(is_test)
-    print(args)
     configure_logging(is_test, token)
     start_bot(token, True)
 

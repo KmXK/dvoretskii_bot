@@ -49,7 +49,7 @@ class DeleteArmyHandler(Handler):
             await update.message.reply_text('Человечка с таким именем не существует')
 
     def help(self):
-        return '/delete_army name%date - перестать отслеживать срок человека в армии'
+        return '/delete_army name - перестать отслеживать срок человека в армии'
 
 
 @CommandHandler('army', only_admin=False)
