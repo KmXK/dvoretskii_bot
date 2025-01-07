@@ -30,6 +30,7 @@ class ScriptHandler(Handler):
 
             # FIX: Now bot is dying and we need to send this on restart or make grace shutdown (too hardw)
             await update.message.reply_markdown('Script has been finished successfully')
+            return True
 
     def help(self):
         return f"/{self.command} - {self.help_text}"
