@@ -18,20 +18,22 @@ class AddArmyHandler(Handler):
 
     async def chat(self, update, context):
         try:
-            name, start_date, end_date = update.message.text.strip().replace('/add_army', '').split('%')
+            name, start_date, end_date = update.message.text.strip().replace('/add_army', '').split(' ')
             if start_date == None or end_date == None:
                 raise ValueError()
             self.repository.db.army.append(Army(name=name.strip(), start_date=start_date, end_date=end_date))
             self.repository.save()
             await update.message.reply_markdown(f'Добавил человечка')
         except ValueError:
-            string = 'Ошибка. Добавление должно быть строкой, разделенной "," например: (Ваня,01.01.2022,01.01.2023) \n' \
+            string = \
+                'Ошибка. Добавление должно быть строкой, разделенной пробелом например: (Ваня 01.01.2022 01.01.2023) \n' \
                 'name - Имя \n' \
-                'date - дата в формате дд.мм.гггг \n'
+                'start date - дата начало службы в формате дд.мм.гггг \n' \
+                'end date - дата конца службы в формате дд.мм.гггг \n'
             await update.message.reply_text(string)
 
     def help(self):
-        return '/add_army name,start_datedate,end_date - отслеживать срок человека в армии'
+        return '/add_army - отслеживать срок человека в армии'
 
 
 @CommandHandler('delete_army', only_admin=True)
@@ -49,7 +51,7 @@ class DeleteArmyHandler(Handler):
             await update.message.reply_text('Человечка с таким именем не существует')
 
     def help(self):
-        return '/delete_army name - перестать отслеживать срок человека в армии'
+        return '/delete_army - перестать отслеживать срок человека в армии'
 
 
 @CommandHandler('army', only_admin=False)

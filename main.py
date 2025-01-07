@@ -33,11 +33,8 @@ from logging_filters import ReplaceFilter, SkipFilter
 logger: logging.Logger
 
 
-def configure_logging(is_test, token):
-    if is_test:
-        log_file_path = None
-    else:
-        log_file_path = "main.log"
+def configure_logging(token, log_file: None | str):
+    log_file_path = log_file
 
     logging.basicConfig(
         filename=log_file_path,
@@ -117,7 +114,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 validate_admin(handler, update)
                 and hasattr(handler, "callback")
                 and await handler.callback(update, context)
-            ):
+                ):
                 await update.callback_query.answer()
                 return
         except BaseException as e:
@@ -151,11 +148,15 @@ def main():
         help="Use production environment",
         action="store_true",
     )
+    parser.add_argument(
+        "--log-file",
+        help='Log to file',
+    )
     args = parser.parse_args()
     is_test = not args.prod
 
     token = get_token(is_test)
-    configure_logging(is_test, token)
+    configure_logging(token, args.log_file)
     start_bot(token, True)
 
 
