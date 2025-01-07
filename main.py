@@ -28,7 +28,7 @@ from repository import JsonFileStorage, Repository
 from consts import TOKEN
 from logging_filters import ReplaceFilter
 
-test = True
+test = False
 
 if test:
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
