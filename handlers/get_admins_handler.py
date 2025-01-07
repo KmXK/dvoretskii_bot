@@ -11,7 +11,7 @@ class GetAdminsHandler(Handler):
         await update.message.reply_text(text='\n'.join([
             'Админы:',
             '',
-            *[str(i) for i in self.repository.admin_ids]
+            *[str(i) for i in self.repository.db.admin_ids]
         ]))
 
     def help(self):

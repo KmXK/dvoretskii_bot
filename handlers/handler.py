@@ -8,11 +8,11 @@ from telegram.ext import ContextTypes
 class Handler:
     only_for_admin = False
 
-    async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Chat message handler"""
         return False
 
-    async def callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Callback handler"""
         return False
 
@@ -65,7 +65,7 @@ def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = N
             return (
                 (only_admin != True or validate_admin(update, self.repository))
                 and (command == None or validate_command_msg(update, command))
-                and await chat(self, update, context)
+                and await chat(self, update, context) == True
             )
 
         handlerClass.only_for_admin = only_admin == True

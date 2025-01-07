@@ -10,12 +10,13 @@ class AddAdminHandler(Handler):
     async def chat(self, update, context):
         try:
             admin_id = int(update.message.text.split()[1])
-            self.repository.add_admin(admin_id)
+            self.repository.db.admin_ids.add(admin_id)
+            self.repository.save()
             await update.message.reply_markdown('Админ добавлен')
         except ValueError:
-            await update.message.reply_text('Ошибка. Id пользователя должен быть числом')
+            await update.message.reply_text('Ошибка. id админа должно быть целым числом')
         except IndexError:
-            await update.message.reply_text('Ошибка. Укажите Id пользователя')
+            await update.message.reply_text('Ошибка. Укажите id админа')
 
     def help(self):
         return '/add_admin - добавить админа по id'

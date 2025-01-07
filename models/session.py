@@ -1,11 +1,10 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from models.response import Response
-from models.rule import Rule
+from models.rule import Rule, RulePattern, Response
 from models.session_state import SessionState
-from models.rule_pattern import RulePattern
 from telegram.ext import ContextTypes
 
 
+# TODO: rewrite on separated steps via objects (not if-else)
 class Session:
     def __init__(self, chat_id):
         self.chat_id = chat_id
@@ -22,7 +21,7 @@ class Session:
                 return False
 
         if self.state == SessionState.pattern:
-            self.rule.pattern = update.message.text
+            self.rule.pattern.regex = update.message.text
             return True
 
         if self.state == SessionState.responses:
@@ -88,15 +87,13 @@ class Session:
             return
 
         if update.callback_query.data == "Ignore":
-            self.rule.ignore_case_flag = 1
+            self.rule.pattern.ignore_case_flag = 1
             await self.next_message(update, context)
             await update.callback_query.edit_message_text("Игнорировать регистр? (Да)")
             return
 
         if update.callback_query.data == "NoIgnore":
-            self.rule.ignore_case_flag = 0
+            self.rule.pattern.ignore_case_flag = 0
             await self.next_message(update, context)
             await update.callback_query.edit_message_text("Игнорировать регистр? (Нет)")
             return
-
-            

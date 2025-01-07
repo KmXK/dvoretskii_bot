@@ -1,67 +1,104 @@
+from abc import abstractmethod
+from dataclasses import asdict
 import json
+import logging
 import os
 
-from models.rule import Rule
+from dacite import from_dict
+
+from models.db import Database
+
+
+class Storage:
+    @abstractmethod
+    def read_dict(self):
+        pass
+
+    @abstractmethod
+    def write_dict(self, data: dict):
+        pass
+
+
+class JsonFileStorage(Storage):
+    def __init__(self, path, cached = False):
+        self.cached = cached
+        self.cache = {}
+        self.written = True # True for first read
+
+        self.path = path
+
+    def read_dict(self):
+        if self.cached and not self.written:
+            return self.cache
+
+        self.written = False
+        data = open(self.path, 'r', encoding='utf-8').read()
+        if data.strip() == '':
+            self.cache = {}
+        else:
+            self.cache = json.loads(data)
+        return self.cache
+
+    def write_dict(self, data):
+        self.written = True
+        open('db.json', 'w', encoding='utf-8').write(json.dumps(data, default=list, sort_keys=True, indent=4))
+
 
 class Repository:
-    def __init__(self):
-        self._init_db()
-        self._migrate_db()
+    def __init__(self, storage: Storage):
+        self._storage = storage
 
-    def _init_db(self):
-        if not os.path.exists('db.json'):
-            with open('db.json', 'w', encoding='utf-8') as f:
-                f.write('{"AdminIds": [***REMOVED***, ***REMOVED***], "rules": [], "version": 1.1, "army": [], "chats": []}')
-        self.db = json.loads(open('db.json', encoding='utf-8').read())
+        data = storage.read_dict()
+        migrated_data = self._migrate(data)
+        self.db = from_dict(data_class=Database, data=migrated_data)
+        self.save()
 
-    def _migrate_db(self):
-        if self.db.get('version') is None:
-            self.db['version'] = 1
-        if self.db.get('army') is None:
-            self.db['army'] = []
-        if self.db["version"] == 1:
-            self.db['chats'] = []
-            self.db["version"] = 1.1
-        self.write_db()
+    def save(self):
+        self._storage.write_dict(asdict(self.db))
 
-    def write_db(self):
-        open('db.json', 'w', encoding='utf-8').write(json.dumps(self.db, default=lambda o: o.__dict__, sort_keys=True, indent=2, ensure_ascii=False))
+    def is_admin(self, user_id: str):
+        return user_id in self.db.admin_ids
 
-    # region rules
-    @property
-    def rules(self):
-        return self.db['rules']
+    def _migrate(self, data: dict):
+        # default config
+        if data.get('version') is None:
+            data = {
+                'admin_ids': [
+                    ***REMOVED***,
+                    ***REMOVED***
+                ],
+                'version': 2
+            }
 
-    def add_rule(self, rule: Rule):
-        self.db['rules'].append(rule)
-        self.write_db()
+        if data['version'] < 2:
+            data['admin_ids'] = data['AdminIds']
+            del data['AdminIds']
 
-    def add_many_rules(self, rules: list[Rule]):
-        self.db['rules'] += rules
-        self.write_db()
+            data['rules'] = [{
+                    'id': rule['id'],
+                    'from_users': [rule['from']],
+                    'pattern': {
+                        'regex': rule['text'],
+                        'ignore_case_flag': rule['case_flag']
+                    },
+                    'responses': [
+                        {
+                            'from_chat_id': '',
+                            'message_id': '',
+                            'text': rule['response'],
+                            'probability': 1
+                        }
+                    ],
+                    'tags': []
+                } for rule in data['rules']]
 
-    def delete_rule(self, rule_id: str):
-        self.db['rules'] = [rule for rule in self.db['rules'] if rule['id'] != rule_id]
-        self.write_db()
+            data['version'] = 2
 
-    def delete_many_rules(self, rules: list[str]):
-        self.db['rules'] = [rule for rule in self.db['rules'] if rule not in rules]
-        self.write_db()
-    # endregion
+        for rule in data.get('rules', []):
+            rule['from_users'] = set(rule['from_users'])
 
-    #region admins
-    @property
-    def admin_ids(self):
-        return self.db['AdminIds']
+        data['admin_ids'] = set(data['admin_ids'])
 
-    def is_admin(self, user_id):
-        return user_id in self.db['AdminIds']
+        return data
 
-    def add_admin(self, admin_id):
-        self.db['AdminIds'].append(admin_id)
-        self.write_db()
 
-    def delete_admin(self, admin_id):
-        self.db['AdminIds'] = [admin for admin in self.db['AdminIds'] if admin != admin_id]
-        self.write_db()
-    #endregion

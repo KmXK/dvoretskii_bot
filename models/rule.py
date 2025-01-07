@@ -1,12 +1,27 @@
+from dataclasses import dataclass
+from typing import Optional
 import uuid
 
-from models.response import Response
-from models.rule_pattern import RulePattern
 
+@dataclass
+class RulePattern:
+    regex: str = ""
+    ignore_case_flag: int = 1
+
+
+@dataclass
+class Response:
+    from_chat_id: int
+    message_id: int
+    probability: int
+
+    text: Optional[str] = None  # only for migration from version 1.*
+
+
+@dataclass
 class Rule:
-    def __init__(self, from_users: list[str], pattern: RulePattern, responses: list[Response], tags):
-        self.id = uuid.uuid4().hex
-        self.from_users = from_users
-        self.pattern = pattern
-        self.responses = responses
-        self.tags = tags
+    from_users: set[int]
+    pattern: RulePattern
+    responses: list[Response]
+    tags: list[str]
+    id: str = uuid.uuid4().hex

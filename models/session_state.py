@@ -1,5 +1,6 @@
 import enum
 
+
 class SessionState(enum.Enum):
     start = 0
     from_user = 1

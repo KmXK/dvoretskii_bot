@@ -10,13 +10,13 @@ class GetRulesHandler(Handler):
 
     async def chat(self, update, context):
         strings = ['Правила:', '']
-        for rule in self.repository.rules:
+        for rule in self.repository.db.rules:
             strings.append(textwrap.dedent(f'''\
-                    id: {rule['id']}
-                    От: {', '.join([str(i) for i in rule['from_users']])}
-                    Текст: {rule['pattern']}
-                    Количество ответов: {len(rule["responses"])}
-                    Игнорировать регистр: {rule["ignore_case_flag"]}
+                    id: {rule.id}
+                    От: {', '.join([str(i) for i in rule.from_users])}
+                    Текст: {rule.pattern.regex}
+                    Количество ответов: {len(rule.responses)}
+                    Игнорировать регистр: {rule.pattern.ignore_case_flag}
             '''))
         await update.message.reply_text(text='\n'.join(strings))
 
