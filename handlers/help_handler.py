@@ -8,6 +8,10 @@ def make_help_message(handlers, is_admin):
         and (is_admin or not handler.only_for_admin)
     ]
     handlers.sort()
+    handlers = [*filter(lambda h: len(h) > 0, handlers)]
+
+    if len(handlers) == 0:
+        return 'Список команд пуст'
 
     return '\n'.join([
         'Список команд: ', '',

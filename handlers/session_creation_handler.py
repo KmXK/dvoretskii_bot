@@ -44,7 +44,7 @@ class SessionCreationHandler(Handler):
             return True
 
     def help(self):
-        return '/add_rule_test - Добавить новое правило'
+        return '/add_rule_test - добавить новое правило'
 
     def _clear_sessions(self):
         finish_sessions = [session for session in self.sessions if session.state == SessionState.finish]

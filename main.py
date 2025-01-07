@@ -17,6 +17,7 @@ from handlers.get_rules_handler import GetRulesHandler
 from handlers.help_handler import HelpHandler
 from handlers.download_handler import DownloadHandler
 from handlers.rule_answer_handler import RuleAnswerHandler
+from handlers.script_handler import ScriptHandler
 from handlers.session_creation_handler import SessionCreationHandler
 
 from repository import JsonFileStorage, Repository
@@ -51,11 +52,17 @@ repository = Repository(JsonFileStorage("db.json"))
 handlers = [
     SessionCreationHandler(repository),
     DownloadHandler(),
+
     GetRulesHandler(repository),
     DeleteRuleHandler(repository),
+
     GetAdminsHandler(repository),
     AddAdminHandler(repository),
     DeleteAdminHandler(repository),
+
+    ScriptHandler('update', './update.sh', 'скачать изменения и обновить бота'),
+    ScriptHandler('reload', './reload.sh', 'перезапустить бота'),
+
     RuleAnswerHandler(repository),
 ]
 
