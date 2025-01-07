@@ -29,7 +29,5 @@ class HelpHandler(Handler):
     async def chat(self, update, context):
         if self.repository.is_admin(update.message.from_user.id):
             await update.message.reply_text(self.adminHelpMessage)
-            print(self.adminHelpMessage)
         else:
             await update.message.reply_text(self.helpMessage)
-            print(self.helpMessage)

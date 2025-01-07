@@ -1,8 +1,6 @@
 from abc import abstractmethod
 from dataclasses import asdict
 import json
-import logging
-import os
 
 from dacite import from_dict
 
@@ -83,8 +81,8 @@ class Repository:
                     },
                     'responses': [
                         {
-                            'from_chat_id': '',
-                            'message_id': '',
+                            'from_chat_id': 0,
+                            'message_id': 0,
                             'text': rule['response'],
                             'probability': 1
                         }

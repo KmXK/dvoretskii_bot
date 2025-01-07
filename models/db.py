@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
-from telegram import Chat
 from models.army import Army
+from models.chat import Chat
 from models.rule import Rule
 
 
