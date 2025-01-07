@@ -16,6 +16,7 @@ from handlers.add_admin_handler import AddAdminHandler
 from handlers.delete_rule_handler import DeleteRuleHandler
 from handlers.get_admins_handler import GetAdminsHandler
 from handlers.get_rules_handler import GetRulesHandler
+from handlers.handler import Handler
 from handlers.help_handler import HelpHandler
 from handlers.download_handler import DownloadHandler
 from handlers.logs_handler import LogsHandler
@@ -27,6 +28,9 @@ from repository import JsonFileStorage, Repository
 
 from consts import TOKEN
 from logging_filters import ReplaceFilter, SkipFilter
+
+
+logger: logging.Logger
 
 
 def configure_logging(is_test, token):
@@ -54,15 +58,15 @@ def configure_logging(is_test, token):
     ]:
         logging.getLogger("httpx").addFilter(filter)
 
+    global logger
+    logger = logging.getLogger(__name__)  # logger for current application
+
 
 def get_token(is_test=False):
     if is_test:
         return "***REMOVED***"
     else:
         return "***REMOVED***"
-
-
-logger = logging.getLogger(__name__)  # logger for current application
 
 
 repository = Repository(JsonFileStorage("db.json"))
@@ -87,10 +91,20 @@ handlers = [
 handlers.append(HelpHandler(handlers, repository))
 
 
+def validate_admin(handler: Handler, update: Update):
+    return not handler.only_for_admin or repository.is_admin(
+        update.message.from_user.id
+    )
+
+
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for handler in handlers:
         try:
-            if hasattr(handler, "chat") and await handler.chat(update, context) == True:
+            if (
+                validate_admin(handler, update)
+                and hasattr(handler, "chat")
+                and await handler.chat(update, context) == True
+            ):
                 return
         except BaseException as e:
             logging.exception(e)
@@ -99,7 +113,11 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for handler in handlers:
         try:
-            if hasattr(handler, "callback") and await handler.callback(update, context):
+            if (
+                validate_admin(handler, update)
+                and hasattr(handler, "callback")
+                and await handler.callback(update, context)
+            ):
                 await update.callback_query.answer()
                 return
         except BaseException as e:
@@ -129,12 +147,15 @@ def start_bot(token, drop_pending_updates):
 def main():
     parser = argparse.ArgumentParser("bot")
     parser.add_argument(
-        "--prod", help="Use production environment", action="store_false"
+        "--prod",
+        help="Use production environment",
+        action="store_true",
     )
     args = parser.parse_args()
     is_test = not args.prod
 
     token = get_token(is_test)
+    print(args)
     configure_logging(is_test, token)
     start_bot(token, True)
 
