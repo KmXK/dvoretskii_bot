@@ -4,6 +4,7 @@ import re
 from models.rule import Rule
 from repository import Repository
 from handlers.handler import Handler
+from tg_update_helpers import get_from_user, get_message
 
 
 class RuleAnswerHandler(Handler):
@@ -13,10 +14,12 @@ class RuleAnswerHandler(Handler):
     async def chat(self, update, context):
         rules = self.repository.db.rules
 
+        message = update.message
+
         def does_rule_match(rule: Rule):
             return (
-                re.match(rule.pattern.regex, update.message.text, re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0)
-                and any(filter(lambda rule: update.message.from_user.id in rule.from_users or 0 in rule.from_users, rules))
+                re.match(rule.pattern.regex, message.text, re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0)
+                and any(filter(lambda rule: message.from_user.id in rule.from_users or 0 in rule.from_users, rules))
             )
 
         available_rules = [rule for rule in rules if does_rule_match(rule)]
@@ -43,8 +46,8 @@ class RuleAnswerHandler(Handler):
         response = rule.responses[response_index]
 
         if response.text != None:
-            await update.message.reply_text(response.text)
+            await message.reply_text(response.text)
         else:
-            await update.message.reply_copy(response.from_chat_id, response.message_id)
+            await message.reply_copy(response.from_chat_id, message.id)
 
         return True

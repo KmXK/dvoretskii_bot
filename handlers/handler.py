@@ -67,8 +67,7 @@ def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = N
         @wraps(handlerClass.chat)
         async def filteredChat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
             return (
-                (only_admin != True or validate_admin(update, self.repository))
-                and (command == None or validate_command_msg(update, command))
+                (command == None or validate_command_msg(update, command))
                 and await chat(self, update, context) == True
             )
 

@@ -1,4 +1,5 @@
 import argparse
+from typing import Any, Awaitable, Callable
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -19,6 +20,7 @@ from handlers.get_rules_handler import GetRulesHandler
 from handlers.handler import Handler
 from handlers.help_handler import HelpHandler
 from handlers.download_handler import DownloadHandler
+from handlers.id_handler import IdHandler
 from handlers.logs_handler import LogsHandler
 from handlers.rule_answer_handler import RuleAnswerHandler
 from handlers.script_handler import ScriptHandler
@@ -28,6 +30,8 @@ from repository import JsonFileStorage, Repository
 
 from consts import TOKEN
 from logging_filters import ReplaceFilter, SkipFilter
+from session.session_registry import try_get_session_handler
+from tg_update_helpers import get_from_user, get_message
 
 
 logger: logging.Logger
@@ -80,6 +84,7 @@ handlers = [
     DeleteArmyHandler(repository),
     ArmyHandler(repository),
     LogsHandler("./main.log", repository),
+    IdHandler(),
     ScriptHandler("update", "./update.sh", "скачать изменения и обновить бота"),
     ScriptHandler("reload", "./reload.sh", "перезапустить бота"),
     RuleAnswerHandler(repository),
@@ -88,35 +93,55 @@ handlers = [
 handlers.append(HelpHandler(handlers, repository))
 
 
-def validate_admin(handler: Handler, update: Update):
-    return not handler.only_for_admin or repository.is_admin(
-        update.message.from_user.id
+# TODO: этот context от тг везде передаётся и путает, но нигде не используется, может удалить?
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None:
+        return False # dont react on changes
+
+    await action(
+        update,
+        context,
+        "chat",
+        None,
     )
 
 
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    for handler in handlers:
-        try:
-            if (
-                validate_admin(handler, update)
-                and hasattr(handler, "chat")
-                and await handler.chat(update, context) == True
-            ):
-                return
-        except BaseException as e:
-            logging.exception(e)
-
-
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await action(
+        update,
+        context,
+        "callback",
+        lambda u: u.callback_query.answer()
+    )
+
+
+def validate_admin(handler: Handler, user_id: int):
+    return not handler.only_for_admin or repository.is_admin(user_id)
+
+
+async def action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    action: str,
+    func: Callable[[Update], Awaitable[Any]],
+):
+    session_handler = try_get_session_handler(get_message(update))
+    if session_handler is not None:
+        if await getattr(session_handler, action)(update, context):
+            if func is not None:
+                await func(update)
+            return
+
     for handler in handlers:
         try:
             if (
-                validate_admin(handler, update)
-                and hasattr(handler, "callback")
-                and await handler.callback(update, context)
-                ):
-                await update.callback_query.answer()
-                return
+                validate_admin(handler, get_from_user(update).id)
+                and hasattr(handler, action)
+                and await getattr(handler, action)(update, context)
+            ):
+                if func is not None:
+                    await func(update)
+                break
         except BaseException as e:
             logging.exception(e)
 
@@ -150,7 +175,7 @@ def main():
     )
     parser.add_argument(
         "--log-file",
-        help='Log to file',
+        help="Log to file",
     )
     args = parser.parse_args()
     is_test = not args.prod

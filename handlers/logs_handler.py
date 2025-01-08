@@ -1,3 +1,4 @@
+import logging
 from math import ceil
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from handlers.handler import CommandHandler, Handler
