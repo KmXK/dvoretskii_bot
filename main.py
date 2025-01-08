@@ -15,6 +15,7 @@ from handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from handlers.delete_admin_handler import DeleteAdminHandler
 from handlers.add_admin_handler import AddAdminHandler
 from handlers.delete_rule_handler import DeleteRuleHandler
+from handlers.feature_request_handler import FeatureRequestHandler
 from handlers.get_admins_handler import GetAdminsHandler
 from handlers.get_rules_handler import GetRulesHandler
 from handlers.handler import Handler
@@ -83,6 +84,7 @@ handlers = [
     AddArmyHandler(repository),
     DeleteArmyHandler(repository),
     ArmyHandler(repository),
+    FeatureRequestHandler(repository),
     LogsHandler("./main.log", repository),
     IdHandler(),
     ScriptHandler("update", "./update.sh", "скачать изменения и обновить бота"),
