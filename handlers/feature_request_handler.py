@@ -2,10 +2,11 @@ from telegram import Update
 from handlers.handler import Handler, validate_command_msg
 from models.feature_request import FeatureRequest
 from repository import Repository
+import re
 
 
 def format_fq(index: int, fq: FeatureRequest):
-    return f"{index+1:2}. {fq.author_name[1:]}@: {fq.text}"
+    return f"{index+1:2}. `{fq.author_name}`: {re.sub('@[a-zA-Z0-9]+', lambda m: f'`{m.group(0)}`', fq.text)}"
 
 
 class FeatureRequestHandler(Handler):
@@ -33,6 +34,7 @@ class FeatureRequestHandler(Handler):
                     for i, fq in enumerate(self.repository.db.feature_requests)
                 ]
             ),
+            parse_mode='markdown',
         )
 
     async def _add_feature(self, update: Update, text):
