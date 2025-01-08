@@ -5,7 +5,7 @@ from repository import Repository
 
 
 def format_fq(index: int, fq: FeatureRequest):
-    return f"{index+1:2}. {fq.author_name}: {fq.text}"
+    return f"{index+1:2}. {fq.author_name[1:]}@: {fq.text}"
 
 
 class FeatureRequestHandler(Handler):
