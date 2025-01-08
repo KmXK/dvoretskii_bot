@@ -66,9 +66,9 @@ class ArmyHandler(Handler):
         text = "Статус по армейке на сегодня: \n\n"
         for army in self.repository.db.army:
             last = datetime.datetime.fromtimestamp(army.end_date) - datetime.datetime.now()
-            percent = 1 - last / (datetime.datetime.fromtimestamp(army.end_date) - datetime.datetime.fromtimestamp(army.start_date))
+            percent = 1  - last / (datetime.datetime.fromtimestamp(army.end_date) - datetime.datetime.fromtimestamp(army.start_date))
             if last.days > 0:
-                text += f"{army.name} - осталось {humanize.precisedelta(last, format='%0d')} (прошло {percent* 100:.5f}%)\n"
+                text += f"{army.name} - осталось {humanize.precisedelta(last, format='%0.1f', minimum_unit='hours')} ({percent* 100:.5f}%)\n"
             else:
                 text += f"{army.name} - дембель\n"
         await update.message.reply_markdown(text)
