@@ -15,7 +15,7 @@ class ScriptHandler(Handler):
     async def chat(self, update, context):
         if validate_command_msg(update, self.command):
             process = await asyncio.create_subprocess_shell(
-                f"sudo {self.script_path}",
+                self.script_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
