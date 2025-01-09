@@ -18,7 +18,8 @@ class RuleAnswerHandler(Handler):
 
         def does_rule_match(rule: Rule):
             return (
-                re.match(rule.pattern.regex, message.text, re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0)
+                isinstance(message.text, str)
+                and re.match(rule.pattern.regex, message.text, re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0)
                 and any(filter(lambda rule: message.from_user.id in rule.from_users or 0 in rule.from_users, rules))
             )
 
@@ -48,6 +49,6 @@ class RuleAnswerHandler(Handler):
         if response.text != None:
             await message.reply_text(response.text)
         else:
-            await message.reply_copy(response.from_chat_id, message.id)
+            await message.reply_copy(response.from_chat_id, response.message_id)
 
         return True
