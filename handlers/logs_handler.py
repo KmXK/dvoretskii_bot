@@ -61,7 +61,7 @@ class LogsHandler(Handler):
         self.repository = repository
 
     async def chat(self, update, context):
-        with open(self.log_file_path) as f:
+        with open(self.log_file_path, 'w+') as f:
             all_lines = f.readlines()
             page_count = get_page_count(all_lines)
             current_page = page_count - 1
