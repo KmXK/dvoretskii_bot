@@ -1,8 +1,8 @@
 from abc import abstractmethod
-from calendar import month
 from dataclasses import asdict
 import datetime
 import json
+import os
 
 from dacite import from_dict
 import dateutil
@@ -33,6 +33,9 @@ class JsonFileStorage(Storage):
         if self.cached and not self.written:
             return self.cache
 
+        if not os.path.exists(self.path):
+            open(self.path, 'w').close()
+
         self.written = False
         data = open(self.path, 'r', encoding='utf-8').read()
         if data.strip() == '':
@@ -43,7 +46,7 @@ class JsonFileStorage(Storage):
 
     def write_dict(self, data):
         self.written = True
-        open('db.json', 'w', encoding='utf-8').write(json.dumps(data, default=list, sort_keys=True, indent=4, ensure_ascii=False))
+        open(self.path, 'w', encoding='utf-8').write(json.dumps(data, default=list, sort_keys=True, indent=4, ensure_ascii=False))
 
 
 class Repository:
