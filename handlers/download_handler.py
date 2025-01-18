@@ -59,7 +59,7 @@ class DownloadHandler(Handler):
         try:
             print("Инстаграм пошел")
             async with aiohttp.ClientSession() as session:
-                async with session.get("http://8.215.8.243:1337/instagram?url="+url) as response:
+                async with session.get("http://8.215.8.243:1337/instagram2?url="+url) as response:
                     json = await response.json()
                     if json['status']:
                         video = json['result'][0]
