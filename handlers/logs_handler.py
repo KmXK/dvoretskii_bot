@@ -1,5 +1,6 @@
 import logging
 from math import ceil
+import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from handlers.handler import CommandHandler, Handler
 from repository import Repository
@@ -61,7 +62,10 @@ class LogsHandler(Handler):
         self.repository = repository
 
     async def chat(self, update, context):
-        with open(self.log_file_path, 'w+') as f:
+        if not os.path.exists(self.path):
+            open(self.path, 'w').close()
+
+        with open(self.log_file_path, 'w') as f:
             all_lines = f.readlines()
             page_count = get_page_count(all_lines)
             current_page = page_count - 1
