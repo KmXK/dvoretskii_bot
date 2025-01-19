@@ -1,3 +1,5 @@
+import datetime
+import dateutil.relativedelta
 from telegram import Update
 from handlers.handler import Handler, validate_command_msg
 from models.feature_request import FeatureRequest
@@ -43,6 +45,9 @@ class FeatureRequestHandler(Handler):
                 author_name=update.message.from_user.name,
                 text=text,
                 author_id=update.message.from_user.id,
+                message_id=update.message.id,
+                chat_id=update.message.chat_id,
+                creation_timestamp=datetime.datetime.now().timestamp(),
             )
         )
         self.repository.save()

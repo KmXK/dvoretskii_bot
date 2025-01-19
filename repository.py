@@ -75,42 +75,7 @@ class Repository:
                 'version': 2
             }
 
-        if data['version'] < 2:
-            data['admin_ids'] = data['AdminIds']
-            del data['AdminIds']
-
-            data['rules'] = [{
-                    'id': rule['id'],
-                    'from_users': [rule['from']],
-                    'pattern': {
-                        'regex': rule['text'],
-                        'ignore_case_flag': rule['case_flag']
-                    },
-                    'responses': [
-                        {
-                            'from_chat_id': 0,
-                            'message_id': 0,
-                            'text': rule['response'],
-                            'probability': 1
-                        }
-                    ],
-                    'tags': []
-                } for rule in data['rules']]
-
-            data['version'] = 2
-
-            for army in data['army']:
-                end = datetime.datetime.strptime(army['date'], '%d.%m.%Y')
-                start = datetime.datetime.strptime(army['date'], '%d.%m.%Y')
-                army['end_date'] = end.timestamp()
-                if end.month == 5:  # КОСТЫЛЬ
-                    start.month
-                    army['start_date'] = (end - dateutil.relativedelta.relativedelta(months=6)).timestamp()
-                else:
-                    army['start_date'] = (end - dateutil.relativedelta.relativedelta(years=1)).timestamp()
-
-                del army['date']
-
+        # вроде как set() удалять нельзя, либа не справляется с конвертацией [] в set
         for rule in data.get('rules', []):
             rule['from_users'] = set(rule['from_users'])
 
