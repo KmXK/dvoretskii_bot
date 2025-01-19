@@ -1,4 +1,5 @@
 import datetime
+import itertools
 import dateutil.relativedelta
 from telegram import Update
 from handlers.handler import Handler, validate_command_msg
@@ -28,16 +29,18 @@ class FeatureRequestHandler(Handler):
         )
 
     async def _show_list(self, update: Update):
-        await update.message.reply_text(
-            "Фича-реквесты:\n\n" +
+        msg = "Фича-реквесты:\n\n" + \
             "\n".join(
                 [
                     format_fq(i, fq)
                     for i, fq in enumerate(self.repository.db.feature_requests)
                 ]
-            ),
-            parse_mode='markdown',
-        )
+            )
+        for msg_batch in itertools.batched(msg, 4096):
+            await update.message.reply_text(
+                msg_batch,
+                parse_mode='markdown',
+            )
 
     async def _add_feature(self, update: Update, text):
         self.repository.db.feature_requests.append(
