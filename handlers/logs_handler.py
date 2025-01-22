@@ -21,6 +21,7 @@ class LogsHandler(Handler):
             data_func=lambda: self._get_log_data(),
             always_show_pagination=True,
             delimiter="",
+            start_from_last_page=True,
         )
 
     async def chat(self, update, context):
