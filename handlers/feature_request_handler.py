@@ -36,9 +36,9 @@ class FeatureRequestHandler(Handler):
                     for i, fq in enumerate(self.repository.db.feature_requests)
                 ]
             )
-        for msg_batch in itertools.batched(msg, 4096):
+        for i in range(0, len(msg), 4096):
             await update.message.reply_text(
-                msg_batch,
+                msg[i:i+4096],
                 parse_mode='markdown',
             )
 
