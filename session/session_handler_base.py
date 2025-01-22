@@ -41,7 +41,7 @@ class SessionHandlerBase(Handler):
         )
 
     async def _action(self, update, context, func):
-        if not get_session_key(update) in self.sessions:
+        if get_session_key(update) not in self.sessions:
             session = SessionData()
             if self.try_activate_session(update, session.context):
                 session_registry.activate_session(self, get_message(update))
@@ -68,18 +68,15 @@ class SessionHandlerBase(Handler):
         session = self.sessions[get_session_key(update)]
 
         step = self.steps[session.current_handler_index]
-        if await func(step)(update, session.context) == True:
-            print(f"compeleted {session.current_handler_index}")
+        if await func(step)(update, session.context):
             session.current_handler_index += 1
 
-            while (
-                session.current_handler_index < len(self.steps)
-                and await func(self.steps[session.current_handler_index])(
-                    update,
-                    session.context,
-                )
+            while session.current_handler_index < len(self.steps) and await func(
+                self.steps[session.current_handler_index]
+            )(
+                update,
+                session.context,
             ):
-                print(f"compeleted {session.current_handler_index}")
                 session.current_handler_index += 1
 
             if session.current_handler_index >= len(self.steps):

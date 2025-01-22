@@ -131,7 +131,6 @@ def page_wrapper_format(
     post_text: str = "",
 ):
     def wrapper(item, context: FormatItemContext):
-        print("#" + str(context.item_number))
         if context.item_number == context.page_first_item_number:
             item = pre_text + str(item)
         if context.item_number == context.page_last_item_number:

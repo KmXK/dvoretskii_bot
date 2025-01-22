@@ -29,7 +29,6 @@ from handlers.session_creation_handler import SessionCreationHandler
 
 from repository import JsonFileStorage, Repository
 
-from consts import TOKEN
 from logging_filters import ReplaceFilter, SkipFilter
 from session.session_registry import try_get_session_handler
 from tg_update_helpers import get_from_user, get_message
@@ -95,10 +94,10 @@ handlers = [
 handlers.append(HelpHandler(handlers, repository))
 
 
-# TODO: этот context от тг везде передаётся и путает, но нигде не используется, может удалить?
+# TODO: создать контектс для всего запроса, поместить туда контекст тг, update и репозиторий, начать оперировать им
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message is None:
-        return False # dont react on changes
+        return False  # dont react on changes
 
     await action(
         update,
@@ -109,12 +108,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await action(
-        update,
-        context,
-        "callback",
-        lambda u: u.callback_query.answer()
-    )
+    await action(update, context, "callback", lambda u: u.callback_query.answer())
 
 
 def validate_admin(handler: Handler, user_id: int):
