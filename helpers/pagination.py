@@ -1,7 +1,11 @@
 from dataclasses import dataclass
+import logging
 from math import ceil
 from typing import Any, Callable, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+
+
+logger = logging.getLogger("pagination")
 
 
 def is_int_string(s: str):
@@ -62,7 +66,8 @@ def parse_and_validate(
         if result.unique_keyboard_name == unique_keyboard_name:
             return result
         return None
-    except ParsePaginationException:
+    except ParsePaginationException as e:
+        logger.exception(e)
         return None
 
 

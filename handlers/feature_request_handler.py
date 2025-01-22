@@ -7,9 +7,6 @@ from repository import Repository
 import re
 
 
-LIST_SIZE = 15
-
-
 def format_fq(fq: FeatureRequest, format_context: FormatItemContext):
     return f"{format_context.item_number + 1:2}. `{fq.author_name}`: {re.sub('@[a-zA-Z0-9]+', lambda m: f'`{m.group(0)}`', fq.text)}"
 
