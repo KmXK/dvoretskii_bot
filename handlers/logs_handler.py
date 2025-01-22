@@ -65,7 +65,7 @@ class LogsHandler(Handler):
         if not os.path.exists(self.log_file_path):
             open(self.log_file_path, 'w').close()
 
-        with open(self.log_file_path, 'w') as f:
+        with open(self.log_file_path, 'r') as f:
             all_lines = f.readlines()
             page_count = get_page_count(all_lines)
             current_page = page_count - 1
