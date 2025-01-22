@@ -62,8 +62,8 @@ class LogsHandler(Handler):
         self.repository = repository
 
     async def chat(self, update, context):
-        if not os.path.exists(self.path):
-            open(self.path, 'w').close()
+        if not os.path.exists(self.log_file_path):
+            open(self.log_file_path, 'w').close()
 
         with open(self.log_file_path, 'w') as f:
             all_lines = f.readlines()
