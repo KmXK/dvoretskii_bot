@@ -24,6 +24,7 @@ class DownloadHandler(Handler):
                     'youtu.be': self._load_youtube,
                 }.items():
                     if handlerPath in url:
+                        logger.info(f'Получен url: {url}')
                         await handler(url, update, context)
                         return True
 
@@ -38,14 +39,14 @@ class DownloadHandler(Handler):
 
                     video = [a.get('href') for a in bs.find_all('a', type="no-watermark") if a.get('href') is not None]
                     if len(video) > 0:
-                        logger.info('Видео получено')
+                        logger.info(f'Видео получено: {video}')
                         await update.message.reply_video(video[0])
                         logger.info('Видео отправлено')
                         return
 
                     images = [InputMediaPhoto(a.get('href')) for a in bs.find_all('a', type="slide") if a.get('href') is not None]
                     if len(images) > 0:
-                        logger.info('Картинки получены')
+                        logger.info(f'Картинки получены: {images}')
                         for i in range(0, len(images), 10):
                             await update.message.reply_media_group(images[i:i+10])
                         logger.info('Картинки отправлены')
@@ -63,6 +64,7 @@ class DownloadHandler(Handler):
                     json = await response.json()
                     if json['status']:
                         video = json['result'][0]
+                        logger.info(f'Получено видео: {video}')
                         await update.message.reply_video(video)
         except Exception as e:
             logger.exception(e)
