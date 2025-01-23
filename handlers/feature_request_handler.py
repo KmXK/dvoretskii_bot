@@ -1,10 +1,12 @@
 import datetime
+import re
+
 from telegram import Update
+
 from handlers.handler import Handler, validate_command_msg
 from helpers.pagination import FormatItemContext, Paginator
 from models.feature_request import FeatureRequest
 from repository import Repository
-import re
 
 
 def format_fq(fq: FeatureRequest, format_context: FormatItemContext):

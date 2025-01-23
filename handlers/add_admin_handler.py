@@ -1,5 +1,5 @@
-from repository import Repository
 from handlers.handler import CommandHandler, Handler
+from repository import Repository
 
 
 @CommandHandler('add_admin', only_admin=True)

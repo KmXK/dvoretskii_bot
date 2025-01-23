@@ -1,6 +1,7 @@
 import datetime
-import json
+
 import humanize
+
 from handlers.handler import CommandHandler, Handler
 from models.army import Army
 from repository import Repository
@@ -23,7 +24,7 @@ class AddArmyHandler(Handler):
                 raise ValueError()
             self.repository.db.army.append(Army(name=name.strip(), start_date=start_date, end_date=end_date))
             self.repository.save()
-            await update.message.reply_markdown(f'Добавил человечка')
+            await update.message.reply_markdown('Добавил человечка')
         except ValueError:
             string = \
                 'Ошибка. Добавление должно быть строкой, разделенной пробелом например: (Ваня 01.01.2022 01.01.2023) \n' \

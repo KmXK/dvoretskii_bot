@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from handlers.handler import Handler, validate_command_msg
 
+from handlers.handler import Handler, validate_command_msg
 
 logger = logging.getLogger('ScriptHandler')
 
@@ -22,7 +22,7 @@ class ScriptHandler(Handler):
 
             [stdout, stderr] = await process.communicate()
 
-            logger.info(f"Update command result: \nstdout: {stdout.decode(errors='replace')}\nstderr: {stderr.decode(errors='replace')}");
+            logger.info(f"Update command result: \nstdout: {stdout.decode(errors='replace')}\nstderr: {stderr.decode(errors='replace')}")
 
             if process.returncode != 0:
                 await update.message.reply_markdown(f'Script executed with errorcode {process.returncode}')

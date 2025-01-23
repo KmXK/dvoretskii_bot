@@ -1,5 +1,7 @@
 from abc import abstractmethod
+
 from telegram import Update
+
 from handlers.handler import Handler, validate_command_msg
 from session import session_registry
 from session.step import Step

@@ -1,10 +1,10 @@
-from telegram import InputMediaPhoto, Update
-from telegram.ext import ContextTypes
-from bs4 import BeautifulSoup
+import logging
+import re
 
 import aiohttp
-import re
-import logging
+from bs4 import BeautifulSoup
+from telegram import InputMediaPhoto, Update
+from telegram.ext import ContextTypes
 
 from consts import URL_REGEX
 from handlers.handler import Handler

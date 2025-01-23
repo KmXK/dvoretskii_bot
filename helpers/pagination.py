@@ -1,9 +1,9 @@
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from math import ceil
 from typing import Any, Callable, Optional
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 logger = logging.getLogger("pagination")
 

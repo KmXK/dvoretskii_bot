@@ -1,7 +1,8 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from models.rule import Rule, RulePattern, Response
-from models.session_state import SessionState
 from telegram.ext import ContextTypes
+
+from models.rule import Response, Rule, RulePattern
+from models.session_state import SessionState
 
 
 # TODO: rewrite on separated steps via objects (not if-else)

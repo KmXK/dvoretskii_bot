@@ -1,8 +1,10 @@
 from functools import wraps
 from typing import Optional
+
 from telegram import MessageEntity, Update
-from repository import Repository
 from telegram.ext import ContextTypes
+
+from repository import Repository
 
 
 class Handler:

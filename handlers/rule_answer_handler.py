@@ -1,10 +1,10 @@
 import logging
 import random
 import re
+
+from handlers.handler import Handler
 from models.rule import Rule
 from repository import Repository
-from handlers.handler import Handler
-from tg_update_helpers import get_from_user, get_message
 
 
 class RuleAnswerHandler(Handler):
