@@ -1,9 +1,15 @@
 import logging
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+
+from helpers.keyboard import (
+    KeyboardParseException,
+    KeyboardParseResult,
+    parse_and_validate_keyboard,
+)
 
 logger = logging.getLogger("pagination")
 
@@ -15,19 +21,16 @@ def is_int_string(s: str):
 
 
 @dataclass
-class PaginationParseResult:
-    unique_keyboard_name: str
+class PaginationParseResult(KeyboardParseResult):
     page_number: int
-    metadata: str
     is_current_page: bool
 
 
-class ParsePaginationException(Exception):
-    def __init__(self, msg):
-        super(msg)
+class ParsePaginationException(KeyboardParseException):
+    pass
 
 
-def parse(
+def parse_pagination(
     callback_data: str,
     delimiter: str = "|",
     current_page_marker: str = "~",
@@ -54,21 +57,6 @@ def parse(
         page_number=int(parts[2]),
         is_current_page=is_current_page,
     )
-
-
-def parse_and_validate(
-    unique_keyboard_name: str,
-    callback_data: str,
-    **kwargs,
-) -> Optional[PaginationParseResult]:
-    try:
-        result = parse(callback_data, **kwargs)
-        if result.unique_keyboard_name == unique_keyboard_name:
-            return result
-        return None
-    except ParsePaginationException as e:
-        logger.exception(e)
-        return None
 
 
 def create_pagination_keyboard(
@@ -99,17 +87,15 @@ def create_pagination_keyboard(
         InlineKeyboardButton(
             button[0],
             callback_data=(
-                delimiter.join(
-                    [
-                        unique_keyboard_name,
-                        metadata if isinstance(metadata, str) else metadata(button[1]),
-                        (
-                            f"{current_page_marker}{button[1]}"
-                            if button[1] == current_page
-                            else str(button[1])
-                        ),
-                    ]
-                )
+                delimiter.join([
+                    unique_keyboard_name,
+                    metadata if isinstance(metadata, str) else metadata(button[1]),
+                    (
+                        f"{current_page_marker}{button[1]}"
+                        if button[1] == current_page
+                        else str(button[1])
+                    ),
+                ])
             ),
         )
         for button in buttons
@@ -154,6 +140,8 @@ def get_data_page(
     always_show_pagination: bool = False,
     delimiter: str = "\n",
     start_from_last_page: bool = False,
+    metadata: str | Callable[[int], str] = "",
+    empty_list_placeholder: str = "Список пуст",
 ):
     length = len(data)
     if length <= page_size or page is None:
@@ -164,8 +152,10 @@ def get_data_page(
 
     return (
         ("" if list_header is None else f"{str(list_header)}\n\n")
-        + delimiter.join(
-            [
+        + (
+            empty_list_placeholder
+            if len(data) == 0
+            else delimiter.join([
                 item_format_func(
                     fq,
                     FormatItemContext(
@@ -176,12 +166,13 @@ def get_data_page(
                     ),
                 )
                 for i, fq in enumerate(data[start_index : last_index + 1])
-            ]
+            ])
         ),
         create_pagination_keyboard(
             unique_keyboard_name,
             current_page=page,
             pages_count=get_pages_count(length, page_size),
+            metadata=metadata,
         )
         if length > page_size or always_show_pagination
         else None,
@@ -194,11 +185,16 @@ class Paginator:
         unique_keyboard_name: str,
         list_header: str | None,
         page_size: int,
-        data_func: Callable[[], list[Any]],
+        data_func: Callable[[], list[Any]] = lambda: [],
         item_format_func: Callable[[Any, FormatItemContext], str] = lambda x, _: str(x),
         always_show_pagination: bool = True,
         delimiter: str = "\n",
         start_from_last_page: bool = False,
+        keyboard_decorator: Callable[
+            [list[InlineKeyboardButton]],
+            list[list[InlineKeyboardButton]],
+        ] = lambda x: [x],
+        metadata: str | Callable[[int], str] = "",
     ):
         self.unique_keyboard_name = unique_keyboard_name
         self.list_header = list_header
@@ -208,22 +204,30 @@ class Paginator:
         self.always_show_pagination = always_show_pagination
         self.delimiter = delimiter
         self.start_from_last_page = start_from_last_page
+        self.keyboard_decorator = keyboard_decorator
+        self.metadata = metadata
 
-    async def show_list(self, update: Update, keyboard_func: Callable[[list[InlineKeyboardButton]], list[list[InlineKeyboardButton]]] = lambda x: [x]):
+    async def show_list(self, update: Update):
         text, keyboard = self._get_data_page()
         await update.message.reply_text(
             text=text,
             parse_mode="markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard_func(keyboard)),
+            reply_markup=InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
         )
         return True
 
-    async def process_callback(self, update: Update, keyboard_func: Callable[[list[InlineKeyboardButton]], list[list[InlineKeyboardButton]]] = lambda x: [x]):
-        parsed = parse_and_validate(
+    async def process_callback(self, update: Update):
+        parsed = parse_and_validate_keyboard(
             self.unique_keyboard_name,
             update.callback_query.data,
+            parse_func=parse_pagination,
         )
 
+        return await self.process_parsed_callback(update, parsed)
+
+    async def process_parsed_callback(
+        self, update: Update, parsed: PaginationParseResult | None
+    ):
         if parsed is None:
             return False
 
@@ -231,7 +235,7 @@ class Paginator:
             text, keyboard = self._get_data_page(parsed.page_number)
             await update.callback_query.message.edit_text(
                 text=text,
-                reply_markup=InlineKeyboardMarkup(keyboard_func(keyboard)),
+                reply_markup=InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
                 parse_mode="markdown",
             )
 
@@ -248,4 +252,5 @@ class Paginator:
             always_show_pagination=self.always_show_pagination,
             delimiter=self.delimiter,
             start_from_last_page=self.start_from_last_page,
+            metadata=self.metadata,
         )
