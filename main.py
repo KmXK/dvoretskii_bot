@@ -1,38 +1,35 @@
 import argparse
+import logging
 from typing import Any, Awaitable, Callable
+
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
     filters,
-    CallbackQueryHandler,
 )
 
-import logging
-
+from handlers.add_admin_handler import AddAdminHandler
 from handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from handlers.delete_admin_handler import DeleteAdminHandler
-from handlers.add_admin_handler import AddAdminHandler
 from handlers.delete_rule_handler import DeleteRuleHandler
+from handlers.download_handler import DownloadHandler
 from handlers.feature_request_handler import FeatureRequestHandler
 from handlers.get_admins_handler import GetAdminsHandler
 from handlers.get_rules_handler import GetRulesHandler
 from handlers.handler import Handler
 from handlers.help_handler import HelpHandler
-from handlers.download_handler import DownloadHandler
 from handlers.id_handler import IdHandler
 from handlers.logs_handler import LogsHandler
 from handlers.rule_answer_handler import RuleAnswerHandler
 from handlers.script_handler import ScriptHandler
 from handlers.session_creation_handler import SessionCreationHandler
-
-from repository import JsonFileStorage, Repository
-
 from logging_filters import ReplaceFilter, SkipFilter
+from repository import JsonFileStorage, Repository
 from session.session_registry import try_get_session_handler
 from tg_update_helpers import get_from_user, get_message
-
 
 logger: logging.Logger
 

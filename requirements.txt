@@ -4,3 +4,4 @@ python-telegram-bot
 dacite
 humanize
 python-dateutil
+youtube-dl-nightly
