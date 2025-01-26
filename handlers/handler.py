@@ -56,7 +56,7 @@ def validate_command_msg(update: Update, command: str) -> bool:
                 return False # команда не подходит для данного хэндлера
 
             return True
-    return False # не зашли в один из первых двух ифов
+    return False # не команда
 
 def validate_admin(update: Update, repository: Repository):
     return repository.is_admin(update.message.from_user.id)
@@ -69,11 +69,11 @@ def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = N
         @wraps(handlerClass.chat)
         async def filteredChat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
             return (
-                (command == None or validate_command_msg(update, command))
-                and await chat(self, update, context) == True
+                (command is None or validate_command_msg(update, command))
+                and await chat(self, update, context) is True
             )
 
-        handlerClass.only_for_admin = only_admin == True
+        handlerClass.only_for_admin = only_admin is True
         handlerClass.chat = filteredChat
         return handlerClass
 

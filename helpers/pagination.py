@@ -115,7 +115,7 @@ def create_pagination_keyboard(
         for button in buttons
     ]
 
-    return InlineKeyboardMarkup([keyboard])
+    return keyboard
 
 
 @dataclass
@@ -209,16 +209,16 @@ class Paginator:
         self.delimiter = delimiter
         self.start_from_last_page = start_from_last_page
 
-    async def show_list(self, update: Update):
+    async def show_list(self, update: Update, keyboard_func: Callable[[list[InlineKeyboardButton]], list[list[InlineKeyboardButton]]] = lambda x: [x]):
         text, keyboard = self._get_data_page()
         await update.message.reply_text(
             text=text,
             parse_mode="markdown",
-            reply_markup=keyboard,
+            reply_markup=InlineKeyboardMarkup(keyboard_func(keyboard)),
         )
         return True
 
-    async def process_callback(self, update: Update):
+    async def process_callback(self, update: Update, keyboard_func: Callable[[list[InlineKeyboardButton]], list[list[InlineKeyboardButton]]] = lambda x: [x]):
         parsed = parse_and_validate(
             self.unique_keyboard_name,
             update.callback_query.data,
@@ -231,7 +231,7 @@ class Paginator:
             text, keyboard = self._get_data_page(parsed.page_number)
             await update.callback_query.message.edit_text(
                 text=text,
-                reply_markup=keyboard,
+                reply_markup=InlineKeyboardMarkup(keyboard_func(keyboard)),
                 parse_mode="markdown",
             )
 

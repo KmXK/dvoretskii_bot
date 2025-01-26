@@ -1,7 +1,7 @@
 import datetime
 import re
 
-from telegram import Update
+from telegram import InlineKeyboardButton, Update
 
 from handlers.handler import Handler, validate_command_msg
 from helpers.pagination import FormatItemContext, Paginator
@@ -35,11 +35,18 @@ class FeatureRequestHandler(Handler):
             return await self.paginator.show_list(update)
 
         return await self._add_feature(
-            update, update.message.text[len(data[0]) :].strip()
+            update, update.message.text[len(data[0]):].strip()
         )
 
     async def callback(self, update, context):
         return await self.paginator.process_callback(update)
+
+    def _create_filter_keyboard(self):
+        return [
+            InlineKeyboardButton("1", callback_data="1"),
+            InlineKeyboardButton("2", callback_data="2"),
+            InlineKeyboardButton("3", callback_data="3"),
+        ]
 
     async def _add_feature(self, update: Update, text):
         self.repository.db.feature_requests.append(
