@@ -2,6 +2,7 @@ import os
 import textwrap
 
 from handlers.handler import CommandHandler, Handler
+from helpers.formats import union_lists
 from helpers.pagination import (
     Paginator,
 )
@@ -21,10 +22,10 @@ class LogsHandler(Handler):
             page_format_func=lambda ctx: "```\n"
             + "".join(ctx.data).replace("`", "'")
             + "```",
-            data_func=lambda: [
-                x if len(x) <= 100 else "\n".join(textwrap.wrap(x, width=70)) + "\n"
+            data_func=lambda: union_lists([
+                x if len(x) <= 100 else textwrap.wrap(x, width=70)
                 for x in self._get_log_data()
-            ],
+            ]),
             always_show_pagination=True,
             delimiter="",
             start_from_last_page=True,
