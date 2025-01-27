@@ -16,7 +16,7 @@ class LogsHandler(Handler):
         self.paginator = Paginator(
             unique_keyboard_name="logs",
             list_header=None,
-            page_size=20,
+            page_size=25,
             page_format_func=lambda ctx: "```" + "".join(ctx.data) + "```",
             data_func=lambda: self._get_log_data(),
             always_show_pagination=True,
