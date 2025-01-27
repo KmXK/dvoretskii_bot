@@ -156,7 +156,7 @@ class FeatureRequestViewHandler(Handler):
         return paginator
 
     def help(self):
-        return "/featurerequest - посмотреть или добавить фича-реквест(ы)"
+        return "/fq - посмотреть или добавить фича-реквест(ы)"
 
 
 class FeatureRequestEditHandler(Handler):
@@ -278,3 +278,6 @@ class FeatureRequestEditHandler(Handler):
             return "Вы не можете редактировать статус этого фича-реквеста"
 
         return None
+
+    def help(self):
+        return "/fq done|deny|reopen <ids> - редактировать статус фича-реквеста(ов)"
