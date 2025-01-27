@@ -1,11 +1,15 @@
 import json
+import logging
 import os
 from abc import abstractmethod
 from dataclasses import asdict
+from enum import Enum
 
-from dacite import from_dict
+from dacite import Config, from_dict
 
 from models.db import Database
+
+logger = logging.getLogger("repository")
 
 
 class Storage:
@@ -43,9 +47,20 @@ class JsonFileStorage(Storage):
 
     def write_dict(self, data):
         self.written = True
-        open(self.path, "w", encoding="utf-8").write(
-            json.dumps(data, default=list, sort_keys=True, indent=4, ensure_ascii=False)
-        )
+
+        try:
+            data = json.dumps(
+                data,
+                default=list,
+                sort_keys=True,
+                indent=4,
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            logger.exception(e)
+            return
+
+        open(self.path, "w", encoding="utf-8").write(data)
 
 
 class Repository:
@@ -54,7 +69,11 @@ class Repository:
 
         data = storage.read_dict()
         migrated_data = self._migrate(data)
-        self.db = from_dict(data_class=Database, data=migrated_data)
+        self.db = from_dict(
+            data_class=Database,
+            data=migrated_data,
+            config=Config(cast=[Enum]),
+        )
         self.save()
 
     def save(self):

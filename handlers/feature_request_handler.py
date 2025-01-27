@@ -226,6 +226,7 @@ class FeatureRequestEditHandler(Handler):
                 fq = self.repository.db.feature_requests[id - 1]
 
                 error = self._validate_fq(
+                    update.message.from_user.id,
                     fq,
                     error_list,
                 )
@@ -257,7 +258,12 @@ class FeatureRequestEditHandler(Handler):
 
         return wrapper
 
-    def _validate_fq(self, fq: FeatureRequest, messages: list[str | None]):
+    def _validate_fq(
+        self,
+        user_id: int,
+        fq: FeatureRequest,
+        messages: list[str | None],
+    ):
         validation_statuses = [
             FeatureRequestStatus.DONE,
             FeatureRequestStatus.DENIED,
@@ -267,5 +273,8 @@ class FeatureRequestEditHandler(Handler):
         for i, validation_status in enumerate(validation_statuses):
             if fq.status == validation_status and messages[i] is not None:
                 return messages[i]
+
+        if fq.author_id != user_id and not self.repository.is_admin(user_id):
+            return "Вы не можете редактировать статус этого фича-реквеста"
 
         return None

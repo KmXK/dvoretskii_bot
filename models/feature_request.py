@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Optional
 
 
-class FeatureRequestStatus:
+class FeatureRequestStatus(IntEnum):
     OPEN = 0
     DONE = 1
     DENIED = 2
@@ -13,7 +14,7 @@ class FeatureRequestChange:
     author_id: int
     timestamp: float
     message_id: int
-    status: FeatureRequestStatus
+    status: FeatureRequestStatus = field(default_factory=FeatureRequestStatus)
 
 
 @dataclass
