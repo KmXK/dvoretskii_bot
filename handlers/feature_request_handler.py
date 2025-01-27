@@ -1,17 +1,15 @@
 import datetime
 import re
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 
 from telegram import InlineKeyboardButton, Update
 
 from handlers.handler import Handler, validate_command_msg
-from helpers.keyboard import (
-    KeyboardParseResult,
-    parse_and_validate_keyboard,
-)
+from helpers.formats import format_lined_list
+from helpers.keyboard import KeyboardParseResult, parse_and_validate_keyboard
 from helpers.pagination import (
-    FormatItemContext,
+    PageFormatContext,
     PaginationParseResult,
     Paginator,
     parse_pagination,
@@ -20,8 +18,13 @@ from models.feature_request import FeatureRequest
 from repository import Repository
 
 
-def format_fq(fq: FeatureRequest, format_context: FormatItemContext):
-    return f"{format_context.item_number + 1:2}. `{fq.author_name}`: {re.sub('@[a-zA-Z0-9]+', lambda m: f'`{m.group(0)}`', fq.text)}"
+def format_page(ctx: PageFormatContext[FeatureRequest]) -> str:
+    def format_fq(fq: FeatureRequest):
+        return f"`{fq.author_name}`: {re.sub('@[a-zA-Z0-9]+', lambda m: f'`{m.group(0)}`', fq.text)}"
+
+    return format_lined_list(
+        items=[(fq.id, format_fq(fq)) for fq in ctx.data], delimiter=". "
+    )
 
 
 class FilterType(Enum):
@@ -31,16 +34,16 @@ class FilterType(Enum):
     OPENED = 3
 
 
-class FeatureRequestHandler(Handler):
+class FeatureRequestViewHandler(Handler):
     def __init__(self, repository: Repository):
         self.repository = repository
 
     async def chat(self, update, context):
-        if not validate_command_msg(update, "featurerequest"):
+        if not validate_command_msg(update, ["featurerequest", "fq"]):
             return False
 
         data = update.message.text.split(" ")
-        if len(data) == 1:
+        if len(data) == 1 or data[1] == "list":
             return await self._get_paginator(FilterType.ALL).show_list(update)
 
         return await self._add_feature(
@@ -48,7 +51,6 @@ class FeatureRequestHandler(Handler):
         )
 
     async def callback(self, update, context):
-        print(update.callback_query.data)
         parsed: Optional[KeyboardParseResult] = parse_and_validate_keyboard(
             "feature_request_filter",
             update.callback_query.data,
@@ -106,23 +108,25 @@ class FeatureRequestHandler(Handler):
     async def _add_feature(self, update: Update, text):
         self.repository.db.feature_requests.append(
             FeatureRequest(
+                id=len(self.repository.db.feature_requests) + 1,
                 author_name=update.message.from_user.name,
                 text=text,
                 author_id=update.message.from_user.id,
-                message_id=self.repository.db.feature_requests[-1].id + 1,
+                message_id=update.message.message_id,
                 chat_id=update.message.chat_id,
                 creation_timestamp=datetime.datetime.now().timestamp(),
             )
         )
         self.repository.save()
         await update.message.reply_text("Фича-реквест добавлен")
+        return True
 
     def _get_paginator(self, type: FilterType) -> Paginator:
         paginator = Paginator(
             unique_keyboard_name="feature_request_list",
             list_header="Фича реквесты",
             page_size=15,
-            item_format_func=format_fq,
+            page_format_func=format_page,
             always_show_pagination=True,
         )
 
@@ -149,3 +153,117 @@ class FeatureRequestHandler(Handler):
 
     def help(self):
         return "/featurerequest - посмотреть или добавить фича-реквест(ы)"
+
+
+class FeatureRequestEditHandler(Handler):
+    def __init__(self, repository: Repository):
+        self.repository = repository
+
+    async def chat(self, update, context):
+        if not validate_command_msg(update, ["featurerequest", "fq"]):
+            return False
+
+        data = update.message.text.split(" ")
+
+        if len(data) < 2:
+            return False
+
+        if data[1] in ["done", "deny", "reopen"]:
+            if len(data) < 3:
+                await update.message.reply_text("Укажите номера фичи-реквеста(ов)")
+                return True
+
+            def reopen(fq):
+                fq.done_timestamp = fq.deny_timestamp = None
+
+            def done(fq):
+                fq.done_timestamp = datetime.datetime.now().timestamp()
+
+            def deny(fq):
+                fq.deny_timestamp = datetime.datetime.now().timestamp()
+
+            return await {
+                "done": self._command(
+                    [
+                        "Фича-реквест уже выполнен",
+                        "Фича-реквест уже отклонён",
+                        None,
+                    ],
+                    done,
+                ),
+                "deny": self._command(
+                    [
+                        "Фича-реквест уже выполнен",
+                        "Фича-реквест уже отклонён",
+                        None,
+                    ],
+                    deny,
+                ),
+                "reopen": self._command(
+                    [
+                        None,
+                        None,
+                        "Фича-реквест и так открыт",
+                    ],
+                    reopen,
+                ),
+            }[data[1]](update, data[2:])
+
+        return False
+
+    def _command(
+        self,
+        error_list: list[str | None],
+        func: Callable[[FeatureRequest], None],
+    ):
+        async def wrapper(update: Update, ids):
+            results = []
+            for id in ids:
+                if not id.isdigit():
+                    results.append((id, "Неверный номер фичи-реквеста"))
+                    continue
+
+                id = int(id)
+                if id <= 0 or id > len(self.repository.db.feature_requests):
+                    results.append((id, "Фича-реквеста с таким номером не существует"))
+                    continue
+
+                fq = self.repository.db.feature_requests[id - 1]
+
+                error = self._validate_fq(
+                    fq,
+                    error_list,
+                )
+
+                if error is not None:
+                    results.append((fq.id, error))
+                    continue
+
+                func(fq)
+                results.append((fq.id, None))
+
+            self.repository.save()
+
+            results.sort(key=lambda x: x[1] is None)
+            await update.message.reply_markdown(
+                format_lined_list([
+                    (id, "✅" if result is None else result) for id, result in results
+                ])
+            )
+
+            return True
+
+        return wrapper
+
+    def _validate_fq(self, fq, messages: list[str | None]):
+        validations = [
+            lambda x: x.done_timestamp is not None,
+            lambda x: x.deny_timestamp is not None,
+            lambda x: x.done_timestamp is None and x.deny_timestamp is None,
+        ]
+
+        for i, validation in enumerate(validations):
+            if validation(fq) and messages[i] is not None:
+                return messages[i]
+
+        return None

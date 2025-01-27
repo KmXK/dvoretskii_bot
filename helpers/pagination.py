@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Callable
+from typing import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
@@ -73,7 +73,7 @@ def create_pagination_keyboard(
 
     buttons = [
         ["<", current_page - 1 if current_page > 0 else 0],
-        [f"{current_page + 1}/{pages_count}", current_page],
+        [f"{current_page + 1}/{1 if pages_count == 0 else pages_count}", current_page],
         [">", current_page + 1 if current_page < max_page_number else max_page_number],
     ]
 
@@ -105,40 +105,33 @@ def create_pagination_keyboard(
 
 
 @dataclass
-class FormatItemContext:
-    item_number: int
-    total_items: int
-    page_first_item_number: int
-    page_last_item_number: int
-
-
-def page_wrapper_format(
-    pre_text: str = "",
-    post_text: str = "",
-):
-    def wrapper(item, context: FormatItemContext):
-        if context.item_number == context.page_first_item_number:
-            item = pre_text + str(item)
-        if context.item_number == context.page_last_item_number:
-            item = str(item) + post_text
-        return item
-
-    return wrapper
+class PageFormatContext[T]:
+    data: list[T]
+    page_items_range: tuple[int, int]
 
 
 def get_pages_count(items_count: int, page_size: int):
     return ceil(items_count / page_size)
 
 
-def get_data_page(
-    data: list[Any],
+def join_page_data_func[T](
+    format_func: Callable[[T, PageFormatContext[T]], str] = lambda x, _: str(x),
+    delimiter="\n",
+):
+    def wrapper(ctx: PageFormatContext[T]):
+        return delimiter.join([format_func(x, ctx) for x in ctx.data])
+
+    return wrapper
+
+
+def get_data_page[T](
+    data: list[T],
     page: int | None,
     page_size: int,
     list_header: str | None,
     unique_keyboard_name: str,
-    item_format_func: Callable[[Any, FormatItemContext], str] = lambda x, _: str(x),
+    page_format_func: Callable[[PageFormatContext[T]], str] = join_page_data_func(),
     always_show_pagination: bool = False,
-    delimiter: str = "\n",
     start_from_last_page: bool = False,
     metadata: str | Callable[[int], str] = "",
     empty_list_placeholder: str = "Список пуст",
@@ -150,24 +143,20 @@ def get_data_page(
     start_index = page * page_size
     last_index = min(length - 1, start_index + page_size - 1)
 
-    return (
-        ("" if list_header is None else f"{str(list_header)}\n\n")
-        + (
-            empty_list_placeholder
-            if len(data) == 0
-            else delimiter.join([
-                item_format_func(
-                    fq,
-                    FormatItemContext(
-                        item_number=i + start_index,
-                        total_items=length,
-                        page_first_item_number=start_index,
-                        page_last_item_number=last_index,
-                    ),
+    def format_page(data):
+        if len(data) == 0:
+            return empty_list_placeholder
+
+        if page_format_func is not None:
+            return page_format_func(
+                PageFormatContext(
+                    data=data[start_index : last_index + 1],
+                    page_items_range=(start_index, last_index),
                 )
-                for i, fq in enumerate(data[start_index : last_index + 1])
-            ])
-        ),
+            )
+
+    return (
+        ("" if list_header is None else f"{str(list_header)}\n\n") + format_page(data),
         create_pagination_keyboard(
             unique_keyboard_name,
             current_page=page,
@@ -179,14 +168,14 @@ def get_data_page(
     )
 
 
-class Paginator:
+class Paginator[T]:
     def __init__(
         self,
         unique_keyboard_name: str,
         list_header: str | None,
         page_size: int,
-        data_func: Callable[[], list[Any]] = lambda: [],
-        item_format_func: Callable[[Any, FormatItemContext], str] = lambda x, _: str(x),
+        data_func: Callable[[], list[T]] = lambda: [],
+        page_format_func: Callable[[PageFormatContext[T]], str] = join_page_data_func(),
         always_show_pagination: bool = True,
         delimiter: str = "\n",
         start_from_last_page: bool = False,
@@ -200,7 +189,7 @@ class Paginator:
         self.list_header = list_header
         self.page_size = page_size
         self.data_func = data_func
-        self.item_format_func = item_format_func
+        self.page_format_func = page_format_func
         self.always_show_pagination = always_show_pagination
         self.delimiter = delimiter
         self.start_from_last_page = start_from_last_page
@@ -248,9 +237,8 @@ class Paginator:
             page_size=self.page_size,
             list_header=self.list_header,
             unique_keyboard_name=self.unique_keyboard_name,
-            item_format_func=self.item_format_func,
+            page_format_func=self.page_format_func,
             always_show_pagination=self.always_show_pagination,
-            delimiter=self.delimiter,
             start_from_last_page=self.start_from_last_page,
             metadata=self.metadata,
         )

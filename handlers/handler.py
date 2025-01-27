@@ -18,16 +18,23 @@ class Handler:
         """Chat message handler"""
         return False
 
-    async def callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    async def callback(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> bool:
         """Callback handler"""
         return False
 
     def help(self):
-        return ''
+        return ""
 
 
 # проверяет, что в запросе содержится команда к боту
-def validate_command_msg(update: Update, command: str) -> bool:
+def validate_command_msg(update: Update, command: str | list[str]) -> bool:
+    if isinstance(command, list):
+        return any(map(lambda c: validate_command_msg(update, c), command))
+
     # скопировал из исходником CommandHandler для модуля телеграма
     # проверяет корректность имени команды
     # в форматах /command и /command@bot
@@ -53,13 +60,15 @@ def validate_command_msg(update: Update, command: str) -> bool:
                 command_parts[0].lower() == command
                 and command_parts[1].lower() == message.get_bot().username.lower()
             ):
-                return False # команда не подходит для данного хэндлера
+                return False  # команда не подходит для данного хэндлера
 
             return True
-    return False # не команда
+    return False  # не команда
+
 
 def validate_admin(update: Update, repository: Repository):
     return repository.is_admin(update.message.from_user.id)
+
 
 # decorator for simple command handlers
 def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = None):
@@ -67,15 +76,17 @@ def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = N
         chat = handlerClass.chat
 
         @wraps(handlerClass.chat)
-        async def filteredChat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def filteredChat(
+            self,
+            update: Update,
+            context: ContextTypes.DEFAULT_TYPE,
+        ):
             return (
-                (command is None or validate_command_msg(update, command))
-                and await chat(self, update, context) is True
-            )
+                command is None or validate_command_msg(update, command)
+            ) and await chat(self, update, context) is True
 
         handlerClass.only_for_admin = only_admin is True
         handlerClass.chat = filteredChat
         return handlerClass
 
     return decorator
-

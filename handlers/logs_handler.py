@@ -3,7 +3,6 @@ import os
 from handlers.handler import CommandHandler, Handler
 from helpers.pagination import (
     Paginator,
-    page_wrapper_format,
 )
 from repository import Repository
 
@@ -18,7 +17,7 @@ class LogsHandler(Handler):
             unique_keyboard_name="logs",
             list_header=None,
             page_size=25,
-            item_format_func=page_wrapper_format("```\n", "```"),
+            page_format_func=lambda ctx: "```" + "".join(ctx.data) + "```",
             data_func=lambda: self._get_log_data(),
             always_show_pagination=True,
             delimiter="",
