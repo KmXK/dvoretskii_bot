@@ -19,7 +19,7 @@ class LogsHandler(Handler):
             unique_keyboard_name="logs",
             list_header=None,
             page_size=25,
-            page_format_func=lambda ctx: "```\n"
+            page_format_func=lambda ctx: "```python\n"
             + "".join(ctx.data).replace("`", "'")
             + "```",
             data_func=lambda: union_lists([
