@@ -1,5 +1,19 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+
+
+class FeatureRequestStatus:
+    OPEN = 0
+    DONE = 1
+    DENIED = 2
+
+
+@dataclass
+class FeatureRequestChange:
+    author_id: int
+    timestamp: float
+    message_id: int
+    status: FeatureRequestStatus
 
 
 @dataclass
@@ -13,5 +27,10 @@ class FeatureRequest:
     chat_id: Optional[int]
 
     priority: int = 100
-    done_timestamp: Optional[float] = None
-    deny_timestamp: Optional[float] = None
+    history: list[FeatureRequestChange] = field(default_factory=list)
+
+    @property
+    def status(self) -> FeatureRequestStatus:
+        if len(self.history) == 0:
+            return FeatureRequestStatus.OPEN
+        return self.history[-1].status

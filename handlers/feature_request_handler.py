@@ -1,7 +1,7 @@
 import datetime
 import re
 from enum import Enum
-from typing import Callable, Optional
+from typing import Optional
 
 from telegram import InlineKeyboardButton, Update
 
@@ -14,7 +14,11 @@ from helpers.pagination import (
     Paginator,
     parse_pagination,
 )
-from models.feature_request import FeatureRequest
+from models.feature_request import (
+    FeatureRequest,
+    FeatureRequestChange,
+    FeatureRequestStatus,
+)
 from repository import Repository
 
 
@@ -132,9 +136,9 @@ class FeatureRequestViewHandler(Handler):
 
         filters = [
             lambda x: x,
-            lambda x: x.done_timestamp is not None,
-            lambda x: x.deny_timestamp is not None,
-            lambda x: x.done_timestamp is None and x.deny_timestamp is None,
+            lambda x: x.status == FeatureRequestStatus.DONE,
+            lambda x: x.status == FeatureRequestStatus.DENIED,
+            lambda x: x.status == FeatureRequestStatus.OPEN,
         ]
 
         paginator.data_func = lambda: [
@@ -173,15 +177,6 @@ class FeatureRequestEditHandler(Handler):
                 await update.message.reply_text("Укажите номера фичи-реквеста(ов)")
                 return True
 
-            def reopen(fq):
-                fq.done_timestamp = fq.deny_timestamp = None
-
-            def done(fq):
-                fq.done_timestamp = datetime.datetime.now().timestamp()
-
-            def deny(fq):
-                fq.deny_timestamp = datetime.datetime.now().timestamp()
-
             return await {
                 "done": self._command(
                     [
@@ -189,7 +184,7 @@ class FeatureRequestEditHandler(Handler):
                         "Фича-реквест уже отклонён",
                         None,
                     ],
-                    done,
+                    FeatureRequestStatus.DONE,
                 ),
                 "deny": self._command(
                     [
@@ -197,7 +192,7 @@ class FeatureRequestEditHandler(Handler):
                         "Фича-реквест уже отклонён",
                         None,
                     ],
-                    deny,
+                    FeatureRequestStatus.DENIED,
                 ),
                 "reopen": self._command(
                     [
@@ -205,7 +200,7 @@ class FeatureRequestEditHandler(Handler):
                         None,
                         "Фича-реквест и так открыт",
                     ],
-                    reopen,
+                    FeatureRequestStatus.OPEN,
                 ),
             }[data[1]](update, data[2:])
 
@@ -214,7 +209,7 @@ class FeatureRequestEditHandler(Handler):
     def _command(
         self,
         error_list: list[str | None],
-        func: Callable[[FeatureRequest], None],
+        new_status: FeatureRequestStatus,
     ):
         async def wrapper(update: Update, ids):
             results = []
@@ -239,7 +234,14 @@ class FeatureRequestEditHandler(Handler):
                     results.append((fq.id, error))
                     continue
 
-                func(fq)
+                fq.history.append(
+                    FeatureRequestChange(
+                        author_id=update.message.from_user.id,
+                        timestamp=datetime.datetime.now().timestamp(),
+                        message_id=update.message.message_id,
+                        status=new_status,
+                    )
+                )
                 results.append((fq.id, None))
 
             self.repository.save()
@@ -255,15 +257,15 @@ class FeatureRequestEditHandler(Handler):
 
         return wrapper
 
-    def _validate_fq(self, fq, messages: list[str | None]):
-        validations = [
-            lambda x: x.done_timestamp is not None,
-            lambda x: x.deny_timestamp is not None,
-            lambda x: x.done_timestamp is None and x.deny_timestamp is None,
+    def _validate_fq(self, fq: FeatureRequest, messages: list[str | None]):
+        validation_statuses = [
+            FeatureRequestStatus.DONE,
+            FeatureRequestStatus.DENIED,
+            FeatureRequestStatus.OPEN,
         ]
 
-        for i, validation in enumerate(validations):
-            if validation(fq) and messages[i] is not None:
+        for i, validation_status in enumerate(validation_statuses):
+            if fq.status == validation_status and messages[i] is not None:
                 return messages[i]
 
         return None
