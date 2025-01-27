@@ -5,3 +5,4 @@ dacite
 humanize
 python-dateutil
 youtube-dl-nightly
+coloredlogs
