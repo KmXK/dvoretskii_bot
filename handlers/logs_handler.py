@@ -1,4 +1,5 @@
 import os
+import textwrap
 
 from handlers.handler import CommandHandler, Handler
 from helpers.pagination import (
@@ -17,8 +18,13 @@ class LogsHandler(Handler):
             unique_keyboard_name="logs",
             list_header=None,
             page_size=25,
-            page_format_func=lambda ctx: "```" + "".join(ctx.data) + "```",
-            data_func=lambda: self._get_log_data(),
+            page_format_func=lambda ctx: "```\n"
+            + "".join(ctx.data).replace("`", "'")
+            + "```",
+            data_func=lambda: [
+                x if len(x) <= 100 else "\n".join(textwrap.wrap(x, width=70)) + "\n"
+                for x in self._get_log_data()
+            ],
             always_show_pagination=True,
             delimiter="",
             start_from_last_page=True,
@@ -36,7 +42,7 @@ class LogsHandler(Handler):
     def help(self):
         return "/logs - показать логи"
 
-    def _get_log_data(self):
+    def _get_log_data(self) -> list[str]:
         if not os.path.exists(self.log_file_path):
             return []
         return open(self.log_file_path, "r").readlines()

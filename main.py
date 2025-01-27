@@ -2,6 +2,7 @@ import argparse
 import logging
 from typing import Any, Awaitable, Callable
 
+import coloredlogs
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -38,12 +39,11 @@ logger: logging.Logger
 
 
 def configure_logging(token, log_file: None | str):
-    log_file_path = log_file
-
-    logging.basicConfig(
-        filename=log_file_path,
-        format="%(asctime)s - %(levelname)s - %(message)s",
+    coloredlogs.install(
+        fmt="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
         level=logging.INFO,
+        stream=open(log_file, "a") if log_file else None,
+        isatty=log_file is None,
     )
 
     for filter in [
