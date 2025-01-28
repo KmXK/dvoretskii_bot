@@ -1,10 +1,10 @@
 import base64
 import logging
 import re
+from asyncio import sleep
 
 import aiohttp
-from bs4 import BeautifulSoup
-from telegram import InputMediaPhoto, Update
+from telegram import InputMediaAudio, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 from consts import URL_REGEX
@@ -27,7 +27,10 @@ class DownloadHandler(Handler):
                 }.items():
                     if handlerPath in url:
                         logger.info(f"Получен url: {url}")
-                        await handler(url, update, context)
+                        try:
+                            await handler(url, update, context)
+                        except Exception as e:
+                            logger.exception(e)
                         return True
 
     async def _load_tiktok(
@@ -37,36 +40,83 @@ class DownloadHandler(Handler):
         async with aiohttp.ClientSession() as session:
             logger.info("Запрос на получение информации")
 
-            async with session.post(
-                "https://ttsave.app/download",
-                data={"query": url, "language_id": "1"},
+            # async with session.post(
+            #     "https://ttsave.app/download",
+            #     data={"query": url, "language_id": "1"},
+            # ) as response:
+            #     bs = BeautifulSoup(await response.text(), "html.parser")
+
+            #     video = [
+            #         a.get("href")
+            #         for a in bs.find_all("a", type="no-watermark")
+            #         if a.get("href") is not None
+            #     ]
+            #     if len(video) > 0:
+            #         logger.info(f"Видео получено: {video}")
+            #         await update.message.reply_video(video[0])
+            #         logger.info("Видео отправлено")
+            #         return
+
+            #     images = [
+            #         InputMediaPhoto(a.get("href"))
+            #         for a in bs.find_all("a", type="slide")
+            #         if a.get("href") is not None
+            #     ]
+            #     if len(images) > 0:
+            #         logger.info(f"Картинки получены: {images}")
+            #         for i in range(0, len(images), 10):
+            #             await update.message.reply_media_group(images[i : i + 10])
+            #         logger.info("Картинки отправлены")
+            #         return
+
+            #     await update.message.reply_text("Ты плохой человек")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "http://8.215.8.243:1337/tiktok2?url=" + url
             ) as response:
-                bs = BeautifulSoup(await response.text(), "html.parser")
+                json = await response.json()
+                if json["status"]:
+                    video = json["result"].get("video")
+                    if video is not None:
+                        logger.info(f"Получено видео: {video}")
+                        await update.message.reply_video(url)
 
-                video = [
-                    a.get("href")
-                    for a in bs.find_all("a", type="no-watermark")
-                    if a.get("href") is not None
-                ]
-                if len(video) > 0:
-                    logger.info(f"Видео получено: {video}")
-                    await update.message.reply_video(video[0])
-                    logger.info("Видео отправлено")
-                    return
+                    images = json["result"].get("image")
+                    if images is not None:
+                        audio = json["result"].get("audio")
+                        if audio is not None:
+                            audio = InputMediaAudio(
+                                audio, filename="TikTok Audio", title="123"
+                            )
+                        logger.info(f"Картинки получены: {images}")
+                        images = [InputMediaPhoto(href) for href in images]
+                        for i in range(0, len(images), 10):
+                            retry = 0
+                            while retry < 3:
+                                try:
+                                    await update.message.reply_media_group(
+                                        images[i : i + 10]
+                                    )
+                                    break
+                                except Exception as e:
+                                    logging.exception(e)
+                                    await sleep(3)
+                                    retry += 1
 
-                images = [
-                    InputMediaPhoto(a.get("href"))
-                    for a in bs.find_all("a", type="slide")
-                    if a.get("href") is not None
-                ]
-                if len(images) > 0:
-                    logger.info(f"Картинки получены: {images}")
-                    for i in range(0, len(images), 10):
-                        await update.message.reply_media_group(images[i : i + 10])
-                    logger.info("Картинки отправлены")
-                    return
+                        if audio is not None:
+                            await update.message.reply_media_group([audio])
+                        logger.info("Картинки отправлены")
 
-                await update.message.reply_text("Ты плохой человек")
+                    # logger.info(f"Получено видео: {video}")
+                    # new_url = (
+                    #     "https://download.proxy.nigger.by/?password=***REMOVED***&download_url="
+                    #     + base64.b64encode(video.encode("utf-8")).decode("utf-8")
+                    # )
+                    # logger.info(f"Video via proxy: {new_url}")
+                    # await update.message.reply_video(new_url)
+
+                    # await update.message.reply_video(video)
 
     async def _load_instagram(
         self, url: str, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -80,8 +130,11 @@ class DownloadHandler(Handler):
                 if json["status"]:
                     video = json["result"][0]
                     logger.info(f"Получено видео: {video}")
-                    new_url = "https://download.proxy.nigger.by/?password=***REMOVED***&download_url=" + base64.b64encode(video.encode('utf-8')).decode('utf-8')
-                    logger.info(f'Video via proxy: {new_url}')
+                    new_url = (
+                        "https://download.proxy.nigger.by/?password=***REMOVED***&download_url="
+                        + base64.b64encode(video.encode("utf-8")).decode("utf-8")
+                    )
+                    logger.info(f"Video via proxy: {new_url}")
                     await update.message.reply_video(new_url)
 
     async def _load_youtube(
