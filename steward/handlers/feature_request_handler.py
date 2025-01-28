@@ -1,7 +1,6 @@
 import datetime
 import re
 from enum import Enum
-from typing import Optional
 
 from telegram import InlineKeyboardButton, Update
 
@@ -13,7 +12,7 @@ from steward.data.models.feature_request import (
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler, validate_command_msg
 from steward.helpers.formats import format_lined_list
-from steward.helpers.keyboard import KeyboardParseResult, parse_and_validate_keyboard
+from steward.helpers.keyboard import parse_and_validate_keyboard
 from steward.helpers.pagination import (
     PageFormatContext,
     PaginationParseResult,
@@ -46,6 +45,10 @@ class FeatureRequestViewHandler(Handler):
         if not validate_command_msg(update, ["featurerequest", "fq"]):
             return False
 
+        assert (
+            update.message.text
+        )  # TODO: remove all asserts to message in chat() methods
+
         data = update.message.text.split(" ")
         if len(data) == 1 or data[1] == "list":
             return await self._get_paginator(FilterType.ALL).show_list(update)
@@ -55,36 +58,38 @@ class FeatureRequestViewHandler(Handler):
         )
 
     async def callback(self, update, context):
-        parsed: Optional[KeyboardParseResult] = parse_and_validate_keyboard(
+        assert update.callback_query.data
+
+        filter_parsed = parse_and_validate_keyboard(
             "feature_request_filter",
             update.callback_query.data,
         )
 
-        if parsed is not None:
+        if filter_parsed is not None:
             return await self._get_paginator(
-                FilterType(int(parsed.metadata))
+                FilterType(int(filter_parsed.metadata))
             ).process_parsed_callback(
                 update,
                 PaginationParseResult(
                     unique_keyboard_name="feature_request_list",
-                    metadata=parsed.metadata,
+                    metadata=filter_parsed.metadata,
                     is_current_page=False,
                     page_number=0,
                 ),
             )
 
-        parsed: Optional[PaginationParseResult] = parse_and_validate_keyboard(
+        pagination_parsed = parse_and_validate_keyboard(
             "feature_request_list",
             update.callback_query.data,
             parse_func=parse_pagination,
         )
 
-        if parsed is not None:
+        if pagination_parsed is not None:
             return await self._get_paginator(
-                FilterType(int(parsed.metadata))
+                FilterType(int(pagination_parsed.metadata))
             ).process_parsed_callback(
                 update,
-                parsed,
+                pagination_parsed,
             )
 
         return False

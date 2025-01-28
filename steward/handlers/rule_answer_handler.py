@@ -25,7 +25,7 @@ class RuleAnswerHandler(Handler):
                     re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0,
                 )
                 and any(
-                    filter(
+                    filter[Rule](
                         lambda rule: message.from_user.id in rule.from_users
                         or 0 in rule.from_users,
                         rules,
@@ -59,7 +59,7 @@ class RuleAnswerHandler(Handler):
 
         response = rule.responses[response_index]
 
-        if response.text != None:
+        if response.text is not None:
             await message.reply_text(response.text)
         else:
             await message.reply_copy(response.from_chat_id, response.message_id)

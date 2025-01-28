@@ -27,7 +27,11 @@ class AddArmyHandler(Handler):
             if start_date is None or end_date is None:
                 raise ValueError()
             self.repository.db.army.append(
-                Army(name=name.strip(), start_date=start_date, end_date=end_date)
+                Army(
+                    name=name.strip(),
+                    start_date=date_to_timestamp(start_date),
+                    end_date=date_to_timestamp(end_date),
+                )
             )
             self.repository.save()
             await update.message.reply_markdown("Добавил человечка")
@@ -52,11 +56,17 @@ class DeleteArmyHandler(Handler):
     async def chat(self, update, context):
         try:
             name = update.message.text.strip().replace("/delete_army", "").strip()
-            self.repository.db.army.remove(
-                next((x for x in self.repository.db.army if x.name == name), None)
+            army_to_delete = next(
+                (x for x in self.repository.db.army if x.name == name), None
             )
-            self.repository.save()
-            await update.message.reply_markdown("Удалил человечка")
+            if army_to_delete is None:
+                await update.message.reply_text(
+                    "Человечка с таким именем не существует"
+                )
+            else:
+                self.repository.db.army.remove(army_to_delete)
+                self.repository.save()
+                await update.message.reply_markdown("Удалил человечка")
         except ValueError:
             await update.message.reply_text("Человечка с таким именем не существует")
 
@@ -71,7 +81,8 @@ class ArmyHandler(Handler):
 
     async def chat(self, update, context):
         if len(self.repository.db.army) == 0:
-            text += "В армейку никого не добавили"
+            await update.message.reply_markdown("В армейку никого не добавили")
+            return
 
         text = "Статус по армейке на сегодня: \n\n"
         for army in self.repository.db.army:

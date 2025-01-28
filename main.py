@@ -36,6 +36,7 @@ def get_token(is_test=False):
 repository = Repository(JsonFileStorage("db.json"))
 
 # TODO: Union CRUD handlers to one import
+# TODO: Create bot context for bot
 handlers: list[Handler] = [
     DownloadHandler(),
     GetRulesHandler(repository),

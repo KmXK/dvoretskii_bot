@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Callable
 
 logger = logging.getLogger("keyboard")
 
@@ -31,12 +31,12 @@ def parse_keyboard(
     )
 
 
-def parse_and_validate_keyboard(
+def parse_and_validate_keyboard[T: KeyboardParseResult](
     unique_keyboard_name: str,
     callback_data: str,
-    parse_func=parse_keyboard,
+    parse_func: Callable[[str], T] = parse_keyboard,
     **kwargs,
-) -> Optional[Any]:
+) -> T | None:
     try:
         result = parse_func(callback_data, **kwargs)
         if result.unique_keyboard_name == unique_keyboard_name:

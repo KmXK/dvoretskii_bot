@@ -43,6 +43,7 @@ class Bot:
         )
 
     # TODO: создать контектс для всего запроса, поместить туда контекст тг, update и репозиторий, начать оперировать им
+    # (RequestContext!!!)
     async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message is None:
             return False  # dont react on changes

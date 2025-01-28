@@ -152,4 +152,3 @@ class DownloadHandler(Handler):
                 params={"url": url, "type": "video"},
             ) as response:
                 logger.info(await response.text())
-                json = await response.json()
