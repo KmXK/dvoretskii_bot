@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 import humanize.i18n
 
@@ -13,6 +14,8 @@ def date_to_timestamp(date: str) -> float:
 
 humanize.i18n.activate("ru_RU")
 
+logger = logging.getLogger(__name__)
+
 
 @CommandHandler("add_army", only_admin=True)
 class AddArmyHandler(Handler):
@@ -22,7 +25,7 @@ class AddArmyHandler(Handler):
     async def chat(self, update, context):
         try:
             name, start_date, end_date = (
-                update.message.text.strip().replace("/add_army", "").split(" ")
+                update.message.text.replace("/add_army", "").strip().split(" ")
             )
             if start_date is None or end_date is None:
                 raise ValueError()
@@ -35,7 +38,8 @@ class AddArmyHandler(Handler):
             )
             self.repository.save()
             await update.message.reply_markdown("Добавил человечка")
-        except ValueError:
+        except ValueError as e:
+            logger.exception(e)
             string = (
                 "Ошибка. Добавление должно быть строкой, разделенной пробелом например: (Ваня 01.01.2022 01.01.2023) \n"
                 "name - Имя \n"
