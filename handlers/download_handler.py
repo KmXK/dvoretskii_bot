@@ -101,8 +101,10 @@ class DownloadHandler(Handler):
                                     break
                                 except Exception as e:
                                     logging.exception(e)
-                                    await sleep(3)
+                                    await sleep(10)
                                     retry += 1
+                            if i + 10 < len(images):
+                                await sleep(5)
 
                         if audio is not None:
                             await update.message.reply_media_group([audio])
