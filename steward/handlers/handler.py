@@ -4,7 +4,7 @@ from typing import Optional
 from telegram import MessageEntity, Update
 from telegram.ext import ContextTypes
 
-from repository import Repository
+from steward.repository import Repository
 
 
 class Handler:

@@ -1,12 +1,13 @@
 import os
 import textwrap
 
-from handlers.handler import CommandHandler, Handler
 from helpers.formats import union_lists
 from helpers.pagination import (
     Paginator,
 )
-from repository import Repository
+
+from handlers.handler import CommandHandler, Handler
+from steward.repository import Repository
 
 
 @CommandHandler("logs", only_admin=True)

@@ -12,28 +12,28 @@ from telegram.ext import (
     filters,
 )
 
-from handlers.add_admin_handler import AddAdminHandler
-from handlers.add_rule_handler import AddRuleHandler
-from handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
-from handlers.delete_admin_handler import DeleteAdminHandler
-from handlers.delete_rule_handler import DeleteRuleHandler
-from handlers.download_handler import DownloadHandler
-from handlers.feature_request_handler import (
+from steward.handlers.add_admin_handler import AddAdminHandler
+from steward.handlers.add_rule_handler import AddRuleHandler
+from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
+from steward.handlers.delete_admin_handler import DeleteAdminHandler
+from steward.handlers.delete_rule_handler import DeleteRuleHandler
+from steward.handlers.download_handler import DownloadHandler
+from steward.handlers.feature_request_handler import (
     FeatureRequestEditHandler,
     FeatureRequestViewHandler,
 )
-from handlers.get_admins_handler import GetAdminsHandler
-from handlers.get_rules_handler import GetRulesHandler
-from handlers.handler import Handler
-from handlers.help_handler import HelpHandler
-from handlers.id_handler import IdHandler
-from handlers.logs_handler import LogsHandler
-from handlers.rule_answer_handler import RuleAnswerHandler
-from handlers.script_handler import ScriptHandler
-from logging_filters import ReplaceFilter, SkipFilter
-from repository import JsonFileStorage, Repository
-from session.session_registry import try_get_session_handler
-from tg_update_helpers import get_from_user
+from steward.handlers.get_admins_handler import GetAdminsHandler
+from steward.handlers.get_rules_handler import GetRulesHandler
+from steward.handlers.handler import Handler
+from steward.handlers.help_handler import HelpHandler
+from steward.handlers.id_handler import IdHandler
+from steward.handlers.logs_handler import LogsHandler
+from steward.handlers.rule_answer_handler import RuleAnswerHandler
+from steward.handlers.script_handler import ScriptHandler
+from steward.helpers.tg_update_helpers import get_from_user
+from steward.models.logging_filters import ReplaceFilter, SkipFilter
+from steward.repository import JsonFileStorage, Repository
+from steward.session.session_registry import try_get_session_handler
 
 logger: logging.Logger
 

@@ -2,9 +2,10 @@ import logging
 import random
 import re
 
-from handlers.handler import Handler
 from models.rule import Rule
-from repository import Repository
+
+from handlers.handler import Handler
+from steward.repository import Repository
 
 
 class RuleAnswerHandler(Handler):
@@ -19,8 +20,18 @@ class RuleAnswerHandler(Handler):
         def does_rule_match(rule: Rule):
             return (
                 isinstance(message.text, str)
-                and re.match(rule.pattern.regex, message.text, re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0)
-                and any(filter(lambda rule: message.from_user.id in rule.from_users or 0 in rule.from_users, rules))
+                and re.match(
+                    rule.pattern.regex,
+                    message.text,
+                    re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0,
+                )
+                and any(
+                    filter(
+                        lambda rule: message.from_user.id in rule.from_users
+                        or 0 in rule.from_users,
+                        rules,
+                    )
+                )
             )
 
         available_rules = [rule for rule in rules if does_rule_match(rule)]
@@ -30,19 +41,22 @@ class RuleAnswerHandler(Handler):
 
         rule = random.choice(available_rules)
         probability_max = sum(rule.probability for rule in rule.responses)
-        logging.info(f'sum is {probability_max}')
+        logging.info(f"sum is {probability_max}")
 
         probability_choice = random.randint(0, probability_max - 1)
-        logging.info(f'probability choice is {probability_choice}')
+        logging.info(f"probability choice is {probability_choice}")
         lower_bound = 0
         response_index = 0
 
         # while upper_bound is less than probability_max
-        while lower_bound + rule.responses[response_index].probability - 1 < probability_choice:
+        while (
+            lower_bound + rule.responses[response_index].probability - 1
+            < probability_choice
+        ):
             lower_bound += rule.responses[response_index].probability
             response_index += 1
 
-        logging.info(f'selected {response_index} response')
+        logging.info(f"selected {response_index} response")
 
         response = rule.responses[response_index]
 

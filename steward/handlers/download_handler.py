@@ -7,8 +7,8 @@ import aiohttp
 from telegram import InputMediaAudio, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
-from consts import URL_REGEX
 from handlers.handler import Handler
+from steward.consts import URL_REGEX
 
 logger = logging.getLogger("download_controller")
 

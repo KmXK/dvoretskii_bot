@@ -1,5 +1,6 @@
 from models.rule import Rule
-from repository import Repository, Storage
+
+from steward.repository import Repository, Storage
 
 
 class InMemoryStorage(Storage):
@@ -48,22 +49,20 @@ def test_initialization():
 
 def test_migration_to_latest_version():
     repository = Repository(
-        InMemoryStorage(
-            {
-                "AdminIds": [***REMOVED***, ***REMOVED***],
-                "rules": [
-                    {
-                        "id": "d1835cabdaf845c496aa4b3f30f30bb7",
-                        "from": 0,
-                        "text": "test_text",
-                        "response": "test_response",
-                        "case_flag": 1,
-                    }
-                ],
-                "version": 1,
-                "army": [{"name": "Test", "date": "17.10.2025"}],
-            }
-        )
+        InMemoryStorage({
+            "AdminIds": [***REMOVED***, ***REMOVED***],
+            "rules": [
+                {
+                    "id": "d1835cabdaf845c496aa4b3f30f30bb7",
+                    "from": 0,
+                    "text": "test_text",
+                    "response": "test_response",
+                    "case_flag": 1,
+                }
+            ],
+            "version": 1,
+            "army": [{"name": "Test", "date": "17.10.2025"}],
+        })
     )
 
     print(repository.db)

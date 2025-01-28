@@ -3,7 +3,7 @@ from typing import Any
 
 from telegram import Update
 
-from tg_update_helpers import get_from_user, get_message
+from steward.helpers.tg_update_helpers import get_from_user, get_message
 
 logger = logging.getLogger(__name__)
 

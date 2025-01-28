@@ -3,9 +3,6 @@ import re
 from enum import Enum
 from typing import Optional
 
-from telegram import InlineKeyboardButton, Update
-
-from handlers.handler import Handler, validate_command_msg
 from helpers.formats import format_lined_list
 from helpers.keyboard import KeyboardParseResult, parse_and_validate_keyboard
 from helpers.pagination import (
@@ -19,7 +16,10 @@ from models.feature_request import (
     FeatureRequestChange,
     FeatureRequestStatus,
 )
-from repository import Repository
+from telegram import InlineKeyboardButton, Update
+
+from handlers.handler import Handler, validate_command_msg
+from steward.repository import Repository
 
 
 def format_page(ctx: PageFormatContext[FeatureRequest]) -> str:
