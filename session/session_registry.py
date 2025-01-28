@@ -1,22 +1,22 @@
 import logging
+from typing import Any
 
 from telegram import Update
 
-from session.session_handler_base import SessionHandlerBase
 from tg_update_helpers import get_from_user, get_message
 
 logger = logging.getLogger(__name__)
 
 type SessionKey = tuple[int, int]
 
-sessions: dict[SessionKey, SessionHandlerBase] = {}
+sessions: dict[SessionKey, Any] = {}
 
 
 def get_session_key(update: Update):
     return get_message(update).chat.id, get_from_user(update).id
 
 
-def activate_session(handler: SessionHandlerBase, update: Update):
+def activate_session(handler: Any, update: Update):
     logger.info("activate session")
     sessions[get_session_key(update)] = handler
 

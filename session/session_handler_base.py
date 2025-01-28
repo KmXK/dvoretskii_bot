@@ -4,7 +4,11 @@ from typing import TypeVar
 from telegram import Update
 
 from handlers.handler import Handler, validate_command_msg
-from session import session_registry
+from session.session_registry import (
+    activate_session,
+    deactivate_session,
+    get_session_key,
+)
 from session.step import Step
 
 
@@ -46,17 +50,15 @@ class SessionHandlerBase(Handler):
         )
 
     async def _action(self, update, context, func):
-        if session_registry.get_session_key(update) not in self.sessions:
+        if get_session_key(update) not in self.sessions:
             session = SessionData()
             if self.try_activate_session(update, session.context):
-                session_registry.activate_session(self, update)
-                self.sessions[session_registry.get_session_key(update)] = session
+                activate_session(self, update)
+                self.sessions[get_session_key(update)] = session
             else:
                 return False
         elif validate_command_msg(update, "stop"):
-            await self._stop_session(
-                update, self.sessions[session_registry.get_session_key(update)]
-            )
+            await self._stop_session(update, self.sessions[get_session_key(update)])
             return False
 
         return await func(self)(update, context)
@@ -76,7 +78,7 @@ class SessionHandlerBase(Handler):
         )
 
     async def _session_action(self, update, context, func):
-        session = self.sessions[session_registry.get_session_key(update)]
+        session = self.sessions[get_session_key(update)]
 
         step = self.steps[session.current_handler_index]
         if await func(step)(update, session.context):
@@ -96,8 +98,8 @@ class SessionHandlerBase(Handler):
         return True
 
     async def _stop_session(self, update: Update, session):
-        session_registry.deactivate_session(update)
-        self.sessions.pop(session_registry.get_session_key(update))
+        deactivate_session(update)
+        self.sessions.pop(get_session_key(update))
         await self.on_session_finished(update, session.context)
 
         for step in self.steps:
