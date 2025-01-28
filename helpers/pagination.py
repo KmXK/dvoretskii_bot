@@ -72,16 +72,16 @@ def create_pagination_keyboard(
     max_page_number = pages_count - 1
 
     buttons = [
-        ["<", current_page - 1 if current_page > 0 else 0],
-        [f"{current_page + 1}/{1 if pages_count == 0 else pages_count}", current_page],
-        [">", current_page + 1 if current_page < max_page_number else max_page_number],
+        ("<", current_page - 1 if current_page > 0 else 0),
+        (f"{current_page + 1}/{1 if pages_count == 0 else pages_count}", current_page),
+        (">", current_page + 1 if current_page < max_page_number else max_page_number),
     ]
 
     if allow_edges:
         if show_edges_for_first_and_last_pages or current_page > 0:
-            buttons.insert(0, ["<<<", 0])
+            buttons.insert(0, ("<<<", 0))
         if show_edges_for_first_and_last_pages or current_page < max_page_number:
-            buttons.append([">>>", max_page_number])
+            buttons.append((">>>", max_page_number))
 
     keyboard = [
         InlineKeyboardButton(
@@ -206,6 +206,8 @@ class Paginator[T]:
         return True
 
     async def process_callback(self, update: Update):
+        assert update.callback_query
+
         parsed = parse_and_validate_keyboard(
             self.unique_keyboard_name,
             update.callback_query.data,

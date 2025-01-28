@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 from handlers.add_admin_handler import AddAdminHandler
+from handlers.add_rule_handler import AddRuleHandler
 from handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from handlers.delete_admin_handler import DeleteAdminHandler
 from handlers.delete_rule_handler import DeleteRuleHandler
@@ -29,11 +30,10 @@ from handlers.id_handler import IdHandler
 from handlers.logs_handler import LogsHandler
 from handlers.rule_answer_handler import RuleAnswerHandler
 from handlers.script_handler import ScriptHandler
-from handlers.session_creation_handler import SessionCreationHandler
 from logging_filters import ReplaceFilter, SkipFilter
 from repository import JsonFileStorage, Repository
 from session.session_registry import try_get_session_handler
-from tg_update_helpers import get_from_user, get_message
+from tg_update_helpers import get_from_user
 
 logger: logging.Logger
 
@@ -72,10 +72,11 @@ def get_token(is_test=False):
 
 repository = Repository(JsonFileStorage("db.json"))
 
-handlers = [
-    SessionCreationHandler(repository),
+# TODO: Union CRUD handlers to one import
+handlers: list[Handler] = [
     DownloadHandler(),
     GetRulesHandler(repository),
+    AddRuleHandler(repository),
     DeleteRuleHandler(repository),
     GetAdminsHandler(repository),
     AddAdminHandler(repository),
@@ -109,7 +110,11 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await action(update, context, "callback", lambda u: u.callback_query.answer())
+    if update.callback_query is None:
+        logger.warning(f"invalid callback call: {update}")
+        return False
+
+    await action(update, context, "callback", lambda: update.callback_query.answer())
 
 
 def validate_admin(handler: Handler, user_id: int):
@@ -120,13 +125,13 @@ async def action(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     action: str,
-    func: Callable[[Update], Awaitable[Any]],
+    func: Callable[[], Awaitable[Any]] | None,
 ):
-    session_handler = try_get_session_handler(get_message(update))
+    session_handler = try_get_session_handler(update)
     if session_handler is not None:
         if await getattr(session_handler, action)(update, context):
             if func is not None:
-                await func(update)
+                await func()
             return
 
     for handler in handlers:

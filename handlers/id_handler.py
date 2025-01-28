@@ -1,6 +1,7 @@
-from telegram import MessageOriginUser, Update
+from telegram import MessageOriginUser, Update, User
 
 from handlers.handler import validate_command_msg
+from helpers.validation import check, try_get, validate_update
 from session.session_handler_base import SessionHandlerBase
 from session.steps.echo_step import AnswerStep
 from session.steps.jump_step import JumpStep
@@ -14,32 +15,31 @@ def validate_forward_user(update: Update):
     )
 
 
-def write_result(update: Update):
-    origin: MessageOriginUser = update.message.forward_origin
-    return f"Id пользователя {origin.sender_user.name} = {origin.sender_user.id}"
+def write_result(user: User):
+    return f"Id пользователя {user.name} = {user.id}"
 
 
 class IdHandler(SessionHandlerBase):
     def __init__(self):
-        super().__init__(
-            [
-                QuestionStep(
-                    "name",
-                    "Пришли мне сообщение, чтобы узнать айди автора",
-                    filter_answer=lambda update: (
-                        "Некорректное сообщение, попробуй другое"
-                        if not validate_forward_user(update)
-                        else None
+        super().__init__([
+            QuestionStep(
+                "name",
+                "Пришли мне сообщение, чтобы узнать айди автора",
+                filter_answer=validate_update([
+                    check(
+                        lambda u: validate_forward_user(u),
+                        "Некорректное сообщение, попробуй другое",
                     ),
-                ),
-                AnswerStep(lambda context: write_result(context["name"])),
-                JumpStep(
-                    "loop",
-                    -2,
-                    lambda c: c["repeat_count"] > c["loop"] or c["repeat_count"] == -1,
-                )
-            ]
-        )
+                    try_get(lambda u: u.message.forward_origin.sender_user),
+                ]),
+            ),
+            AnswerStep(lambda context: write_result(context["name"])),
+            JumpStep(
+                "loop",
+                -2,
+                lambda c: c["repeat_count"] > c["loop"] or c["repeat_count"] == -1,
+            ),
+        ])
 
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "id"):
@@ -56,7 +56,3 @@ class IdHandler(SessionHandlerBase):
 
         session_context["repeat_count"] = stop_iteration_number
         return True
-
-
-    def on_session_finished(self, update, session_context):
-        print(session_context)

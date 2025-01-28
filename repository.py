@@ -14,7 +14,7 @@ logger = logging.getLogger("repository")
 
 class Storage:
     @abstractmethod
-    def read_dict(self):
+    def read_dict(self) -> dict:
         pass
 
     @abstractmethod
@@ -79,7 +79,7 @@ class Repository:
     def save(self):
         self._storage.write_dict(asdict(self.db))
 
-    def is_admin(self, user_id: str):
+    def is_admin(self, user_id: int):
         return user_id in self.db.admin_ids
 
     def _migrate(self, data: dict):
