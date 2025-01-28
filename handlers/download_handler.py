@@ -78,12 +78,11 @@ class DownloadHandler(Handler):
                 json = await response.json()
                 if json["status"]:
                     video = json["result"].get("video")
+                    images = json["result"].get("image")
                     if video is not None:
                         logger.info(f"Получено видео: {video}")
-                        await update.message.reply_video(url)
-
-                    images = json["result"].get("image")
-                    if images is not None:
+                        await update.message.reply_video(video)
+                    elif images is not None:
                         audio = json["result"].get("audio")
                         if audio is not None:
                             audio = InputMediaAudio(
@@ -94,6 +93,11 @@ class DownloadHandler(Handler):
                         for i in range(0, len(images), 10):
                             retry = 0
                             while retry < 5:
+                                if retry == 2 and audio is not None:
+                                    await update.message.reply_media_group([audio])
+                                    await sleep(3)
+                                    audio = None
+                                
                                 try:
                                     await update.message.reply_media_group(
                                         images[i : i + 10]
@@ -101,10 +105,10 @@ class DownloadHandler(Handler):
                                     break
                                 except Exception as e:
                                     logging.exception(e)
-                                    await sleep(10)
+                                    await sleep(5)
                                     retry += 1
                             if i + 10 < len(images):
-                                await sleep(5)
+                                await sleep(2)
 
                         if audio is not None:
                             await update.message.reply_media_group([audio])
