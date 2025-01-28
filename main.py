@@ -142,7 +142,7 @@ async def action(
                 and await getattr(handler, action)(update, context)
             ):
                 if func is not None:
-                    await func(update)
+                    await func()
                 break
         except BaseException as e:
             logging.exception(e)
