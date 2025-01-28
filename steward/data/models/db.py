@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 
-from models.army import Army
-from models.chat import Chat
-from models.feature_request import FeatureRequest
-from models.rule import Rule
+from .army import Army
+from .chat import Chat
+from .feature_request import FeatureRequest
+from .rule import Rule
 
 
 @dataclass
@@ -13,4 +13,4 @@ class Database:
     chats: list[Chat] = field(default_factory=list)
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
-    version: int = None
+    version: int = 3

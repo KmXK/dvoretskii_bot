@@ -1,10 +1,10 @@
 import datetime
 
 import humanize.i18n
-from models.army import Army
 
-from handlers.handler import CommandHandler, Handler
-from steward.repository import Repository
+from steward.data.models.army import Army
+from steward.data.repository import Repository
+from steward.handlers.handler import CommandHandler, Handler
 
 
 def date_to_timestamp(date: str) -> float:

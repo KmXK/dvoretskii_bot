@@ -1,6 +1,5 @@
-from models.rule import Rule
-
-from steward.repository import Repository, Storage
+from steward.data.models.rule import Rule
+from steward.data.repository import Repository, Storage
 
 
 class InMemoryStorage(Storage):

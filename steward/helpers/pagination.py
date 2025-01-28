@@ -5,7 +5,7 @@ from typing import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from helpers.keyboard import (
+from steward.helpers.keyboard import (
     KeyboardParseException,
     KeyboardParseResult,
     parse_and_validate_keyboard,

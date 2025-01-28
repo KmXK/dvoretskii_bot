@@ -7,7 +7,7 @@ from enum import Enum
 
 from dacite import Config, from_dict
 
-from models.db import Database
+from .models.db import Database
 
 logger = logging.getLogger("repository")
 

@@ -1,5 +1,5 @@
-from handlers.handler import CommandHandler, Handler
-from steward.repository import Repository
+from steward.data.repository import Repository
+from steward.handlers.handler import CommandHandler, Handler
 
 
 @CommandHandler("delete_admin", only_admin=True)

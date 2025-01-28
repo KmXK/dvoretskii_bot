@@ -1,11 +1,11 @@
 from telegram import MessageOriginUser, Update, User
 
-from handlers.handler import validate_command_msg
-from helpers.validation import check, try_get, validate_update
-from session.session_handler_base import SessionHandlerBase
-from session.steps.echo_step import AnswerStep
-from session.steps.jump_step import JumpStep
-from session.steps.question_step import QuestionStep
+from steward.handlers.handler import validate_command_msg
+from steward.helpers.validation import check, try_get, validate_update
+from steward.session.session_handler_base import SessionHandlerBase
+from steward.session.steps.echo_step import AnswerStep
+from steward.session.steps.jump_step import JumpStep
+from steward.session.steps.question_step import QuestionStep
 
 
 def validate_forward_user(update: Update):

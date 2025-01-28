@@ -3,13 +3,13 @@ from typing import TypeVar
 
 from telegram import Update
 
-from handlers.handler import Handler, validate_command_msg
-from session.session_registry import (
+from steward.handlers.handler import Handler, validate_command_msg
+from steward.session.session_registry import (
     activate_session,
     deactivate_session,
     get_session_key,
 )
-from session.step import Step
+from steward.session.step import Step
 
 
 class SessionData:

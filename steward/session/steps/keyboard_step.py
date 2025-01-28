@@ -2,8 +2,8 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from helpers.typing import is_list_of
-from session.step import Step
+from steward.helpers.typing import is_list_of
+from steward.session.step import Step
 
 type KeyboardButton = tuple[str, str, Any]
 type KeyboardLine = list[KeyboardButton]

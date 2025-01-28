@@ -1,17 +1,18 @@
 import logging
 import re
 
-from helpers.validation import check, try_get, validate_message_text
-from models.rule import Response, Rule, RulePattern
-from session.session_handler_base import SessionHandlerBase
-from session.step import Step
-from session.steps.keyboard_step import KeyboardStep
-from session.steps.question_step import QuestionStep
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from handlers.handler import validate_command_msg
+from steward.data.models.rule import Response, Rule, RulePattern
+from steward.data.repository import Repository
 from steward.helpers.tg_update_helpers import get_message
-from steward.repository import Repository
+from steward.helpers.validation import check, try_get, validate_message_text
+from steward.session.session_handler_base import SessionHandlerBase
+from steward.session.step import Step
+from steward.session.steps.keyboard_step import KeyboardStep
+from steward.session.steps.question_step import QuestionStep
+
+from .handler import validate_command_msg
 
 
 class CollectResponsesStep(Step):

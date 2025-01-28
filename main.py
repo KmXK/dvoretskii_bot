@@ -1,17 +1,8 @@
 import argparse
 import logging
-from typing import Any, Awaitable, Callable
 
-import coloredlogs
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
-
+from steward.bot import Bot
+from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.add_admin_handler import AddAdminHandler
 from steward.handlers.add_rule_handler import AddRuleHandler
 from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
@@ -30,37 +21,9 @@ from steward.handlers.id_handler import IdHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.script_handler import ScriptHandler
-from steward.helpers.tg_update_helpers import get_from_user
-from steward.models.logging_filters import ReplaceFilter, SkipFilter
-from steward.repository import JsonFileStorage, Repository
-from steward.session.session_registry import try_get_session_handler
+from steward.logging.configure import configure_logging
 
 logger: logging.Logger
-
-
-def configure_logging(token, log_file: None | str):
-    coloredlogs.install(
-        fmt="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
-        level=logging.INFO,
-        stream=open(log_file, "a") if log_file else None,
-        isatty=log_file is None,
-    )
-
-    for filter in [
-        ReplaceFilter(token, "<censored token>"),
-        *[
-            SkipFilter(f"/{path} HTTP/1.1 200 OK")
-            for path in [
-                "getUpdates",
-                "getMe",
-                "deleteWebhook",
-            ]
-        ],
-    ]:
-        logging.getLogger("httpx").addFilter(filter)
-
-    global logger
-    logger = logging.getLogger(__name__)  # logger for current application
 
 
 def get_token(is_test=False):
@@ -96,78 +59,6 @@ handlers: list[Handler] = [
 handlers.append(HelpHandler(handlers, repository))
 
 
-# TODO: создать контектс для всего запроса, поместить туда контекст тг, update и репозиторий, начать оперировать им
-async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message is None:
-        return False  # dont react on changes
-
-    await action(
-        update,
-        context,
-        "chat",
-        None,
-    )
-
-
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query is None:
-        logger.warning(f"invalid callback call: {update}")
-        return False
-
-    await action(update, context, "callback", lambda: update.callback_query.answer())
-
-
-def validate_admin(handler: Handler, user_id: int):
-    return not handler.only_for_admin or repository.is_admin(user_id)
-
-
-async def action(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    action: str,
-    func: Callable[[], Awaitable[Any]] | None,
-):
-    session_handler = try_get_session_handler(update)
-    if session_handler is not None:
-        if await getattr(session_handler, action)(update, context):
-            if func is not None:
-                await func()
-            return
-
-    for handler in handlers:
-        try:
-            if (
-                validate_admin(handler, get_from_user(update).id)
-                and hasattr(handler, action)
-                and await getattr(handler, action)(update, context)
-            ):
-                if func is not None:
-                    await func()
-                break
-        except BaseException as e:
-            logging.exception(e)
-
-
-def start_bot(token, drop_pending_updates):
-    application = (
-        Application.builder()
-        .token(token)
-        .read_timeout(300)
-        .write_timeout(300)
-        .pool_timeout(300)
-        .connect_timeout(300)
-        .media_write_timeout(300)
-        .build()
-    )
-
-    application.add_handler(MessageHandler(filters.ALL, chat))
-    application.add_handler(CallbackQueryHandler(callback))
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=drop_pending_updates,
-    )
-
-
 def main():
     parser = argparse.ArgumentParser("bot")
     parser.add_argument(
@@ -183,8 +74,10 @@ def main():
     is_test = not args.prod
 
     token = get_token(is_test)
+
     configure_logging(token, args.log_file)
-    start_bot(token, True)
+
+    Bot(handlers, repository).start(token, True)
 
 
 if __name__ == "__main__":

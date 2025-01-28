@@ -1,6 +1,6 @@
 from typing import Callable
 
-from session.step import Step
+from steward.session.step import Step
 
 
 class AnswerStep(Step):

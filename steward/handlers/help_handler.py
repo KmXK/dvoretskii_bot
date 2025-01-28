@@ -1,9 +1,11 @@
-from handlers.handler import CommandHandler, Handler
+from steward.handlers.handler import CommandHandler, Handler
 
 
 def make_help_message(handlers, is_admin):
     handlers = [
-        handler.help() for handler in handlers if not isinstance(handler, HelpHandler)
+        handler.help()
+        for handler in handlers
+        if not isinstance(handler, HelpHandler)
         and handler.help
         and (is_admin or not handler.only_for_admin)
     ]
@@ -11,15 +13,12 @@ def make_help_message(handlers, is_admin):
     handlers = [*filter(lambda h: len(h) > 0, handlers)]
 
     if len(handlers) == 0:
-        return 'Список команд пуст'
+        return "Список команд пуст"
 
-    return '\n'.join([
-        'Список команд: ', '',
-        *filter(lambda h: len(h) > 0, handlers)
-    ])
+    return "\n".join(["Список команд: ", "", *filter(lambda h: len(h) > 0, handlers)])
 
 
-@CommandHandler('help')
+@CommandHandler("help")
 class HelpHandler(Handler):
     def __init__(self, handlers, repository):
         self.repository = repository

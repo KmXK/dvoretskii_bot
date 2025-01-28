@@ -2,8 +2,8 @@ from typing import Callable
 
 from telegram import Update
 
-from helpers.validation import Error, Validator, call_validator_callable
-from session.step import Step
+from steward.helpers.validation import Error, Validator, call_validator_callable
+from steward.session.step import Step
 
 
 def text_data_converter(text_filter_func):

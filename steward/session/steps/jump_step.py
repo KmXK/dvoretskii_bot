@@ -1,6 +1,6 @@
 from typing import Callable
 
-from session.step import Step
+from steward.session.step import Step
 
 
 class JumpStep(Step):
@@ -32,7 +32,9 @@ class JumpStep(Step):
             jump_count = 1
 
         # после выполнения хендлера добавляется единица самостоятельно
-        session_context["__internal_session_data__"].current_handler_index += jump_count - 1
+        session_context["__internal_session_data__"].current_handler_index += (
+            jump_count - 1
+        )
         session_context[self.iteration_key] += 1
 
         return True

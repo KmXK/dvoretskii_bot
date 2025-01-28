@@ -7,10 +7,13 @@ import aiohttp
 from telegram import InputMediaAudio, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
-from handlers.handler import Handler
-from steward.consts import URL_REGEX
+from steward.handlers.handler import Handler
 
 logger = logging.getLogger("download_controller")
+
+URL_REGEX = (
+    r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+)
 
 
 class DownloadHandler(Handler):

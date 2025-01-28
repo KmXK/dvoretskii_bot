@@ -2,10 +2,9 @@ import logging
 import random
 import re
 
-from models.rule import Rule
-
-from handlers.handler import Handler
-from steward.repository import Repository
+from steward.data.models.rule import Rule
+from steward.data.repository import Repository
+from steward.handlers.handler import Handler
 
 
 class RuleAnswerHandler(Handler):
