@@ -93,7 +93,7 @@ class DownloadHandler(Handler):
                         images = [InputMediaPhoto(href) for href in images]
                         for i in range(0, len(images), 10):
                             retry = 0
-                            while retry < 3:
+                            while retry < 5:
                                 try:
                                     await update.message.reply_media_group(
                                         images[i : i + 10]
