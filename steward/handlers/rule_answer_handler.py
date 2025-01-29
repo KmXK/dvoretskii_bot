@@ -25,11 +25,8 @@ class RuleAnswerHandler(Handler):
                     re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0,
                 )
                 and any(
-                    filter[Rule](
-                        lambda rule: message.from_user.id in rule.from_users
-                        or 0 in rule.from_users,
-                        rules,
-                    )
+                    message.from_user.id in x.from_users or 0 in x.from_users
+                    for x in rules
                 )
             )
 
