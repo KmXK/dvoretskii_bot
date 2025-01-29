@@ -52,8 +52,8 @@ handlers: list[Handler] = [
     FeatureRequestViewHandler(repository),
     LogsHandler("./main.log", repository),
     IdHandler(),
-    ScriptHandler("update", "./update.sh", "скачать изменения и обновить бота"),
-    ScriptHandler("reload", "./reload.sh", "перезапустить бота"),
+    ScriptHandler("update", "./scripts/update.sh", "скачать изменения и обновить бота"),
+    ScriptHandler("reload", "./scripts/reload.sh", "перезапустить бота"),
     RuleAnswerHandler(repository),
 ]
 
