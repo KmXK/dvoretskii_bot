@@ -13,9 +13,7 @@ def make_help_message(handlers: list[Handler], is_admin: bool):
             (
                 handler.help()
                 for handler in handlers
-                if not isinstance(handler, HelpHandler)
-                and handler.help
-                and (is_admin or not handler.only_for_admin)
+                if handler.help and (is_admin or not handler.only_for_admin)
             ),
         ),
     ]
