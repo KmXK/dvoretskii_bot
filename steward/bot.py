@@ -92,7 +92,7 @@ class Bot:
             if len(chat_ids) == len(self.repository.db.chats):
                 return
 
-            new_set = set((x.id for x in self.repository.db.chats if x.is_group_chat))
+            new_set = set((x.id for x in self.repository.db.chats if x.id < 0))
             diff = new_set - chat_ids
 
             chat_ids.update(new_set)

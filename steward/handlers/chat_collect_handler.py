@@ -17,7 +17,6 @@ class ChatCollectHandler(Handler):
                 Chat(
                     update.message.chat.id,
                     update.message.chat.title or "Unknown",
-                    update.message.chat.type != "private",
                 )
             )
             await self.repository.save()
