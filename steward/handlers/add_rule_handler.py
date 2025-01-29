@@ -132,7 +132,7 @@ class AddRuleHandler(SessionHandlerBase):
         )
 
         self.repository.db.rules.append(self.rule)
-        self.repository.save()
+        await self.repository.save()
 
         await get_message(update).chat.send_message(
             f"Правило добавлено c id {self.rule.id}"

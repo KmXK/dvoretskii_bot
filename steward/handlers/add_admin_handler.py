@@ -11,7 +11,7 @@ class AddAdminHandler(Handler):
         try:
             admin_id = int(update.message.text.split()[1])
             self.repository.db.admin_ids.add(admin_id)
-            self.repository.save()
+            await self.repository.save()
             await update.message.reply_markdown("Админ добавлен")
         except ValueError:
             await update.message.reply_text(

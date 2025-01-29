@@ -126,7 +126,7 @@ class FeatureRequestViewHandler(Handler):
                 creation_timestamp=datetime.datetime.now().timestamp(),
             )
         )
-        self.repository.save()
+        await self.repository.save()
         await update.message.reply_text("Фича-реквест добавлен")
         return True
 
@@ -250,7 +250,7 @@ class FeatureRequestEditHandler(Handler):
                 )
                 results.append((fq.id, None))
 
-            self.repository.save()
+            await self.repository.save()
 
             results.sort(key=lambda x: x[1] is None)
             await update.message.reply_markdown(

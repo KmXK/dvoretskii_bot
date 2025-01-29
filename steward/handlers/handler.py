@@ -26,8 +26,8 @@ class Handler:
         """Callback handler"""
         return False
 
-    def help(self):
-        return ""
+    def help(self) -> str | None:
+        return None
 
 
 # проверяет, что в запросе содержится команда к боту

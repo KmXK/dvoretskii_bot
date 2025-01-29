@@ -11,7 +11,7 @@ class DeleteAdminHandler(Handler):
         try:
             admin_id = int(update.message.text.split()[1])
             self.repository.db.admin_ids.remove(admin_id)
-            self.repository.save()
+            await self.repository.save()
             await update.message.reply_markdown("Админ удалён")
         except ValueError:
             await update.message.reply_text(

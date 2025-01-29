@@ -6,3 +6,4 @@ humanize
 python-dateutil
 youtube-dl-nightly
 coloredlogs
+aiofiles

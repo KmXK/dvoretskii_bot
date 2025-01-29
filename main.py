@@ -6,6 +6,7 @@ from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.add_admin_handler import AddAdminHandler
 from steward.handlers.add_rule_handler import AddRuleHandler
 from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
+from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.delete_admin_handler import DeleteAdminHandler
 from steward.handlers.delete_rule_handler import DeleteRuleHandler
 from steward.handlers.download_handler import DownloadHandler
@@ -38,6 +39,7 @@ repository = Repository(JsonFileStorage("db.json"))
 # TODO: Union CRUD handlers to one import
 # TODO: Create bot context for bot
 handlers: list[Handler] = [
+    ChatCollectHandler(repository),
     DownloadHandler(),
     GetRulesHandler(repository),
     AddRuleHandler(repository),

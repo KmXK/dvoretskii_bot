@@ -15,10 +15,10 @@ class DeleteRuleHandler(Handler):
                     self.repository.db.rules.remove(
                         next(
                             (x for x in self.repository.db.rules if x.id == rule_id),
-                            None,
+                            None,  # type: ignore (validates in except)
                         )
                     )
-                    self.repository.save()
+                    await self.repository.save()
                     await update.message.reply_markdown(f"Правило {rule_id} удалено")
                 except ValueError:
                     await update.message.reply_text(

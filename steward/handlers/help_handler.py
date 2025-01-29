@@ -1,21 +1,30 @@
+from typing import TypeGuard
+
 from steward.handlers.handler import CommandHandler, Handler
 
 
-def make_help_message(handlers, is_admin):
-    handlers = [
-        handler.help()
-        for handler in handlers
-        if not isinstance(handler, HelpHandler)
-        and handler.help
-        and (is_admin or not handler.only_for_admin)
-    ]
-    handlers.sort()
-    handlers = [*filter(lambda h: len(h) > 0, handlers)]
+def make_help_message(handlers: list[Handler], is_admin: bool):
+    def check_help_msg(h: str | None) -> TypeGuard[str]:
+        return h is not None
 
-    if len(handlers) == 0:
+    help_msgs = [
+        *filter(
+            check_help_msg,
+            (
+                handler.help()
+                for handler in handlers
+                if not isinstance(handler, HelpHandler)
+                and handler.help
+                and (is_admin or not handler.only_for_admin)
+            ),
+        ),
+    ]
+    help_msgs.sort()
+
+    if len(help_msgs) == 0:
         return "Список команд пуст"
 
-    return "\n".join(["Список команд: ", "", *filter(lambda h: len(h) > 0, handlers)])
+    return "\n".join(["Список команд: ", "", *help_msgs])
 
 
 @CommandHandler("help")

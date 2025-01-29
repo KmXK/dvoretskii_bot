@@ -1,24 +1,26 @@
 import json
 import logging
-import os
 from abc import abstractmethod
 from dataclasses import asdict
 from enum import Enum
+from typing import Callable, Coroutine
 
+import aiofiles
+import aiofiles.os
 from dacite import Config, from_dict
 
-from .models.db import Database
+from steward.data.models.db import Database
 
-logger = logging.getLogger("repository")
+logger = logging.getLogger(__name__)
 
 
 class Storage:
     @abstractmethod
-    def read_dict(self) -> dict:
+    async def read_dict(self) -> dict:
         pass
 
     @abstractmethod
-    def write_dict(self, data: dict):
+    async def write_dict(self, data: dict):
         pass
 
 
@@ -30,22 +32,27 @@ class JsonFileStorage(Storage):
 
         self.path = path
 
-    def read_dict(self):
+    async def read_dict(self):
         if self.cached and not self.written:
             return self.cache
 
-        if not os.path.exists(self.path):
-            open(self.path, "w").close()
+        if not await aiofiles.os.path.exists(self.path):
+            async with aiofiles.open(self.path, "r") as f:
+                await f.close()
 
         self.written = False
-        data = open(self.path, "r", encoding="utf-8").read()
-        if data.strip() == "":
-            self.cache = {}
-        else:
-            self.cache = json.loads(data)
+
+        async with aiofiles.open(self.path, "r", encoding="utf-8") as f:
+            data = await f.read()
+
+            if data.strip() == "":
+                self.cache = {}
+            else:
+                self.cache = json.loads(data)
+
         return self.cache
 
-    def write_dict(self, data):
+    async def write_dict(self, data):
         self.written = True
 
         try:
@@ -60,24 +67,43 @@ class JsonFileStorage(Storage):
             logger.exception(e)
             return
 
-        open(self.path, "w", encoding="utf-8").write(data)
+        async with aiofiles.open(self.path, "w", encoding="utf-8") as f:
+            await f.write(data)
 
 
 class Repository:
     def __init__(self, storage: Storage):
         self._storage = storage
+        self._save_callbacks: set[Callable[[], None | Coroutine]] = set()
 
-        data = storage.read_dict()
+        self.db = Database()
+
+    async def migrate(self):
+        data = await self._storage.read_dict()
         migrated_data = self._migrate(data)
         self.db = from_dict(
             data_class=Database,
             data=migrated_data,
             config=Config(cast=[Enum]),
         )
-        self.save()
+        await self.save()
 
-    def save(self):
-        self._storage.write_dict(asdict(self.db))
+    async def save(self):
+        await self._storage.write_dict(asdict(self.db))
+        for callback in self._save_callbacks:
+            result = callback()
+            if isinstance(result, Coroutine):
+                await result
+
+    def subscribe_on_save(self, callback: Callable[[], Coroutine | None]):
+        self._save_callbacks.add(callback)
+
+    def unsubscribe_on_save(self, callback: Callable[[], Coroutine | None]):
+        try:
+            self._save_callbacks.remove(callback)
+        except ValueError as e:
+            logging.exception(e)
+            pass
 
     def is_admin(self, user_id: int):
         return user_id in self.db.admin_ids
@@ -97,5 +123,8 @@ class Repository:
         for fq in data.get("feature_requests", []):
             fq["id"] = id
             id += 1
+
+        for chat in data.get("chats", []):
+            chat["is_group_chat"] = True
 
         return data
