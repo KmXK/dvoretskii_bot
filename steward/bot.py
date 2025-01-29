@@ -83,6 +83,7 @@ class Bot:
                 return (parts[0], " ".join(parts[1:]))
 
             commands = [parse_help_msg(x) for x in command_texts]
+            logging.info(commands)
 
             return await bot.set_my_commands(commands, scope)
 
