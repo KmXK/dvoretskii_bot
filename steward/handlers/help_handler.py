@@ -39,3 +39,6 @@ class HelpHandler(Handler):
             await update.message.reply_text(self.adminHelpMessage)
         else:
             await update.message.reply_text(self.helpMessage)
+
+    def help(self):
+        return "/help - показать список команд"
