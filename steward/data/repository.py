@@ -124,7 +124,4 @@ class Repository:
             fq["id"] = id
             id += 1
 
-        for chat in data.get("chats", []):
-            chat["is_group_chat"] = True
-
         return data
