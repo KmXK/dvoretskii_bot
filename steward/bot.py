@@ -83,7 +83,6 @@ class Bot:
                 return (parts[0], " ".join(parts[1:]))
 
             commands = [parse_help_msg(x) for x in command_texts]
-            logging.info(commands)
 
             return await bot.set_my_commands(commands, scope)
 
@@ -103,7 +102,7 @@ class Bot:
             for chat_id in diff:
                 for admin_id in self.repository.db.admin_ids:
                     await set_commands(
-                        lambda x: x.only_for_admin,
+                        lambda x: True,
                         BotCommandScopeChatMember(chat_id, admin_id),
                     )
 
@@ -113,9 +112,7 @@ class Bot:
         self.repository.subscribe_on_save(update_admin_hints)
         for admin_id in self.repository.db.admin_ids:
             try:
-                await set_commands(
-                    lambda x: x.only_for_admin, BotCommandScopeChat(admin_id)
-                )
+                await set_commands(lambda x: True, BotCommandScopeChat(admin_id))
             except TelegramError:
                 pass  # chat can be deleted
 
