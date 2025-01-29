@@ -161,7 +161,9 @@ class FeatureRequestViewHandler(Handler):
         return paginator
 
     def help(self):
-        return "/fq - посмотреть или добавить фича-реквест(ы)"
+        # TODO: Может сделать описание в разных хендлерах, а потом для хинтов их объединять?
+        # Сейчас просто при указании 2+ одинаковых команд будет показывать лишь первое описание
+        return "/fq [done|deny|reopen <ids>] | [text] - управлять фича-реквестами"
 
 
 class FeatureRequestEditHandler(Handler):
@@ -283,6 +285,3 @@ class FeatureRequestEditHandler(Handler):
             return "Вы не можете редактировать статус этого фича-реквеста"
 
         return None
-
-    def help(self):
-        return "/fq done|deny|reopen <ids> - редактировать статус фича-реквеста(ов)"
