@@ -23,4 +23,4 @@ class DeleteAdminHandler(Handler):
             await update.message.reply_text("Ошибка. Укажите id админа")
 
     def help(self):
-        return "/delete_admin - удалить админа по id"
+        return "/delete_admin <id> - удалить админа"

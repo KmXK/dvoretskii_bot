@@ -21,4 +21,4 @@ class AddAdminHandler(Handler):
             await update.message.reply_text("Ошибка. Укажите id админа")
 
     def help(self):
-        return "/add_admin - добавить админа по id"
+        return "/add_admin <id> - добавить админа по id"

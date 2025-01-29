@@ -28,4 +28,4 @@ class DeleteRuleHandler(Handler):
             await update.message.reply_text("Ошибка. Укажите id правил(а)")
 
     def help(self):
-        return "/delete_rule - удалить правило(а) по id через пробел"
+        return "/delete_rule <id> [<id>...] - удалить правило(а)"
