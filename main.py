@@ -1,7 +1,7 @@
 import argparse
 import logging
 
-from steward.bot import Bot
+from steward.bot.bot import Bot
 from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.add_admin_handler import AddAdminHandler
 from steward.handlers.add_rule_handler import AddRuleHandler
