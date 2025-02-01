@@ -2,6 +2,7 @@ import base64
 import logging
 import re
 from asyncio import sleep
+from urllib.parse import urlencode
 
 import aiohttp
 from telegram import InputMediaAudio, InputMediaPhoto, Update
@@ -100,7 +101,6 @@ class DownloadHandler(Handler):
                                     await update.message.reply_media_group([audio])
                                     await sleep(3)
                                     audio = None
-                                
                                 try:
                                     await update.message.reply_media_group(
                                         images[i : i + 10]
@@ -138,13 +138,13 @@ class DownloadHandler(Handler):
                 json = await response.json()
                 if json["status"]:
                     first = json["result"][0]
-                    if 'd.rapidcdn.app' in first:
+                    if "d.rapidcdn.app" in first:
                         video = first
                         logger.info(f"Получено видео: {video}")
-                        new_url = (
-                            "https://download.proxy.nigger.by/?password=***REMOVED***&download_url="
-                            + base64.b64encode(video.encode("utf-8")).decode("utf-8")
-                        )
+                        new_url = "https://download.proxy.nigger.by/?" + urlencode({
+                            "password": "***REMOVED***",
+                            "download_url": base64.b64encode(video.encode()).decode(),
+                        })
                         logger.info(f"Video via proxy: {new_url}")
                         await update.message.reply_video(video)
                     else:
