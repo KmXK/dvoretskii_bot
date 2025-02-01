@@ -2,6 +2,7 @@ import argparse
 import logging
 
 from steward.bot.bot import Bot
+from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.add_admin_handler import AddAdminHandler
 from steward.handlers.add_rule_handler import AddRuleHandler
@@ -36,28 +37,40 @@ def get_token(is_test=False):
 
 repository = Repository(JsonFileStorage("db.json"))
 
+
 # TODO: Union CRUD handlers to one import
 # TODO: Create bot context for bot
-handlers: list[Handler] = [
-    ChatCollectHandler(repository),
-    DownloadHandler(),
-    GetRulesHandler(repository),
-    AddRuleHandler(repository),
-    DeleteRuleHandler(repository),
-    GetAdminsHandler(repository),
-    AddAdminHandler(repository),
-    DeleteAdminHandler(repository),
-    AddArmyHandler(repository),
-    DeleteArmyHandler(repository),
-    ArmyHandler(repository),
-    FeatureRequestEditHandler(repository),
-    FeatureRequestViewHandler(repository),
-    LogsHandler("./main.log", repository),
-    IdHandler(),
-    ScriptHandler("update", "./scripts/update.sh", "скачать изменения и обновить бота"),
-    ScriptHandler("reload", "./scripts/reload.sh", "перезапустить бота"),
-    RuleAnswerHandler(repository),
-]
+handlers: list[Handler] = init_handlers(
+    repository,
+    [
+        ChatCollectHandler,
+        DownloadHandler,
+        GetRulesHandler,
+        AddRuleHandler,
+        DeleteRuleHandler,
+        GetAdminsHandler,
+        AddAdminHandler,
+        DeleteAdminHandler,
+        AddArmyHandler,
+        DeleteArmyHandler,
+        ArmyHandler,
+        FeatureRequestEditHandler,
+        FeatureRequestViewHandler,
+        LogsHandler("./main.log", repository),
+        IdHandler,
+        ScriptHandler(
+            "update",
+            "./scripts/update.sh",
+            "скачать изменения и обновить бота",
+        ),
+        ScriptHandler(
+            "reload",
+            "./scripts/reload.sh",
+            "перезапустить бота",
+        ),
+        RuleAnswerHandler,
+    ],
+)
 
 handlers.append(HelpHandler(handlers, repository))
 
@@ -80,7 +93,10 @@ def main():
 
     configure_logging(token, args.log_file)
 
-    Bot(handlers, repository).start(token, True)
+    Bot(handlers, repository).start(
+        token,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
