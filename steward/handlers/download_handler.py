@@ -2,10 +2,11 @@ import base64
 import logging
 import re
 from asyncio import sleep
+import tempfile
 from urllib.parse import urlencode
 
 import aiohttp
-from telegram import InputMediaAudio, InputMediaPhoto, Message, Update
+from telegram import InputFile, InputMediaAudio, InputMediaPhoto, Message, Update
 from telegram.ext import ContextTypes
 
 from steward.handlers.handler import Handler
@@ -148,11 +149,33 @@ class DownloadHandler(Handler):
 
         logger.info(f"Отправляем видео: {url}")
 
-        try:
-            await message.reply_video(url)
-        except Exception as e:
-            logger.exception(e)
-            return False
+        # будет удалён при закрытии
+        # TODO: вынести функцию скачивания отдельно с контекстом для `with`
+        with tempfile.TemporaryFile("r+b") as file:
+            logger.info(f"Создан файл {file.name}")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as response:
+                        while True:
+                            chunk = await response.content.readany()
+                            if not chunk:
+                                break
+                            file.write(chunk)
+
+                logger.info('Файл был скачен')
+
+                file.seek(0)
+
+                input_file = InputFile(file)
+                await message.reply_video(
+                    input_file,
+                    disable_notification=True,
+                    supports_streaming=True,
+                )
+            except Exception as e:
+                logger.exception(e)
+                return False
+
         return True
 
     async def _send_images(
@@ -172,7 +195,7 @@ class DownloadHandler(Handler):
                 retry = 0
                 while retry < retries_count:
                     try:
-                        await message.reply_media_group(medias[i : i + 10])
+                        await message.reply_media_group(medias[i : i + 10], disable_notification=True,)
                         break
                     except Exception as e:
                         logging.exception(e)
