@@ -18,6 +18,7 @@ from steward.helpers import morphy
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
+yt_logger.setLevel(logging.DEBUG)
 
 URL_REGEX = (
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
