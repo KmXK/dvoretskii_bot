@@ -35,44 +35,46 @@ def get_token(is_test=False):
         return "***REMOVED***"
 
 
-repository = Repository(JsonFileStorage("db.json"))
+def get_handlers(log_file: None | str, repository: Repository):
+    # TODO: Union CRUD handlers to one import
+    # TODO: Create bot context for bot
+    handlers: list[Handler] = init_handlers(
+        repository,
+        [
+            ChatCollectHandler,
+            DownloadHandler,
+            GetRulesHandler,
+            AddRuleHandler,
+            DeleteRuleHandler,
+            GetAdminsHandler,
+            AddAdminHandler,
+            DeleteAdminHandler,
+            AddArmyHandler,
+            DeleteArmyHandler,
+            ArmyHandler,
+            FeatureRequestEditHandler,
+            FeatureRequestViewHandler,
+            IdHandler,
+            ScriptHandler(
+                "update",
+                "./scripts/update.sh",
+                "скачать изменения и обновить бота",
+            ),
+            ScriptHandler(
+                "reload",
+                "./scripts/reload.sh",
+                "перезапустить бота",
+            ),
+            RuleAnswerHandler,
+        ],
+    )
 
+    if log_file:
+        handlers.append(LogsHandler(log_file, repository))
 
-# TODO: Union CRUD handlers to one import
-# TODO: Create bot context for bot
-handlers: list[Handler] = init_handlers(
-    repository,
-    [
-        ChatCollectHandler,
-        DownloadHandler,
-        GetRulesHandler,
-        AddRuleHandler,
-        DeleteRuleHandler,
-        GetAdminsHandler,
-        AddAdminHandler,
-        DeleteAdminHandler,
-        AddArmyHandler,
-        DeleteArmyHandler,
-        ArmyHandler,
-        FeatureRequestEditHandler,
-        FeatureRequestViewHandler,
-        LogsHandler("./main.log", repository),
-        IdHandler,
-        ScriptHandler(
-            "update",
-            "./scripts/update.sh",
-            "скачать изменения и обновить бота",
-        ),
-        ScriptHandler(
-            "reload",
-            "./scripts/reload.sh",
-            "перезапустить бота",
-        ),
-        RuleAnswerHandler,
-    ],
-)
+    handlers.append(HelpHandler(handlers, repository))
 
-handlers.append(HelpHandler(handlers, repository))
+    return handlers
 
 
 def main():
@@ -92,6 +94,9 @@ def main():
     token = get_token(is_test)
 
     configure_logging(token, args.log_file)
+
+    repository = Repository(JsonFileStorage("db.json"))
+    handlers = get_handlers(args.log_file, repository)
 
     Bot(handlers, repository).start(
         token,
