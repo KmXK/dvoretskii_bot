@@ -17,6 +17,7 @@ from steward.handlers.handler import Handler
 from steward.helpers import morphy
 
 logger = logging.getLogger("download_controller")
+yt_logger = logging.getLogger("youtube_dl")
 
 URL_REGEX = (
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
@@ -140,6 +141,7 @@ class DownloadHandler(Handler):
                 "cookiefile": environ.get("YT_COOKIES_FILE"),
                 "outtmpl": filepath,
                 "max_downloads": 1,
+                "logger": yt_logger,
             }).download([url])
 
             with open(filepath, "rb") as file:
