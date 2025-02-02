@@ -5,7 +5,7 @@ import re
 import tempfile
 from asyncio import sleep
 from contextlib import asynccontextmanager
-from nt import environ
+from os import environ
 from urllib.parse import urlencode
 
 import aiohttp
