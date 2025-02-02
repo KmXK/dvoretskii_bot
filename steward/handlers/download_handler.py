@@ -141,7 +141,6 @@ class DownloadHandler(Handler):
                 "verbose": True,
                 "cookiefile": environ.get("YT_COOKIES_FILE"),
                 "outtmpl": filepath,
-                "max_downloads": 1,
                 "logger": yt_logger,
             }).download([url])
 
