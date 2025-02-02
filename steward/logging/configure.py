@@ -2,7 +2,7 @@ import logging
 
 import coloredlogs
 
-from steward.logging.logging_filters import ReplaceFilter, SkipFilter
+from steward.logging.logging_filters import ReplaceFilter
 
 
 def configure_logging(token, log_file: None | str):
@@ -13,16 +13,18 @@ def configure_logging(token, log_file: None | str):
         isatty=log_file is None,
     )
 
+    # TODO: Remove logs /getUpdates (но не удалять другие!!!)
     for filter in [
         ReplaceFilter(token, "<censored token>"),
-        *[
-            SkipFilter(f"/{path} HTTP/1.1 200 OK")
-            for path in [
-                "getUpdates",
-                "getMe",
-                "deleteWebhook",
-            ]
-        ],
+    #    *[
+     #       SkipFilter(f"/{path} HTTP/1.1 200 OK")
+      #      for path in [
+       #         "getUpdates",
+                #"getMe",
+
+            #    "deleteWebhook",
+#            ]
+#        ],
     ]:
         logging.getLogger("httpx").addFilter(filter)
 
