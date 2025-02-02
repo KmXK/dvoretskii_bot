@@ -149,7 +149,7 @@ class DownloadHandler(Handler):
             url = self._get_proxy_url(url)
 
         # будет удалён при закрытии
-        async with self._get_file(url, "TikTok Video") as input_file:
+        async with self._download_file(url, "TikTok Video") as input_file:
             await message.reply_video(
                 input_file,
                 disable_notification=True,
@@ -196,7 +196,7 @@ class DownloadHandler(Handler):
         })
 
     @asynccontextmanager
-    async def _get_file(self, url: str, filename: str):
+    async def _download_file(self, url: str, filename: str):
         logger.info(f"Скачиваем файл: {url}")
         with tempfile.TemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
