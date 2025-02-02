@@ -139,7 +139,7 @@ class DownloadHandler(Handler):
                 "verbose": True,
                 "cookiefile": environ.get("YT_COOKIES_FILE"),
                 "outtmpl": filepath,
-            }).extract_info(url, download=False)
+            }).download(url)
 
             with open(filepath, "rb") as file:
                 await message.reply_video(
