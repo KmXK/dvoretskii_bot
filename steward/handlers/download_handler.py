@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
 import aiohttp
-from telegram import InputFile, InputMediaAudio, InputMediaPhoto, Message, Update
+from telegram import InputFile, InputMediaPhoto, Message, Update
 from telegram.ext import ContextTypes
 
 from steward.handlers.handler import Handler
@@ -100,13 +100,9 @@ class DownloadHandler(Handler):
                         audio = json["result"].get("audio")
                         if audio is not None:
                             logger.info(f"Получено аудио: {audio}")
-                            audio = InputMediaAudio(
-                                audio,
-                                filename="TikTok Audio",
-                                title="123",
-                            )
-                            await message.reply_media_group([audio])
-                            logger.info("Аудио отправлено")
+                            async with self._download_file(audio) as file:
+                                await message.reply_audio(file, filename="TikTok Audio")
+                                logger.info("Аудио отправлено")
 
     async def _load_instagram(
         self,
