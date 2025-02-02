@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import re
@@ -11,6 +12,7 @@ from telegram import InputFile, InputMediaAudio, InputMediaPhoto, Message, Updat
 from telegram.ext import ContextTypes
 
 from steward.handlers.handler import Handler
+from steward.helpers import morphy
 
 logger = logging.getLogger("download_controller")
 
@@ -163,31 +165,52 @@ class DownloadHandler(Handler):
         use_proxy: bool = False,
         retries_count: int = 5,
     ):
-        logger.info(f"Отправляются картинки: {images}")
-        medias = [
-            InputMediaPhoto(href if use_proxy else self._get_proxy_url(href))
-            for href in images
-        ]
+        logger.info(
+            f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
+        )
 
-        for i in range(0, len(images), 10):
-            retry = 0
-            while retry < retries_count:
-                try:
-                    await message.reply_media_group(
-                        medias[i : i + 10],
-                        disable_notification=True,
-                    )
-                    break
-                except Exception as e:
-                    logging.exception(e)
-                    await sleep(5)
-                    retry += 1
+        files_tasks = [self._download_file(url) for url in images]
 
-            # wait if not last
-            if i + 10 < len(images):
-                await sleep(2)
+        try:
+            results = await asyncio.gather(
+                *[task.__aenter__() for task in files_tasks],
+                return_exceptions=True,
+            )
 
-        logger.info("Картинки отправлены")
+            exceptions = [exc for exc in results if isinstance(exc, Exception)]
+            if len(exceptions) > 0:
+                raise ExceptionGroup("", exceptions)
+
+            medias = [
+                InputMediaPhoto(file)
+                for file in results
+                if not isinstance(file, BaseException)
+            ]
+
+            for i in range(0, len(medias), 10):
+                retry = 0
+                while retry < retries_count:
+                    try:
+                        await message.reply_media_group(
+                            medias[i : i + 10],
+                            disable_notification=True,
+                        )
+                        break
+                    except Exception as e:
+                        logging.exception(e)
+                        await sleep(5)
+                        retry += 1
+
+                # wait if not last
+                if i + 10 < len(images):
+                    await sleep(2)
+
+            logger.info("Картинки отправлены")
+
+        except Exception as e:
+            for task in files_tasks:
+                await task.__aexit__(None, None, None)
+            raise e
 
     def _get_proxy_url(self, url: str) -> str:
         return "https://download.proxy.nigger.by/?" + urlencode({
