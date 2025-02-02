@@ -3,6 +3,7 @@ import logging
 import re
 import tempfile
 from asyncio import sleep
+from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
 import aiohttp
@@ -144,28 +145,11 @@ class DownloadHandler(Handler):
         use_proxy: bool = False,
     ):
         if use_proxy:
-            logger.info(f"Хотим отправить видео через прокси: {url}")
+            logger.info(f"Хотим скачать видео через прокси: {url}")
             url = self._get_proxy_url(url)
 
-        logger.info(f"Отправляем видео: {url}")
-
         # будет удалён при закрытии
-        # TODO: вынести функцию скачивания отдельно с контекстом для `with`
-        with tempfile.TemporaryFile("r+b") as file:
-            logger.info(f"Создан файл {file.name}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    while True:
-                        chunk = await response.content.readany()
-                        if not chunk:
-                            break
-                        file.write(chunk)
-
-            logger.info("Файл был скачен")
-
-            file.seek(0)
-
-            input_file = InputFile(file, filename="TikTok Video")
+        async with self._get_file(url, "TikTok Video") as input_file:
             await message.reply_video(
                 input_file,
                 disable_notification=True,
@@ -210,3 +194,22 @@ class DownloadHandler(Handler):
             "password": "***REMOVED***",
             "download_url": base64.b64encode(url.encode()).decode(),
         })
+
+    @asynccontextmanager
+    async def _get_file(self, url: str, filename: str):
+        logger.info(f"Скачиваем файл: {url}")
+        with tempfile.TemporaryFile("r+b") as file:
+            logger.info(f"Создан файл {file.name}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    while True:
+                        chunk = await response.content.readany()
+                        if not chunk:
+                            break
+                        file.write(chunk)
+
+            logger.info("Файл был скачен")
+
+            file.seek(0)
+
+            yield InputFile(file, filename)
