@@ -96,6 +96,7 @@ def main():
     Bot(handlers, repository).start(
         token,
         drop_pending_updates=True,
+        local_server="http://localhost:8001",
     )
 
 

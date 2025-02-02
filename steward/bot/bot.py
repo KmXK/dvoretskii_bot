@@ -32,8 +32,8 @@ class Bot:
 
         self.hints_updater = InlineHintsUpdater(repository, handlers)
 
-    def start(self, token, drop_pending_updates):
-        application = (
+    def start(self, token, drop_pending_updates, local_server: str | None = None):
+        applicationBuilder = (
             Application.builder()
             .token(token)
             .read_timeout(300)
@@ -41,8 +41,17 @@ class Bot:
             .pool_timeout(300)
             .connect_timeout(300)
             .media_write_timeout(300)
-            .build()
+            .local_mode(True)
         )
+
+        if local_server is not None:
+            applicationBuilder = (
+                applicationBuilder.base_url(local_server + "/bot")
+                .base_file_url(local_server + "/file/bot")
+                .local_mode(True)
+            )
+
+        application = applicationBuilder.build()
 
         application.add_handler(MessageHandler(filters.ALL, self._chat))
         application.add_handler(CallbackQueryHandler(self._callback))
