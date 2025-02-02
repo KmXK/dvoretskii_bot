@@ -5,9 +5,11 @@ import re
 import tempfile
 from asyncio import sleep
 from contextlib import asynccontextmanager
+from nt import environ
 from urllib.parse import urlencode
 
 import aiohttp
+import youtube_dl
 from telegram import InputFile, InputMediaPhoto, Message, Update
 from telegram.ext import ContextTypes
 
@@ -129,12 +131,21 @@ class DownloadHandler(Handler):
         message: Message,
     ):
         logger.info("Youtube пошел")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "http://8.215.8.243:1337/youtube",
-                params={"url": url, "type": "video"},
-            ) as response:
-                logger.info(await response.text())
+
+        with tempfile.TemporaryDirectory(prefix="yt_") as dir:
+            filepath = dir + "/file"
+            youtube_dl.YoutubeDL({
+                "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                "verbose": True,
+                "cookiefile": environ.get("YT_COOKIES_FILE"),
+                "outtmpl": filepath,
+            }).extract_info(url, download=False)
+
+            with open(filepath, "rb") as file:
+                await message.reply_video(
+                    InputFile(file, filename="Youtube Video"),
+                    supports_streaming=True,
+                )
 
     async def _send_video(
         self,
