@@ -1,5 +1,5 @@
 #!/bin/bash
 
-cd ~/..
+cd $BOT_DIR/
 git pull
 ./scripts/reload.sh &
