@@ -1,8 +1,8 @@
 import base64
 import logging
 import re
-from asyncio import sleep
 import tempfile
+from asyncio import sleep
 from urllib.parse import urlencode
 
 import aiohttp
@@ -162,11 +162,11 @@ class DownloadHandler(Handler):
                                 break
                             file.write(chunk)
 
-                logger.info('Файл был скачен')
+                logger.info("Файл был скачен")
 
                 file.seek(0)
 
-                input_file = InputFile(file)
+                input_file = InputFile(file, filename="TikTok Video")
                 await message.reply_video(
                     input_file,
                     disable_notification=True,
@@ -195,7 +195,10 @@ class DownloadHandler(Handler):
                 retry = 0
                 while retry < retries_count:
                     try:
-                        await message.reply_media_group(medias[i : i + 10], disable_notification=True,)
+                        await message.reply_media_group(
+                            medias[i : i + 10],
+                            disable_notification=True,
+                        )
                         break
                     except Exception as e:
                         logging.exception(e)
