@@ -171,3 +171,5 @@ cython_debug/
 
 pyvenv.cfg
 bin/
+
+.telegram_bot_api_data
