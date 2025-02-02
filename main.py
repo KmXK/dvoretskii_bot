@@ -69,7 +69,7 @@ def get_handlers(log_file: None | str, repository: Repository):
         ],
     )
 
-    if log_file:
+    if log_file is not None:
         handlers.append(LogsHandler(log_file, repository))
 
     handlers.append(HelpHandler(handlers, repository))
@@ -101,7 +101,7 @@ def main():
     Bot(handlers, repository).start(
         token,
         drop_pending_updates=True,
-        local_server="http://localhost:8001",
+        local_server="http://localhost:8001" if not is_test else None,
     )
 
 
