@@ -142,7 +142,7 @@ class DownloadHandler(Handler):
         message: Message,
         url: str,
         use_proxy: bool = False,
-    ) -> bool:
+    ):
         if use_proxy:
             logger.info(f"Хотим отправить видео через прокси: {url}")
             url = self._get_proxy_url(url)
@@ -153,30 +153,24 @@ class DownloadHandler(Handler):
         # TODO: вынести функцию скачивания отдельно с контекстом для `with`
         with tempfile.TemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
-                        while True:
-                            chunk = await response.content.readany()
-                            if not chunk:
-                                break
-                            file.write(chunk)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    while True:
+                        chunk = await response.content.readany()
+                        if not chunk:
+                            break
+                        file.write(chunk)
 
-                logger.info("Файл был скачен")
+            logger.info("Файл был скачен")
 
-                file.seek(0)
+            file.seek(0)
 
-                input_file = InputFile(file, filename="TikTok Video")
-                await message.reply_video(
-                    input_file,
-                    disable_notification=True,
-                    supports_streaming=True,
-                )
-            except Exception as e:
-                logger.exception(e)
-                return False
-
-        return True
+            input_file = InputFile(file, filename="TikTok Video")
+            await message.reply_video(
+                input_file,
+                disable_notification=True,
+                supports_streaming=True,
+            )
 
     async def _send_images(
         self,
@@ -184,37 +178,32 @@ class DownloadHandler(Handler):
         images: list[str],
         use_proxy: bool = False,
         retries_count: int = 5,
-    ) -> bool:
+    ):
         logger.info(f"Отправляются картинки: {images}")
         medias = [
             InputMediaPhoto(href if use_proxy else self._get_proxy_url(href))
             for href in images
         ]
-        try:
-            for i in range(0, len(images), 10):
-                retry = 0
-                while retry < retries_count:
-                    try:
-                        await message.reply_media_group(
-                            medias[i : i + 10],
-                            disable_notification=True,
-                        )
-                        break
-                    except Exception as e:
-                        logging.exception(e)
-                        await sleep(5)
-                        retry += 1
 
-                # wait if not last
-                if i + 10 < len(images):
-                    await sleep(2)
+        for i in range(0, len(images), 10):
+            retry = 0
+            while retry < retries_count:
+                try:
+                    await message.reply_media_group(
+                        medias[i : i + 10],
+                        disable_notification=True,
+                    )
+                    break
+                except Exception as e:
+                    logging.exception(e)
+                    await sleep(5)
+                    retry += 1
 
-            logger.info("Картинки отправлены")
-        except Exception as e:
-            logger.exception(e)
-            return False
+            # wait if not last
+            if i + 10 < len(images):
+                await sleep(2)
 
-        return True
+        logger.info("Картинки отправлены")
 
     def _get_proxy_url(self, url: str) -> str:
         return "https://download.proxy.nigger.by/?" + urlencode({
