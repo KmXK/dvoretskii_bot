@@ -233,13 +233,21 @@ class DownloadHandler(Handler):
         logger.info(f"Скачиваем файл: {url}")
         with tempfile.TemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    while True:
-                        chunk = await response.content.readany()
-                        if not chunk:
-                            break
-                        file.write(chunk)
+
+            async def get_url_content_to_file(url: str):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as response:
+                        while True:
+                            chunk = await response.content.readany()
+                            if not chunk:
+                                break
+                            file.write(chunk)
+
+            try:
+                await get_url_content_to_file(url)
+            except Exception as e:
+                logger.exception(e)
+                await get_url_content_to_file(self._get_proxy_url(url))
 
             logger.info("Файл был скачен")
 
