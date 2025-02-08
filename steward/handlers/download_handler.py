@@ -235,7 +235,9 @@ class DownloadHandler(Handler):
             logger.info(f"Создан файл {file.name}")
 
             async def get_url_content_to_file(url: str):
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(connect=2)
+                ) as session:
                     async with session.get(url) as response:
                         while True:
                             chunk = await response.content.readany()
