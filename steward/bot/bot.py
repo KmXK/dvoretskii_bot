@@ -106,12 +106,14 @@ class Bot:
                 return
 
         for handler in self.handlers:
+            logging.debug(f"Try handler {handler}")
             try:
                 if (
                     self._validate_admin(handler, get_from_user(update).id)
                     and hasattr(handler, action)
                     and await getattr(handler, action)(update, context)
                 ):
+                    logging.debug(f"Used handler {handler}")
                     if func is not None:
                         await func()
                     break

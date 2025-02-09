@@ -16,8 +16,6 @@ limiters: dict[Any, Limiter] = {}
 
 def limit(limit: int, duration: pyrate_limiter.Duration) -> Any:
     def mapping(*args, **kwargs):
-        print(args)
         return "", 1
 
-    print("Create limiter")
     return Limiter(Rate(limit, duration)).as_decorator()(mapping)  # type: ignore

@@ -90,12 +90,17 @@ def main():
         "--log-file",
         help="Log to file",
     )
+    parser.add_argument(
+        "--debug",
+        help="Debug mode",
+        action="store_true",
+    )
     args = parser.parse_args()
     is_test = not args.prod
 
     token = get_token(is_test)
 
-    configure_logging(token, args.log_file)
+    configure_logging(token, args.log_file, args.debug)
 
     repository = Repository(JsonFileStorage("db.json"))
     handlers = get_handlers(args.log_file, repository)
