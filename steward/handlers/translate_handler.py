@@ -5,13 +5,12 @@ from os import environ
 from aiohttp import ClientSession
 
 from steward.handlers.handler import Handler, validate_command_msg
-from steward.helpers.limiter import Duration, limit
+from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)
 
 
 class TranslateHandler(Handler):
-    @limit(10, Duration.MINUTE)
     async def chat(self, update, context):
         assert update.message and update.message.text
         if validate_command_msg(update, ["translate"]):
@@ -39,6 +38,8 @@ class TranslateHandler(Handler):
         else:
             return False
 
+        check_limit(self, 10, Duration.MINUTE)
+
         async with ClientSession() as session:
             async with session.post(
                 "https://translate.api.cloud.yandex.net/translate/v2/translate",
@@ -49,7 +50,15 @@ class TranslateHandler(Handler):
                 },
             ) as response:
                 json = await response.json()
+
                 logger.info(f"got response {json}")
+
+                if "unsupported target_language_code" in json["message"]:
+                    await update.message.reply_text(
+                        f"Язык {lang} не поддерживается для перевода"
+                    )
+                    return True
+
                 text = json["translations"][0]["text"]
                 await update.message.reply_text(text)
 
