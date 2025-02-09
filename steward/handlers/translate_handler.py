@@ -53,7 +53,10 @@ class TranslateHandler(Handler):
 
                 logger.info(f"got response {json}")
 
-                if "unsupported target_language_code" in json["message"]:
+                if (
+                    "message" in json
+                    and "unsupported target_language_code" in json["message"]
+                ):
                     await update.message.reply_text(
                         f"Язык {lang} не поддерживается для перевода"
                     )
