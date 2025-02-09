@@ -6,6 +6,7 @@ from steward.handlers.handler import Handler, validate_command_msg
 logger = logging.getLogger("ScriptHandler")
 
 
+# TODO: Уведомление в чат об окончании скрипта даже после смерти
 class ScriptHandler(Handler):
     def __init__(self, command: str, script_path: str, help_text: str):
         self.command = command
