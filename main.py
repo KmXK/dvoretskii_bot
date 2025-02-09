@@ -23,6 +23,7 @@ from steward.handlers.id_handler import IdHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.script_handler import ScriptHandler
+from steward.handlers.translate_handler import TranslateHandler
 from steward.logging.configure import configure_logging
 
 logger: logging.Logger
@@ -55,6 +56,7 @@ def get_handlers(log_file: None | str, repository: Repository):
             FeatureRequestEditHandler,
             FeatureRequestViewHandler,
             IdHandler,
+            TranslateHandler,
             ScriptHandler(
                 "update",
                 "./scripts/update.sh",

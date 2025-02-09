@@ -16,15 +16,14 @@ def configure_logging(token, log_file: None | str):
     # TODO: Remove logs /getUpdates (но не удалять другие!!!)
     for filter in [
         ReplaceFilter(token, "<censored token>"),
-    #    *[
-     #       SkipFilter(f"/{path} HTTP/1.1 200 OK")
-      #      for path in [
-       #         "getUpdates",
-                #"getMe",
-
-            #    "deleteWebhook",
-#            ]
-#        ],
+        #    *[
+        #       SkipFilter(f"/{path} HTTP/1.1 200 OK")
+        #      for path in [
+        #         "getUpdates",
+        # "getMe",
+        #    "deleteWebhook",
+        #            ]
+        #        ],
     ]:
         logging.getLogger("httpx").addFilter(filter)
 
