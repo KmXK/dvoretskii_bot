@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Awaitable, Callable
 
+from pyrate_limiter import BucketFullException
 from telegram import (
     Update,
 )
@@ -114,6 +115,10 @@ class Bot:
                     if func is not None:
                         await func()
                     break
+            except BucketFullException as e:
+                logging.warning(f"Rate limit exceeded: {e} {update.message}")
+                if update.effective_message:
+                    await update.effective_message.reply_text("Слишком много запросов")
             except BaseException as e:
                 logging.exception(e)
 

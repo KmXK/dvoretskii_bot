@@ -4,10 +4,12 @@ from os import environ
 from aiohttp import ClientSession
 
 from steward.handlers.handler import CommandHandler, Handler
+from steward.helpers.limiter import Duration, limit
 
 
 @CommandHandler("translate")
 class TranslateHandler(Handler):
+    @limit(10, Duration.MINUTE)
     async def chat(self, update, context):
         assert update.message and update.message.text
 
