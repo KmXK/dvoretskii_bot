@@ -1,3 +1,4 @@
+import logging
 import re
 from os import environ
 
@@ -5,6 +6,8 @@ from aiohttp import ClientSession
 
 from steward.handlers.handler import Handler, validate_command_msg
 from steward.helpers.limiter import Duration, limit
+
+logger = logging.getLogger(__name__)
 
 
 class TranslateHandler(Handler):
@@ -33,9 +36,6 @@ class TranslateHandler(Handler):
         elif re.match(r"^\[[a-zA-Z]{2}\]", update.message.text) is not None:
             lang = update.message.text[1:3]
             text = update.message.text[4:]
-
-            print(lang)
-            print(text)
         else:
             return False
 
@@ -49,7 +49,7 @@ class TranslateHandler(Handler):
                 },
             ) as response:
                 json = await response.json()
-                print(json)
+                logger.info(f"got response {json}")
                 text = json["translations"][0]["text"]
                 await update.message.reply_text(text)
 
