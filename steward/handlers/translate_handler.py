@@ -45,7 +45,7 @@ class TranslateHandler(Handler):
         lang: str = match.group("to_lang")
         text: str = match.group("text")
 
-        check_limit(self, 10, Duration.MINUTE)
+        check_limit(self, 20, Duration.MINUTE, name=str(update.message.from_user.id))
 
         async with ClientSession() as session:
             async with session.post(

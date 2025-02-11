@@ -11,6 +11,7 @@ from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.delete_admin_handler import DeleteAdminHandler
 from steward.handlers.delete_rule_handler import DeleteRuleHandler
 from steward.handlers.download_handler import DownloadHandler
+from steward.handlers.exchange_rates_handler import ExchangeRateHandler
 from steward.handlers.feature_request_handler import (
     FeatureRequestEditHandler,
     FeatureRequestViewHandler,
@@ -57,6 +58,7 @@ def get_handlers(log_file: None | str, repository: Repository):
             FeatureRequestViewHandler,
             IdHandler,
             TranslateHandler,
+            ExchangeRateHandler,
             ScriptHandler(
                 "update",
                 "./scripts/update.sh",
