@@ -1,7 +1,8 @@
+from inspect import isawaitable
 from typing import Any
 
 import pyrate_limiter
-from pyrate_limiter import Limiter, Rate
+from pyrate_limiter import ItemMapping, Limiter, Rate
 
 
 class Duration:
@@ -14,7 +15,11 @@ class Duration:
 limiters: dict[Any, Limiter] = {}
 
 
-def get_limiter(obj: Any, limit: int, duration: pyrate_limiter.Duration) -> Limiter:
+def get_rate_limiter(
+    obj: Any,
+    limit: int,
+    duration: pyrate_limiter.Duration,
+) -> Limiter:
     if obj not in limiters:
         limiters[obj] = Limiter(Rate(limit, duration))
     return limiters[obj]
@@ -27,12 +32,17 @@ def check_limit(
     name: str = "",
     weight: int = 1,
 ) -> bool:
-    limiter = get_limiter(obj, limit, duration)
-    return limiter.try_acquire("", 1)
+    limiter = get_rate_limiter(obj, limit, duration)
+    result = limiter.try_acquire(name, weight)
+    assert not isawaitable(
+        result
+    )  # зависит от типа лимитера, у нас Rate, там всегда синхронно
+    return result
 
 
-def limit(limit: int, duration: pyrate_limiter.Duration) -> Any:
-    def mapping(*args, **kwargs):
-        return "", 1
+def _simple_mapping(*args, **kwargs):
+    return "", 1
 
-    return Limiter(Rate(limit, duration)).as_decorator()(mapping)  # type: ignore
+
+def limit(limit: int, duration: pyrate_limiter.Duration, mapping: ItemMapping) -> Any:
+    return Limiter(Rate(limit, duration)).as_decorator()(_simple_mapping)  # type: ignore
