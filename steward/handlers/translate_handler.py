@@ -10,40 +10,51 @@ from steward.helpers.limiter import Duration, check_limit
 logger = logging.getLogger(__name__)
 
 
+# xx or xx/xx ("xx/" part is optional)
+# means from_lang/to_lang
+LANG_REGEX = r"((?P<from_lang>[a-zA-Z]+)/)?(?P<to_lang>[a-zA-Z]+)"
+
+
 class TranslateHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
         if validate_command_msg(update, ["translate"]):
-            parts = update.message.text.split(" ")
+            # TODO: получать сразу параметры команды из validate_command_msg или ещё одного вызова
+            # чтобы не иметь эту логику в хендлерах
+            match = re.match(
+                r"^/translate " + LANG_REGEX + r" (?P<text>.+)$",
+                update.message.text,
+            )
 
-            if len(parts) < 3:
+            if not match:
                 await update.message.reply_text(
-                    "Использование: /translate <lang_code> <text>"
+                    "Использование: /translate [<from_code_language>/]<to_code_language> <text>"
                 )
                 return True
 
-            lang = parts[1]
-
-            if len(lang) != 2:
-                await update.message.reply_text(
-                    "Код языка должен состоять из двух букв"
-                )
-                return True
-
-            text = " ".join(parts[2:])
         # TODO: сделать подмену сообщений в правилах и поменять на /translate
-        elif re.match(r"^\[[a-zA-Z]{2}\]", update.message.text) is not None:
-            lang = update.message.text[1:3]
-            text = update.message.text[4:]
         else:
-            return False
+            match = re.match(
+                r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$",
+                update.message.text,
+            )
+            if not match:
+                return False
+
+        from_lang: str | None = match.group("from_lang")
+        lang: str = match.group("to_lang")
+        text: str = match.group("text")
 
         check_limit(self, 10, Duration.MINUTE)
 
         async with ClientSession() as session:
             async with session.post(
                 "https://translate.api.cloud.yandex.net/translate/v2/translate",
-                json={"texts": [text], "targetLanguageCode": lang},
+                json={
+                    "texts": [text],
+                    "targetLanguageCode": lang,
+                    "sourceLanguageCode": from_lang if from_lang else None,
+                },
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Api-Key {environ.get('TRANSLATE_KEY_SECRET')}",
@@ -68,4 +79,4 @@ class TranslateHandler(Handler):
         return True
 
     def help(self) -> str | None:
-        return "/translate <lang_code> <text> - перевод текста"
+        return "/translate [<from_code_language>/]<to_code_language> <text> - перевод текста"
