@@ -65,7 +65,7 @@ class ExchangeRateHandler(Handler):
 
         from_currency = match.group("from").upper() if match.group("from") else "BYN"
         to_currency = str(match.group("to")).upper()
-        amount = float(match.group("amount")) if match.group("amount") else 1
+        amount = float(match.group("amount")) if match.group("amount") else 1.0
 
         logger.info(f"from: {from_currency}, to: {to_currency}, amount: {amount}")
 
