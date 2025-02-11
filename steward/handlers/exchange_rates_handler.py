@@ -1,7 +1,11 @@
 import logging
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from aiohttp import ClientSession
+from pyrate_limiter import Callable
+from yarl import Query
 
 from steward.handlers.handler import Handler, validate_command_msg
 from steward.helpers.limiter import Duration, check_limit
@@ -13,6 +17,29 @@ logger = logging.getLogger(__name__)
 # means from_currency/to_currency
 NUMBER_REGEX = r"(?P<amount>[0-9]+(\.[0-9]+)?)"
 CURRENCY_REGEX = r"(" + NUMBER_REGEX + r")?((?P<from>[a-zA-Z]{3}) (?P<to>[a-zA-Z]{3})"
+
+
+@dataclass
+class ApiData:
+    api: str
+    params: Query
+    get_func: Callable[[dict], Any]
+
+    async def try_get_exchange_rate(self) -> float | None:
+        logger.info(f"using endpoint: {self.api}")
+        async with ClientSession() as session:
+            async with session.get(
+                self.api,
+                params=self.params,
+            ) as response:
+                json = await response.json()
+
+                logger.info(f"got response {json}")
+
+                try:
+                    return float(self.get_func(json))
+                except Exception as _:
+                    return None
 
 
 class ExchangeRateHandler(Handler):
@@ -50,38 +77,35 @@ class ExchangeRateHandler(Handler):
 
         check_limit(self, 10, Duration.MINUTE, name=str(update.message.from_user.id))
 
-        async with ClientSession() as session:
-            async with session.get(
-                "https://api.coinbase.com/v2/exchange-rates",
+        apis = [
+            ApiData(
+                api="https://api.coinbase.com/v2/exchange-rates",
                 params={
                     "currency": from_currency,
                 },
-            ) as response:
-                json = await response.json()
+                get_func=lambda json: json["data"]["rates"][to_currency],
+            ),
+            ApiData(
+                api="https://data-api.binance.vision/api/v3/avgPrice",
+                params={
+                    "symbol": f"{'USDT' if from_currency == 'USD' else from_currency}{'USDT' if to_currency == 'USD' else to_currency}",
+                },
+                get_func=lambda json: json["price"],
+            ),
+        ]
 
-                logger.info(f"got response {json}")
+        for api in apis:
+            rate = await api.try_get_exchange_rate()
 
-                if (
-                    "data" in json
-                    and "rates" in json["data"]
-                    and len(json["data"]["rates"].keys()) == 1
-                ):
-                    await update.message.reply_text(
-                        f"Валюта {from_currency} не поддерживается"
-                    )
-                    return True
-
-                rates = json["data"]["rates"]
-
-                if to_currency not in rates:
-                    await update.message.reply_text(
-                        f"Валюта {to_currency} не поддерживается"
-                    )
-                    return True
-
+            if rate:
                 await update.message.reply_text(
-                    f"{amount} {from_currency} = {float(rates[to_currency]) * amount} {to_currency}"
+                    f"{amount} {from_currency} = {rate * amount} {to_currency}"
                 )
+                return True
+
+        await update.message.reply_text(
+            f"Конвертация {from_currency} в {to_currency} невозможна"
+        )
 
         return True
 
