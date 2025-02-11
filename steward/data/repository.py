@@ -3,7 +3,8 @@ import logging
 from abc import abstractmethod
 from dataclasses import asdict
 from enum import Enum
-from typing import Callable, Coroutine
+from inspect import isawaitable
+from typing import Awaitable, Callable
 
 import aiofiles
 import aiofiles.os
@@ -74,7 +75,7 @@ class JsonFileStorage(Storage):
 class Repository:
     def __init__(self, storage: Storage):
         self._storage = storage
-        self._save_callbacks: set[Callable[[], None | Coroutine]] = set()
+        self._save_callbacks: set[Callable[[], None | Awaitable]] = set()
 
         self.db = Database()
 
@@ -92,13 +93,13 @@ class Repository:
         await self._storage.write_dict(asdict(self.db))
         for callback in self._save_callbacks:
             result = callback()
-            if isinstance(result, Coroutine):
+            if isawaitable(result):
                 await result
 
-    def subscribe_on_save(self, callback: Callable[[], Coroutine | None]):
+    def subscribe_on_save(self, callback: Callable[[], Awaitable | None]):
         self._save_callbacks.add(callback)
 
-    def unsubscribe_on_save(self, callback: Callable[[], Coroutine | None]):
+    def unsubscribe_on_save(self, callback: Callable[[], Awaitable | None]):
         try:
             self._save_callbacks.remove(callback)
         except ValueError as e:

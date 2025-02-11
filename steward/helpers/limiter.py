@@ -20,7 +20,13 @@ def get_limiter(obj: Any, limit: int, duration: pyrate_limiter.Duration) -> Limi
     return limiters[obj]
 
 
-def check_limit(obj: Any, limit: int, duration: pyrate_limiter.Duration):
+def check_limit(
+    obj: Any,
+    limit: int,
+    duration: pyrate_limiter.Duration,
+    name: str = "",
+    weight: int = 1,
+) -> bool:
     limiter = get_limiter(obj, limit, duration)
     return limiter.try_acquire("", 1)
 
