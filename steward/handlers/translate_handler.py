@@ -22,8 +22,8 @@ class TranslateHandler(Handler):
             # TODO: получать сразу параметры команды из validate_command_msg или ещё одного вызова
             # чтобы не иметь эту логику в хендлерах
             match = re.match(
-                r"^/translate " + LANG_REGEX + r" (?P<text>.+)$",
-                update.message.text,
+                r"^" + LANG_REGEX + r" (?P<text>.+)$",
+                " ".join(update.message.text.split(" ")[1:]),
             )
 
             if not match:

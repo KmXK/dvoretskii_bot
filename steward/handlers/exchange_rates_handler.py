@@ -24,8 +24,8 @@ class ExchangeRateHandler(Handler):
         # TODO: получать сразу параметры команды из validate_command_msg или ещё одного вызова
         # чтобы не иметь эту логику в хендлерах
         match = re.match(
-            r"^/exchange ((?P<amount>[0-9]+(\.[0-9]+)?) )?((?P<from>[a-zA-Z]+) )(?P<to>[a-zA-Z]+)",
-            update.message.text,
+            r"^((?P<amount>[0-9]+(\.[0-9]+)?) )?((?P<from>[a-zA-Z]+) )(?P<to>[a-zA-Z]+)",
+            " ".join(update.message.text.split(" ")[1:]),
         )
 
         if not match:
