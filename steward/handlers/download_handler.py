@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import os
 import re
 import tempfile
 from asyncio import sleep
@@ -10,11 +11,13 @@ from urllib.parse import urlencode
 
 import aiohttp
 import youtube_dl
+from pyrate_limiter import Duration
 from telegram import InputFile, InputMediaPhoto, Message, Update
 from telegram.ext import ContextTypes
 
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
+from steward.helpers.limiter import check_limit
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -39,6 +42,7 @@ class DownloadHandler(Handler):
                     "instagram.com": self._load_instagram,
                     "youtube.com": self._load_youtube,
                     "youtu.be": self._load_youtube,
+                    "music.yandex": self._load_yandex_music,
                 }.items():
                     if handlerPath in url:
                         logger.info(f"Получен url: {url}")
@@ -54,39 +58,6 @@ class DownloadHandler(Handler):
         message: Message,
     ):
         logger.info("Тикток пошел")
-        # async with aiohttp.ClientSession() as session:
-        #     logger.info("Запрос на получение информации")
-
-        #     async with session.post(
-        #         "https://ttsave.app/download",
-        #         data={"query": url, "language_id": "1"},
-        #     ) as response:
-        #         bs = BeautifulSoup(await response.text(), "html.parser")
-
-        #         video = [
-        #             a.get("href")
-        #             for a in bs.find_all("a", type="no-watermark")
-        #             if a.get("href") is not None
-        #         ]
-        #         if len(video) > 0:
-        #             logger.info(f"Видео получено: {video}")
-        #             await message.reply_video(video[0])
-        #             logger.info("Видео отправлено")
-        #             return
-
-        #         images = [
-        #             InputMediaPhoto(a.get("href"))
-        #             for a in bs.find_all("a", type="slide")
-        #             if a.get("href") is not None
-        #         ]
-        #         if len(images) > 0:
-        #             logger.info(f"Картинки получены: {images}")
-        #             for i in range(0, len(images), 10):
-        #                 await message.reply_media_group(images[i : i + 10])
-        #             logger.info("Картинки отправлены")
-        #             return
-
-        #         await message.reply_text("Ты плохой человек")
 
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -149,6 +120,35 @@ class DownloadHandler(Handler):
                     InputFile(file, filename="Youtube Video"),
                     supports_streaming=True,
                 )
+
+    async def _load_yandex_music(
+        self,
+        url: str,
+        message: Message,
+    ):
+        check_limit(self, 1, 10 * Duration.SECOND)
+
+        logger.info("Yandex Music пошла")
+
+        logger.info(url.split("?")[0])
+
+        with tempfile.TemporaryDirectory(prefix="ym_") as dir:
+            filepath = dir + "/%(title)s"
+            try:
+                youtube_dl.YoutubeDL({
+                    "verbose": True,
+                    "outtmpl": filepath,
+                    "logger": yt_logger,
+                    "retries": 0,
+                }).download([url.split("?")[0]])
+            except youtube_dl.DownloadError:
+                logger.error("Ошибка авторизации, попробуй позже =(")
+                # await message.reply_text("Ошибка авторизации, попробуй позже =(")
+                return
+
+            with open(os.path.join(dir, os.listdir(dir)[0]), "rb") as file:
+                logger.info(file)
+                await message.reply_audio(file, filename=file.name)
 
     async def _send_video(
         self,
