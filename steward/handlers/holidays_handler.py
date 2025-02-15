@@ -1,6 +1,6 @@
 import logging
 
-from aiohttp import ClientSession
+import cloudscraper
 from bs4 import BeautifulSoup
 
 from steward.handlers.command_handler import CommandHandler
@@ -10,9 +10,6 @@ from steward.helpers.formats import format_lined_list
 logger = logging.getLogger(__name__)
 
 url = "https://kakoysegodnyaprazdnik.ru/"
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
-}
 
 
 @CommandHandler("holidays", only_admin=False)
@@ -20,18 +17,21 @@ class HolidaysHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
 
-        async with ClientSession() as session:
-            response = await session.get(url, headers=headers)
+        scaper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
 
-        content = await response.text()
+        response = scaper.get(url)
 
         # redirect is also error here
-        if response.status >= 300:
-            logger.warning(f"Failed to get holidays: {response.status} {content}")
+        if response.status_code >= 300:
+            logger.warning(
+                f"Failed to get holidays: {response.status_code} {response.content}"
+            )
             await update.message.reply_text("На этом мои полномочия все(")
             return True
 
-        soup = BeautifulSoup(content, "html.parser")
+        soup = BeautifulSoup(response.content, "html.parser")
 
         holidays = [
             (i + 1, span.text)
