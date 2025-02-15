@@ -1,5 +1,4 @@
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,17 +6,11 @@ from aiohttp import ClientSession
 from pyrate_limiter import Callable
 from yarl import Query
 
+from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
-from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)
-
-
-# xx or xx/xx ("xx/" part is optional)
-# means from_currency/to_currency
-NUMBER_REGEX = r"(?P<amount>[0-9]+(\.[0-9]+)?)"
-CURRENCY_REGEX = r"(" + NUMBER_REGEX + r")?((?P<from>[a-zA-Z]{3}) (?P<to>[a-zA-Z]{3})"
 
 
 @dataclass
@@ -43,30 +36,25 @@ class ApiData:
                     return None
 
 
+@CommandHandler(
+    "exchange",
+    arguments_template=r"((?P<amount>[0-9]+(\.[0-9]+)?) )?((?P<from_currency>[a-zA-Z]+) )?(?P<to_currency>[a-zA-Z]+)",
+    arguments_mapping={
+        "amount": lambda x: 1.0 if x is None else float(x),
+        "from_currency": lambda x: (x or "BYN").upper(),
+        "to_currency": lambda x: (x or "BYN").upper(),
+    },
+)
 class ExchangeRateHandler(Handler):
-    async def chat(self, update, context):
+    async def chat(
+        self,
+        update,
+        context,
+        to_currency: str,
+        amount: float,
+        from_currency: str,
+    ):
         assert update.message and update.message.text
-        if not validate_command_msg(update, ["exchange"]):
-            return False
-
-        # TODO: получать сразу параметры команды из validate_command_msg или ещё одного вызова
-        # чтобы не иметь эту логику в хендлерах
-        match = re.match(
-            r"^((?P<amount>[0-9]+(\.[0-9]+)?) )?((?P<from>[a-zA-Z]+) )(?P<to>[a-zA-Z]+)",
-            " ".join(update.message.text.split(" ")[1:]),
-        )
-
-        if not match:
-            await update.message.reply_text(
-                "Использование: /exchange [<amount>] <from_currency> <to_currency>"
-            )
-            return True
-
-        logger.info(match)
-
-        from_currency = match.group("from").upper() if match.group("from") else "BYN"
-        to_currency = str(match.group("to")).upper()
-        amount = float(match.group("amount")) if match.group("amount") else 1.0
 
         logger.info(f"from: {from_currency}, to: {to_currency}, amount: {amount}")
 
@@ -100,7 +88,7 @@ class ExchangeRateHandler(Handler):
 
             if rate:
                 await update.message.reply_text(
-                    f"{amount} {from_currency} = {rate * amount} {to_currency}"
+                    f"{amount} {from_currency} = {rate * float(amount or 1.0)} {to_currency}"
                 )
                 return True
 

@@ -21,7 +21,7 @@ def validate_arguments(
         "validate_arguments result (%s on template %s): %s",
         match,
         argument_string,
-        argument_regex,
+        argument_regex.pattern,
     )
 
     if match is None:
@@ -37,6 +37,9 @@ class ValidationResult:
 
     def __bool__(self):
         return self.is_valid
+
+    def __repr__(self) -> str:
+        return f"ValidationResult({self.is_valid}, {self.args})"
 
 
 class ValidationArgumentsError(BaseException):
