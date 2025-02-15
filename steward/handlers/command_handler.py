@@ -8,7 +8,10 @@ from pyrate_limiter import Callable, Optional
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from steward.helpers.command_validation import validate_command_msg
+from steward.helpers.command_validation import (
+    ValidationArgumentsError,
+    validate_command_msg,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +57,17 @@ def CommandHandler(
                     return value
 
                 # если не все параметры запрошены в сигнатуре метода
-                kwargs = {
-                    k: get_value(k, v, sig.parameters.get(k).default)
-                    for k, v in (validation_result.args or {}).items()
-                    if k in sig.parameters.keys()
-                }
+                try:
+                    kwargs = {
+                        k: get_value(k, v, sig.parameters.get(k).default)
+                        for k, v in (validation_result.args or {}).items()
+                        if k in sig.parameters.keys()
+                    }
+                except BaseException as e:
+                    logger.exception(e)
+                    # TODO: move get_value to command_validation
+                    raise ValidationArgumentsError()
+
                 return await chat(self, update, context, **kwargs)
 
             return await chat(self, update, context)

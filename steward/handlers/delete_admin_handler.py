@@ -3,21 +3,23 @@ from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 
 
-@CommandHandler("delete_admin", only_admin=True)
+@CommandHandler(
+    "delete_admin",
+    only_admin=True,
+    arguments_template=r"(?P<admin_id>\d+)",
+    arguments_mapping={
+        "admin_id": lambda x: int(x) if x is not None else 0
+    },  # TODO: как-нибудь различать обязательные и нет параметры, чтобы избавиться от таких костылей
+)
 class DeleteAdminHandler(Handler):
     def __init__(self, repository: Repository):
         self.repository = repository
 
-    async def chat(self, update, context):
+    async def chat(self, update, context, admin_id: int):
         try:
-            admin_id = int(update.message.text.split()[1])
             self.repository.db.admin_ids.remove(admin_id)
             await self.repository.save()
-            await update.message.reply_markdown("Админ удалён")
-        except ValueError:
-            await update.message.reply_text(
-                "Ошибка. Id админа должно быть целым числом"
-            )
+            await update.message.reply_markdown(f"Админ с id={admin_id} удалён")
         except KeyError:
             await update.message.reply_text("Ошибка. Админа с таким id не существует")
         except IndexError:
