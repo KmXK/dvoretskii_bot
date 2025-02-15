@@ -1,23 +1,17 @@
 import logging
 
-import cloudscraper
+from aiohttp import ClientSession
 from bs4 import BeautifulSoup
 
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
+from steward.helpers.formats import format_lined_list
 
 logger = logging.getLogger(__name__)
 
 url = "https://kakoysegodnyaprazdnik.ru/"
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Language": "ru,en-US;q=0.9,en;q=0.8",
-}
-
-cookies = {
-    "PHPSESSID": "***REMOVED***",
-    "5eacd459ffc899eab97276533bb38fbc": "FuckYouMudila",
 }
 
 
@@ -26,25 +20,35 @@ class HolidaysHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
 
-        logger.info(f"using endpoint: {url}")
-        scraper = cloudscraper.create_scraper()
-        response = scraper.get(url, headers=headers, cookies=cookies)
+        async with ClientSession() as session:
+            response = await session.get(url, headers=headers)
 
-        if response.status_code != 200:
+        content = await response.text()
+
+        # redirect is also error here
+        if response.status >= 300:
+            logger.warning(f"Failed to get holidays: {response.status} {content}")
             await update.message.reply_text("На этом мои полномочия все(")
             return True
 
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(content, "html.parser")
 
         holidays = [
-            f"`{i + 1}.` {block.find('span', itemprop='text').text.strip().replace('`', '\\`')} ({block.find('span', class_='super').text.strip()})"
-            if block.find("span", class_="super")
-            else f"`{i + 1}.` {block.find('span', itemprop='text').text.strip().replace('`', '\\`')}"
-            for i, block in enumerate(soup.find_all("div", itemprop="suggestedAnswer"))
+            (i + 1, span.text)
+            for i, span in enumerate(
+                soup.select(
+                    'div[itemtype="http://schema.org/Answer"] span[itemprop="text"]'
+                )
+            )
         ]
 
-        await update.message.reply_markdown(f"Сегодня:\n{'\n'.join(holidays)}")
+        await update.message.reply_markdown(
+            "\n".join([
+                "Праздники сегодня:",
+                format_lined_list(holidays),
+            ])
+        )
         return True
 
-    def help(self) -> str | None:
+    def help(self):
         return "/holidays - узнать какие сегодня праздники"
