@@ -16,6 +16,7 @@ from telegram.ext import (
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
+from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.tg_update_helpers import get_from_user
 from steward.session.session_registry import try_get_session_handler
 
@@ -116,6 +117,14 @@ class Bot:
                     logging.debug(f"Used handler {handler}")
                     if func is not None:
                         await func()
+                    break
+            except ValidationArgumentsError as e:
+                logging.warning(f"Validation error: {e} {update.message}")
+                help_msg = handler.help()
+                if update.effective_message and help_msg:
+                    await update.effective_message.reply_text(
+                        "Использование: " + help_msg
+                    )
                     break
             except BucketFullException as e:
                 logging.warning(f"Rate limit exceeded: {e} {update.message}")

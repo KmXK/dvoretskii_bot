@@ -12,7 +12,7 @@ from steward.session.step import Step
 from steward.session.steps.keyboard_step import KeyboardStep
 from steward.session.steps.question_step import QuestionStep
 
-from .handler import validate_command_msg
+from ..helpers.command_validation import validate_command_msg
 
 
 class CollectResponsesStep(Step):

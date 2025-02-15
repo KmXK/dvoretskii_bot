@@ -1,10 +1,5 @@
-from functools import wraps
-from typing import Optional
-
-from telegram import MessageEntity, Update
+from telegram import Update
 from telegram.ext import ContextTypes
-
-from steward.data.repository import Repository
 
 
 class Handler:
@@ -28,65 +23,3 @@ class Handler:
 
     def help(self) -> str | None:
         return None
-
-
-# проверяет, что в запросе содержится команда к боту
-def validate_command_msg(update: Update, command: str | list[str]) -> bool:
-    if isinstance(command, list):
-        return any(map(lambda c: validate_command_msg(update, c), command))
-
-    # скопировал из исходником CommandHandler для модуля телеграма
-    # проверяет корректность имени команды
-    # в форматах /command и /command@bot
-    if isinstance(update, Update) and update.effective_message:
-        message = update.effective_message
-
-        if (
-            message.entities
-            and message.entities[0].type == MessageEntity.BOT_COMMAND
-            and message.entities[0].offset == 0
-            and message.text
-            and message.get_bot()
-        ):
-            # делит по делителю @ и потом смотрит, что второй элемент массива содержит
-            # корректное имя бота: работает как раз в двух форматах
-            # (если имя бота там было, то сравнивает его, иначе просто сравнивает две
-            #  одинаковые строки)
-            messageCommand = message.text[1 : message.entities[0].length]
-            command_parts = messageCommand.split("@")
-            command_parts.append(message.get_bot().username)
-
-            if not (
-                command_parts[0].lower() == command
-                and command_parts[1].lower() == message.get_bot().username.lower()
-            ):
-                return False  # команда не подходит для данного хэндлера
-
-            return True
-    return False  # не команда
-
-
-def validate_admin(update: Update, repository: Repository):
-    return repository.is_admin(update.message.from_user.id)
-
-
-# decorator for simple command handlers
-def CommandHandler(command: Optional[str] = None, only_admin: Optional[bool] = None):
-    def decorator(handlerClass):
-        chat = handlerClass.chat
-
-        @wraps(handlerClass.chat)
-        async def filteredChat(
-            self,
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-        ):
-            return (
-                command is None or validate_command_msg(update, command)
-            ) and await chat(self, update, context) is True
-
-        handlerClass.only_for_admin = only_admin is True
-        handlerClass.chat = filteredChat
-        return handlerClass
-
-    return decorator

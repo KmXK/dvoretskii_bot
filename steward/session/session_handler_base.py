@@ -3,7 +3,8 @@ from typing import TypeVar
 
 from telegram import Update
 
-from steward.handlers.handler import Handler, validate_command_msg
+from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_command_msg
 from steward.session.session_registry import (
     activate_session,
     deactivate_session,

@@ -10,7 +10,8 @@ from steward.data.models.feature_request import (
     FeatureRequestStatus,
 )
 from steward.data.repository import Repository
-from steward.handlers.handler import Handler, validate_command_msg
+from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.formats import format_lined_list
 from steward.helpers.keyboard import parse_and_validate_keyboard
 from steward.helpers.pagination import (

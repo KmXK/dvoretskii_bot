@@ -2,7 +2,8 @@ import os
 import textwrap
 
 from steward.data.repository import Repository
-from steward.handlers.handler import CommandHandler, Handler
+from steward.handlers.command_handler import CommandHandler
+from steward.handlers.handler import Handler
 from steward.helpers.formats import union_lists
 from steward.helpers.pagination import (
     Paginator,

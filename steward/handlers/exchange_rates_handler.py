@@ -7,7 +7,8 @@ from aiohttp import ClientSession
 from pyrate_limiter import Callable
 from yarl import Query
 
-from steward.handlers.handler import Handler, validate_command_msg
+from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)

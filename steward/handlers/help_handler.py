@@ -1,6 +1,7 @@
 from typing import TypeGuard
 
-from steward.handlers.handler import CommandHandler, Handler
+from steward.handlers.command_handler import CommandHandler
+from steward.handlers.handler import Handler
 
 
 def make_help_message(handlers: list[Handler], is_admin: bool):

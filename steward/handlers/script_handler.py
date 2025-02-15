@@ -1,7 +1,8 @@
 import asyncio
 import logging
 
-from steward.handlers.handler import Handler, validate_command_msg
+from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_command_msg
 
 logger = logging.getLogger("ScriptHandler")
 

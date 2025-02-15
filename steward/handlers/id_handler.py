@@ -1,6 +1,6 @@
 from telegram import MessageOriginUser, Update, User
 
-from steward.handlers.handler import validate_command_msg
+from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.validation import check, try_get, validate_update
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.steps.echo_step import AnswerStep

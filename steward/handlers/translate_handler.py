@@ -1,10 +1,10 @@
 import logging
-import re
 from os import environ
 
 from aiohttp import ClientSession
 
-from steward.handlers.handler import Handler, validate_command_msg
+from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_arguments, validate_command_msg
 from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)
@@ -18,32 +18,33 @@ LANG_REGEX = r"((?P<from_lang>[a-zA-Z]+)/)?(?P<to_lang>[a-zA-Z]+)"
 class TranslateHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
-        if validate_command_msg(update, ["translate"]):
-            # TODO: получать сразу параметры команды из validate_command_msg или ещё одного вызова
-            # чтобы не иметь эту логику в хендлерах
-            match = re.match(
-                r"^" + LANG_REGEX + r" (?P<text>.+)$",
-                " ".join(update.message.text.split(" ")[1:]),
-            )
 
-            if not match:
+        if validation_result := validate_command_msg(
+            update,
+            "translate",
+            r"^" + LANG_REGEX + r" (?P<text>.+)$",
+        ):
+            if not validation_result:
                 await update.message.reply_text(
                     "Использование: /translate [<from_code_language>/]<to_code_language> <text>"
                 )
                 return True
 
+            assert validation_result.args
+            parsed_args = validation_result.args
+
         # TODO: сделать подмену сообщений в правилах и поменять на /translate
         else:
-            match = re.match(
-                r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$",
-                update.message.text,
+            parsed_args = validate_arguments(
+                update.message.text, r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$"
             )
-            if not match:
+
+            if not parsed_args:
                 return False
 
-        from_lang: str | None = match.group("from_lang")
-        lang: str = match.group("to_lang")
-        text: str = match.group("text")
+        from_lang: str | None = parsed_args.get("from_lang")
+        lang: str = parsed_args["to_lang"]
+        text: str = parsed_args["text"]
 
         check_limit(self, 20, Duration.MINUTE, name=str(update.message.from_user.id))
 
