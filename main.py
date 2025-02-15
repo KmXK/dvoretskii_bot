@@ -20,6 +20,7 @@ from steward.handlers.get_admins_handler import GetAdminsHandler
 from steward.handlers.get_rules_handler import GetRulesHandler
 from steward.handlers.handler import Handler
 from steward.handlers.help_handler import HelpHandler
+from steward.handlers.holidays_handler import HolidaysHandler
 from steward.handlers.id_handler import IdHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
@@ -59,6 +60,7 @@ def get_handlers(log_file: None | str, repository: Repository):
             IdHandler,
             TranslateHandler,
             ExchangeRateHandler,
+            HolidaysHandler,
             ScriptHandler(
                 "update",
                 "./scripts/update.sh",
