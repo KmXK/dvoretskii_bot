@@ -43,7 +43,7 @@ class FeatureRequestViewHandler(Handler):
         self.repository = repository
 
     async def chat(self, update, context):
-        if not validate_command_msg(update, ["featurerequest", "fq"]):
+        if not validate_command_msg(update, ["fq", "featurerequest"]):
             return False
 
         assert (
@@ -257,9 +257,9 @@ class FeatureRequestEditHandler(Handler):
 
             results.sort(key=lambda x: x[1] is None)
             await update.message.reply_markdown(
-                format_lined_list([
-                    (id, "✅" if result is None else result) for id, result in results
-                ])
+                format_lined_list(
+                    [(id, "✅" if result is None else result) for id, result in results]
+                )
             )
 
             return True
