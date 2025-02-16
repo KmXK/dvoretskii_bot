@@ -39,3 +39,9 @@
 Б: Игнорировать регистр(1 - да, 0 - нет)
 П: 1
 Б: Правило с id {id} успешно добавлено [Удалить правило]
+
+## sidecars
+
+- [Telegram API](https://github.com/tdlib/telegram-bot-api)
+- [flare-bupasser](https://github.com/yoori/flare-bypasser/tree/main) for Cloudflare
+  just clone repo and run docker ([docker here](https://docs.docker.com/engine/install/ubuntu/))
