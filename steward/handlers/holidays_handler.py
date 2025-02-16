@@ -26,12 +26,12 @@ class HolidaysHandler(Handler):
         # redirect is also error here
         if response.status_code >= 300:
             logger.warning(
-                f"Failed to get holidays: {response.status_code} {response.content}"
+                f"Failed to get holidays: {response.status_code} {response.text}"
             )
             await update.message.reply_text("На этом мои полномочия все(")
             return True
 
-        soup = BeautifulSoup(response.content, "html.parser")
+        soup = BeautifulSoup(response.text, "html.parser")
 
         holidays = [
             (i + 1, span.text)

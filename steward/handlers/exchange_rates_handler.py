@@ -42,6 +42,7 @@ class ApiData:
     arguments_mapping={
         "amount": lambda x: 1.0 if x is None else float(x),
         "from_currency": lambda x: (x or "BYN").upper(),
+        # its required field in regexp, need to fix lambda argument type (dont want type ignoring)
         "to_currency": lambda x: (x or "BYN").upper(),
     },
 )
