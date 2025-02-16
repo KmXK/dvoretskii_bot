@@ -53,8 +53,7 @@ def validate_command_msg(
 ) -> ValidationResult:
     if isinstance(command, list):
         for c in command:
-            result = validate_command_msg(update, c, argument_regex)
-            if result is not None:
+            if result := validate_command_msg(update, c, argument_regex):
                 return result
         return ValidationResult(False)
 
