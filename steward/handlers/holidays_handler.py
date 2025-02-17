@@ -1,7 +1,7 @@
+import logging
 from asyncio import Lock
 from dataclasses import dataclass
 from datetime import date
-import logging
 from os import environ
 
 from aiohttp import ClientSession
@@ -28,11 +28,16 @@ class HolidaysHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
 
+        if cloud_flare_port := environ.get("CLOUDFLARE_BYPASS_PORT"):
+            target_url = 'http://localhost:%s/html?url=%s' % (cloud_flare_port, url)
+        else:
+            target_url = url
+
         # TODO: cache logic in separate class
         async with mutex:
             if cache.date != date.today():
                 async with ClientSession() as session:
-                    response = await session.get('http://localhost:%s/html?url=%s' % (environ.get("CLOUDFLARE_BYPASS_PORT"), url))
+                    response = await session.get(target_url)
 
                     logging.info(response)
                     content = await response.text()
