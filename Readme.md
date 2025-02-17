@@ -43,5 +43,5 @@
 ## sidecars
 
 - [Telegram API](https://github.com/tdlib/telegram-bot-api)
-- [flare-bupasser](https://github.com/yoori/flare-bypasser/tree/main) for Cloudflare
+- [cloudflare bypasser](https://github.com/KmXK/cloudflare-bypass)
   just clone repo and run docker ([docker here](https://docs.docker.com/engine/install/ubuntu/))

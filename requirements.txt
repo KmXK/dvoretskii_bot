@@ -9,4 +9,3 @@ coloredlogs
 aiofiles
 pymorphy3
 pyrate-limiter
-cloudscraper

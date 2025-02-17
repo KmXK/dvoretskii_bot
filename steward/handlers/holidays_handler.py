@@ -1,6 +1,10 @@
+from asyncio import Lock
+from dataclasses import dataclass
+from datetime import date
 import logging
+from os import environ
 
-import cloudscraper
+from aiohttp import ClientSession
 from bs4 import BeautifulSoup
 
 from steward.handlers.command_handler import CommandHandler
@@ -11,36 +15,55 @@ logger = logging.getLogger(__name__)
 
 url = "https://kakoysegodnyaprazdnik.ru/"
 
+@dataclass
+class Cache:
+    holidays: list[tuple[int, str]]
+    date: date
+
+cache = Cache([], date.fromtimestamp(0))
+mutex = Lock()
 
 @CommandHandler("holidays", only_admin=False)
 class HolidaysHandler(Handler):
     async def chat(self, update, context):
         assert update.message and update.message.text
 
-        scaper = cloudscraper.create_scraper(
-            browser={"browser": "chrome", "platform": "windows", "mobile": False}
-        )
+        # TODO: cache logic in separate class
+        async with mutex:
+            if cache.date != date.today():
+                async with ClientSession() as session:
+                    response = await session.get('http://localhost:%s/html?url=%s' % (environ.get("CLOUDFLARE_BYPASS_PORT"), url))
 
-        response = scaper.get(url)
+                    logging.info(response)
+                    content = await response.text()
 
-        # redirect is also error here
-        if response.status_code >= 300:
-            logger.warning(
-                f"Failed to get holidays: {response.status_code} {response.text}"
-            )
-            await update.message.reply_text("На этом мои полномочия все(")
-            return True
+                    # redirect is also error here
+                    if response.status >= 300:
+                        logger.warning(
+                            f"Failed to get holidays: {response.status} {content}"
+                        )
+                        await update.message.reply_text("На этом мои полномочия все(")
+                        return True
 
-        soup = BeautifulSoup(response.text, "html.parser")
+                soup = BeautifulSoup(content, "html.parser")
 
-        holidays = [
-            (i + 1, span.text)
-            for i, span in enumerate(
-                soup.select(
-                    'div[itemtype="http://schema.org/Answer"] span[itemprop="text"]'
-                )
-            )
-        ]
+                cache.date = date.today()
+
+                def get_holiday_name(container):
+                    lifetime = container.select_one('span.super')
+                    name = container.select_one('span[itemprop="text"]').text
+                    return name + (f" ({lifetime.text})" if lifetime else "")
+
+                cache.holidays = [
+                    (i + 1, get_holiday_name(container))
+                    for i, container in enumerate(
+                        soup.select(
+                            'div[itemtype="http://schema.org/Answer"]'
+                        )
+                    )
+                ]
+
+            holidays = cache.holidays
 
         await update.message.reply_markdown(
             "\n".join([
