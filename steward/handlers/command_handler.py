@@ -16,12 +16,25 @@ from steward.helpers.command_validation import (
 logger = logging.getLogger(__name__)
 
 
+type Mapping[T] = Callable[[str | None], T]
+
+
+# костыль для типизации обязательных параметров, чтобы не всплывал None
+# может быть стоит как-то по-другому это обыграть, не хочу много лишнего кода, а так лишь одна функция (# TODO)
+def required[T](func: Callable[[str], T]) -> Mapping[T]:
+    def wrapper(value: str | None):
+        assert value
+        return func(value)
+
+    return wrapper
+
+
 # проверяет, что в запросе содержится команда к боту
 # decorator for simple command handlers
 def CommandHandler(
     command: str,
     arguments_template: Optional[str | re.Pattern] = None,
-    arguments_mapping: dict[str, Callable[[str | None], Any]] = {},
+    arguments_mapping: dict[str, Mapping[Any]] = {},  # TODO: better typing?
     only_admin: Optional[bool] = None,
 ):
     def decorator(handlerClass):

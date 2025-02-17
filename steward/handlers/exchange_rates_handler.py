@@ -6,7 +6,7 @@ from aiohttp import ClientSession
 from pyrate_limiter import Callable
 from yarl import Query
 
-from steward.handlers.command_handler import CommandHandler
+from steward.handlers.command_handler import CommandHandler, required
 from steward.handlers.handler import Handler
 from steward.helpers.limiter import Duration, check_limit
 
@@ -40,10 +40,9 @@ class ApiData:
     "exchange",
     arguments_template=r"((?P<amount>[0-9]+(\.[0-9]+)?) )?((?P<from_currency>[a-zA-Z]+) )?(?P<to_currency>[a-zA-Z]+)",
     arguments_mapping={
-        "amount": lambda x: 1.0 if x is None else float(x),
+        "amount": lambda x: float(x or 1),
         "from_currency": lambda x: (x or "BYN").upper(),
-        # its required field in regexp, need to fix lambda argument type (dont want type ignoring)
-        "to_currency": lambda x: (x or "BYN").upper(),
+        "to_currency": required(str.upper),
     },
 )
 class ExchangeRateHandler(Handler):
