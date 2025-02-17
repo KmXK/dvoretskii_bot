@@ -201,12 +201,14 @@ class Paginator[T]:
         await update.message.reply_text(
             text=text,
             parse_mode="markdown",
-            reply_markup=InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
+            reply_markup=None
+            if keyboard is None
+            else InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
         )
         return True
 
     async def process_callback(self, update: Update):
-        assert update.callback_query
+        assert update.callback_query and update.callback_query.data
 
         parsed = parse_and_validate_keyboard(
             self.unique_keyboard_name,
@@ -222,12 +224,16 @@ class Paginator[T]:
         if parsed is None:
             return False
 
+        assert update.callback_query and update.callback_query.message
+
         if not parsed.is_current_page:
             text, keyboard = self._get_data_page(parsed.page_number)
             await update.callback_query.message.edit_text(
                 text=text,
-                reply_markup=InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
                 parse_mode="markdown",
+                reply_markup=None
+                if keyboard is None
+                else InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
             )
 
         return True

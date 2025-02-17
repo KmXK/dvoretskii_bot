@@ -15,21 +15,22 @@ logger = logging.getLogger(__name__)
 
 url = "https://kakoysegodnyaprazdnik.ru/"
 
+
 @dataclass
 class Cache:
     holidays: list[tuple[int, str]]
     date: date
 
+
 cache = Cache([], date.fromtimestamp(0))
 mutex = Lock()
 
+
 @CommandHandler("holidays", only_admin=False)
 class HolidaysHandler(Handler):
-    async def chat(self, update, context):
-        assert update.message and update.message.text
-
+    async def chat(self, context):
         if cloud_flare_port := environ.get("CLOUDFLARE_BYPASS_PORT"):
-            target_url = 'http://localhost:%s/html?url=%s' % (cloud_flare_port, url)
+            target_url = "http://localhost:%s/html?url=%s" % (cloud_flare_port, url)
         else:
             target_url = url
 
@@ -47,7 +48,7 @@ class HolidaysHandler(Handler):
                         logger.warning(
                             f"Failed to get holidays: {response.status} {content}"
                         )
-                        await update.message.reply_text("На этом мои полномочия все(")
+                        await context.message.reply_text("На этом мои полномочия все(")
                         return True
 
                 soup = BeautifulSoup(content, "html.parser")
@@ -55,22 +56,20 @@ class HolidaysHandler(Handler):
                 cache.date = date.today()
 
                 def get_holiday_name(container):
-                    lifetime = container.select_one('span.super')
+                    lifetime = container.select_one("span.super")
                     name = container.select_one('span[itemprop="text"]').text
                     return name + (f" ({lifetime.text})" if lifetime else "")
 
                 cache.holidays = [
                     (i + 1, get_holiday_name(container))
                     for i, container in enumerate(
-                        soup.select(
-                            'div[itemtype="http://schema.org/Answer"]'
-                        )
+                        soup.select('div[itemtype="http://schema.org/Answer"]')
                     )
                 ]
 
             holidays = cache.holidays
 
-        await update.message.reply_markdown(
+        await context.message.reply_markdown(
             "\n".join([
                 "Праздники сегодня:",
                 format_lined_list(holidays),

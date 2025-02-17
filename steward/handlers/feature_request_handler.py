@@ -2,14 +2,14 @@ import datetime
 import re
 from enum import Enum
 
-from telegram import InlineKeyboardButton, Update
+from telegram import InlineKeyboardButton, Message
 
+from steward.bot.context import ChatBotContext
 from steward.data.models.feature_request import (
     FeatureRequest,
     FeatureRequestChange,
     FeatureRequestStatus,
 )
-from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.formats import format_lined_list
@@ -39,38 +39,33 @@ class FilterType(Enum):
 
 
 class FeatureRequestViewHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
-        if not validate_command_msg(update, ["fq", "featurerequest"]):
+    async def chat(self, context):
+        if not validate_command_msg(context.update, ["fq", "featurerequest"]):
             return False
 
-        assert (
-            update.message.text
-        )  # TODO: remove all asserts to message in chat() methods
+        assert context.message.text
 
-        data = update.message.text.split(" ")
+        data = context.message.text.split(" ")
         if len(data) == 1 or data[1] == "list":
-            return await self._get_paginator(FilterType.ALL).show_list(update)
+            return await self._get_paginator(FilterType.ALL).show_list(context.update)
 
         return await self._add_feature(
-            update, update.message.text[len(data[0]) :].strip()
+            context.message, context.message.text[len(data[0]) :].strip()
         )
 
-    async def callback(self, update, context):
-        assert update.callback_query.data
+    async def callback(self, context):
+        assert context.callback_query.data
 
         filter_parsed = parse_and_validate_keyboard(
             "feature_request_filter",
-            update.callback_query.data,
+            context.callback_query.data,
         )
 
         if filter_parsed is not None:
             return await self._get_paginator(
                 FilterType(int(filter_parsed.metadata))
             ).process_parsed_callback(
-                update,
+                context.update,
                 PaginationParseResult(
                     unique_keyboard_name="feature_request_list",
                     metadata=filter_parsed.metadata,
@@ -81,7 +76,7 @@ class FeatureRequestViewHandler(Handler):
 
         pagination_parsed = parse_and_validate_keyboard(
             "feature_request_list",
-            update.callback_query.data,
+            context.callback_query.data,
             parse_func=parse_pagination,
         )
 
@@ -89,7 +84,7 @@ class FeatureRequestViewHandler(Handler):
             return await self._get_paginator(
                 FilterType(int(pagination_parsed.metadata))
             ).process_parsed_callback(
-                update,
+                context.update,
                 pagination_parsed,
             )
 
@@ -115,20 +110,20 @@ class FeatureRequestViewHandler(Handler):
             for (text, type) in callbacks
         ]
 
-    async def _add_feature(self, update: Update, text):
+    async def _add_feature(self, message: Message, text):
         self.repository.db.feature_requests.append(
             FeatureRequest(
                 id=len(self.repository.db.feature_requests) + 1,
-                author_name=update.message.from_user.name,
+                author_name=message.from_user.name,
                 text=text,
-                author_id=update.message.from_user.id,
-                message_id=update.message.message_id,
-                chat_id=update.message.chat_id,
+                author_id=message.from_user.id,
+                message_id=message.message_id,
+                chat_id=message.chat_id,
                 creation_timestamp=datetime.datetime.now().timestamp(),
             )
         )
         await self.repository.save()
-        await update.message.reply_text("Фича-реквест добавлен")
+        await message.reply_text("Фича-реквест добавлен")
         return True
 
     def _get_paginator(self, type: FilterType) -> Paginator:
@@ -168,21 +163,18 @@ class FeatureRequestViewHandler(Handler):
 
 
 class FeatureRequestEditHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
-        if not validate_command_msg(update, ["featurerequest", "fq"]):
+    async def chat(self, context):
+        if not validate_command_msg(context.update, ["featurerequest", "fq"]):
             return False
 
-        data = update.message.text.split(" ")
+        data = context.message.text.split(" ")
 
         if len(data) < 2:
             return False
 
         if data[1] in ["done", "deny", "reopen"]:
             if len(data) < 3:
-                await update.message.reply_text("Укажите номера фичи-реквеста(ов)")
+                await context.message.reply_text("Укажите номера фичи-реквеста(ов)")
                 return True
 
             return await {
@@ -210,7 +202,7 @@ class FeatureRequestEditHandler(Handler):
                     ],
                     FeatureRequestStatus.OPEN,
                 ),
-            }[data[1]](update, data[2:])
+            }[data[1]](context, data[2:])
 
         return False
 
@@ -219,7 +211,7 @@ class FeatureRequestEditHandler(Handler):
         error_list: list[str | None],
         new_status: FeatureRequestStatus,
     ):
-        async def wrapper(update: Update, ids):
+        async def wrapper(context: ChatBotContext, ids):
             results = []
             for id in ids:
                 if not id.isdigit():
@@ -234,7 +226,7 @@ class FeatureRequestEditHandler(Handler):
                 fq = self.repository.db.feature_requests[id - 1]
 
                 error = self._validate_fq(
-                    update.message.from_user.id,
+                    context,
                     fq,
                     error_list,
                 )
@@ -245,9 +237,9 @@ class FeatureRequestEditHandler(Handler):
 
                 fq.history.append(
                     FeatureRequestChange(
-                        author_id=update.message.from_user.id,
+                        author_id=context.message.from_user.id,
                         timestamp=datetime.datetime.now().timestamp(),
-                        message_id=update.message.message_id,
+                        message_id=context.message.message_id,
                         status=new_status,
                     )
                 )
@@ -256,7 +248,7 @@ class FeatureRequestEditHandler(Handler):
             await self.repository.save()
 
             results.sort(key=lambda x: x[1] is None)
-            await update.message.reply_markdown(
+            await context.message.reply_markdown(
                 format_lined_list([
                     (id, "✅" if result is None else result) for id, result in results
                 ])
@@ -268,7 +260,7 @@ class FeatureRequestEditHandler(Handler):
 
     def _validate_fq(
         self,
-        user_id: int,
+        context: ChatBotContext,
         fq: FeatureRequest,
         messages: list[str | None],
     ):
@@ -281,6 +273,8 @@ class FeatureRequestEditHandler(Handler):
         for i, validation_status in enumerate(validation_statuses):
             if fq.status == validation_status and messages[i] is not None:
                 return messages[i]
+
+        user_id = context.message.from_user.id
 
         if fq.author_id != user_id and not self.repository.is_admin(user_id):
             return "Вы не можете редактировать статус этого фича-реквеста"

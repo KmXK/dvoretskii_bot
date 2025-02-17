@@ -28,16 +28,15 @@ def make_help_message(handlers: list[Handler], is_admin: bool):
 
 @CommandHandler("help")
 class HelpHandler(Handler):
-    def __init__(self, handlers, repository):
-        self.repository = repository
+    def __init__(self, handlers):
         self.helpMessage = make_help_message(handlers, False)
         self.adminHelpMessage = make_help_message(handlers, True)
 
-    async def chat(self, update, context):
-        if self.repository.is_admin(update.message.from_user.id):
-            await update.message.reply_text(self.adminHelpMessage)
+    async def chat(self, context):
+        if self.repository.is_admin(context.message.from_user.id):
+            await context.message.reply_text(self.adminHelpMessage)
         else:
-            await update.message.reply_text(self.helpMessage)
+            await context.message.reply_text(self.helpMessage)
 
     def help(self):
         return "/help - показать список команд"

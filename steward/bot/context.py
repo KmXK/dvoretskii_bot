@@ -9,15 +9,19 @@ from steward.data.repository import Repository
 @dataclass
 class BotContext:
     repository: Repository
+
+
+@dataclass
+class BotActionContext(BotContext):
     update: Update
     tg_context: ContextTypes.DEFAULT_TYPE
 
 
 @dataclass
-class ChatBotContext(BotContext):
+class ChatBotContext(BotActionContext):
     message: Message
 
 
 @dataclass
-class CallbackBotContext(BotContext):
+class CallbackBotContext(BotActionContext):
     callback_query: CallbackQuery

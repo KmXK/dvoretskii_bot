@@ -9,10 +9,12 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     ContextTypes,
+    ExtBot,
     MessageHandler,
     filters,
 )
 
+from steward.bot.context import BotActionContext, CallbackBotContext, ChatBotContext
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
@@ -33,6 +35,12 @@ class Bot:
         self.repository = repository
 
         self.hints_updater = InlineHintsUpdater(repository, handlers)
+
+        self.bot: ExtBot[None] = None  # type: ignore
+
+        for handler in handlers:
+            handler.repository = repository
+            handler.bot = self.bot
 
     def start(self, token, drop_pending_updates, local_server: str | None = None):
         applicationBuilder = (
@@ -62,7 +70,13 @@ class Bot:
             await self.repository.migrate()
             await self.hints_updater.start(application.bot)
 
+            for handler in self.handlers:
+                if init_coro := handler.init():
+                    await init_coro
+
         application.post_init = post_init
+
+        self.bot = application.bot
 
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
@@ -70,15 +84,19 @@ class Bot:
             close_loop=False,
         )
 
-    # TODO: создать контекст для всего запроса, поместить туда контекст тг, update и репозиторий, начать оперировать им
-    # (RequestContext!!!)
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message is None:
             return False  # dont react on changes
 
-        await self._action(
+        ctx = ChatBotContext(
+            self.repository,
             update,
             context,
+            update.message,
+        )
+
+        await self._action(
+            ctx,
             "chat",
             None,
         )
@@ -88,20 +106,30 @@ class Bot:
             logger.warning(f"invalid callback call: {update}")
             return False
 
+        ctx = CallbackBotContext(
+            self.repository,
+            update,
+            context,
+            update.callback_query,
+        )
+
         await self._action(
-            update, context, "callback", lambda: update.callback_query.answer()
+            ctx,
+            "callback",
+            lambda: ctx.callback_query.answer(),
         )
 
     async def _action(
         self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
+        context: BotActionContext,
         action: str,
         func: Callable[[], Awaitable[Any]] | None,
     ):
+        update = context.update
+
         session_handler = try_get_session_handler(update)
         if session_handler is not None:
-            if await getattr(session_handler, action)(update, context):
+            if await getattr(session_handler, action)(context):
                 if func is not None:
                     await func()
                 return
@@ -112,7 +140,7 @@ class Bot:
                 if (
                     self._validate_admin(handler, get_from_user(update).id)
                     and hasattr(handler, action)
-                    and await getattr(handler, action)(update, context)
+                    and await getattr(handler, action)(context)
                 ):
                     logging.debug(f"Used handler {handler}")
                     if func is not None:

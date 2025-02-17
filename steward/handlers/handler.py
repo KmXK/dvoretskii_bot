@@ -1,5 +1,7 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ExtBot
+
+from steward.bot.context import CallbackBotContext, ChatBotContext
+from steward.data.repository import Repository
 
 
 class Handler:
@@ -9,15 +11,19 @@ class Handler:
     # а не перезаписывают его тут
     only_for_admin = False
 
-    async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    # initialized externally (# TODO: перепридумать!)
+    repository: Repository
+    bot: ExtBot[None]
+
+    # to initialize handler
+    async def init(self):
+        pass
+
+    async def chat(self, context: ChatBotContext) -> bool:
         """Chat message handler"""
         return False
 
-    async def callback(
-        self,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-    ) -> bool:
+    async def callback(self, context: CallbackBotContext) -> bool:
         """Callback handler"""
         return False
 

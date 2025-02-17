@@ -36,24 +36,24 @@ class KeyboardStep(Step):
             for button in line:
                 self.mapping[button[1]] = button[2]
 
-    async def chat(self, update, session_context):
-        assert update.message
+    async def chat(self, context):
         if not self.is_waiting:
             markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton(x[0], callback_data=x[1]) for x in keyboard_line]
                 for keyboard_line in self.keyboard
             ])
 
-            await update.message.reply_text(self.msg, reply_markup=markup)
+            await context.message.reply_text(self.msg, reply_markup=markup)
 
             self.is_waiting = True
             return False
 
         return False
 
-    async def callback(self, update, session_context):
-        assert update.callback_query
-        if self.mapping.get(update.callback_query.data) is not None:
-            session_context[self.name] = self.mapping[update.callback_query.data]
+    async def callback(self, context):
+        if self.mapping.get(context.callback_query.data) is not None:
+            context.session_context[self.name] = self.mapping[
+                context.callback_query.data
+            ]
             return True
         return False

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 type SessionKey = tuple[int, int]
 
+# TODO: Make a class not static
 sessions: dict[SessionKey, Any] = {}
 
 

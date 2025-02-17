@@ -4,7 +4,6 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.data.models.rule import Response, Rule, RulePattern
-from steward.data.repository import Repository
 from steward.helpers.tg_update_helpers import get_message
 from steward.helpers.validation import check, try_get, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
@@ -20,12 +19,10 @@ class CollectResponsesStep(Step):
         self.name = name
         self.is_waiting = False
 
-    async def chat(self, update, session_context):
-        assert update.message
-
+    async def chat(self, context):
         if not self.is_waiting:
-            session_context[self.name] = []
-            await update.message.reply_text(
+            context.session_context[self.name] = []
+            await context.message.reply_text(
                 "Ответы на сообщение (пишите отдельными сообщениями, можно пересылать, можно отправлять стикеры, картинки, видео и аудио):",
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -39,30 +36,28 @@ class CollectResponsesStep(Step):
             self.is_waiting = True
             return False  # to stay on this handler in session
 
-        response = Response(update.message.chat_id, update.message.message_id, 100)
-        await update.message.chat.copy_message(
-            update.message.chat_id, update.message.message_id
+        response = Response(context.message.chat_id, context.message.message_id, 100)
+        await context.message.chat.copy_message(
+            context.message.chat_id, context.message.message_id
         )
 
-        session_context[self.name].append(response)
+        context.session_context[self.name].append(response)
         return False
 
-    async def callback(self, update, session_context):
-        if len(session_context[self.name]) == 0:
-            await update.callback_query.message.chat.send_message(
+    async def callback(self, context):
+        if len(context.session_context[self.name]) == 0:
+            await context.callback_query.message.chat.send_message(
                 "Количество ответов не может быть нулевым"
             )
             return False
-        logging.info(update)
-        if update.callback_query.data == "add_rule_handler|end_responses":  # type: ignore
+        logging.info(context.update)
+        if context.callback_query.data == "add_rule_handler|end_responses":  # type: ignore
             return True
         return False
 
 
 class AddRuleHandler(SessionHandlerBase):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
+    def __init__(self):
         super().__init__([
             QuestionStep(
                 "from_users",

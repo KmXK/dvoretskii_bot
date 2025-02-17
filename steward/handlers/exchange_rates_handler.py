@@ -6,6 +6,7 @@ from aiohttp import ClientSession
 from pyrate_limiter import Callable
 from yarl import Query
 
+from steward.bot.context import ChatBotContext
 from steward.handlers.command_handler import CommandHandler, required
 from steward.handlers.handler import Handler
 from steward.helpers.limiter import Duration, check_limit
@@ -48,23 +49,22 @@ class ApiData:
 class ExchangeRateHandler(Handler):
     async def chat(
         self,
-        update,
-        context,
+        context: ChatBotContext,
         to_currency: str,
         amount: float,
         from_currency: str,
     ):
-        assert update.message and update.message.text
+        assert context.message and context.message.text
 
         logger.info(f"from: {from_currency}, to: {to_currency}, amount: {amount}")
 
         if from_currency == to_currency:
-            await update.message.reply_text(
+            await context.message.reply_text(
                 f"Валюты {from_currency} и {to_currency} совпадают"
             )
             return True
 
-        check_limit(self, 10, Duration.MINUTE, name=str(update.message.from_user.id))
+        check_limit(self, 10, Duration.MINUTE, name=str(context.message.from_user.id))
 
         apis = [
             ApiData(
@@ -87,12 +87,12 @@ class ExchangeRateHandler(Handler):
             rate = await api.try_get_exchange_rate()
 
             if rate:
-                await update.message.reply_text(
+                await context.message.reply_text(
                     f"{amount} {from_currency} = {rate * float(amount or 1.0)} {to_currency}"
                 )
                 return True
 
-        await update.message.reply_text(
+        await context.message.reply_text(
             f"Конвертация {from_currency} в {to_currency} невозможна"
         )
 

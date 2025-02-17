@@ -1,7 +1,6 @@
 import os
 import textwrap
 
-from steward.data.repository import Repository
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 from steward.helpers.formats import union_lists
@@ -12,9 +11,8 @@ from steward.helpers.pagination import (
 
 @CommandHandler("logs", only_admin=True)
 class LogsHandler(Handler):
-    def __init__(self, log_file_path: str, repository: Repository):
+    def __init__(self, log_file_path: str):
         self.log_file_path = log_file_path
-        self.repository = repository
 
         self.paginator = Paginator(
             unique_keyboard_name="logs",
@@ -32,14 +30,14 @@ class LogsHandler(Handler):
             start_from_last_page=True,
         )
 
-    async def chat(self, update, context):
+    async def chat(self, context):
         if not os.path.exists(self.log_file_path):
             open(self.log_file_path, "w").close()
 
-        return await self.paginator.show_list(update)
+        return await self.paginator.show_list(context.update)
 
-    async def callback(self, update, context):
-        return await self.paginator.process_callback(update)
+    async def callback(self, context):
+        return await self.paginator.process_callback(context.update)
 
     def help(self):
         return "/logs - показать логи"

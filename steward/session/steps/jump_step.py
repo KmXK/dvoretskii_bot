@@ -16,11 +16,11 @@ class JumpStep(Step):
 
         self.counter = 0
 
-    async def chat(self, update, session_context):
-        return self._jump(session_context)
+    async def chat(self, context):
+        return self._jump(context.session_context)
 
-    async def callback(self, update, session_context):
-        return self._jump(session_context)
+    async def callback(self, context):
+        return self._jump(context.session_context)
 
     def _jump(self, session_context):
         if self.iteration_key not in session_context:

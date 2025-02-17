@@ -1,16 +1,12 @@
 import textwrap
 
-from steward.data.repository import Repository
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 
 
 @CommandHandler("get_rules", only_admin=True)
 class GetRulesHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
+    async def chat(self, context):
         strings = ["Правила:", ""]
         for rule in self.repository.db.rules:
             strings.append(
@@ -22,7 +18,7 @@ class GetRulesHandler(Handler):
                     Игнорировать регистр: {rule.pattern.ignore_case_flag}
             """)
             )
-        await update.message.reply_text(text="\n".join(strings))
+        await context.message.reply_text(text="\n".join(strings))
 
     def help(self):
         return "/get_rules - просмотреть существующие правила"

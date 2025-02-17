@@ -38,11 +38,10 @@ def get_token(is_test=False):
         return "***REMOVED***"
 
 
-def get_handlers(log_file: None | str, repository: Repository):
+def get_handlers(log_file: None | str):
     # TODO: Union CRUD handlers to one import
     # TODO: Create bot context for bot
     handlers: list[Handler] = init_handlers(
-        repository,
         [
             ChatCollectHandler,
             DownloadHandler,
@@ -76,9 +75,9 @@ def get_handlers(log_file: None | str, repository: Repository):
     )
 
     if log_file is not None:
-        handlers.append(LogsHandler(log_file, repository))
+        handlers.append(LogsHandler(log_file))
 
-    handlers.append(HelpHandler(handlers, repository))
+    handlers.append(HelpHandler(handlers))
 
     return handlers
 
@@ -107,7 +106,7 @@ def main():
     configure_logging(token, args.log_file, args.debug)
 
     repository = Repository(JsonFileStorage("db.json"))
-    handlers = get_handlers(args.log_file, repository)
+    handlers = get_handlers(args.log_file)
 
     Bot(handlers, repository).start(
         token,

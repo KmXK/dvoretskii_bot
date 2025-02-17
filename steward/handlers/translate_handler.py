@@ -16,16 +16,14 @@ LANG_REGEX = r"((?P<from_lang>[a-zA-Z]+)/)?(?P<to_lang>[a-zA-Z]+)"
 
 
 class TranslateHandler(Handler):
-    async def chat(self, update, context):
-        assert update.message and update.message.text
-
+    async def chat(self, context):
         if validation_result := validate_command_msg(
-            update,
+            context.update,
             "translate",
             r"^" + LANG_REGEX + r" (?P<text>.+)$",
         ):
             if not validation_result:
-                await update.message.reply_text(
+                await context.message.reply_text(
                     "Использование: /translate [<from_code_language>/]<to_code_language> <text>"
                 )
                 return True
@@ -36,7 +34,7 @@ class TranslateHandler(Handler):
         # TODO: сделать подмену сообщений в правилах и поменять на /translate
         else:
             parsed_args = validate_arguments(
-                update.message.text, r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$"
+                context.message.text, r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$"
             )
 
             if not parsed_args:
@@ -46,7 +44,7 @@ class TranslateHandler(Handler):
         lang: str = parsed_args["to_lang"]
         text: str = parsed_args["text"]
 
-        check_limit(self, 20, Duration.MINUTE, name=str(update.message.from_user.id))
+        check_limit(self, 20, Duration.MINUTE, name=str(context.message.from_user.id))
 
         async with ClientSession() as session:
             async with session.post(
@@ -69,13 +67,13 @@ class TranslateHandler(Handler):
                     "message" in json
                     and "unsupported target_language_code" in json["message"]
                 ):
-                    await update.message.reply_text(
+                    await context.message.reply_text(
                         f"Язык {lang} не поддерживается для перевода"
                     )
                     return True
 
                 text = json["translations"][0]["text"]
-                await update.message.reply_text(text)
+                await context.message.reply_text(text)
 
         return True
 

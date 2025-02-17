@@ -15,8 +15,8 @@ class ScriptHandler(Handler):
         self.help_text = help_text
         self.only_for_admin = True
 
-    async def chat(self, update, context):
-        if validate_command_msg(update, self.command):
+    async def chat(self, context):
+        if validate_command_msg(context.update, self.command):
             process = await asyncio.create_subprocess_shell(
                 self.script_path,
                 stdout=asyncio.subprocess.PIPE,
@@ -30,13 +30,15 @@ class ScriptHandler(Handler):
             )
 
             if process.returncode != 0:
-                await update.message.reply_markdown(
+                await context.update.message.reply_markdown(
                     f"Script executed with errorcode {process.returncode}"
                 )
                 return True
 
             # FIX: Now bot is dying and we need to send this on restart or make grace shutdown (too hard)
-            await update.message.reply_markdown("Script has been finished successfully")
+            await context.update.message.reply_markdown(
+                "Script has been finished successfully"
+            )
             return True
 
     def help(self):

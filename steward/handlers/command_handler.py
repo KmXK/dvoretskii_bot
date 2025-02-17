@@ -5,9 +5,8 @@ from functools import wraps
 from typing import Any
 
 from pyrate_limiter import Callable, Optional
-from telegram import Update
-from telegram.ext import ContextTypes
 
+from steward.bot.context import ChatBotContext
 from steward.helpers.command_validation import (
     ValidationArgumentsError,
     validate_command_msg,
@@ -41,16 +40,12 @@ def CommandHandler(
         chat = handlerClass.chat
         sig = inspect.signature(chat)
         # параметр для спаршенных аргументов
-        send_arguments = len(sig.parameters.keys()) > 3
+        send_arguments = len(sig.parameters.keys()) > 2
 
         @wraps(handlerClass.chat)
-        async def filteredChat(
-            self,
-            update: Update,
-            context: ContextTypes.DEFAULT_TYPE,
-        ):
+        async def filteredChat(self, context: ChatBotContext):
             validation_result = validate_command_msg(
-                update,
+                context.update,
                 command,
                 arguments_template,
             )
@@ -81,9 +76,9 @@ def CommandHandler(
                     # TODO: move get_value to command_validation
                     raise ValidationArgumentsError()
 
-                return await chat(self, update, context, **kwargs)
+                return await chat(self, context, **kwargs)
 
-            return await chat(self, update, context)
+            return await chat(self, context)
 
         handlerClass.only_for_admin = only_admin is True
         handlerClass.chat = filteredChat

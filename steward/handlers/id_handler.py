@@ -1,4 +1,4 @@
-from telegram import MessageOriginUser, Update, User
+from telegram import MessageOriginUser, User
 
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.validation import check, try_get, validate_update
@@ -6,13 +6,6 @@ from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.steps.echo_step import AnswerStep
 from steward.session.steps.jump_step import JumpStep
 from steward.session.steps.question_step import QuestionStep
-
-
-def validate_forward_user(update: Update):
-    return update.message is not None and isinstance(
-        update.message.forward_origin,
-        MessageOriginUser,
-    )
 
 
 def write_result(user: User):
@@ -27,7 +20,11 @@ class IdHandler(SessionHandlerBase):
                 "Пришли мне сообщение, чтобы узнать айди автора",
                 filter_answer=validate_update([
                     check(
-                        lambda u: validate_forward_user(u),
+                        lambda update: update.message is not None
+                        and isinstance(
+                            update.message.forward_origin,
+                            MessageOriginUser,
+                        ),
                         "Некорректное сообщение, попробуй другое",
                     ),
                     try_get(lambda u: u.message.forward_origin.sender_user),

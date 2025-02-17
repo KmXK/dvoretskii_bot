@@ -1,15 +1,11 @@
-from steward.data.repository import Repository
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 
 
 @CommandHandler("get_admins", only_admin=True)
 class GetAdminsHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
-        await update.message.reply_text(
+    async def chat(self, context):
+        await context.message.reply_text(
             text="\n".join([
                 "Админы:",
                 "",

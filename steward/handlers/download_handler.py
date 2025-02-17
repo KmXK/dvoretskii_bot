@@ -12,8 +12,7 @@ from urllib.parse import urlencode
 import aiohttp
 import youtube_dl
 from pyrate_limiter import Duration
-from telegram import InputFile, InputMediaPhoto, Message, Update
-from telegram.ext import ContextTypes
+from telegram import InputFile, InputMediaPhoto, Message
 
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
@@ -29,28 +28,25 @@ URL_REGEX = (
 
 
 class DownloadHandler(Handler):
-    async def chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # todo: remove after adding context to handlers
-        assert update.message is not None
+    async def chat(self, context):
+        assert context.message.text
+        urls = re.findall(URL_REGEX, context.message.text)
 
-        if update.message.text is not None:
-            urls = re.findall(URL_REGEX, update.message.text)
-
-            for url in urls:
-                for handlerPath, handler in {
-                    "tiktok": self._load_tiktok,
-                    "instagram.com": self._load_instagram,
-                    "youtube.com": self._load_youtube,
-                    "youtu.be": self._load_youtube,
-                    "music.yandex": self._load_yandex_music,
-                }.items():
-                    if handlerPath in url:
-                        logger.info(f"Получен url: {url}")
-                        try:
-                            await handler(url, update.message)
-                        except Exception as e:
-                            logger.exception(e)
-                        return True
+        for url in urls:
+            for handlerPath, handler in {
+                "tiktok": self._load_tiktok,
+                "instagram.com": self._load_instagram,
+                "youtube.com": self._load_youtube,
+                "youtu.be": self._load_youtube,
+                "music.yandex": self._load_yandex_music,
+            }.items():
+                if handlerPath in url:
+                    logger.info(f"Получен url: {url}")
+                    try:
+                        await handler(url, context.message)
+                    except Exception as e:
+                        logger.exception(e)
+                    return True
 
     async def _load_tiktok(
         self,

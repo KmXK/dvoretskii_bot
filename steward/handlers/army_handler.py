@@ -4,7 +4,6 @@ import logging
 import humanize.i18n
 
 from steward.data.models.army import Army
-from steward.data.repository import Repository
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 
@@ -20,13 +19,10 @@ logger = logging.getLogger(__name__)
 
 @CommandHandler("add_army", only_admin=True)
 class AddArmyHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
+    async def chat(self, context):
         try:
             name, start_date, end_date = (
-                update.message.text.replace("/add_army", "").strip().split(" ")
+                context.message.text.replace("/add_army", "").strip().split(" ")
             )
             if start_date is None or end_date is None:
                 raise ValueError()
@@ -38,7 +34,7 @@ class AddArmyHandler(Handler):
                 )
             )
             await self.repository.save()
-            await update.message.reply_markdown("Добавил человечка")
+            await context.message.reply_markdown("Добавил человечка")
         except ValueError as e:
             logger.exception(e)
             string = (
@@ -47,7 +43,7 @@ class AddArmyHandler(Handler):
                 "start date - дата начало службы в формате дд.мм.гггг \n"
                 "end date - дата конца службы в формате дд.мм.гггг \n"
             )
-            await update.message.reply_text(string)
+            await context.message.reply_text(string)
 
     def help(self):
         return "/add_army <name> <start_date> <end_date> - отслеживать срок человека в армии"
@@ -55,25 +51,22 @@ class AddArmyHandler(Handler):
 
 @CommandHandler("delete_army", only_admin=True)
 class DeleteArmyHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
+    async def chat(self, context):
         try:
-            name = update.message.text.strip().replace("/delete_army", "").strip()
+            name = context.message.text.strip().replace("/delete_army", "").strip()
             army_to_delete = next(
                 (x for x in self.repository.db.army if x.name == name), None
             )
             if army_to_delete is None:
-                await update.message.reply_text(
+                await context.message.reply_text(
                     "Человечка с таким именем не существует"
                 )
             else:
                 self.repository.db.army.remove(army_to_delete)
                 await self.repository.save()
-                await update.message.reply_markdown("Удалил человечка")
+                await context.message.reply_markdown("Удалил человечка")
         except ValueError:
-            await update.message.reply_text("Человечка с таким именем не существует")
+            await context.message.reply_text("Человечка с таким именем не существует")
 
     def help(self):
         return "/delete_army <name> - перестать отслеживать срок человека в армии"
@@ -81,12 +74,9 @@ class DeleteArmyHandler(Handler):
 
 @CommandHandler("army", only_admin=False)
 class ArmyHandler(Handler):
-    def __init__(self, repository: Repository):
-        self.repository = repository
-
-    async def chat(self, update, context):
+    async def chat(self, context):
         if len(self.repository.db.army) == 0:
-            await update.message.reply_markdown("В армейку никого не добавили")
+            await context.message.reply_markdown("В армейку никого не добавили")
             return
 
         text = "Статус по армейке на сегодня: \n\n"
@@ -102,7 +92,7 @@ class ArmyHandler(Handler):
                 text += f"{army.name} - осталось {humanize.precisedelta(last, format='%0.1f', minimum_unit='hours')} ({percent * 100:.5f}%)\n"
             else:
                 text += f"{army.name} - дембель\n"
-        await update.message.reply_markdown(text)
+        await context.message.reply_markdown(text)
 
     def help(self):
         return "/army - посмотреть статус армейцев"
