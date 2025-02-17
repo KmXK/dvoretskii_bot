@@ -1,21 +1,22 @@
-from steward.handlers.command_handler import CommandHandler
+from steward.bot.context import ChatBotContext
+from steward.handlers.command_handler import CommandHandler, required
 from steward.handlers.handler import Handler
 
 
-@CommandHandler("add_admin", only_admin=True)
+@CommandHandler(
+    "add_admin",
+    only_admin=True,
+    arguments_template=r"(?P<id>\d+)",
+    arguments_mapping={"id": required(int)},
+)
 class AddAdminHandler(Handler):
-    async def chat(self, context):
-        try:
-            admin_id = int(context.message.text.split()[1])
-            self.repository.db.admin_ids.add(admin_id)
+    async def chat(self, context: ChatBotContext, id: int):
+        if self.repository.is_admin(id):
+            await context.message.reply_text("Такой админ уже есть")
+        else:
+            self.repository.db.admin_ids.add(id)
             await self.repository.save()
-            await context.message.reply_markdown("Админ добавлен")
-        except ValueError:
-            await context.message.reply_text(
-                "Ошибка. id админа должно быть целым числом"
-            )
-        except IndexError:
-            await context.message.reply_text("Ошибка. Укажите id админа")
+            await context.message.reply_markdown(f"Админ с id = {id} добавлен")
 
     def help(self):
         return "/add_admin <id> - добавить админа по id"

@@ -14,11 +14,9 @@ class DeleteAdminHandler(Handler):
         try:
             self.repository.db.admin_ids.remove(admin_id)
             await self.repository.save()
-            await context.message.reply_markdown(f"Админ с id={admin_id} удалён")
+            await context.message.reply_markdown(f"Админ с id = {admin_id} удалён")
         except KeyError:
             await context.message.reply_text("Ошибка. Админа с таким id не существует")
-        except IndexError:
-            await context.message.reply_text("Ошибка. Укажите id админа")
 
     def help(self):
         return "/delete_admin <id> - удалить админа"
