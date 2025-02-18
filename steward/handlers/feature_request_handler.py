@@ -162,6 +162,7 @@ class FeatureRequestViewHandler(Handler):
         return "/fq [done|deny|reopen <ids>] | [text] - управлять фича-реквестами"
 
 
+# TODO: list of args (args mapping argument)
 class FeatureRequestEditHandler(Handler):
     async def chat(self, context):
         if not validate_command_msg(context.update, ["featurerequest", "fq"]):
