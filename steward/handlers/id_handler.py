@@ -12,6 +12,7 @@ def write_result(user: User):
     return f"Id пользователя {user.name} = {user.id}"
 
 
+# TODO: add commandHandler to SessionHandlerBase
 class IdHandler(SessionHandlerBase):
     def __init__(self):
         super().__init__([
@@ -53,3 +54,6 @@ class IdHandler(SessionHandlerBase):
 
         session_context["repeat_count"] = stop_iteration_number
         return True
+
+    def help(self):
+        return "/id <количество повторений> - получить айди пользователя"

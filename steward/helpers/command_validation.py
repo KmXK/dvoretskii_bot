@@ -27,7 +27,7 @@ def validate_arguments(
     if match is None:
         return None
 
-    return {k: v.strip() for k, v in match.groupdict().items()}
+    return {k: v.strip() if v is not None else v for k, v in match.groupdict().items()}
 
 
 class ValidationResult:

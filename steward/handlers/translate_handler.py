@@ -4,7 +4,11 @@ from os import environ
 from aiohttp import ClientSession
 
 from steward.handlers.handler import Handler
-from steward.helpers.command_validation import validate_arguments, validate_command_msg
+from steward.helpers.command_validation import (
+    ValidationArgumentsError,
+    validate_arguments,
+    validate_command_msg,
+)
 from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)
@@ -20,25 +24,43 @@ class TranslateHandler(Handler):
         if validation_result := validate_command_msg(
             context.update,
             "translate",
-            r"^" + LANG_REGEX + r" (?P<text>.+)$",
+            LANG_REGEX + r"( (?P<text>.+))?",
         ):
             if not validation_result:
-                await context.message.reply_text(
-                    "Использование: /translate [<from_code_language>/]<to_code_language> <text>"
-                )
-                return True
+                raise ValidationArgumentsError()
 
             assert validation_result.args
+
+            if validation_result.args.get("text") is None:
+                if (
+                    context.message.reply_to_message is None
+                    or context.message.reply_to_message.text is None
+                ):
+                    raise ValidationArgumentsError()
+
+                validation_result.args["text"] = context.message.reply_to_message.text
+
             parsed_args = validation_result.args
 
         # TODO: сделать подмену сообщений в правилах и поменять на /translate
         else:
+            assert context.message.text
             parsed_args = validate_arguments(
-                context.message.text, r"^\[" + LANG_REGEX + r"\] (?P<text>.+)$"
+                context.message.text,
+                r"\[" + LANG_REGEX + r"\]( (?P<text>.+))?",
             )
 
             if not parsed_args:
                 return False
+
+            if parsed_args.get("text") is None:
+                if (
+                    context.message.reply_to_message is None
+                    or context.message.reply_to_message.text is None
+                ):
+                    raise ValidationArgumentsError()
+
+                parsed_args["text"] = context.message.reply_to_message.text
 
         from_lang: str | None = parsed_args.get("from_lang")
         lang: str = parsed_args["to_lang"]
