@@ -62,8 +62,10 @@ class TranslateHandler(Handler):
 
                 parsed_args["text"] = context.message.reply_to_message.text
 
-        from_lang: str | None = parsed_args.get("from_lang")
-        lang: str = parsed_args["to_lang"]
+        from_lang = parsed_args.get("from_lang")
+        if from_lang is not None:
+            from_lang = from_lang.lower()
+        lang: str = parsed_args["to_lang"].lower()
         text: str = parsed_args["text"]
 
         check_limit(self, 20, Duration.MINUTE, name=str(context.message.from_user.id))
