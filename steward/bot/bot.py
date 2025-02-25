@@ -42,7 +42,12 @@ class Bot:
             handler.repository = repository
             handler.bot = self.bot
 
-    def start(self, token, drop_pending_updates, local_server: str | None = None):
+    def start(
+        self,
+        token: str,
+        drop_pending_updates: bool,
+        local_server: str | None = None,
+    ):
         applicationBuilder = (
             Application.builder()
             .token(token)
@@ -58,7 +63,7 @@ class Bot:
             applicationBuilder = (
                 applicationBuilder.base_url(local_server + "/bot")
                 .base_file_url(local_server + "/file/bot")
-                .local_mode(local_server is not None)
+                .local_mode(True)
             )
 
         application = applicationBuilder.build()
@@ -90,6 +95,7 @@ class Bot:
 
         ctx = ChatBotContext(
             self.repository,
+            self.bot,
             update,
             context,
             update.message,
@@ -108,6 +114,7 @@ class Bot:
 
         ctx = CallbackBotContext(
             self.repository,
+            self.bot,
             update,
             context,
             update.callback_query,
