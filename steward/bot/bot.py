@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -15,6 +16,7 @@ from telegram.ext import (
 )
 
 from steward.bot.context import BotActionContext, CallbackBotContext, ChatBotContext
+from steward.bot.delayed_action_handler import DelayedActionHandler
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
@@ -37,6 +39,7 @@ class Bot:
         self.hints_updater = InlineHintsUpdater(repository, handlers)
 
         self.bot: ExtBot[None] = None  # type: ignore
+        self.delayed_action_handler: DelayedActionHandler
 
         for handler in handlers:
             handler.repository = repository
@@ -76,12 +79,18 @@ class Bot:
             await self.hints_updater.start(application.bot)
 
             for handler in self.handlers:
-                if init_coro := handler.init():
+                if init_coro := handler.init():  # type: ignore
                     await init_coro
 
         application.post_init = post_init
 
         self.bot = application.bot
+
+        self.delayed_action_handler = DelayedActionHandler(self.repository, self.bot)
+        asyncio.ensure_future(
+            self.delayed_action_handler.start(),
+            loop=asyncio.get_event_loop(),
+        )
 
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,

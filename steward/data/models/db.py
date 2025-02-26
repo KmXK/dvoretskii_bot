@@ -32,6 +32,7 @@ def parse_from_dict(data: dict[str, Any]) -> Database:
         type_hooks={
             datetime: lambda s: datetime.fromtimestamp(s),
             timedelta: lambda s: timedelta(seconds=s),
+            # set: lambda s: set(s), # TODO: TEST and clean migrate()
         },
     )
 

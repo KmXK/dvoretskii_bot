@@ -11,7 +11,7 @@ def try_get_class_by_mark(
     if category in marks:
         if isinstance(mark, str) and mark in marks[category]:
             return marks[category][mark]
-        elif isinstance(mark, dict) and mark["__class_mark__"] in marks[category]:
+        elif isinstance(mark, dict) and mark.get("__class_mark__") in marks[category]:
             return marks[category][mark["__class_mark__"]]
     return None
 
