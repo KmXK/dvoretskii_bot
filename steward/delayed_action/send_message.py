@@ -11,7 +11,7 @@ class MessageData:
 
 
 @dataclass
-@class_mark("delayed_action", "send_message")
+@class_mark("delayed_action/send_message")
 class SendMessageDelayedAction(DelayedAction):
     to_chat_id: int
     data: str | MessageData

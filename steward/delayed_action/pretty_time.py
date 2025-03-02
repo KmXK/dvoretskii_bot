@@ -23,7 +23,7 @@ pretty_times = [
 
 
 @dataclass
-@class_mark("generator", "pretty_time")
+@class_mark("generator/pretty_time")
 class PrettyTimeGenerator(Generator):
     def get_next(self, now: datetime):
         times = [
@@ -40,7 +40,7 @@ class PrettyTimeGenerator(Generator):
 
 
 @dataclass
-@class_mark("delayed_action", "pretty_time")
+@class_mark("delayed_action/pretty_time")
 class PrettyTimeDelayedAction(DelayedAction):
     chat_id: int
     generator: PrettyTimeGenerator = field(

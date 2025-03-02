@@ -41,16 +41,23 @@ def parse_from_dict(data: dict[str, Any]) -> Database:
         data=data,
         config=config,
     )
+    logging.info(db.delayed_actions)
 
     db.delayed_actions.clear()
+
+    # def fill_class_marks(real_obj: Any, dict_obj: dict[Any, Any], cls: Type):
+    #     if not is_dataclass(real_obj):
+    #         return
+
+    #     for field in real_obj.__dataclass_fields__.values():
 
     # custom logic for delayed actions because we use __class_mark__ as hint
     # to choose concrete class for the value
     for action in data.get("delayed_actions", []):
+        logging.info(action)
         try:
             generator = from_dict(
                 data_class=get_class_by_mark(
-                    "generator",
                     action["generator"],
                 ),
                 data=action["generator"],
@@ -58,7 +65,7 @@ def parse_from_dict(data: dict[str, Any]) -> Database:
             )
 
             real_action = from_dict(
-                data_class=get_class_by_mark("delayed_action", action),
+                data_class=get_class_by_mark(action),
                 data=action,
                 config=config,
             )
