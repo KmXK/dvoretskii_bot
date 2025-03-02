@@ -1,13 +1,13 @@
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, Sized
 
 from dacite import Config, from_dict
 
 from steward.delayed_action.base import DelayedAction
-from steward.helpers.class_mark import get_class_by_mark
+from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
 from .chat import Chat
@@ -26,57 +26,77 @@ class Database:
     version: int = 3
 
 
-def parse_from_dict(data: dict[str, Any]) -> Database:
-    config = Config(
-        cast=[Enum],
-        type_hooks={
-            datetime: lambda s: datetime.fromtimestamp(s),
-            timedelta: lambda s: timedelta(seconds=s),
-            # set: lambda s: set(s), # TODO: TEST and clean migrate()
-        },
-    )
+PARSE_CONFIG = Config(
+    cast=[Enum],
+    type_hooks={
+        datetime: lambda s: datetime.fromtimestamp(s),
+        timedelta: lambda s: timedelta(seconds=s),
+        # set: lambda s: set(s), # TODO: TEST and clean migrate()
+    },
+)
 
+
+def populate_object_with_marked_fields(real_obj: Any, dict_obj: dict[Any, Any]):
+    def create_marked_field(field_data: Any):
+        def iter_wrap[T: Sized](default: T, add_func: Callable[[T, Any], None]):
+            logging.info(type(field_data).__name__)
+            value = default
+            for item in field_data:
+                x = create_marked_field(item)
+                if x is not None:
+                    add_func(value, x)
+            return value if len(value) > 0 else None
+
+        if isinstance(field_data, list):
+            return iter_wrap(list(), lambda l, v: l.append(v))
+        elif isinstance(field_data, set):
+            return iter_wrap(set(), lambda s, v: s.add(v))
+
+        if not isinstance(field_data, dict):
+            return None
+
+        cls = try_get_class_by_mark(field_data)
+
+        if not cls:
+            return None
+
+        try:
+            value = from_dict(
+                data_class=cls,
+                data=field_data,
+                config=PARSE_CONFIG,
+            )
+
+            populate_object_with_marked_fields(
+                value,
+                field_data,
+            )
+        except BaseException as e:
+            logging.exception(e)
+            return None
+
+        return value
+
+    if not is_dataclass(real_obj):
+        return {}
+
+    for f in real_obj.__dataclass_fields__.values():
+        value = create_marked_field(dict_obj.get(f.name))
+        if value is not None:
+            setattr(real_obj, f.name, value)
+
+
+def parse_from_dict(data: dict[str, Any]) -> Database:
     db = from_dict(
         data_class=Database,
         data=data,
-        config=config,
+        config=PARSE_CONFIG,
     )
     logging.info(db.delayed_actions)
 
     db.delayed_actions.clear()
 
-    # def fill_class_marks(real_obj: Any, dict_obj: dict[Any, Any], cls: Type):
-    #     if not is_dataclass(real_obj):
-    #         return
-
-    #     for field in real_obj.__dataclass_fields__.values():
-
-    # custom logic for delayed actions because we use __class_mark__ as hint
-    # to choose concrete class for the value
-    for action in data.get("delayed_actions", []):
-        logging.info(action)
-        try:
-            generator = from_dict(
-                data_class=get_class_by_mark(
-                    action["generator"],
-                ),
-                data=action["generator"],
-                config=config,
-            )
-
-            real_action = from_dict(
-                data_class=get_class_by_mark(action),
-                data=action,
-                config=config,
-            )
-
-            real_action.generator = generator
-
-            db.delayed_actions.append(real_action)
-        except BaseException as e:
-            logging.exception(e)
-            continue
-
+    populate_object_with_marked_fields(db, data)
     return db
 
 
