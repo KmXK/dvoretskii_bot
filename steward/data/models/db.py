@@ -27,11 +27,13 @@ class Database:
 
 
 PARSE_CONFIG = Config(
-    cast=[Enum],
+    cast=[
+        Enum,
+        set,
+    ],
     type_hooks={
         datetime: lambda s: datetime.fromtimestamp(s),
         timedelta: lambda s: timedelta(seconds=s),
-        # set: lambda s: set(s), # TODO: TEST and clean migrate()
     },
 )
 
@@ -92,9 +94,6 @@ def parse_from_dict(data: dict[str, Any]) -> Database:
         data=data,
         config=PARSE_CONFIG,
     )
-    logging.info(db.delayed_actions)
-
-    db.delayed_actions.clear()
 
     populate_object_with_marked_fields(db, data)
     return db

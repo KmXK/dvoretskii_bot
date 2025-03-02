@@ -130,15 +130,4 @@ class Repository:
         if data.get("version") is None:
             data = {"admin_ids": [***REMOVED***, ***REMOVED***], "version": 2}
 
-        # вроде как set() удалять нельзя, либа не справляется с конвертацией [] в set
-        for rule in data.get("rules", []):
-            rule["from_users"] = set(rule["from_users"])
-
-        data["admin_ids"] = set(data["admin_ids"])
-
-        id = 1
-        for fq in data.get("feature_requests", []):
-            fq["id"] = id
-            id += 1
-
         return data
