@@ -115,8 +115,8 @@ class AddRuleHandler(SessionHandlerBase):
                     ),
                 ]),
             ),
-            CollectResponsesStep("responses"),
             CheckRegexpStep(),
+            CollectResponsesStep("responses"),
             QuestionStep(
                 "probabilities",
                 lambda ctx: f"Напишите вероятности ответов ({len(ctx['responses'])})(через пробел)",
@@ -143,7 +143,7 @@ class AddRuleHandler(SessionHandlerBase):
         ])
 
     def try_activate_session(self, update, session_context):
-        if not validate_command_msg(update, ["add_rule", "new_rule"]):
+        if not validate_command_msg(update, "add_rule"):
             return False
 
         return True
@@ -168,3 +168,6 @@ class AddRuleHandler(SessionHandlerBase):
         await get_message(update).chat.send_message(
             f"Правило добавлено c id {self.rule.id}"
         )
+
+    def help(self):
+        return "/add_rule - добавить правило"
