@@ -19,9 +19,19 @@ class CollectResponsesStep(Step):
         self.is_waiting = False
 
     async def chat(self, context):
+        response = Response(context.message.chat_id, context.message.message_id, 100)
+        await context.message.chat.copy_message(
+            context.message.chat_id, context.message.message_id
+        )
+
+        context.session_context[self.name].append(response)
+        return False
+
+    async def callback(self, context):
         if not self.is_waiting:
             context.session_context[self.name] = []
-            await context.message.reply_text(
+            await context.bot.send_message(
+                context.callback_query.message.chat.id,
                 "Ответы на сообщение (пишите отдельными сообщениями, можно пересылать, можно отправлять стикеры, картинки, видео и аудио):",
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -35,15 +45,6 @@ class CollectResponsesStep(Step):
             self.is_waiting = True
             return False  # to stay on this handler in session
 
-        response = Response(context.message.chat_id, context.message.message_id, 100)
-        await context.message.chat.copy_message(
-            context.message.chat_id, context.message.message_id
-        )
-
-        context.session_context[self.name].append(response)
-        return False
-
-    async def callback(self, context):
         if len(context.session_context[self.name]) == 0:
             await context.callback_query.message.chat.send_message(
                 "Количество ответов не может быть нулевым"
@@ -60,19 +61,8 @@ class CheckRegexpStep(Step):
         self.is_first = True
 
     async def chat(self, context):
-        if not context.message.text:
-            await context.message.reply_text("Пустое сообщение")
-            return False
-
-        result = re.search(context.session_context["pattern"], context.message.text)
-        await context.message.reply_text("Подходит" if result else "Не подходит")
-
-        return False
-
-    async def callback(self, context):
         if self.is_first:
-            await context.bot.send_message(
-                context.callback_query.message.chat.id,
+            await context.message.reply_text(
                 'Проверка шаблона, отправляйте сообщения, а после нажмите кнопку "Закончить" в конце',
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -86,6 +76,16 @@ class CheckRegexpStep(Step):
             self.is_first = False
             return False  # to stay on this handler in session
 
+        if not context.message.text:
+            await context.message.reply_text("Пустое сообщение")
+            return False
+
+        result = re.search(context.session_context["pattern"], context.message.text)
+        await context.message.reply_text("Подходит" if result else "Не подходит")
+
+        return False
+
+    async def callback(self, context):
         if context.callback_query.data == "add_rule_handler|end_check_regexp":
             return True
         return False
