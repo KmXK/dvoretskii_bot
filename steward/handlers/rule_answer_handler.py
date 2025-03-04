@@ -13,7 +13,7 @@ class RuleAnswerHandler(Handler):
         def does_rule_match(rule: Rule):
             return (
                 isinstance(context.message.text, str)
-                and re.match(
+                and re.search(
                     rule.pattern.regex,
                     context.message.text,
                     re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0,

@@ -4,14 +4,13 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.data.models.rule import Response, Rule, RulePattern
+from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.tg_update_helpers import get_message
 from steward.helpers.validation import check, try_get, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
 from steward.session.steps.keyboard_step import KeyboardStep
 from steward.session.steps.question_step import QuestionStep
-
-from ..helpers.command_validation import validate_command_msg
 
 
 class CollectResponsesStep(Step):
@@ -56,6 +55,42 @@ class CollectResponsesStep(Step):
         return False
 
 
+class CheckRegexpStep(Step):
+    def __init__(self):
+        self.is_first = True
+
+    async def chat(self, context):
+        if not context.message.text:
+            await context.message.reply_text("Пустое сообщение")
+            return False
+
+        result = re.search(context.session_context["pattern"], context.message.text)
+        await context.message.reply_text("Подходит" if result else "Не подходит")
+
+        return False
+
+    async def callback(self, context):
+        if self.is_first:
+            await context.bot.send_message(
+                context.callback_query.message.chat.id,
+                'Проверка шаблона, отправляйте сообщения, а после нажмите кнопку "Закончить" в конце',
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "Закончить",
+                            callback_data="add_rule_handler|end_check_regexp",
+                        ),
+                    ],
+                ]),
+            )
+            self.is_first = False
+            return False  # to stay on this handler in session
+
+        if context.callback_query.data == "add_rule_handler|end_check_regexp":
+            return True
+        return False
+
+
 class AddRuleHandler(SessionHandlerBase):
     def __init__(self):
         super().__init__([
@@ -81,6 +116,7 @@ class AddRuleHandler(SessionHandlerBase):
                 ]),
             ),
             CollectResponsesStep("responses"),
+            CheckRegexpStep(),
             QuestionStep(
                 "probabilities",
                 lambda ctx: f"Напишите вероятности ответов ({len(ctx['responses'])})(через пробел)",
