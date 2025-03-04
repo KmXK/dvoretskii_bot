@@ -41,7 +41,6 @@ PARSE_CONFIG = Config(
 def populate_object_with_marked_fields(real_obj: Any, dict_obj: dict[Any, Any]):
     def create_marked_field(field_data: Any):
         def iter_wrap[T: Sized](default: T, add_func: Callable[[T, Any], None]):
-            logging.info(type(field_data).__name__)
             value = default
             for item in field_data:
                 x = create_marked_field(item)
