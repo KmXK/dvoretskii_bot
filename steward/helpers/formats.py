@@ -13,4 +13,5 @@ def union_lists[T](lists: list[list[T] | T]) -> list[T]:
             result.extend(x)
         else:
             result.append(x)
+    print(result)
     return result

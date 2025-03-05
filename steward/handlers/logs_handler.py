@@ -19,7 +19,7 @@ class LogsHandler(Handler):
             list_header=None,
             page_size=25,
             page_format_func=lambda ctx: "```python\n"
-            + "".join(ctx.data).replace("`", "'")
+            + "\n".join(x.rstrip("\n") for x in ctx.data).replace("`", "'")
             + "```",
             data_func=lambda: union_lists([
                 x if len(x) <= 100 else textwrap.wrap(x, width=70)
