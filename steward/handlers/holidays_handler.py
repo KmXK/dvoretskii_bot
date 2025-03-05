@@ -68,6 +68,7 @@ class HolidaysHandler(Handler):
                 ]
 
             holidays = cache.holidays
+            logging.info("got holidays: %s", holidays)
 
         await context.message.reply_markdown(
             "\n".join([
