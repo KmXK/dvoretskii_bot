@@ -57,18 +57,20 @@ class DownloadHandler(Handler):
 
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                "http://8.215.8.243:1337/tiktok2?url=" + url
+                "http://8.215.8.243:1337/tiktok?url=" + url
             ) as response:
                 json = await response.json()
                 if json["status"]:
-                    video = json["result"].get("video")
-                    images = json["result"].get("image")
-                    if video is not None:
+                    result = json["result"]
+                    video = result.get("video_HD") or result.get("video")
+                    images = result.get("image")
+
+                    if video:
                         await self._send_video(message, video)
-                    elif images is not None:
+                    elif images:
                         await self._send_images(message, images)
 
-                        audio = json["result"].get("audio")
+                        audio = result.get("audio")
                         if audio is not None:
                             logger.info(f"Получено аудио: {audio}")
                             async with self._download_file(audio) as file:
