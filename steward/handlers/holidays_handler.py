@@ -43,6 +43,8 @@ class HolidaysHandler(Handler):
                     logging.info(response)
                     content = await response.text()
 
+                    logging.info(content)
+
                     # redirect is also error here
                     if response.status >= 300:
                         logger.warning(
