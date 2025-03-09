@@ -11,3 +11,4 @@ pymorphy3
 pyrate-limiter
 yt-dlp
 gallery-dl
+PySocks

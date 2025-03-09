@@ -1,15 +1,13 @@
+import asyncio
 import base64
 import logging
 import os
 import re
 import tempfile
-from asyncio import sleep
 from contextlib import ExitStack, asynccontextmanager
 from urllib.parse import urlencode
 
 import aiohttp
-import gallery_dl
-import gallery_dl.path
 import youtube_dl
 import yt_dlp
 from pyrate_limiter import Duration
@@ -110,6 +108,7 @@ class DownloadHandler(Handler):
                 filepath = dir + "/file"
                 logger.info(
                     yt_dlp.YoutubeDL({
+                        "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
                         "verbose": True,
                         "outtmpl": filepath,
                         "logger": yt_logger,
@@ -135,31 +134,28 @@ class DownloadHandler(Handler):
             logger.info(f"trying get images from {type_name}...")
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
+                process = await asyncio.create_subprocess_exec(
+                    "gallery-dl",
+                    "--proxy",
+                    "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                    "--verbose",
+                    "-f",
+                    "{num}.{extension}",
+                    "-D",
+                    dir,
+                    url,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await process.communicate()
+                logger.info(
+                    f"gallery-dl process done: stdout={stdout.decode(errors='replace')}, stderr={stderr.decode(errors='replace')}"
+                )
 
-                class CustomPath(gallery_dl.path.PathFormat):
-                    def __init__(self, *args, **kwargs):
-                        super().__init__(*args, **kwargs)
-                        self.i = 1
-
-                    def build_path(self):
-                        super().build_path()
-                        i = self.i
-                        self.i += 1
-                        self.temppath = self.realpath = self.path = os.path.join(
-                            dir,
-                            re.sub(
-                                r"(.*)\.(?P<extension>[^\.]+)$",
-                                lambda m: f"{i}.{m.group('extension')}",
-                                str(self.filename),
-                            ),
-                        )
-
-                # TODO: cringe
-                gallery_dl.path.PathFormat = CustomPath
-
-                job = gallery_dl.job.DownloadJob(url)
-                job.initialize()
-                job.run()
+                if process.returncode != 0:
+                    raise Exception(
+                        f"gallery-dl exited with error {process.returncode}"
+                    )
 
                 all_files = [os.path.join(dir, x) for x in os.listdir(dir)]
                 images = [x for x in all_files if not x.endswith(".mp3")]
@@ -234,12 +230,12 @@ class DownloadHandler(Handler):
                             break
                         except Exception as e:
                             logging.exception(e)
-                            await sleep(5)
+                            await asyncio.sleep(5)
                             retry += 1
 
                     # wait if not last
                     if i + 10 < len(images):
-                        await sleep(2)
+                        await asyncio.sleep(2)
 
             logger.info("Картинки отправлены")
 
