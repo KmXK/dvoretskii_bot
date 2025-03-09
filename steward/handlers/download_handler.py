@@ -40,8 +40,14 @@ class DownloadHandler(Handler):
                     self._get_images_wrapper("tiktok"),
                 ],
                 "instagram.com": [
-                    self._get_video_wrapper("inst"),
-                    self._get_images_wrapper("inst"),
+                    self._get_video_wrapper(
+                        "inst",
+                        cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
+                    ),
+                    self._get_images_wrapper(
+                        "inst",
+                        cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
+                    ),
                 ],
                 "youtube.com": self._get_video_wrapper("youtube"),
                 "youtu.be": self._get_video_wrapper("youtube"),
@@ -97,6 +103,7 @@ class DownloadHandler(Handler):
     def _get_video_wrapper(
         self,
         type_name: str,
+        cookie_file: str | None = None,
     ):
         async def wrapper(
             url: str,
@@ -112,6 +119,7 @@ class DownloadHandler(Handler):
                         "verbose": True,
                         "outtmpl": filepath,
                         "logger": yt_logger,
+                        "cookiefile": cookie_file,
                     }).extract_info(url, download=True)
                 )
 
@@ -126,6 +134,7 @@ class DownloadHandler(Handler):
     def _get_images_wrapper(
         self,
         type_name: str,
+        cookie_file: str | None = None,
     ):
         async def wrapper(
             url: str,
@@ -143,6 +152,14 @@ class DownloadHandler(Handler):
                     "{num}.{extension}",
                     "-D",
                     dir,
+                    *(
+                        [
+                            "-C",
+                            cookie_file,
+                        ]
+                        if cookie_file
+                        else []
+                    ),
                     url,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
