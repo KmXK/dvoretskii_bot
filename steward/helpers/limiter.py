@@ -34,7 +34,7 @@ def check_limit(
     weight: int = 1,
 ) -> bool:
     limiter = get_rate_limiter(obj, limit, duration)
-    result = limiter.try_acquire(name, weight)
+    result = limiter.try_acquire(name, weight)  # exception here
     assert not isawaitable(
         result
     )  # зависит от типа лимитера, у нас Rate, там всегда синхронно

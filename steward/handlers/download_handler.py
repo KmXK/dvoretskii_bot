@@ -1,16 +1,17 @@
-import asyncio
 import base64
 import logging
 import os
 import re
 import tempfile
 from asyncio import sleep
-from contextlib import asynccontextmanager
-from os import environ
+from contextlib import ExitStack, asynccontextmanager
 from urllib.parse import urlencode
 
 import aiohttp
+import gallery_dl
+import gallery_dl.path
 import youtube_dl
+import yt_dlp
 from pyrate_limiter import Duration
 from telegram import InputFile, InputMediaPhoto, Message
 
@@ -28,96 +29,43 @@ URL_REGEX = (
 
 
 class DownloadHandler(Handler):
+    # TODO: Make process pool
+
     async def chat(self, context):
         assert context.message.text
         urls = re.findall(URL_REGEX, context.message.text)
 
         for url in urls:
-            for handlerPath, handler in {
-                "tiktok": self._load_tiktok,
-                "instagram.com": self._load_instagram,
-                "youtube.com": self._load_youtube,
-                "youtu.be": self._load_youtube,
+            for handlerPath, handlers in {
+                "tiktok": [
+                    self._get_video_wrapper("tiktok"),
+                    self._get_images_wrapper("tiktok"),
+                ],
+                "instagram.com": [
+                    self._get_video_wrapper("inst"),
+                    self._get_images_wrapper("inst"),
+                ],
+                "youtube.com": self._get_video_wrapper("youtube"),
+                "youtu.be": self._get_video_wrapper("youtube"),
                 "music.yandex": self._load_yandex_music,
             }.items():
                 if handlerPath in url:
                     logger.info(f"Получен url: {url}")
-                    try:
-                        await handler(url, context.message)
-                    except Exception as e:
-                        logger.exception(e)
+                    if not isinstance(handlers, list):
+                        handlers = [handlers]
+
+                    success = False
+                    for handler in handlers:
+                        try:
+                            await handler(url, context.message)
+                            success = True
+                            break
+                        except Exception as e:
+                            logger.exception(e)
+
+                    if not success:
+                        await context.message.reply_text("не смог =(")
                     return True
-
-    async def _load_tiktok(
-        self,
-        url: str,
-        message: Message,
-    ):
-        logger.info("Тикток пошел")
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "http://8.215.8.243:1337/tiktok?url=" + url
-            ) as response:
-                json = await response.json()
-                if json["status"]:
-                    result = json["result"]
-                    video = result.get("video_HD") or result.get("video")
-                    images = result.get("image")
-
-                    if video:
-                        await self._send_video(message, video)
-                    elif images:
-                        await self._send_images(message, images)
-
-                        audio = result.get("audio")
-                        if audio is not None:
-                            logger.info(f"Получено аудио: {audio}")
-                            async with self._download_file(audio) as file:
-                                await message.reply_audio(file, filename="TikTok Audio")
-                                logger.info("Аудио отправлено")
-
-    async def _load_instagram(
-        self,
-        url: str,
-        message: Message,
-    ):
-        logger.info("Инстаграм пошел")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "http://8.215.8.243:1337/instagram2?",
-                params={"url": url},
-            ) as response:
-                json = await response.json()
-                if json["status"]:
-                    first: str = json["result"][0]
-                    if "d.rapidcdn.app" in first:
-                        await self._send_video(message, first)
-                    else:
-                        await self._send_images(message, json["result"])
-
-    async def _load_youtube(
-        self,
-        url: str,
-        message: Message,
-    ):
-        logger.info("Youtube пошел")
-
-        with tempfile.TemporaryDirectory(prefix="yt_") as dir:
-            filepath = dir + "/file"
-            youtube_dl.YoutubeDL({
-                "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
-                "verbose": True,
-                "cookiefile": environ.get("YT_COOKIES_FILE"),
-                "outtmpl": filepath,
-                "logger": yt_logger,
-            }).download([url])
-
-            with open(filepath, "rb") as file:
-                await message.reply_video(
-                    InputFile(file, filename="Youtube Video"),
-                    supports_streaming=True,
-                )
 
     async def _load_yandex_music(
         self,
@@ -148,6 +96,86 @@ class DownloadHandler(Handler):
                 logger.info(file)
                 await message.reply_audio(file, filename=file.name)
 
+    def _get_video_wrapper(
+        self,
+        type_name: str,
+    ):
+        async def wrapper(
+            url: str,
+            message: Message,
+        ):
+            logger.info(f"trying get video from {type_name}...")
+
+            with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
+                filepath = dir + "/file"
+                logger.info(
+                    yt_dlp.YoutubeDL({
+                        "verbose": True,
+                        "outtmpl": filepath,
+                        "logger": yt_logger,
+                    }).extract_info(url, download=True)
+                )
+
+                with open(filepath, "rb") as file:
+                    await message.reply_video(
+                        InputFile(file, filename=f"{type_name} Video"),
+                        supports_streaming=True,
+                    )
+
+        return wrapper
+
+    def _get_images_wrapper(
+        self,
+        type_name: str,
+    ):
+        async def wrapper(
+            url: str,
+            message: Message,
+        ):
+            logger.info(f"trying get images from {type_name}...")
+
+            with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
+
+                class CustomPath(gallery_dl.path.PathFormat):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        self.i = 1
+
+                    def build_path(self):
+                        super().build_path()
+                        i = self.i
+                        self.i += 1
+                        self.temppath = self.realpath = self.path = os.path.join(
+                            dir,
+                            re.sub(
+                                r"(.*)\.(?P<extension>[^\.]+)$",
+                                lambda m: f"{i}.{m.group('extension')}",
+                                str(self.filename),
+                            ),
+                        )
+
+                # TODO: cringe
+                gallery_dl.path.PathFormat = CustomPath
+
+                job = gallery_dl.job.DownloadJob(url)
+                job.initialize()
+                job.run()
+
+                all_files = [os.path.join(dir, x) for x in os.listdir(dir)]
+                images = [x for x in all_files if not x.endswith(".mp3")]
+                audios = [x for x in all_files if x.endswith(".mp3")]
+
+                await self._send_images(message, images)
+
+                if len(audios) > 0:
+                    with open(os.path.join(dir, audios[0]), "rb") as file:
+                        await message.reply_audio(
+                            file,
+                            filename="Audio",
+                        )
+
+        return wrapper
+
     async def _send_video(
         self,
         message: Message,
@@ -170,54 +198,54 @@ class DownloadHandler(Handler):
         self,
         message: Message,
         images: list[str],
-        use_proxy: bool = False,
         retries_count: int = 5,
     ):
         logger.info(
             f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
         )
 
-        files_tasks = [self._download_file(url) for url in images]
+        # files_tasks = [self._download_file(url) for url in images]
 
         try:
-            results = await asyncio.gather(
-                *[task.__aenter__() for task in files_tasks],
-                return_exceptions=True,
-            )
+            # results = await asyncio.gather(
+            #     *[task.__aenter__() for task in files_tasks],
+            #     return_exceptions=True,
+            # )
 
-            exceptions = [exc for exc in results if isinstance(exc, Exception)]
-            if len(exceptions) > 0:
-                raise ExceptionGroup("", exceptions)
+            # exceptions = [exc for exc in results if isinstance(exc, Exception)]
+            # if len(exceptions) > 0:
+            #     raise ExceptionGroup("", exceptions)
 
-            medias = [
-                InputMediaPhoto(file)
-                for file in results
-                if not isinstance(file, BaseException)
-            ]
+            medias = []
 
-            for i in range(0, len(medias), 10):
-                retry = 0
-                while retry < retries_count:
-                    try:
-                        await message.reply_media_group(
-                            medias[i : i + 10],
-                            disable_notification=True,
-                        )
-                        break
-                    except Exception as e:
-                        logging.exception(e)
-                        await sleep(5)
-                        retry += 1
+            with ExitStack() as stack:
+                for image_path in images:
+                    file = stack.enter_context(open(image_path, "rb"))
+                    medias.append(InputMediaPhoto(file))
 
-                # wait if not last
-                if i + 10 < len(images):
-                    await sleep(2)
+                for i in range(0, len(medias), 10):
+                    retry = 0
+                    while retry < retries_count:
+                        try:
+                            await message.reply_media_group(
+                                medias[i : i + 10],
+                                disable_notification=True,
+                            )
+                            break
+                        except Exception as e:
+                            logging.exception(e)
+                            await sleep(5)
+                            retry += 1
+
+                    # wait if not last
+                    if i + 10 < len(images):
+                        await sleep(2)
 
             logger.info("Картинки отправлены")
 
         except Exception as e:
-            for task in files_tasks:
-                await task.__aexit__(None, None, None)
+            # for task in files_tasks:
+            #     await task.__aexit__(None, None, None)
             raise e
 
     def _get_proxy_url(self, url: str) -> str:
