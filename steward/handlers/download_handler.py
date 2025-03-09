@@ -52,17 +52,17 @@ class DownloadHandler(Handler):
                     if not isinstance(handlers, list):
                         handlers = [handlers]
 
-                    success = False
+                    # success = False
                     for handler in handlers:
                         try:
                             await handler(url, context.message)
-                            success = True
+                            # success = True
                             break
                         except Exception as e:
                             logger.exception(e)
 
-                    if not success:
-                        await context.message.reply_text("не смог =(")
+                    # if not success:
+                    #     await context.message.reply_text("не смог =(")
                     return True
 
     async def _load_yandex_music(
