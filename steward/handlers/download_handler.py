@@ -40,14 +40,15 @@ class DownloadHandler(Handler):
                     self._get_images_wrapper("tiktok"),
                 ],
                 "instagram.com": [
-                    self._get_video_wrapper(
-                        "inst",
-                        cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
-                    ),
-                    self._get_images_wrapper(
-                        "inst",
-                        cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
-                    ),
+                    self._load_instagram,
+                    # self._get_video_wrapper(
+                    #     "inst",
+                    #     cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
+                    # ),
+                    # self._get_images_wrapper(
+                    #     "inst",
+                    #     cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
+                    # ),
                 ],
                 "youtube.com": self._get_video_wrapper("youtube"),
                 "youtu.be": self._get_video_wrapper("youtube"),
@@ -70,6 +71,38 @@ class DownloadHandler(Handler):
                     # if not success:
                     #     await context.message.reply_text("не смог =(")
                     return True
+
+    async def _load_instagram(
+        self,
+        url: str,
+        message: Message,
+    ):
+        check_limit(self, 1, 10 * Duration.SECOND)
+
+        url = f"https://download.proxy.nigger.by/igdl?url={url}"
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(connect=2)
+        ) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    raise Exception(f"invalid response: {response}")
+
+                json = await response.json()
+
+                data = json["url"]["data"]
+
+                videos = [x["url"] for x in data if "rapidcdn" in x["url"]]
+                images = [x["url"] for x in data if "rapidcdn" not in x["url"]]
+
+                videos = sorted(set(videos), key=lambda x: videos.index(x))
+                images = sorted(set(images), key=lambda x: images.index(x))
+
+                for video in videos:
+                    await self._send_video(message, video)
+
+                if len(images) > 0:
+                    await self._download_and_send_images(message, images)
 
     async def _load_yandex_music(
         self,
@@ -206,6 +239,59 @@ class DownloadHandler(Handler):
                 disable_notification=True,
                 supports_streaming=True,
             )
+
+    async def _download_and_send_images(
+        self,
+        message: Message,
+        images: list[str],
+        retries_count: int = 5,
+    ):
+        logger.info(
+            f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
+        )
+
+        files_tasks = [self._download_file(url) for url in images]
+
+        try:
+            results = await asyncio.gather(
+                *[task.__aenter__() for task in files_tasks],
+                return_exceptions=True,
+            )
+
+            exceptions = [exc for exc in results if isinstance(exc, Exception)]
+            if len(exceptions) > 0:
+                raise ExceptionGroup("", exceptions)
+
+            medias = [
+                InputMediaPhoto(file)
+                for file in results
+                if not isinstance(file, BaseException)
+            ]
+
+            for i in range(0, len(medias), 10):
+                retry = 0
+                while retry < retries_count:
+                    try:
+                        await message.reply_media_group(
+                            medias[i : i + 10],
+                            disable_notification=True,
+                        )
+                        break
+                    except Exception as e:
+                        logging.exception(e)
+                        await asyncio.sleep(5)
+                        retry += 1
+
+                # wait if not last
+                if i + 10 < len(images):
+                    await asyncio.sleep(2)
+
+            logger.info("Картинки отправлены")
+
+        except Exception as e:
+            for task in files_tasks:
+                await task.__aexit__(None, None, None)
+            raise e
 
     async def _send_images(
         self,
