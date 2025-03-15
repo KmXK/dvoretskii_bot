@@ -82,7 +82,7 @@ class DownloadHandler(Handler):
         url = f"https://download.proxy.nigger.by/igdl?url={url}"
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(connect=2)
+            timeout=aiohttp.ClientTimeout(connect=15)
         ) as session:
             async with session.get(url) as response:
                 if response.status != 200:
@@ -361,7 +361,7 @@ class DownloadHandler(Handler):
 
             async def get_url_content_to_file(url: str):
                 async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(connect=2)
+                    timeout=aiohttp.ClientTimeout(connect=15)
                 ) as session:
                     async with session.get(url) as response:
                         while True:
