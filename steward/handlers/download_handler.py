@@ -370,11 +370,11 @@ class DownloadHandler(Handler):
                                 break
                             file.write(chunk)
 
-            try:
+            # try:
                 await get_url_content_to_file(url)
-            except Exception as e:
-                logger.exception(e)
-                await get_url_content_to_file(self._get_proxy_url(url))
+            # except Exception as e:
+            #     logger.exception(e)
+            #     await get_url_content_to_file(self._get_proxy_url(url))
 
             logger.info("Файл был скачен")
 
