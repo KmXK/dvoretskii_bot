@@ -12,3 +12,4 @@ pyrate-limiter
 yt-dlp
 gallery-dl
 PySocks
+aiohttp_socks

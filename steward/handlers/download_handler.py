@@ -6,16 +6,15 @@ import re
 import tempfile
 from contextlib import ExitStack, asynccontextmanager
 from urllib.parse import urlencode
+from aiohttp_socks import ProxyConnector
 
 import aiohttp
 import youtube_dl
 import yt_dlp
-from pyrate_limiter import Duration
 from telegram import InputFile, InputMediaPhoto, Message
 
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
-from steward.helpers.limiter import check_limit
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -61,12 +60,16 @@ class DownloadHandler(Handler):
 
                     # success = False
                     for handler in handlers:
-                        try:
-                            await handler(url, context.message)
-                            # success = True
+                        success = False
+                        for i in range(3):
+                            try:
+                                await handler(url, context.message)
+                                success = True
+                                break
+                            except Exception as e:
+                                logger.exception(e)
+                        if success:
                             break
-                        except Exception as e:
-                            logger.exception(e)
 
                     # if not success:
                     #     await context.message.reply_text("не смог =(")
@@ -77,12 +80,10 @@ class DownloadHandler(Handler):
         url: str,
         message: Message,
     ):
-        check_limit(self, 1, 10 * Duration.SECOND)
-
         url = f"https://download.proxy.nigger.by/igdl?url={url}"
 
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(connect=15)
+            timeout=aiohttp.ClientTimeout(connect=2)
         ) as session:
             async with session.get(url) as response:
                 if response.status != 200:
@@ -102,15 +103,13 @@ class DownloadHandler(Handler):
                     await self._send_video(message, video)
 
                 if len(images) > 0:
-                    await self._download_and_send_images(message, images)
+                    await self._send_images_by_url(message, images)
 
     async def _load_yandex_music(
         self,
         url: str,
         message: Message,
     ):
-        check_limit(self, 1, 10 * Duration.SECOND)
-
         logger.info("Yandex Music пошла")
 
         logger.info(url.split("?")[0])
@@ -245,12 +244,13 @@ class DownloadHandler(Handler):
         message: Message,
         images: list[str],
         retries_count: int = 5,
+        use_proxy = False,
     ):
         logger.info(
             f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
         )
 
-        files_tasks = [self._download_file(url) for url in images]
+        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url in images]
 
         try:
             results = await asyncio.gather(
@@ -258,9 +258,13 @@ class DownloadHandler(Handler):
                 return_exceptions=True,
             )
 
+            logger.info(results)
+
             exceptions = [exc for exc in results if isinstance(exc, Exception)]
             if len(exceptions) > 0:
                 raise ExceptionGroup("", exceptions)
+
+            logger.info(exceptions)
 
             medias = [
                 InputMediaPhoto(file)
@@ -347,6 +351,58 @@ class DownloadHandler(Handler):
             #     await task.__aexit__(None, None, None)
             raise e
 
+    async def _send_images_by_url(
+        self,
+        message: Message,
+        urls: list[str],
+        retries_count: int = 5,
+    ):
+        logger.info(
+            f"Отправляется {morphy.make_agree_with_number('картинка', len(urls))}"
+        )
+
+        # files_tasks = [self._download_file(url) for url in images]
+
+        try:
+            # results = await asyncio.gather(
+            #     *[task.__aenter__() for task in files_tasks],
+            #     return_exceptions=True,
+            # )
+
+            # exceptions = [exc for exc in results if isinstance(exc, Exception)]
+            # if len(exceptions) > 0:
+            #     raise ExceptionGroup("", exceptions)
+
+            medias = []
+
+            for image_url in urls:
+                medias.append(InputMediaPhoto(image_url))
+
+            for i in range(0, len(medias), 10):
+                retry = 0
+                while retry < retries_count:
+                    try:
+                        await message.reply_media_group(
+                            medias[i : i + 10],
+                            disable_notification=True,
+                        )
+                        break
+                    except Exception as e:
+                        logging.exception(e)
+                        await asyncio.sleep(5)
+                        retry += 1
+
+                # wait if not last
+                if i + 10 < len(urls):
+                    await asyncio.sleep(2)
+
+            logger.info("Картинки отправлены")
+
+        except Exception as e:
+            # for task in files_tasks:
+            #     await task.__aexit__(None, None, None)
+            raise e
+
     def _get_proxy_url(self, url: str) -> str:
         return "https://download.proxy.nigger.by/?" + urlencode({
             "password": "***REMOVED***",
@@ -354,16 +410,23 @@ class DownloadHandler(Handler):
         })
 
     @asynccontextmanager
-    async def _download_file(self, url: str):
+    async def _download_file(self, url: str, use_proxy = False):
         logger.info(f"Скачиваем файл: {url}")
         with tempfile.TemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
 
             async def get_url_content_to_file(url: str):
+                connector = None
+                if use_proxy:
+                    connector = ProxyConnector.from_url('socks5://***REMOVED***:***REMOVED***@nigger.by:61228')
+
                 async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(connect=15)
+                    # connector=connector,
+                    timeout=aiohttp.ClientTimeout(connect=2),
                 ) as session:
-                    async with session.get(url) as response:
+                    async with session.get(
+                        url
+                    ) as response:
                         while True:
                             chunk = await response.content.readany()
                             if not chunk:
@@ -371,7 +434,7 @@ class DownloadHandler(Handler):
                             file.write(chunk)
 
             # try:
-                await get_url_content_to_file(url)
+            await get_url_content_to_file(url)
             # except Exception as e:
             #     logger.exception(e)
             #     await get_url_content_to_file(self._get_proxy_url(url))
@@ -380,4 +443,8 @@ class DownloadHandler(Handler):
 
             file.seek(0)
 
-            yield file
+            try:
+                yield file
+            except Exception as e:
+                logger.exception(e)
+                raise e
