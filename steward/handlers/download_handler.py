@@ -14,7 +14,7 @@ import youtube_dl
 import yt_dlp
 from telegram import InputFile, InputMediaPhoto, Message
 
-from download_bot.steward.helpers.limiter import Duration, check_limit
+from steward.helpers.limiter import Duration, check_limit
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
 
@@ -26,7 +26,7 @@ URL_REGEX = (
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
 )
 
-YT_LIMIT = {}
+YT_LIMIT = 'YT_LIMIT_OBJECT'
 
 
 class DownloadHandler(Handler):
@@ -162,13 +162,22 @@ class DownloadHandler(Handler):
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
                 filepath = dir + "/file"
-                yt_dlp.YoutubeDL({
+                info = yt_dlp.YoutubeDL({
                     "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
                     "verbose": True,
                     "outtmpl": filepath,
                     "logger": yt_logger,
                     "cookiefile": cookie_file,
-                }).download([url])
+                    "format": "(bv[filesize<=250M]+ba)/best",
+                    "format_sort": ["ext:mp4", "res:1080"],
+                    "max_filesize": 250 * 1024 * 1024,
+                }).extract_info(url)
+
+                width: str | None = None
+                height: str | None = None
+                if isinstance(info, dict):
+                    width = info.get('width') # type: ignore
+                    height = info.get('height') # type: ignore
 
                 # fix
                 files = os.listdir(dir)
@@ -180,6 +189,8 @@ class DownloadHandler(Handler):
                     await message.reply_video(
                         InputFile(file, filename=f"{type_name} Video"),
                         supports_streaming=True,
+                        width=int(width) if width is not None else None,
+                        height=int(height) if height is not None else None,
                     )
 
         return wrapper
