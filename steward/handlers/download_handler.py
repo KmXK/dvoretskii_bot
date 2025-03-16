@@ -49,8 +49,14 @@ class DownloadHandler(Handler):
                     #     cookie_file=os.environ.get("INSTAGRAM_COOKIE_FILE"),
                     # ),
                 ],
-                "youtube.com": self._get_video_wrapper("youtube"),
-                "youtu.be": self._get_video_wrapper("youtube"),
+                "youtube.com": self._get_video_wrapper(
+                    "youtube",
+                    cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                ),
+                "youtu.be": self._get_video_wrapper(
+                    "youtube",
+                    cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                ),
                 "music.yandex": self._load_yandex_music,
             }.items():
                 if handlerPath in url:
@@ -61,7 +67,7 @@ class DownloadHandler(Handler):
                     # success = False
                     for handler in handlers:
                         success = False
-                        for i in range(3):
+                        for i in range(1):
                             try:
                                 await handler(url, context.message)
                                 success = True
@@ -145,15 +151,19 @@ class DownloadHandler(Handler):
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
                 filepath = dir + "/file"
-                logger.info(
-                    yt_dlp.YoutubeDL({
-                        "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
-                        "verbose": True,
-                        "outtmpl": filepath,
-                        "logger": yt_logger,
-                        "cookiefile": cookie_file,
-                    }).extract_info(url, download=True)
-                )
+                yt_dlp.YoutubeDL({
+                    "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                    "verbose": True,
+                    "outtmpl": filepath,
+                    "logger": yt_logger,
+                    "cookiefile": cookie_file,
+                }).download([url])
+
+                # fix
+                files = os.listdir(dir)
+                logging.info(os.listdir(dir))
+
+                filepath = dir + '/' + files[0]
 
                 with open(filepath, "rb") as file:
                     await message.reply_video(
