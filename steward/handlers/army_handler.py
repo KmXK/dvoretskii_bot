@@ -64,8 +64,11 @@ class ArmyHandler(Handler):
             await context.message.reply_markdown("В армейку никого не добавили")
             return
 
+        army_list = [*self.repository.db.army]
+        army_list.sort(key=lambda a: (a.end_date, a.start_date))
+
         text = "Статус по армейке на сегодня: \n\n"
-        for army in self.repository.db.army:
+        for army in army_list:
             last = (
                 datetime.datetime.fromtimestamp(army.end_date) - datetime.datetime.now()
             )
