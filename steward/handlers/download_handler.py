@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from contextlib import ExitStack, asynccontextmanager
+from typing import Any, Callable
 from urllib.parse import urlencode
 from aiohttp_socks import ProxyConnector
 
@@ -13,6 +14,7 @@ import youtube_dl
 import yt_dlp
 from telegram import InputFile, InputMediaPhoto, Message
 
+from download_bot.steward.helpers.limiter import Duration, check_limit
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
 
@@ -24,11 +26,15 @@ URL_REGEX = (
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
 )
 
+YT_LIMIT = {}
+
 
 class DownloadHandler(Handler):
     # TODO: Make process pool
 
     async def chat(self, context):
+        check_limit(YT_LIMIT, 15, Duration.MINUTE)
+
         assert context.message.text
         urls = re.findall(URL_REGEX, context.message.text)
 
@@ -52,10 +58,12 @@ class DownloadHandler(Handler):
                 "youtube.com": self._get_video_wrapper(
                     "youtube",
                     cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                    pre_call=lambda: check_limit(YT_LIMIT, 1, 10 * Duration.SECOND),
                 ),
                 "youtu.be": self._get_video_wrapper(
                     "youtube",
                     cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                    pre_call=lambda: check_limit(YT_LIMIT, 1, 10 * Duration.SECOND),
                 ),
                 "music.yandex": self._load_yandex_music,
             }.items():
@@ -142,11 +150,14 @@ class DownloadHandler(Handler):
         self,
         type_name: str,
         cookie_file: str | None = None,
+        pre_call: Callable[[], Any] = lambda: None,
     ):
         async def wrapper(
             url: str,
             message: Message,
         ):
+            pre_call()
+
             logger.info(f"trying get video from {type_name}...")
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
