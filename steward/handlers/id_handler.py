@@ -15,6 +15,7 @@ def write_result(user: User):
 # TODO: add commandHandler to SessionHandlerBase
 class IdHandler(SessionHandlerBase):
     def __init__(self):
+        self.only_for_admin = True
         super().__init__([
             QuestionStep(
                 "name",
