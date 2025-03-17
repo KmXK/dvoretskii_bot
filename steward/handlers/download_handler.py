@@ -33,8 +33,6 @@ class DownloadHandler(Handler):
     # TODO: Make process pool
 
     async def chat(self, context):
-        check_limit(YT_LIMIT, 15, Duration.MINUTE)
-
         assert context.message.text
         urls = re.findall(URL_REGEX, context.message.text)
 
@@ -68,6 +66,7 @@ class DownloadHandler(Handler):
                 "music.yandex": self._load_yandex_music,
             }.items():
                 if handlerPath in url:
+                    check_limit(YT_LIMIT, 15, Duration.MINUTE)
                     logger.info(f"Получен url: {url}")
                     if not isinstance(handlers, list):
                         handlers = [handlers]
