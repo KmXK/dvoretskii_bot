@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 
 from steward.bot.bot import Bot
 from steward.bot.bot_utils import init_handlers
@@ -115,7 +116,7 @@ def main():
     Bot(handlers, repository).start(
         token,
         drop_pending_updates=True,
-        local_server="http://localhost:8001" if not is_test else None,
+        local_server=os.environ.get("TELEGRAM_API_HOST") if not is_test else None,
     )
 
 
