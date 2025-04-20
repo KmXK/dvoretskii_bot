@@ -7,16 +7,16 @@ import tempfile
 from contextlib import ExitStack, asynccontextmanager
 from typing import Any, Callable
 from urllib.parse import urlencode
-from aiohttp_socks import ProxyConnector
 
 import aiohttp
 import youtube_dl
 import yt_dlp
+from aiohttp_socks import ProxyConnector
 from telegram import InputFile, InputMediaPhoto, Message
 
-from steward.helpers.limiter import Duration, check_limit
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
+from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -26,7 +26,7 @@ URL_REGEX = (
     r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
 )
 
-YT_LIMIT = 'YT_LIMIT_OBJECT'
+YT_LIMIT = "YT_LIMIT_OBJECT"
 
 
 class DownloadHandler(Handler):
@@ -130,12 +130,14 @@ class DownloadHandler(Handler):
         with tempfile.TemporaryDirectory(prefix="ym_") as dir:
             filepath = dir + "/%(title)s"
             try:
-                youtube_dl.YoutubeDL({
-                    "verbose": True,
-                    "outtmpl": filepath,
-                    "logger": yt_logger,
-                    "retries": 0,
-                }).download([url.split("?")[0]])
+                youtube_dl.YoutubeDL(
+                    {
+                        "verbose": True,
+                        "outtmpl": filepath,
+                        "logger": yt_logger,
+                        "retries": 0,
+                    }
+                ).download([url.split("?")[0]])
             except youtube_dl.DownloadError:
                 logger.error("Ошибка авторизации, попробуй позже =(")
                 # await message.reply_text("Ошибка авторизации, попробуй позже =(")
@@ -161,28 +163,30 @@ class DownloadHandler(Handler):
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
                 filepath = dir + "/file"
-                info = yt_dlp.YoutubeDL({
-                    "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
-                    "verbose": True,
-                    "outtmpl": filepath,
-                    "logger": yt_logger,
-                    "cookiefile": cookie_file,
-                    "format": "(bv[filesize<=250M]+ba)/best",
-                    "format_sort": ["ext:mp4", "res:1080"],
-                    "max_filesize": 250 * 1024 * 1024,
-                }).extract_info(url)
+                info = yt_dlp.YoutubeDL(
+                    {
+                        "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                        "verbose": True,
+                        "outtmpl": filepath,
+                        "logger": yt_logger,
+                        "cookiefile": cookie_file,
+                        "format": "(bv[filesize<=250M]+ba)/best",
+                        "format_sort": ["ext:mp4", "res:1080"],
+                        "max_filesize": 250 * 1024 * 1024,
+                    }
+                ).extract_info(url)
 
                 width: str | None = None
                 height: str | None = None
                 if isinstance(info, dict):
-                    width = info.get('width') # type: ignore
-                    height = info.get('height') # type: ignore
+                    width = info.get("width")  # type: ignore
+                    height = info.get("height")  # type: ignore
 
                 # fix
                 files = os.listdir(dir)
                 logging.info(os.listdir(dir))
 
-                filepath = dir + '/' + files[0]
+                filepath = dir + "/" + files[0]
 
                 with open(filepath, "rb") as file:
                     await message.reply_video(
@@ -237,7 +241,7 @@ class DownloadHandler(Handler):
                         f"gallery-dl exited with error {process.returncode}"
                     )
 
-                all_files = [os.path.join(dir, x) for x in os.listdir(dir)]
+                all_files = [os.path.join(dir, x) for x in sorted(os.listdir(dir))]
                 images = [x for x in all_files if not x.endswith(".mp3")]
                 audios = [x for x in all_files if x.endswith(".mp3")]
 
@@ -275,7 +279,7 @@ class DownloadHandler(Handler):
         message: Message,
         images: list[str],
         retries_count: int = 5,
-        use_proxy = False,
+        use_proxy=False,
     ):
         logger.info(
             f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
@@ -338,14 +342,7 @@ class DownloadHandler(Handler):
             f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
         )
 
-        # files_tasks = [self._download_file(url) for url in images]
-
         try:
-            # results = await asyncio.gather(
-            #     *[task.__aenter__() for task in files_tasks],
-            #     return_exceptions=True,
-            # )
-
             # exceptions = [exc for exc in results if isinstance(exc, Exception)]
             # if len(exceptions) > 0:
             #     raise ExceptionGroup("", exceptions)
@@ -378,8 +375,6 @@ class DownloadHandler(Handler):
             logger.info("Картинки отправлены")
 
         except Exception as e:
-            # for task in files_tasks:
-            #     await task.__aexit__(None, None, None)
             raise e
 
     async def _send_images_by_url(
@@ -435,13 +430,15 @@ class DownloadHandler(Handler):
             raise e
 
     def _get_proxy_url(self, url: str) -> str:
-        return "https://download.proxy.nigger.by/?" + urlencode({
-            "password": "***REMOVED***",
-            "download_url": base64.b64encode(url.encode()).decode(),
-        })
+        return "https://download.proxy.nigger.by/?" + urlencode(
+            {
+                "password": "***REMOVED***",
+                "download_url": base64.b64encode(url.encode()).decode(),
+            }
+        )
 
     @asynccontextmanager
-    async def _download_file(self, url: str, use_proxy = False):
+    async def _download_file(self, url: str, use_proxy=False):
         logger.info(f"Скачиваем файл: {url}")
         with tempfile.TemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
@@ -449,15 +446,15 @@ class DownloadHandler(Handler):
             async def get_url_content_to_file(url: str):
                 connector = None
                 if use_proxy:
-                    connector = ProxyConnector.from_url('socks5://***REMOVED***:***REMOVED***@nigger.by:61228')
+                    connector = ProxyConnector.from_url(
+                        "socks5://***REMOVED***:***REMOVED***@nigger.by:61228"
+                    )
 
                 async with aiohttp.ClientSession(
                     # connector=connector,
                     timeout=aiohttp.ClientTimeout(connect=2),
                 ) as session:
-                    async with session.get(
-                        url
-                    ) as response:
+                    async with session.get(url) as response:
                         while True:
                             chunk = await response.content.readany()
                             if not chunk:
