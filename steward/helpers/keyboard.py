@@ -43,5 +43,5 @@ def parse_and_validate_keyboard[T: KeyboardParseResult](
             return result
         return None
     except KeyboardParseException as e:
-        logger.exception(e)
+        logger.info(e)
         return None
