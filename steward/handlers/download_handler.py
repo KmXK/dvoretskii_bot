@@ -245,7 +245,12 @@ class DownloadHandler(Handler):
                         f"gallery-dl exited with error {process.returncode}"
                     )
 
-                all_files = [os.path.join(dir, x) for x in sorted(os.listdir(dir))]
+                all_files = [
+                    os.path.join(dir, x)
+                    for x in sorted(
+                        os.listdir(dir), key=lambda x: f"{int(x.split('.')[0]):03d}"
+                    )
+                ]
                 images = [x for x in all_files if not x.endswith(".mp3")]
                 audios = [x for x in all_files if x.endswith(".mp3")]
 
@@ -264,12 +269,7 @@ class DownloadHandler(Handler):
         self,
         message: Message,
         url: str,
-        use_proxy: bool = False,
     ):
-        if use_proxy:
-            logger.info(f"Хотим скачать видео через прокси: {url}")
-            url = self._get_proxy_url(url)
-
         # будет удалён при закрытии
         async with self._download_file(url) as file:
             await message.reply_video(
