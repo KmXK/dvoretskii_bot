@@ -19,6 +19,7 @@ jobs:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_KEY }}
+          envs: REMOTE_PATH
           script: |
             cd $REMOTE_PATH
             git pull
