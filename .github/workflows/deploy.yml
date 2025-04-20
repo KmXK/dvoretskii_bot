@@ -13,12 +13,14 @@ jobs:
     steps:
       - name: Connect & Deploy
         uses: appleboy/ssh-action@v1.0.0
+        env:
+          REMOTE_PATH: ${{ secrets.REMOTE_PATH }}
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd ${{ secrets.REMOTE_PATH }}
+            cd $REMOTE_PATH
             git pull
             docker compose down
             docker compose up -d --build
