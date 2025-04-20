@@ -1,12 +1,10 @@
 import asyncio
-import base64
 import logging
 import os
 import re
 import tempfile
 from contextlib import ExitStack, asynccontextmanager
 from typing import Any, Callable
-from urllib.parse import urlencode
 
 import aiohttp
 import youtube_dl
@@ -165,7 +163,7 @@ class DownloadHandler(Handler):
                 filepath = dir + "/file"
                 info = yt_dlp.YoutubeDL(
                     {
-                        "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                        "proxy": os.environ.get("DOWNLOAD_PROXY"),
                         "verbose": True,
                         "outtmpl": filepath,
                         "logger": yt_logger,
@@ -212,8 +210,14 @@ class DownloadHandler(Handler):
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
                 process = await asyncio.create_subprocess_exec(
                     "gallery-dl",
-                    "--proxy",
-                    "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
+                    *(
+                        [
+                            "--proxy",
+                            os.environ.get("DOWNLOAD_PROXY") or "",
+                        ]
+                        if os.environ.get("DOWNLOAD_PROXY")
+                        else []
+                    ),
                     "--verbose",
                     "-f",
                     "{num}.{extension}",
@@ -387,18 +391,7 @@ class DownloadHandler(Handler):
             f"Отправляется {morphy.make_agree_with_number('картинка', len(urls))}"
         )
 
-        # files_tasks = [self._download_file(url) for url in images]
-
         try:
-            # results = await asyncio.gather(
-            #     *[task.__aenter__() for task in files_tasks],
-            #     return_exceptions=True,
-            # )
-
-            # exceptions = [exc for exc in results if isinstance(exc, Exception)]
-            # if len(exceptions) > 0:
-            #     raise ExceptionGroup("", exceptions)
-
             medias = []
 
             for image_url in urls:
@@ -425,17 +418,7 @@ class DownloadHandler(Handler):
             logger.info("Картинки отправлены")
 
         except Exception as e:
-            # for task in files_tasks:
-            #     await task.__aexit__(None, None, None)
             raise e
-
-    def _get_proxy_url(self, url: str) -> str:
-        return "https://download.proxy.nigger.by/?" + urlencode(
-            {
-                "password": "***REMOVED***",
-                "download_url": base64.b64encode(url.encode()).decode(),
-            }
-        )
 
     @asynccontextmanager
     async def _download_file(self, url: str, use_proxy=False):
@@ -445,13 +428,13 @@ class DownloadHandler(Handler):
 
             async def get_url_content_to_file(url: str):
                 connector = None
-                if use_proxy:
+                if use_proxy and os.environ.get("DOWNLOAD_PROXY"):
                     connector = ProxyConnector.from_url(
-                        "socks5://***REMOVED***:***REMOVED***@nigger.by:61228"
+                        os.environ.get("DOWNLOAD_PROXY") or ""
                     )
 
                 async with aiohttp.ClientSession(
-                    # connector=connector,
+                    connector=connector,
                     timeout=aiohttp.ClientTimeout(connect=2),
                 ) as session:
                     async with session.get(url) as response:
@@ -461,11 +444,7 @@ class DownloadHandler(Handler):
                                 break
                             file.write(chunk)
 
-            # try:
             await get_url_content_to_file(url)
-            # except Exception as e:
-            #     logger.exception(e)
-            #     await get_url_content_to_file(self._get_proxy_url(url))
 
             logger.info("Файл был скачен")
 

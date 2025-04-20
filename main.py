@@ -34,13 +34,6 @@ from steward.logging.configure import configure_logging
 logger: logging.Logger
 
 
-def get_token(is_test=False):
-    if is_test:
-        return "***REMOVED***"
-    else:
-        return "***REMOVED***"
-
-
 def get_handlers(log_file: None | str):
     # TODO: Union CRUD handlers to one import
     # TODO: Create bot context for bot
@@ -106,7 +99,8 @@ def main():
     args = parser.parse_args()
     is_test = not args.prod
 
-    token = get_token(is_test)
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    assert token
 
     configure_logging(token, args.log_file, args.debug)
 

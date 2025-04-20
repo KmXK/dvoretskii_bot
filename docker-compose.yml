@@ -8,7 +8,9 @@ services:
       - bot_logs:/var/log
       - ./data.json:/app/data.json
     environment:
-      - CLOUDFLARE_BYPASS_PORT=${CLOUDFLARE_BYPASS_PORT}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DOWNLOAD_PROXY=${DOWNLOAD_PROXY}
+      - CLOUDFLARE_BYPASS_PORT=9002
       - TELEGRAM_API_PORT=${TELEGRAM_API_PORT}
       - TRANSLATE_KEY_ID=${TRANSLATE_KEY_ID}
       - TRANSLATE_KEY_SECRET=${TRANSLATE_KEY_SECRET}
@@ -26,7 +28,6 @@ services:
       TELEGRAM_HTTP_PORT: 8081
       TELEGRAM_LOCAL: ""
       TELEGRAM_WORK_DIR: "/data"
-      # TELEGRAM_LOG_FILE: "./log.log"
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
     volumes:
@@ -39,7 +40,7 @@ services:
   cloudflare-bypass:
     image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
     ports:
-      - "$CLOUDFLARE_PORT:8000"
+      - "9002:8000"
     networks:
       - bot
 

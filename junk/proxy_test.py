@@ -23,12 +23,14 @@ async def main():
     # print(resp.read().decode('utf-8'))
 
     print(
-        youtube_dl.YoutubeDL({
-            "proxy": "socks5://***REMOVED***:***REMOVED***@nigger.by:61228",
-            "forceurl": True,
-            "password": "***REMOVED***",
-            "verbose": True,
-        }).extract_info("https://youtube.com/watch?v=rF72jrSYhEE", download=False)
+        youtube_dl.YoutubeDL(
+            {
+                "proxy": "XXX",
+                "forceurl": True,
+                "password": "XXX",
+                "verbose": True,
+            }
+        ).extract_info("https://youtube.com/watch?v=rF72jrSYhEE", download=False)
     )
 
 
