@@ -27,7 +27,6 @@ from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.message_info_handler import MessageInfoHandler
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
-from steward.handlers.script_handler import ScriptHandler
 from steward.handlers.translate_handler import TranslateHandler
 from steward.logging.configure import configure_logging
 
@@ -58,16 +57,6 @@ def get_handlers(log_file: None | str):
             TranslateHandler,
             ExchangeRateHandler,
             HolidaysHandler,
-            ScriptHandler(
-                "update",
-                "./scripts/update.sh",
-                "скачать изменения и обновить бота",
-            ),
-            ScriptHandler(
-                "reload",
-                "./scripts/reload.sh",
-                "перезапустить бота",
-            ),
             RuleAnswerHandler,
         ],
     )
