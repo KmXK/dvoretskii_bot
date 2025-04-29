@@ -126,8 +126,9 @@ class Repository:
         return user_id in self.db.admin_ids
 
     def _migrate(self, data: dict[str, Any]):
+        # TODO: Use config file
         # default config
         if data.get("version") is None:
-            data = {"admin_ids": [***REMOVED***, ***REMOVED***], "version": 2}
+            data = {"admin_ids": [], "version": 2}
 
         return data
