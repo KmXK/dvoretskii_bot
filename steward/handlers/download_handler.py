@@ -296,7 +296,7 @@ class DownloadHandler(Handler):
             f"Отправляется {morphy.make_agree_with_number('картинка', len(videosOrImages))}"
         )
 
-        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url in videosOrImages]
+        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url, _ in videosOrImages]
 
         try:
             results = await asyncio.gather(
