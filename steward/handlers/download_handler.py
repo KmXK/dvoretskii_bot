@@ -126,7 +126,7 @@ class DownloadHandler(Handler):
                     await self._send_video(message, video)
 
                 if len(images) > 0:
-                    await self._send_images_by_url(message, images)
+                    await self._download_and_send_images(message, images)
 
     async def _load_yandex_music(
         self,
