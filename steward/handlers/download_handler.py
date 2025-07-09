@@ -13,7 +13,7 @@ import aiohttp
 import youtube_dl
 import yt_dlp
 from aiohttp_socks import ProxyConnector
-from telegram import InputFile, InputMediaPhoto, Message
+from telegram import InputFile, InputMediaPhoto, InputMediaVideo, Message
 
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
@@ -105,8 +105,7 @@ class DownloadHandler(Handler):
 
                 json_resp = await response.json()
 
-                videos = []
-                images = []
+                medias = []
 
                 for x in json_resp["url"]["data"]:
                     url = x["url"]
@@ -114,19 +113,15 @@ class DownloadHandler(Handler):
                     json_data = base64.urlsafe_b64decode(token.split(".")[1] + ("=" * (4 - (len(token.split(".")[1]) % 4))))
                     filename = json.loads(json_data)["filename"]
                     if filename.endswith("mp4"):
-                        videos.append(url)
+                        medias.append((url, True))
                     else:
-                        images.append(url)
+                        medias.append((url, False))
 
                 # unique
-                videos = sorted(set(videos), key=lambda x: videos.index(x))
-                images = sorted(set(images), key=lambda x: images.index(x))
+                medias = sorted(set(medias), key=lambda x: medias.index(x))
 
-                for video in videos:
-                    await self._send_video(message, video)
-
-                if len(images) > 0:
-                    await self._download_and_send_images(message, images)
+                if len(medias) > 0:
+                    await self._download_and_send_medias(message, medias)
 
     async def _load_yandex_music(
         self,
@@ -290,18 +285,18 @@ class DownloadHandler(Handler):
                 supports_streaming=True,
             )
 
-    async def _download_and_send_images(
+    async def _download_and_send_medias(
         self,
         message: Message,
-        images: list[str],
+        videosOrImages: list[tuple[str, bool]],
         retries_count: int = 5,
         use_proxy=False,
     ):
         logger.info(
-            f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
+            f"Отправляется {morphy.make_agree_with_number('картинка', len(videosOrImages))}"
         )
 
-        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url in images]
+        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url in videosOrImages]
 
         try:
             results = await asyncio.gather(
@@ -318,8 +313,8 @@ class DownloadHandler(Handler):
             logger.info(exceptions)
 
             medias = [
-                InputMediaPhoto(file)
-                for file in results
+                InputMediaPhoto(file) if not videosOrImages[i][1] else InputMediaVideo(file)
+                for i, file in enumerate(results)
                 if not isinstance(file, BaseException)
             ]
 
