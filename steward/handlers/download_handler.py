@@ -103,12 +103,12 @@ class DownloadHandler(Handler):
                 if response.status != 200:
                     raise Exception(f"invalid response: {response}")
 
-                json = await response.json()
+                json_resp = await response.json()
 
                 videos = []
                 images = []
 
-                for x in json["url"]["data"]:
+                for x in json_resp["url"]["data"]:
                     url = x["url"]
                     token = parse_qs(urlparse(url).query)["token"]
                     filename = json.loads(base64.b64decode(token.split(".")[1]))["filename"]
