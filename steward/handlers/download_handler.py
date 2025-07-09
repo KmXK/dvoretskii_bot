@@ -3,6 +3,9 @@ import logging
 import os
 import re
 import tempfile
+import urlparse
+import base64
+import json
 from contextlib import ExitStack, asynccontextmanager
 from typing import Any, Callable
 
@@ -102,11 +105,19 @@ class DownloadHandler(Handler):
 
                 json = await response.json()
 
-                data = json["url"]["data"]
+                videos = []
+                images = []
 
-                videos = [x["url"] for x in data if "rapidcdn" in x["url"]]
-                images = [x["url"] for x in data if "rapidcdn" not in x["url"]]
+                for x in json["url"]["data"]:
+                    url = x["url"]
+                    token = urlparse.parse_qs(urlparse(json["url"]["data"]["url"]))["token"]
+                    filename = json.loads(base64.b64decode(token.split(".")[1]))["filename"]
+                    if filename.endswith("mp4"):
+                        videos.append(url)
+                    else:
+                        images.append(url)
 
+                # unique
                 videos = sorted(set(videos), key=lambda x: videos.index(x))
                 images = sorted(set(images), key=lambda x: images.index(x))
 
