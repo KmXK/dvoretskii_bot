@@ -400,7 +400,7 @@ class DownloadHandler(Handler):
         retries_count: int = 5,
     ):
         logger.info(
-            f"Отправляется {morphy.make_agree_with_number('картинка', len(urls))}"
+            f"Отправляется {morphy.make_agree_with_number('картинка', len(urls))}: {urls}"
         )
 
         try:
