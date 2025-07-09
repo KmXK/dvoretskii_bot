@@ -3,9 +3,9 @@ import logging
 import os
 import re
 import tempfile
-import urlparse
 import base64
 import json
+from urllib.parse import urlparse, parse_qs
 from contextlib import ExitStack, asynccontextmanager
 from typing import Any, Callable
 
@@ -110,7 +110,7 @@ class DownloadHandler(Handler):
 
                 for x in json["url"]["data"]:
                     url = x["url"]
-                    token = urlparse.parse_qs(urlparse(json["url"]["data"]["url"]))["token"]
+                    token = parse_qs(urlparse(json["url"]["data"]["url"]))["token"]
                     filename = json.loads(base64.b64decode(token.split(".")[1]))["filename"]
                     if filename.endswith("mp4"):
                         videos.append(url)
