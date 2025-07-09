@@ -82,8 +82,11 @@ class InlineHintsUpdater:
         # TODO: Clear commands for user on admin delete
         for chat_id in diff:
             for admin_id in self.repository.db.admin_ids:
-                await self._set_commands(
-                    bot,
-                    lambda _: True,
-                    BotCommandScopeChatMember(chat_id, admin_id),
-                )
+                try:
+                    await self._set_commands(
+                        bot,
+                        lambda _: True,
+                        BotCommandScopeChatMember(chat_id, admin_id),
+                    )
+                except TelegramError:
+                    pass  # chat can be deleted
