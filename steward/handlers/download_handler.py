@@ -110,7 +110,7 @@ class DownloadHandler(Handler):
 
                 for x in json["url"]["data"]:
                     url = x["url"]
-                    token = parse_qs(urlparse(json["url"]["data"]["url"]))["token"]
+                    token = parse_qs(urlparse(url))["token"]
                     filename = json.loads(base64.b64decode(token.split(".")[1]))["filename"]
                     if filename.endswith("mp4"):
                         videos.append(url)
