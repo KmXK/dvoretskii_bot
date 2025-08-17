@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from os import environ
 from typing import Any, Awaitable, Callable
 
 from pyrate_limiter import BucketFullException
@@ -14,6 +15,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telethon import TelegramClient
 
 from steward.bot.context import BotActionContext, CallbackBotContext, ChatBotContext
 from steward.bot.delayed_action_handler import DelayedActionHandler
@@ -86,17 +88,29 @@ class Bot:
 
         self.bot = application.bot
 
-        self.delayed_action_handler = DelayedActionHandler(self.repository, self.bot)
-        asyncio.ensure_future(
-            self.delayed_action_handler.start(),
-            loop=asyncio.get_event_loop(),
+        self.client = TelegramClient(
+            ".steward_session",
+            api_id=int(environ.get("TELEGRAM_API_ID", "")),
+            api_hash=environ.get("TELEGRAM_API_HASH", ""),
         )
+        self.client.start(bot_token=environ.get("TELEGRAM_BOT_TOKEN", ""))
 
-        application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=drop_pending_updates,
-            close_loop=False,
-        )
+        with self.client:
+            self.delayed_action_handler = DelayedActionHandler(
+                self.repository,
+                self.bot,
+                self.client,
+            )
+            asyncio.ensure_future(
+                self.delayed_action_handler.start(),
+                loop=asyncio.get_event_loop(),
+            )
+
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=drop_pending_updates,
+                close_loop=False,
+            )
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message is None:
@@ -105,6 +119,7 @@ class Bot:
         ctx = ChatBotContext(
             self.repository,
             self.bot,
+            self.client,
             update,
             context,
             update.message,
@@ -124,6 +139,7 @@ class Bot:
         ctx = CallbackBotContext(
             self.repository,
             self.bot,
+            self.client,
             update,
             context,
             update.callback_query,

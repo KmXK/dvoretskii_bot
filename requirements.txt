@@ -13,3 +13,4 @@ yt-dlp
 gallery-dl
 PySocks
 aiohttp_socks
+telethon

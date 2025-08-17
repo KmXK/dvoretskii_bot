@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from telegram import CallbackQuery, Message, Update
 from telegram.ext import ContextTypes, ExtBot
+from telethon import TelegramClient
 
 from steward.data.repository import Repository
 
@@ -11,6 +12,7 @@ class BotContext:
     repository: Repository
 
     bot: ExtBot[None]
+    client: TelegramClient
 
 
 @dataclass
