@@ -6,6 +6,7 @@ services:
     command: [ "python", "main.py", "--prod" ]
     volumes:
       - bot_logs:/var/log
+      - ./db.json:/app/db.json
       - ./data.json:/app/data.json
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
