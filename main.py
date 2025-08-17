@@ -25,6 +25,7 @@ from steward.handlers.holidays_handler import HolidaysHandler
 from steward.handlers.id_handler import IdHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.message_info_handler import MessageInfoHandler
+from steward.handlers.pasha_handler import PashaHandler
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.translate_handler import TranslateHandler
@@ -58,6 +59,7 @@ def get_handlers(log_file: None | str):
             ExchangeRateHandler,
             HolidaysHandler,
             RuleAnswerHandler,
+            PashaHandler,
         ],
     )
 

@@ -14,6 +14,9 @@ services:
       - TELEGRAM_API_PORT=${TELEGRAM_API_PORT}
       - TRANSLATE_KEY_ID=${TRANSLATE_KEY_ID}
       - TRANSLATE_KEY_SECRET=${TRANSLATE_KEY_SECRET}
+      - AI_KEY_ID=${AI_KEY_ID}
+      - AI_KEY_SECRET=${AI_KEY_SECRET}
+      - AI_MODEL_URI=${AI_MODEL_URI}
       - TELEGRAM_API_HOST=http://telegram-api:8081
     depends_on:
       - telegram-api
