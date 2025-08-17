@@ -69,10 +69,10 @@ class Bot:
                 .local_mode(True)
             )
 
-        application = applicationBuilder.build()
+        application = applicationBuilder.concurrent_updates(True).build()
 
-        application.add_handler(MessageHandler(filters.ALL, self._chat))
-        application.add_handler(CallbackQueryHandler(self._callback))
+        application.add_handler(MessageHandler(filters.ALL, self._chat, block=False))
+        application.add_handler(CallbackQueryHandler(self._callback, block=False))
 
         async def post_init(*_):
             await self.repository.migrate()
