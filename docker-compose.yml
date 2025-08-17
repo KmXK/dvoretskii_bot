@@ -17,6 +17,8 @@ services:
       - AI_KEY_ID=${AI_KEY_ID}
       - AI_KEY_SECRET=${AI_KEY_SECRET}
       - AI_MODEL_URI=${AI_MODEL_URI}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_API_HOST=http://telegram-api:8081
     depends_on:
       - telegram-api

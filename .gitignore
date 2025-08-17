@@ -173,3 +173,4 @@ pyvenv.cfg
 bin/
 
 .telegram_bot_api_data
+.steward_session.session*

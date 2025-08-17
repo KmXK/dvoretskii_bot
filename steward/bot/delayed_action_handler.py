@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 
 from telegram.ext import ExtBot
+from telethon import TelegramClient
 
 from steward.data.repository import Repository
 from steward.delayed_action.base import DelayedAction
@@ -16,14 +17,17 @@ default_actions: list[DelayedAction] = []
 
 
 class DelayedActionHandler:
-    def __init__(self, repository: Repository, bot: ExtBot[None]):
+    def __init__(
+        self, repository: Repository, bot: ExtBot[None], client: TelegramClient
+    ):
         self._repository = repository
         self._bot = bot
+        self._client = client
         self._update_future: asyncio.Future[None] = asyncio.Future()
         self._repository.subscribe_on_save(lambda: self._update_future.set_result(None))
 
     async def start(self):
-        context = DelayedActionContext(self._repository, self._bot)
+        context = DelayedActionContext(self._repository, self._bot, self._client)
 
         while True:
             logger.info("Checking delayed actions...")
