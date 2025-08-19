@@ -121,7 +121,7 @@ class DownloadHandler(Handler):
                 medias = sorted(set(medias), key=lambda x: medias.index(x))
 
                 if len(medias) > 0:
-                    await self._download_and_send_medias(message, medias)
+                    await self._download_and_send_medias(message, medias, use_proxy=True)
 
     async def _load_yandex_music(
         self,
