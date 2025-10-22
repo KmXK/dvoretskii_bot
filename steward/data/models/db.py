@@ -6,6 +6,7 @@ from typing import Any, Callable, Sized
 
 from dacite import Config, from_dict
 
+from steward.data.models.pasha_ai_message import PashaAiMessage
 from steward.delayed_action.base import DelayedAction
 from steward.helpers.class_mark import try_get_class_by_mark
 
@@ -18,6 +19,7 @@ from .rule import Rule
 @dataclass
 class Database:
     admin_ids: set[int] = field(default_factory=set)
+    pasha_ai_messages: dict[str, PashaAiMessage] = field(default_factory=dict)
     army: list[Army] = field(default_factory=list)
     chats: list[Chat] = field(default_factory=list)
     rules: list[Rule] = field(default_factory=list)

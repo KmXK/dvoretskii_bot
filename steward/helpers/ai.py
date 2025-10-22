@@ -4,6 +4,8 @@ from os import environ
 from aiohttp import ClientSession
 from openai import OpenAI
 
+from steward.helpers.limiter import Duration, check_limit
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,8 +21,14 @@ with open("pasha.txt", "r", encoding="utf-8") as f:
     PASHA_PROMPT = f.read()
 
 
-async def make_ai_query(model, text, system_prompt=None):
-    text = system_prompt + ". " + text if system_prompt else text
+async def make_ai_query_ext(
+    user_id,
+    model,
+    messages: list[tuple[str, str]],
+    system_prompt=None,
+):
+    check_limit("ai_total", 20, Duration.MINUTE, name="total")
+    check_limit("ai_per_user", 7, 20 * Duration.SECOND, name=user_id)
 
     async with ClientSession() as session:
         async with session.post(
@@ -29,9 +37,10 @@ async def make_ai_query(model, text, system_prompt=None):
                 "modelUri": f"{environ.get('AI_MODEL_' + model)}",
                 "messages": [
                     {
-                        "role": "user",
-                        "text": text,
+                        "role": "system",
+                        "text": system_prompt,
                     },
+                    *[{"role": role, "text": text} for role, text in messages],
                 ],
             },
             headers={
@@ -40,21 +49,25 @@ async def make_ai_query(model, text, system_prompt=None):
             },
         ) as response:
             json = await response.json()
-
-            logger.info(json)
-
             return json["result"]["alternatives"][0]["message"]["text"]
+
+
+async def make_ai_query(user_id, model, text, system_prompt=None):
+    return await make_ai_query_ext(user_id, model, [("user", text)], system_prompt)
 
 
 deepseek_client = None
 
 
-def make_deepseek_query(text, system_prompt=""):
+def make_deepseek_query(user_id, text, system_prompt=""):
     global deepseek_client
     if not deepseek_client:
         deepseek_client = OpenAI(
             api_key=environ.get("DEEPSEEK_KEY"), base_url="https://api.deepseek.com"
         )
+
+    check_limit("deepseek_total", 20, Duration.MINUTE)
+    check_limit("deepseek_per_user", 7, 20 * Duration.SECOND, name=user_id)
 
     response = deepseek_client.chat.completions.create(
         model="deepseek-chat",

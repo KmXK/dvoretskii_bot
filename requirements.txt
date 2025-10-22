@@ -14,3 +14,4 @@ gallery-dl
 PySocks
 aiohttp_socks
 telethon
+async-lru
