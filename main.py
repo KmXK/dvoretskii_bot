@@ -7,6 +7,7 @@ from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.add_admin_handler import AddAdminHandler
 from steward.handlers.add_rule_handler import AddRuleHandler
+from steward.handlers.ai_handler import AIHandler
 from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.delete_admin_handler import DeleteAdminHandler
@@ -61,6 +62,7 @@ def get_handlers(log_file: None | str):
             HolidaysHandler,
             EveryoneHandler,
             PashaHandler,
+            AIHandler,
             RuleAnswerHandler,
         ],
     )
