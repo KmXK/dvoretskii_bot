@@ -49,7 +49,11 @@ async def make_ai_query_ext(
             },
         ) as response:
             json = await response.json()
-            return json["result"]["alternatives"][0]["message"]["text"]
+            try:
+                return json["result"]["alternatives"][0]["message"]["text"]
+            except Exception as e:
+                logger.error(f"AI request failed: {json}")
+                raise e
 
 
 async def make_ai_query(user_id, model, text, system_prompt=None):
