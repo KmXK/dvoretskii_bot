@@ -13,6 +13,7 @@ class AIHandler(Handler):
                 JAILBREAK_PROMPT,
             ),
         )
+        return True
 
     def help(self):
         return "/ai - поговорить с ии"
