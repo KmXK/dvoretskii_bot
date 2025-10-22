@@ -106,7 +106,7 @@ class ArmyHandler(Handler):
                 datetime.datetime.fromtimestamp(army.end_date)
                 - datetime.datetime.fromtimestamp(army.start_date)
             )
-            if last.days > 0:
+            if last.total_seconds() > 0:
                 if output_type == ArmyHandler.OutputType.DAYS:
                     text.append(
                         f"{army.name} - осталось {humanize.precisedelta(last, format='%0d', minimum_unit='hours', suppress=['years', 'months'])} ({percent * 100:.2f}%)"
