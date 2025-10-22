@@ -8,6 +8,7 @@ class AIHandler(Handler):
     async def chat(self, context):
         await context.message.reply_text(
             make_deepseek_query(
+                context.message.from_user.id,
                 context.message.text,
                 JAILBREAK_PROMPT,
             ),

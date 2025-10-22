@@ -78,11 +78,11 @@ class ArmyHandler(Handler):
 
     async def callback(self, context: CallbackBotContext):
         data = context.callback_query.data
-        if data and len(data) > 0 and data.startswith("army_handler"):
-            output_type = ArmyHandler.OutputType(data.split("|")[1])
-            if output_type not in ArmyHandler.OutputType:
-                output_type = ArmyHandler.OutputType.DAYS
-        else:
+        if not data or len(data) == 0 or not data.startswith("army_handler"):
+            return False
+
+        output_type = ArmyHandler.OutputType(data.split("|")[1])
+        if output_type not in ArmyHandler.OutputType:
             output_type = ArmyHandler.OutputType.DAYS
 
         assert context.update.effective_message
