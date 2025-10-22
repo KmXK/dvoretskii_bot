@@ -6,7 +6,7 @@ from steward.helpers.ai import JAILBREAK_PROMPT, make_deepseek_query
 @CommandHandler("ai", only_admin=True)
 class AIHandler(Handler):
     async def chat(self, context):
-        await context.message.reply_text(
+        await context.message.reply_markdown(
             make_deepseek_query(
                 context.message.from_user.id,
                 context.message.text,

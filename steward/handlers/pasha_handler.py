@@ -133,7 +133,7 @@ async def _execute_pasha_ai_request(context: ChatBotContext, text):
         await make_prompt_from_message(context, text),
         PASHA_PROMPT,
     )
-    message = await context.message.reply_markdown_v2(response)
+    message = await context.message.reply_markdown(response)
 
     context.repository.db.pasha_ai_messages[
         f"{context.message.chat.id}_{message.id}"
