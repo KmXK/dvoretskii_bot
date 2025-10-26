@@ -13,17 +13,23 @@ from telegram.ext import (
     ContextTypes,
     ExtBot,
     MessageHandler,
+    MessageReactionHandler,
     filters,
 )
 from telethon import TelegramClient
 
-from steward.bot.context import BotActionContext, CallbackBotContext, ChatBotContext
+from steward.bot.context import (
+    BotActionContext,
+    CallbackBotContext,
+    ChatBotContext,
+    ReactionBotContext,
+)
 from steward.bot.delayed_action_handler import DelayedActionHandler
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
-from steward.helpers.tg_update_helpers import get_from_user
+from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
 from steward.session.session_registry import try_get_session_handler
 
 logger = logging.getLogger(__name__)
@@ -72,8 +78,10 @@ class Bot:
             )
 
         application = applicationBuilder.concurrent_updates(True).build()
+        self.bot = application.bot
 
         application.add_handler(MessageHandler(filters.ALL, self._chat, block=False))
+        application.add_handler(MessageReactionHandler(self._chat, block=False))
         application.add_handler(CallbackQueryHandler(self._callback, block=False))
 
         async def post_init(*_):
@@ -85,8 +93,6 @@ class Bot:
                     await init_coro
 
         application.post_init = post_init
-
-        self.bot = application.bot
 
         self.client = TelegramClient(
             ".steward_session",
@@ -113,23 +119,40 @@ class Bot:
             )
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.message is None:
-            return False  # dont react on changes
+        logging.info(update)
+        if update.message is not None:
+            ctx = ChatBotContext(
+                self.repository,
+                self.bot,
+                self.client,
+                update,
+                context,
+                update.message,
+            )
 
-        ctx = ChatBotContext(
-            self.repository,
-            self.bot,
-            self.client,
-            update,
-            context,
-            update.message,
-        )
+            await self._action(
+                ctx,
+                "chat",
+                None,
+            )
+        elif update.message_reaction:
+            logging.info("123123")
+            ctx = ReactionBotContext(
+                self.repository,
+                self.bot,
+                self.client,
+                update,
+                context,
+                update.message_reaction,
+            )
 
-        await self._action(
-            ctx,
-            "chat",
-            None,
-        )
+            await self._action(
+                ctx,
+                "reaction",
+                None,
+            )
+        else:
+            return False
 
     async def _callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query is None:
@@ -159,12 +182,15 @@ class Bot:
     ):
         update = context.update
 
-        session_handler = try_get_session_handler(update)
-        if session_handler is not None:
-            if await getattr(session_handler, action)(context):
-                if func is not None:
-                    await func()
-                return
+        try:
+            session_handler = try_get_session_handler(update)
+            if session_handler is not None:
+                if await getattr(session_handler, action)(context):
+                    if func is not None:
+                        await func()
+                    return
+        except UnsupportedUpdateType:
+            pass
 
         for handler in self.handlers:
             logging.debug(f"Try handler {handler}")

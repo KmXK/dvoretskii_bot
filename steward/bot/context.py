@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from telegram import CallbackQuery, Message, Update
+from telegram import CallbackQuery, Message, MessageReactionUpdated, Update
 from telegram.ext import ContextTypes, ExtBot
 from telethon import TelegramClient
 
@@ -29,6 +29,11 @@ class ChatBotContext(BotActionContext):
 @dataclass
 class CallbackBotContext(BotActionContext):
     callback_query: CallbackQuery
+
+
+@dataclass
+class ReactionBotContext(BotActionContext):
+    message_reaction: MessageReactionUpdated
 
 
 @dataclass
