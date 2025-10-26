@@ -33,6 +33,7 @@ from steward.handlers.pasha_handler import (
     PashaSessionHandler,
 )
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
+from steward.handlers.reaction_counter_handler import ReactionCounterHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.translate_handler import TranslateHandler
 from steward.logging.configure import configure_logging
@@ -51,6 +52,7 @@ def get_handlers(log_file: None | str):
             GetRulesHandler,
             AddRuleHandler,
             DeleteRuleHandler,
+            ReactionCounterHandler,
             GetAdminsHandler,
             AddAdminHandler,
             DeleteAdminHandler,

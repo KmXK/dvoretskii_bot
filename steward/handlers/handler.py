@@ -1,6 +1,6 @@
 from telegram.ext import ExtBot
 
-from steward.bot.context import CallbackBotContext, ChatBotContext
+from steward.bot.context import CallbackBotContext, ChatBotContext, ReactionBotContext
 from steward.data.repository import Repository
 
 
@@ -25,6 +25,10 @@ class Handler:
 
     async def callback(self, context: CallbackBotContext) -> bool:
         """Callback handler"""
+        return False
+
+    async def reaction(self, context: ReactionBotContext) -> bool:
+        """Reaction handler"""
         return False
 
     def help(self) -> str | None:
