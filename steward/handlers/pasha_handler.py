@@ -159,6 +159,7 @@ class PashaHandler(Handler):
         if context.message.text.startswith("/pasha") and len(context.message.text) > 7:
             text = context.message.text[7:]
             await _execute_pasha_ai_request(context, text)
+            return True
         else:
             return False
 
@@ -178,3 +179,5 @@ class PashaRelatedMessageHandler(Handler):
             return False
 
         await _execute_pasha_ai_request(context, context.message.text)
+        return True
+
