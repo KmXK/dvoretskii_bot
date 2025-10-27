@@ -5,13 +5,25 @@ import coloredlogs
 from steward.logging.logging_filters import ReplaceFilter
 
 
-def configure_logging(token, log_file: None | str, is_debug: bool = False):
-    coloredlogs.install(
-        fmt="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
-        level=logging.DEBUG if is_debug else logging.INFO,
-        stream=open(log_file, "a") if log_file else None,
-        isatty=log_file is None,
-    )
+def configure_logging(
+    token,
+    log_file: None | str,
+    is_debug: bool = False,
+    is_prod: bool = False,
+):
+    if is_prod:
+        logging.basicConfig(
+            format="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
+            level=logging.DEBUG if is_debug else logging.INFO,
+            stream=open(log_file, "a") if log_file else None,
+        )
+    else:
+        coloredlogs.install(
+            fmt="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
+            level=logging.DEBUG if is_debug else logging.INFO,
+            stream=open(log_file, "a") if log_file else None,
+            isatty=log_file is None,
+        )
 
     # TODO: Remove logs /getUpdates (но не удалять другие!!!)
     for filter in [

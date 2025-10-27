@@ -105,7 +105,7 @@ def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     assert token
 
-    configure_logging(token, args.log_file, args.debug)
+    configure_logging(token, args.log_file, args.debug, args.prod)
 
     repository = Repository(JsonFileStorage("db.json"))
     handlers = get_handlers(args.log_file)

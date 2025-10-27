@@ -29,9 +29,15 @@ services:
     depends_on:
       - telegram-api
       - cloudflare-bypass
+      - fluentbit
     networks:
       - bot
     restart: always
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: app.logs
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
@@ -55,9 +61,41 @@ services:
     networks:
       - bot
 
+  config-generator:
+    build:
+      context: ./fluentbit
+      dockerfile: Dockerfile.config_creator
+    volumes:
+      - ./fluentbit:/templates:ro
+      - config-volume:/output
+    environment:
+      - YC_GROUP_ID=${YC_GROUP_ID}
+    entrypoint: ""
+    command: >
+      sh -c "
+        echo 'Generating config files...' &&
+        envsubst < /templates/fluentbit.conf > /output/fluent-bit.conf &&
+        envsubst < /templates/parsers.conf > /output/parsers.conf &&
+        echo 'Config file generated successfully.'
+      "
+
+  fluentbit:
+    container_name: fluentbit
+    image: cr.yandex/yc/fluent-bit-plugin-yandex:v2.1.1-fluent-bit-1.8.15
+    ports:
+      - 24224:24224
+      - 24224:24224/udp
+    restart: always
+    depends_on:
+      config-generator:
+        condition: service_completed_successfully
+    volumes:
+      - config-volume:/fluent-bit/etc:ro
+
 volumes:
   bot_logs:
   telegram_data:
+  config-volume:
 
 networks:
   bot:
