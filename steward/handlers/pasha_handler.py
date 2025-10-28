@@ -1,3 +1,4 @@
+import logging
 from time import time
 
 import telethon
@@ -153,6 +154,7 @@ class PashaHandler(Handler):
         self,
         context: ChatBotContext,
     ):
+        logging.info("1\n1")
         if not context.message or not context.message.text:
             return False
 
@@ -180,4 +182,3 @@ class PashaRelatedMessageHandler(Handler):
 
         await _execute_pasha_ai_request(context, context.message.text)
         return True
-
