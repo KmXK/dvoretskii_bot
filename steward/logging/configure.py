@@ -13,13 +13,13 @@ def configure_logging(
 ):
     if is_prod:
         logging.basicConfig(
-            format="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
+            format="%(asctime)s.%(msecs)03d - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
             level=logging.DEBUG if is_debug else logging.INFO,
             stream=open(log_file, "a") if log_file else None,
         )
     else:
         coloredlogs.install(
-            fmt="%(asctime)s - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
+            fmt="%(asctime)s.%(msecs)03d - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
             level=logging.DEBUG if is_debug else logging.INFO,
             stream=open(log_file, "a") if log_file else None,
             isatty=log_file is None,
