@@ -16,6 +16,7 @@ def configure_logging(
             format="%(asctime)s.%(msecs)03d - [%(filename)s:%(lineno)d] - %(levelname)s - %(message)s",
             level=logging.DEBUG if is_debug else logging.INFO,
             stream=open(log_file, "a") if log_file else None,
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
     else:
         coloredlogs.install(
@@ -23,6 +24,7 @@ def configure_logging(
             level=logging.DEBUG if is_debug else logging.INFO,
             stream=open(log_file, "a") if log_file else None,
             isatty=log_file is None,
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
     # TODO: Remove logs /getUpdates (но не удалять другие!!!)
