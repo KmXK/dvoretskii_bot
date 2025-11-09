@@ -178,14 +178,14 @@ class DownloadHandler(Handler):
                         "format": "(bv[filesize<=250M]+ba)/best",
                         "format_sort": ["ext:mp4", "res:1080"],
                         "max_filesize": 250 * 1024 * 1024,
-                    }
+                    } # type: ignore
                 ).extract_info(url)
 
                 width: str | None = None
                 height: str | None = None
                 if isinstance(info, dict):
-                    width = info.get("width")  # type: ignore
-                    height = info.get("height")  # type: ignore
+                    width = info.get("width", 0)  # type: ignore
+                    height = info.get("height", 0)  # type: ignore
 
                 # fix
                 files = os.listdir(dir)
@@ -333,7 +333,7 @@ class DownloadHandler(Handler):
                         retry += 1
 
                 # wait if not last
-                if i + 10 < len(images):
+                if i + 10 < len(medias):
                     await asyncio.sleep(2)
 
             logger.info("Картинки отправлены")
