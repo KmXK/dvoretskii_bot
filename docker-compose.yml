@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   bot:
     build: .
@@ -7,7 +5,6 @@ services:
     volumes:
       - bot_logs:/var/log
       - ./db.json:/app/db.json
-      - ./data.json:/app/data.json
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DOWNLOAD_PROXY=${DOWNLOAD_PROXY}
@@ -15,6 +12,9 @@ services:
       - TELEGRAM_API_PORT=${TELEGRAM_API_PORT}
       - TRANSLATE_KEY_ID=${TRANSLATE_KEY_ID}
       - TRANSLATE_KEY_SECRET=${TRANSLATE_KEY_SECRET}
+      - SPEECHKIT_API_ID=${SPEECHKIT_API_ID}
+      - SPEECHKIT_API_SECRET=${SPEECHKIT_API_SECRET}
+      - EVELEN_LABS_STT=${EVELEN_LABS_STT}
       - AI_KEY_ID=${AI_KEY_ID}
       - AI_KEY_SECRET=${AI_KEY_SECRET}
       - AI_MODEL_URI=${AI_MODEL_URI}
@@ -27,7 +27,7 @@ services:
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_API_HOST=http://telegram-api:8081
     depends_on:
-      # - telegram-api
+      - telegram-api
       # - cloudflare-bypass
       - fluentbit
     networks:
@@ -38,21 +38,27 @@ services:
       options:
         fluentd-address: localhost:24224
         tag: app.logs
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./steward
+          target: /app/steward
+          initial_sync: true
 
-  # telegram-api:
-  #   image: aiogram/telegram-bot-api:latest
-  #   environment:
-  #     TELEGRAM_HTTP_PORT: 8081
-  #     TELEGRAM_LOCAL: ""
-  #     TELEGRAM_WORK_DIR: "/data"
-  #     TELEGRAM_API_ID: ${TELEGRAM_API_ID}
-  #     TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-  #   volumes:
-  #     - telegram_data:/data
-  #   ports:
-  #     - "${TELEGRAM_API_PORT}:8081"
-  #   networks:
-  #     - bot
+  telegram-api:
+    image: aiogram/telegram-bot-api:latest
+    environment:
+      TELEGRAM_HTTP_PORT: 8081
+      TELEGRAM_LOCAL: ""
+      TELEGRAM_WORK_DIR: "/data"
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+    volumes:
+      - telegram_data:/data
+    ports:
+      - "${TELEGRAM_API_PORT}:8081"
+    networks:
+      - bot
 
   # cloudflare-bypass:
   #   image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest

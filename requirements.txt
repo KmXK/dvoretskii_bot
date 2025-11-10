@@ -16,3 +16,4 @@ aiohttp_socks
 telethon
 async-lru
 openai
+elevenlabs

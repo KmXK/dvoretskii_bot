@@ -1,4 +1,5 @@
 import asyncio
+from io import BufferedRandom
 import logging
 import os
 import re
@@ -7,13 +8,24 @@ import base64
 import json
 from urllib.parse import urlparse, parse_qs
 from contextlib import ExitStack, asynccontextmanager
-from typing import Any, Callable
+from typing import Any, Callable, cast
+import uuid
 
 import aiohttp
 import youtube_dl
 import yt_dlp
 from aiohttp_socks import ProxyConnector
-from telegram import InputFile, InputMediaPhoto, InputMediaVideo, Message
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Message,
+)
+
+from elevenlabs.client import ElevenLabs
+from elevenlabs.types import SpeechToTextChunkResponseModel
 
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
@@ -89,6 +101,24 @@ class DownloadHandler(Handler):
                     #     await context.message.reply_text("не смог =(")
                     return True
 
+    async def callback(self, context):
+        assert context.callback_query.data
+        data_parts = context.callback_query.data.split("|")
+        if len(data_parts) >= 2 and data_parts[0] == "download_handler":
+            action = data_parts[1]
+
+            if action == "trans":
+                url = "|".join(data_parts[2:])
+
+                try:
+                    await self._make_transcribation(
+                        context.callback_query.message,
+                        url,
+                    )  # type: ignore
+                except Exception as e:
+                    logger.exception(e)
+                return True
+
     async def _load_instagram(
         self,
         url: str,
@@ -110,7 +140,10 @@ class DownloadHandler(Handler):
                 for x in json_resp["url"]["data"]:
                     url = x["url"]
                     token = parse_qs(urlparse(url).query)["token"][0]
-                    json_data = base64.urlsafe_b64decode(token.split(".")[1] + ("=" * (4 - (len(token.split(".")[1]) % 4))))
+                    json_data = base64.urlsafe_b64decode(
+                        token.split(".")[1]
+                        + ("=" * (4 - (len(token.split(".")[1]) % 4)))
+                    )
                     filename = json.loads(json_data)["filename"]
                     if filename.endswith("mp4"):
                         medias.append((url, True))
@@ -121,7 +154,9 @@ class DownloadHandler(Handler):
                 medias = sorted(set(medias), key=lambda x: medias.index(x))
 
                 if len(medias) > 0:
-                    await self._download_and_send_medias(message, medias, use_proxy=True)
+                    await self._download_and_send_medias(
+                        message, medias, use_proxy=True
+                    )
 
     async def _load_yandex_music(
         self,
@@ -168,24 +203,26 @@ class DownloadHandler(Handler):
 
             with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
                 filepath = dir + "/file"
-                info = yt_dlp.YoutubeDL(
-                    {
-                        "proxy": os.environ.get("DOWNLOAD_PROXY"),
-                        "verbose": True,
-                        "outtmpl": filepath,
-                        "logger": yt_logger,
-                        "cookiefile": cookie_file,
-                        "format": "(bv[filesize<=250M]+ba)/best",
-                        "format_sort": ["ext:mp4", "res:1080"],
-                        "max_filesize": 250 * 1024 * 1024,
-                    } # type: ignore
-                ).extract_info(url)
+                info = await asyncio.to_thread(
+                    lambda: yt_dlp.YoutubeDL(
+                        {
+                            "proxy": os.environ.get("DOWNLOAD_PROXY"),
+                            "verbose": True,
+                            "outtmpl": filepath,
+                            "logger": yt_logger,
+                            "cookiefile": cookie_file,
+                            "format": "(bv[filesize<=250M]+ba)/best",
+                            "format_sort": ["ext:mp4", "res:1080"],
+                            "max_filesize": 250 * 1024 * 1024,
+                        }  # type: ignore
+                    ).extract_info(url)
+                )
 
                 width: str | None = None
                 height: str | None = None
                 if isinstance(info, dict):
-                    width = info.get("width", 0)  # type: ignore
-                    height = info.get("height", 0)  # type: ignore
+                    width = info.get("width", 0)
+                    height = info.get("height", 0)
 
                 # fix
                 files = os.listdir(dir)
@@ -193,13 +230,33 @@ class DownloadHandler(Handler):
 
                 filepath = dir + "/" + files[0]
 
+                reply_markup = None
+                duration = info.get("duration")  # секунды (int/float) или None
+                if duration is not None and duration < 3 * 60:
+                    link_id = uuid.uuid4().hex
+                    self.repository.db.saved_links.add(link_id, url)
+                    await self.repository.save()
+                    reply_markup = InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "Текст",
+                                    callback_data=f"download_handler|trans|{link_id}",
+                                ),
+                            ],
+                        ]
+                    )
+
                 with open(filepath, "rb") as file:
                     await message.reply_video(
                         InputFile(file, filename=f"{type_name} Video"),
                         supports_streaming=True,
                         width=int(width) if width is not None else None,
                         height=int(height) if height is not None else None,
+                        reply_markup=reply_markup,
                     )
+
+                logger.info(f"video {type_name} downloaded successfully")
 
         return wrapper
 
@@ -272,6 +329,146 @@ class DownloadHandler(Handler):
 
         return wrapper
 
+    async def _make_transcribation(self, message: Message, url):
+        check_limit("TRANSCRIBATION_LIMIT", 5, Duration.MINUTE)
+        check_limit(f"TRANSCRIBATION_LIMIT_{message.id}", 1, 10 * Duration.SECOND)
+
+        real_uuid = url
+        if url.startswith("no_ydl_"):
+            real_uuid = url[len("no_ydl_") :]
+
+        saved_url = self.repository.db.saved_links.get(real_uuid)
+        if saved_url is None:
+            logger.error("transcribation for saved link was not found")
+            return True
+
+        with tempfile.TemporaryDirectory(prefix="transcribation_") as dir:
+            if url.startswith("no_ydl_"):
+                async with self._download_file(saved_url, use_proxy=True) as file:
+                    output_path = os.path.join(dir, "out.mp3")
+
+                    # run ffmpeg to convert to mp3 mono 44.1k
+                    proc = await asyncio.create_subprocess_exec(
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        file.name,
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "44100",
+                        output_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        logging.error(
+                            "ffmpeg failed to convert file: %s",
+                            stderr.decode(errors="replace"),
+                        )
+                        return
+
+                # check duration of converted file (seconds)
+                ffprobe = await asyncio.create_subprocess_exec(
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    output_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out, err = await ffprobe.communicate()
+                duration = None
+                if ffprobe.returncode == 0:
+                    try:
+                        duration = float(out.decode().strip())
+                    except Exception:
+                        duration = None
+            else:
+                filepath = dir + "/file"
+                info = await asyncio.to_thread(
+                    lambda: yt_dlp.YoutubeDL(
+                        {
+                            "proxy": os.environ.get("DOWNLOAD_PROXY"),
+                            "verbose": True,
+                            "outtmpl": filepath,
+                            "logger": yt_logger,
+                            "format": "bestaudio/best",
+                            "max_filesize": 250 * 1024 * 1024,
+                            "postprocessors": [
+                                {
+                                    "key": "FFmpegExtractAudio",
+                                    "preferredcodec": "mp3",
+                                    "preferredquality": "192",
+                                }
+                            ],
+                            "postprocessor_args": {
+                                "ffmpeg": ["-ac", "1", "-ar", "44100"]
+                            },
+                        }  # type: ignore
+                    ).extract_info(saved_url)
+                )
+
+                logging.info(info)
+                duration = info.get("duration")
+
+            if duration is not None and duration >= 3 * 60:
+                logging.error("Попытка транскрибации аудио больше 3 минут, отменено")
+                return
+
+            files = os.listdir(dir)
+            audio = [f for f in files if f.endswith(".mp3")]
+            if len(audio) == 0:
+                logging.error("Аудио для транскрибации не найдено")
+                return
+
+            logging.info(os.environ.get("SPEECHKIT_API_SECRET"))
+            with open(dir + "/" + audio[0], "rb") as file:
+                client = ElevenLabs(api_key=os.environ.get("EVELEN_LABS_STT"))
+
+                file.seek(0)
+                audio = await asyncio.to_thread(
+                    lambda: client.speech_to_text.convert(
+                        file=file.read(),
+                        model_id="scribe_v1",
+                        tag_audio_events=True,
+                        diarize=True,
+                    )
+                )
+
+                logging.info(audio)
+
+                text = []
+                cur_speaker = None
+
+                for part in cast(SpeechToTextChunkResponseModel, audio).words:
+                    assert part.speaker_id is not None
+
+                    if cur_speaker != part.speaker_id:
+                        cur_speaker = part.speaker_id
+                        text.append(f"{re.sub('([^0-9]+)', 'S', cur_speaker)}: ")
+
+                    text[-1] += part.text
+
+            text = "<blockquote expandable>" + "\n".join(text) + "</blockquote>"
+            if len(text) > 1024:
+                new_message = await message.reply_html(
+                    text,
+                )
+                await message.edit_caption(
+                    new_message.link,
+                )
+            else:
+                await message.edit_caption(
+                    text,
+                    parse_mode="html",
+                )
+
     async def _send_video(
         self,
         message: Message,
@@ -296,7 +493,9 @@ class DownloadHandler(Handler):
             f"Отправляется {morphy.make_agree_with_number('картинка', len(videosOrImages))}"
         )
 
-        files_tasks = [self._download_file(url, use_proxy=use_proxy) for url, _ in videosOrImages]
+        files_tasks = [
+            self._download_file(url, use_proxy=use_proxy) for url, _ in videosOrImages
+        ]
 
         try:
             results = await asyncio.gather(
@@ -308,33 +507,58 @@ class DownloadHandler(Handler):
 
             exceptions = [exc for exc in results if isinstance(exc, Exception)]
             if len(exceptions) > 0:
-                raise ExceptionGroup("", exceptions)
-
-            logger.info(exceptions)
+                raise ExceptionGroup("", exceptions)  # noqa: F821
 
             medias = [
-                InputMediaPhoto(file) if not videosOrImages[i][1] else InputMediaVideo(file)
+                InputMediaPhoto(file)
+                if not videosOrImages[i][1]
+                else InputMediaVideo(file)
                 for i, file in enumerate(results)
                 if not isinstance(file, BaseException)
             ]
 
-            for i in range(0, len(medias), 10):
-                retry = 0
-                while retry < retries_count:
-                    try:
-                        await message.reply_media_group(
-                            medias[i : i + 10],
-                            disable_notification=True,
-                        )
-                        break
-                    except Exception as e:
-                        logging.exception(e)
-                        await asyncio.sleep(5)
-                        retry += 1
+            reply_markup = None
+            if len(videosOrImages) == 1 and videosOrImages[0][1]:
+                assert not isinstance(results[0], BaseException)
+                results[0].seek(0)
 
-                # wait if not last
-                if i + 10 < len(medias):
-                    await asyncio.sleep(2)
+                link_id = uuid.uuid4().hex
+                self.repository.db.saved_links.add(link_id, videosOrImages[0][0])
+                await self.repository.save()
+                reply_markup = InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Текст",
+                                callback_data=f"download_handler|trans|no_ydl_{link_id}",
+                            ),
+                        ],
+                    ]
+                )
+                await message.reply_video(
+                    results[0],
+                    disable_notification=True,
+                    reply_markup=reply_markup,
+                )
+
+            else:
+                for i in range(0, len(medias), 10):
+                    retry = 0
+                    while retry < retries_count:
+                        try:
+                            await message.reply_media_group(
+                                medias[i : i + 10],
+                                disable_notification=True,
+                            )
+                            break
+                        except Exception as e:
+                            logging.exception(e)
+                            await asyncio.sleep(5)
+                            retry += 1
+
+                    # wait if not last
+                    if i + 10 < len(medias):
+                        await asyncio.sleep(2)
 
             logger.info("Картинки отправлены")
 
@@ -430,7 +654,7 @@ class DownloadHandler(Handler):
     @asynccontextmanager
     async def _download_file(self, url: str, use_proxy=False):
         logger.info(f"Скачиваем файл: {url}")
-        with tempfile.TemporaryFile("r+b") as file:
+        with tempfile.NamedTemporaryFile("r+b") as file:
             logger.info(f"Создан файл {file.name}")
 
             async def get_url_content_to_file(url: str):

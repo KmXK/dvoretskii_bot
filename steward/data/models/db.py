@@ -1,12 +1,13 @@
 import logging
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Sized
 
 from dacite import Config, from_dict
 
 from steward.data.models.pasha_ai_message import PashaAiMessage
+from steward.data.models.saved_links import SavedLinks
 from steward.delayed_action.base import DelayedAction
 from steward.helpers.class_mark import try_get_class_by_mark
 
@@ -25,6 +26,8 @@ class Database:
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
     delayed_actions: list[DelayedAction] = field(default_factory=list)
+    saved_links: SavedLinks = field(default_factory=SavedLinks)
+
     version: int = 3
 
 
@@ -34,7 +37,7 @@ PARSE_CONFIG = Config(
         set,
     ],
     type_hooks={
-        datetime: lambda s: datetime.fromtimestamp(s),
+        datetime: lambda s: datetime.fromtimestamp(s, tz=timezone.utc),
         timedelta: lambda s: timedelta(seconds=s),
     },
 )
