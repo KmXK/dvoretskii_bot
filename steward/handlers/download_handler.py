@@ -77,6 +77,14 @@ class DownloadHandler(Handler):
                     cookie_file=os.environ.get("YT_COOKIES_FILE"),
                     pre_call=lambda: check_limit(YT_LIMIT, 1, 10 * Duration.SECOND),
                 ),
+                "pinterest.com": [
+                    self._get_video_wrapper("pinterest"),
+                    self._get_images_wrapper("pinterest"),
+                ],
+                "pin.it": [
+                    self._get_video_wrapper("pinterest"),
+                    self._get_images_wrapper("pinterest"),
+                ],
                 "music.yandex": self._load_yandex_music,
             }.items():
                 if handlerPath in url:
