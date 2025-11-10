@@ -12,6 +12,7 @@ from typing import Any, Callable, cast
 import uuid
 
 import aiohttp
+import httpx
 import youtube_dl
 import yt_dlp
 from aiohttp_socks import ProxyConnector
@@ -429,7 +430,12 @@ class DownloadHandler(Handler):
 
             logging.info(os.environ.get("SPEECHKIT_API_SECRET"))
             with open(dir + "/" + audio[0], "rb") as file:
-                client = ElevenLabs(api_key=os.environ.get("EVELEN_LABS_STT"))
+                client = ElevenLabs(
+                    api_key=os.environ.get("EVELEN_LABS_STT"),
+                    httpx_client=httpx.Client(
+                        timeout=240, proxy=os.environ.get("DOWNLOAD_PROXY")
+                    ),
+                )
 
                 file.seek(0)
                 audio = await asyncio.to_thread(
