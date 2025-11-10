@@ -69,12 +69,12 @@ class DownloadHandler(Handler):
                 ],
                 "youtube.com": self._get_video_wrapper(
                     "youtube",
-                    cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                    # cookie_file=os.environ.get("YT_COOKIES_FILE"),
                     pre_call=lambda: check_limit(YT_LIMIT, 1, 10 * Duration.SECOND),
                 ),
                 "youtu.be": self._get_video_wrapper(
                     "youtube",
-                    cookie_file=os.environ.get("YT_COOKIES_FILE"),
+                    # cookie_file=os.environ.get("YT_COOKIES_FILE"),
                     pre_call=lambda: check_limit(YT_LIMIT, 1, 10 * Duration.SECOND),
                 ),
                 "pinterest.com": [
