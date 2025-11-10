@@ -43,7 +43,6 @@ services:
         - action: sync+restart
           path: ./steward
           target: /app/steward
-          initial_sync: true
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
