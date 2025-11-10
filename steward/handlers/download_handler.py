@@ -220,7 +220,7 @@ class DownloadHandler(Handler):
                             "outtmpl": filepath,
                             "logger": yt_logger,
                             "cookiefile": cookie_file,
-                            "format": "(bv[filesize<=250M]+ba)/best",
+                            "format": "(bv+ba)/best",
                             "format_sort": ["ext:mp4", "res:1080"],
                             "max_filesize": 250 * 1024 * 1024,
                         }  # type: ignore
