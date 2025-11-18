@@ -37,6 +37,10 @@ from steward.handlers.pasha_handler import (
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.reaction_counter_handler import ReactionCounterHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
+from steward.handlers.silence_handler import (
+    SilenceCommandHandler,
+    SilenceEnforcerHandler,
+)
 from steward.handlers.translate_handler import TranslateHandler
 from steward.logging.configure import configure_logging
 
@@ -48,8 +52,10 @@ def get_handlers(log_file: None | str):
     # TODO: Create bot context for bot
     handlers: list[Handler] = init_handlers(
         [
-            PashaRelatedMessageHandler,
             ChatCollectHandler,
+            SilenceCommandHandler,
+            SilenceEnforcerHandler,
+            PashaRelatedMessageHandler,
             DownloadHandler,
             GetRulesHandler,
             AddRuleHandler,
