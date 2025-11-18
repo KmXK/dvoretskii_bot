@@ -18,3 +18,5 @@ async-lru
 openai
 elevenlabs
 httpx[socks]
+tzdata
+python-dotenv

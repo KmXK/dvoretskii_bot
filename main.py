@@ -2,6 +2,8 @@ import argparse
 import logging
 import os
 
+from dotenv import load_dotenv
+
 from steward.bot.bot import Bot
 from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
@@ -84,6 +86,8 @@ def get_handlers(log_file: None | str):
 
 
 def main():
+    load_dotenv()
+
     parser = argparse.ArgumentParser("bot")
     parser.add_argument(
         "--prod",
