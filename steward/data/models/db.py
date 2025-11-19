@@ -28,7 +28,7 @@ class Database:
     feature_requests: list[FeatureRequest] = field(default_factory=list)
     delayed_actions: list[DelayedAction] = field(default_factory=list)
     saved_links: SavedLinks = field(default_factory=SavedLinks)
-    video_offsets: dict[str, float] = field(default_factory=dict)
+    data_offsets: dict[str, float] = field(default_factory=dict)
 
     version: int = 3
 
