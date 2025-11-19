@@ -1,6 +1,9 @@
 # vscode
 .vscode/
 
+# data files
+data/
+
 # test file
 test.py
 db.json
