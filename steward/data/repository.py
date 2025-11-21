@@ -2,7 +2,7 @@ import datetime
 import json
 import logging
 from abc import abstractmethod
-from datetime import timedelta
+from datetime import time, timedelta
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable
 
@@ -28,6 +28,8 @@ class JsonEncoder(json.JSONEncoder):
             return o.total_seconds()
         elif isinstance(o, datetime.datetime):
             return o.timestamp()
+        elif isinstance(o, time):
+            return o.isoformat()
         try:
             iterable = iter(o)
         except TypeError:

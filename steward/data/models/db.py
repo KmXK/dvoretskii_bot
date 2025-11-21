@@ -1,6 +1,6 @@
 import logging
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Sized
 
@@ -12,6 +12,7 @@ from steward.delayed_action.base import DelayedAction
 from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
+from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .feature_request import FeatureRequest
 from .rule import Rule
@@ -29,6 +30,7 @@ class Database:
     delayed_actions: list[DelayedAction] = field(default_factory=list)
     saved_links: SavedLinks = field(default_factory=SavedLinks)
     data_offsets: dict[str, float] = field(default_factory=dict)
+    channel_subscriptions: list[ChannelSubscription] = field(default_factory=list)
 
     version: int = 3
 
@@ -41,6 +43,9 @@ PARSE_CONFIG = Config(
     type_hooks={
         datetime: lambda s: datetime.fromtimestamp(s, tz=timezone.utc),
         timedelta: lambda s: timedelta(seconds=s),
+        time: lambda s: time.fromisoformat(s)
+        if isinstance(s, str)
+        else time(hour=s // 3600, minute=(s % 3600) // 60, second=s % 60),
     },
 )
 
