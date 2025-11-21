@@ -1,8 +1,8 @@
 # vscode
 .vscode/
 
-# data files
-data/
+# data files (only root data folder)
+/data/
 
 # test file
 test.py
