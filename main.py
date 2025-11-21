@@ -34,6 +34,7 @@ from steward.handlers.pasha_handler import (
     PashaRelatedMessageHandler,
     PashaSessionHandler,
 )
+from steward.handlers.post_handler import PostHandler
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.reaction_counter_handler import ReactionCounterHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
@@ -73,6 +74,7 @@ def get_handlers(log_file: None | str):
             IdHandler,
             PrettyTimeHandler,
             MessageInfoHandler,
+            PostHandler,
             TranslateHandler,
             ExchangeRateHandler,
             HolidaysHandler,
