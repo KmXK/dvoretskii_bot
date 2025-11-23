@@ -3,6 +3,7 @@ import logging
 import tempfile
 from pathlib import Path
 
+import aiohttp
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from telegram import InputFile
 
@@ -43,11 +44,29 @@ class CollectVoiceStep(Step):
         voice = context.message.voice
         try:
             # Скачиваем временно для получения длительности
-            tg_file = await voice.get_file()
+            # Используем context.bot.get_file() вместо voice.get_file()
+            # так как в контексте сессии voice.get_file() может не работать
+            tg_file = await context.bot.get_file(voice.file_id)
             with tempfile.TemporaryDirectory(prefix="multiply_voice_temp_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
-                await tg_file.download_to_drive(custom_path=str(audio_path))
+
+                # Скачиваем файл по URL через HTTP
+                # Используем file_path для построения URL
+                file_url = tg_file.file_path
+                if file_url:
+                    # Если file_path относительный, строим полный URL
+                    if not file_url.startswith("http"):
+                        file_url = f"https://api.telegram.org/file/bot{context.bot.token}/{file_url}"
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(file_url) as response:
+                            with open(audio_path, "wb") as f:
+                                async for chunk in response.content.iter_chunked(8192):
+                                    f.write(chunk)
+                else:
+                    # Если URL недоступен, используем download_to_drive
+                    await tg_file.download_to_drive(custom_path=str(audio_path))
 
                 # Получаем длительность аудио
                 audio_duration = await asyncio.to_thread(
@@ -217,8 +236,24 @@ class MultiplyHandler(SessionHandlerBase):
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
 
-                # Используем download_to_drive как в voice_video_handler
-                await tg_file.download_to_drive(custom_path=str(audio_path))
+                # Скачиваем файл по URL через HTTP
+                # Используем file_path для построения URL
+                file_url = tg_file.file_path
+                if file_url:
+                    # Если file_path относительный, строим полный URL
+                    if not file_url.startswith("http"):
+                        file_url = (
+                            f"https://api.telegram.org/file/bot{bot.token}/{file_url}"
+                        )
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(file_url) as response:
+                            with open(audio_path, "wb") as f:
+                                async for chunk in response.content.iter_chunked(8192):
+                                    f.write(chunk)
+                else:
+                    # Если URL недоступен, используем download_to_drive
+                    await tg_file.download_to_drive(custom_path=str(audio_path))
 
                 # Создаем повторенное аудио
                 output_path = tmp_dir_path / "multiplied.ogg"
