@@ -190,10 +190,13 @@ class CollectTimesStep(Step):
         self.times: list[time] = []
 
     async def chat(self, context):
-        # Проверяем, подтвержден ли канал
+        # Проверяем, подтвержден ли канал - это нужно проверять всегда
         if not context.session_context.get("channel_confirmed", False):
             # Канал не подтвержден, пропускаем этот шаг
             context.session_context[self.name] = []
+            # Сбрасываем состояние, чтобы не было проблем при повторном вызове
+            self.is_waiting = False
+            self.times = []
             return True
 
         if not self.is_waiting:
@@ -254,6 +257,15 @@ class CollectTimesStep(Step):
             return False
 
     async def callback(self, context):
+        # Проверяем, подтвержден ли канал - это нужно проверять всегда
+        if not context.session_context.get("channel_confirmed", False):
+            # Канал не подтвержден, пропускаем этот шаг
+            context.session_context[self.name] = []
+            # Сбрасываем состояние, чтобы не было проблем при повторном вызове
+            self.is_waiting = False
+            self.times = []
+            return True
+
         if not self.is_waiting:
             # Если шаг только начался (например, после callback из предыдущего шага),
             # отправляем сообщение с просьбой ввести время
