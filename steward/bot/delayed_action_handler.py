@@ -79,6 +79,7 @@ class DelayedActionHandler:
                 nearest_time = await nearest_time
 
             if nearest_time is None:
+                logging.debug(f"Delayed action is removed {action}")
                 self._repository.db.delayed_actions.remove(action)
                 has_deleted = True
                 continue
