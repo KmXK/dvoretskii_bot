@@ -421,6 +421,17 @@ class SubscribeHandler(SessionHandlerBase):
         )
 
 
+def _escape_markdown(text: str) -> str:
+    """Экранирует специальные символы Markdown v1"""
+    # В Markdown v1 нужно экранировать: _, *, `, [
+    return (
+        text.replace("_", "\\_")
+        .replace("*", "\\*")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+    )
+
+
 def format_subscription_page(ctx: PageFormatContext[ChannelSubscription]) -> str:
     def format_subscription(sub: ChannelSubscription):
         times_str = ", ".join([t.strftime("%H:%M") for t in sub.times])
@@ -429,6 +440,8 @@ def format_subscription_page(ctx: PageFormatContext[ChannelSubscription]) -> str
             if sub.channel_username
             else f"ID {sub.channel_id}"
         )
+        # Экранируем специальные символы Markdown в channel_display
+        channel_display = _escape_markdown(channel_display)
         return f"{channel_display} ({sub.id}) - {times_str}"
 
     from steward.helpers.formats import format_lined_list
