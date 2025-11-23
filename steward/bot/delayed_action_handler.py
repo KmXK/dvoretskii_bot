@@ -51,6 +51,7 @@ class DelayedActionHandler:
             logger.info("Waiting ended")
 
             if self._update_future in done:
+                logger.info("Waiting ended due to update")
                 self._update_future = asyncio.Future()
                 continue
 
