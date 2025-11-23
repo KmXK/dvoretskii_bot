@@ -43,7 +43,8 @@ class CollectVoiceStep(Step):
         voice = context.message.voice
         try:
             # Скачиваем временно для получения длительности
-            tg_file = await voice.get_file()
+            # Используем context.bot для получения файла
+            tg_file = await context.bot.get_file(voice.file_id)
             with tempfile.TemporaryDirectory(prefix="multiply_voice_temp_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
@@ -54,11 +55,13 @@ class CollectVoiceStep(Step):
                     self._get_audio_duration, audio_path
                 )
 
-                # Сохраняем информацию о голосовом сообщении
+                # Сохраняем информацию о голосовом сообщении и боте
                 context.session_context[self.name] = {
                     "voice": voice,
                     "duration": audio_duration,
                 }
+                # Сохраняем бота для использования в on_session_finished
+                context.session_context["bot"] = context.bot
 
         except Exception as e:
             logger.exception("Error getting voice duration: %s", e)
@@ -198,10 +201,18 @@ class MultiplyHandler(SessionHandlerBase):
             return
 
         voice = voice_info["voice"]
+        bot = session_context.get("bot")
+
+        if bot is None:
+            await get_message(update).chat.send_message(
+                "Ошибка: не удалось получить бота"
+            )
+            return
 
         try:
             # Скачиваем голосовое сообщение
-            tg_file = await voice.get_file()
+            # Используем бота из контекста сессии
+            tg_file = await bot.get_file(voice.file_id)
             with tempfile.TemporaryDirectory(prefix="multiply_voice_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
