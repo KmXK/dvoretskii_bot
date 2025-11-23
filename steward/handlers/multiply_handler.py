@@ -59,13 +59,33 @@ class CollectVoiceStep(Step):
                     if not file_url.startswith("http"):
                         file_url = f"https://api.telegram.org/file/bot{context.bot.token}/{file_url}"
 
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(file_url) as response:
-                            with open(audio_path, "wb") as f:
-                                async for chunk in response.content.iter_chunked(8192):
-                                    f.write(chunk)
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(file_url) as response:
+                                response.raise_for_status()  # Проверяем статус ответа
+                                with open(audio_path, "wb") as f:
+                                    while True:
+                                        chunk = await response.content.readany()
+                                        if not chunk:
+                                            break
+                                        f.write(chunk)
+
+                        # Проверяем, что файл не пустой
+                        if audio_path.stat().st_size == 0:
+                            raise ValueError("Скачанный файл пустой")
+                    except Exception as e:
+                        logger.warning(
+                            "Ошибка при скачивании по URL, пробуем download_to_drive: %s",
+                            e,
+                        )
+                        # Если скачивание по URL не удалось, используем download_to_drive
+                        # Устанавливаем правильный бот в объект File
+                        tg_file._bot = context.bot
+                        await tg_file.download_to_drive(custom_path=str(audio_path))
                 else:
                     # Если URL недоступен, используем download_to_drive
+                    # Устанавливаем правильный бот в объект File
+                    tg_file._bot = context.bot
                     await tg_file.download_to_drive(custom_path=str(audio_path))
 
                 # Получаем длительность аудио
@@ -246,13 +266,33 @@ class MultiplyHandler(SessionHandlerBase):
                             f"https://api.telegram.org/file/bot{bot.token}/{file_url}"
                         )
 
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(file_url) as response:
-                            with open(audio_path, "wb") as f:
-                                async for chunk in response.content.iter_chunked(8192):
-                                    f.write(chunk)
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(file_url) as response:
+                                response.raise_for_status()  # Проверяем статус ответа
+                                with open(audio_path, "wb") as f:
+                                    while True:
+                                        chunk = await response.content.readany()
+                                        if not chunk:
+                                            break
+                                        f.write(chunk)
+
+                        # Проверяем, что файл не пустой
+                        if audio_path.stat().st_size == 0:
+                            raise ValueError("Скачанный файл пустой")
+                    except Exception as e:
+                        logger.warning(
+                            "Ошибка при скачивании по URL, пробуем download_to_drive: %s",
+                            e,
+                        )
+                        # Если скачивание по URL не удалось, используем download_to_drive
+                        # Устанавливаем правильный бот в объект File
+                        tg_file._bot = bot
+                        await tg_file.download_to_drive(custom_path=str(audio_path))
                 else:
                     # Если URL недоступен, используем download_to_drive
+                    # Устанавливаем правильный бот в объект File
+                    tg_file._bot = bot
                     await tg_file.download_to_drive(custom_path=str(audio_path))
 
                 # Создаем повторенное аудио
