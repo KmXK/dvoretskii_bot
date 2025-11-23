@@ -47,7 +47,9 @@ class FeatureRequestViewHandler(Handler):
 
         data = context.message.text.split(" ")
         if len(data) == 1 or data[1] == "list":
-            return await self._get_paginator(FilterType.ALL).show_list(context.update)
+            return await self._get_paginator(FilterType.OPENED).show_list(
+                context.update
+            )
 
         return await self._add_feature(
             context.message, context.message.text[len(data[0]) :].strip()
@@ -250,9 +252,9 @@ class FeatureRequestEditHandler(Handler):
 
             results.sort(key=lambda x: x[1] is None)
             await context.message.reply_markdown(
-                format_lined_list([
-                    (id, "✅" if result is None else result) for id, result in results
-                ])
+                format_lined_list(
+                    [(id, "✅" if result is None else result) for id, result in results]
+                )
             )
 
             return True
