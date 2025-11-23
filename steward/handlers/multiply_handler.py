@@ -43,8 +43,7 @@ class CollectVoiceStep(Step):
         voice = context.message.voice
         try:
             # Скачиваем временно для получения длительности
-            # Используем context.bot для получения файла
-            tg_file = await context.bot.get_file(voice.file_id)
+            tg_file = await voice.get_file()
             with tempfile.TemporaryDirectory(prefix="multiply_voice_temp_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
@@ -200,7 +199,8 @@ class MultiplyHandler(SessionHandlerBase):
             )
             return
 
-        voice = voice_info["voice"]
+        # Получаем file_id из сохраненного voice объекта
+        voice_file_id = voice_info["voice"].file_id
         bot = session_context.get("bot")
 
         if bot is None:
@@ -210,12 +210,14 @@ class MultiplyHandler(SessionHandlerBase):
             return
 
         try:
-            # Скачиваем голосовое сообщение
-            # Используем бота из контекста сессии
-            tg_file = await bot.get_file(voice.file_id)
+            # Получаем файл через бота, как в voice_video_handler
+            # Используем сохраненный бот из контекста сессии
+            tg_file = await bot.get_file(voice_file_id)
             with tempfile.TemporaryDirectory(prefix="multiply_voice_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
+
+                # Используем download_to_drive как в voice_video_handler
                 await tg_file.download_to_drive(custom_path=str(audio_path))
 
                 # Создаем повторенное аудио
