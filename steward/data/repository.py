@@ -5,6 +5,7 @@ from abc import abstractmethod
 from datetime import time, timedelta
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 import aiofiles
 import aiofiles.os
@@ -132,5 +133,29 @@ class Repository:
         # default config
         if data.get("version") is None:
             data = {"admin_ids": [], "version": 2}
+
+        if data["version"] == 2:
+            if "channel_subscriptions" in data:
+                if "delayed_actions" not in data:
+                    data["delayed_actions"] = []
+                for x in data["channel_subscriptions"]:
+                    for time in x["times"]:
+                        data["delayed_actions"].append(
+                            {
+                                "__class_mark__": "delayed_action/channel_subscription",
+                                "generator": {
+                                    "__class_mark__": "generator/constant",
+                                    "period": 86400.0,
+                                    "start": datetime.datetime.combine(
+                                        datetime.datetime.now(ZoneInfo("Europe/Minsk"))
+                                        - datetime.timedelta(days=1),
+                                        datetime.time.fromisoformat(time),
+                                    ).timestamp(),
+                                },
+                                "subscription_id": x["id"],
+                            }
+                        )
+
+            data["version"] = 3
 
         return data
