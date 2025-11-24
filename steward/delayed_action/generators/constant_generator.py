@@ -17,11 +17,6 @@ class ConstantGenerator(Generator):
     period: datetime.timedelta
 
     def get_next(self, now):
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=TIMEZONE)
-        else:
-            now = now.astimezone(TIMEZONE)
-
         if self.start >= now:
             return self.start
 

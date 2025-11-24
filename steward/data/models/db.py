@@ -41,7 +41,7 @@ PARSE_CONFIG = Config(
         set,
     ],
     type_hooks={
-        datetime: lambda s: datetime.fromtimestamp(s, tz=timezone.utc),
+        datetime: lambda s: datetime.fromtimestamp(s, tz=timezone.utc) if isinstance(s, int) else datetime.fromisoformat(s),
         timedelta: lambda s: timedelta(seconds=s),
         time: lambda s: time.fromisoformat(s)
         if isinstance(s, str)
