@@ -28,7 +28,7 @@ class JsonEncoder(json.JSONEncoder):
         if isinstance(o, timedelta):
             return o.total_seconds()
         elif isinstance(o, datetime.datetime):
-            return o.timestamp()
+            return o.isoformat()
         elif isinstance(o, time):
             return o.isoformat()
         try:
