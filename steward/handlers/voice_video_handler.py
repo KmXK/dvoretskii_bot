@@ -20,6 +20,7 @@ class VoiceVideoHandler(Handler):
     BACKGROUND_AUDIO_OFFSET_KEY = "lofi_audio"
 
     async def chat(self, context):
+        return False
         voice = context.message.voice
         if voice is None:
             return False
