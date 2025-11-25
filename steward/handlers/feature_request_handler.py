@@ -218,12 +218,14 @@ class FeatureRequestEditHandler(Handler):
             results = []
             for id in ids:
                 if not id.isdigit():
-                    results.append((id, "Неверный номер фичи-реквеста"))
+                    results.append((id, "Неверный номер фичи-реквеста", None))
                     continue
 
                 id = int(id)
                 if id <= 0 or id > len(self.repository.db.feature_requests):
-                    results.append((id, "Фича-реквеста с таким номером не существует"))
+                    results.append(
+                        (id, "Фича-реквеста с таким номером не существует", None)
+                    )
                     continue
 
                 fq = self.repository.db.feature_requests[id - 1]
@@ -235,7 +237,7 @@ class FeatureRequestEditHandler(Handler):
                 )
 
                 if error is not None:
-                    results.append((fq.id, error))
+                    results.append((fq.id, error, None))
                     continue
 
                 fq.history.append(
@@ -246,16 +248,29 @@ class FeatureRequestEditHandler(Handler):
                         status=new_status,
                     )
                 )
-                results.append((fq.id, None))
+                results.append((fq.id, None, fq.text))
 
             await self.repository.save()
 
             results.sort(key=lambda x: x[1] is None)
-            await context.message.reply_markdown(
-                format_lined_list(
-                    [(id, "✅" if result is None else result) for id, result in results]
-                )
-            )
+
+            is_closing = new_status in [
+                FeatureRequestStatus.DONE,
+                FeatureRequestStatus.DENIED,
+            ]
+            formatted_results = []
+            for id, error, text in results:
+                if error is None and text is not None and is_closing:
+                    formatted_text = re.sub(
+                        "@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", text
+                    )
+                    formatted_results.append((id, f"✅ {formatted_text}"))
+                elif error is None:
+                    formatted_results.append((id, "✅"))
+                else:
+                    formatted_results.append((id, error))
+
+            await context.message.reply_markdown(format_lined_list(formatted_results))
 
             return True
 
