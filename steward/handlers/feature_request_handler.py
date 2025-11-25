@@ -51,6 +51,9 @@ class FeatureRequestViewHandler(Handler):
                 context.update
             )
 
+        if len(data) == 2 and data[1].isdigit():
+            return await self._show_feature_request(context, int(data[1]))
+
         return await self._add_feature(
             context.message, context.message.text[len(data[0]) :].strip()
         )
@@ -112,6 +115,52 @@ class FeatureRequestViewHandler(Handler):
             for (text, type) in callbacks
         ]
 
+    async def _show_feature_request(self, context: ChatBotContext, id: int):
+        if id <= 0 or id > len(self.repository.db.feature_requests):
+            await context.message.reply_text(
+                "Фича-реквеста с таким номером не существует"
+            )
+            return True
+
+        fq = self.repository.db.feature_requests[id - 1]
+
+        status_map = {
+            FeatureRequestStatus.OPEN: "Открыт",
+            FeatureRequestStatus.DONE: "Завершён",
+            FeatureRequestStatus.DENIED: "Отклонён",
+        }
+
+        status_text = status_map.get(fq.status, "Неизвестен")
+
+        formatted_text = re.sub("@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", fq.text)
+
+        date_str = ""
+        if fq.creation_timestamp:
+            dt = datetime.datetime.fromtimestamp(fq.creation_timestamp)
+            date_str = f"\nДата: {dt.strftime('%d.%m.%Y %H:%M')}"
+
+        history_text = ""
+        if fq.history:
+            history_text = "\n\nИстория изменений:"
+            for change in fq.history:
+                change_dt = datetime.datetime.fromtimestamp(change.timestamp)
+                change_status = status_map.get(change.status, "Неизвестен")
+                history_text += (
+                    f"\n• {change_status} ({change_dt.strftime('%d.%m.%Y %H:%M')})"
+                )
+
+        message_text = (
+            f"Фича-реквест #{fq.id}\n"
+            f"Статус: {status_text}\n"
+            f"Автор: `{fq.author_name}`\n"
+            f"Текст: {formatted_text}"
+            f"{date_str}"
+            f"{history_text}"
+        )
+
+        await context.message.reply_markdown(message_text)
+        return True
+
     async def _add_feature(self, message: Message, text):
         self.repository.db.feature_requests.append(
             FeatureRequest(
@@ -161,7 +210,9 @@ class FeatureRequestViewHandler(Handler):
     def help(self):
         # TODO: Может сделать описание в разных хендлерах, а потом для хинтов их объединять?
         # Сейчас просто при указании 2+ одинаковых команд будет показывать лишь первое описание
-        return "/fq [done|deny|reopen <ids>] | [text] - управлять фича-реквестами"
+        return (
+            "/fq [id|list|done|deny|reopen <ids>] | [text] - управлять фича-реквестами"
+        )
 
 
 # TODO: list of args (args mapping argument)
