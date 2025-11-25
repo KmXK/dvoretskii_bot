@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN apt update && apt install -y ffmpeg
+RUN apt update && apt install -y ffmpeg curl
 
 WORKDIR /app
 

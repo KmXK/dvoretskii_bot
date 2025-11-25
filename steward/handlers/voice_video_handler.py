@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
@@ -13,6 +15,20 @@ from steward.handlers.handler import Handler
 logger = logging.getLogger(__name__)
 
 
+def _extract_file_path(file_path: str) -> str:
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        parsed_url = urlparse(file_path)
+        path = parsed_url.path
+        if path.startswith("/file/bot"):
+            file_path = path[len("/file/bot") :]
+            first_slash_idx = file_path.find("/")
+            if first_slash_idx > 0:
+                file_path = file_path[first_slash_idx + 1 :]
+        else:
+            file_path = path.lstrip("/")
+    return file_path
+
+
 class VoiceVideoHandler(Handler):
     VIDEO_PATH = Path("data/videos/stupid_video.mp4")
     BACKGROUND_AUDIO_PATH = Path("data/audio/lofi.mp3")
@@ -20,7 +36,6 @@ class VoiceVideoHandler(Handler):
     BACKGROUND_AUDIO_OFFSET_KEY = "lofi_audio"
 
     async def chat(self, context):
-        return False
         voice = context.message.voice
         if voice is None:
             return False
@@ -30,20 +45,29 @@ class VoiceVideoHandler(Handler):
             return False
 
         try:
-            tg_file = await voice.get_file()
+            tg_file = await context.bot.get_file(voice.file_id)
+            file_path = tg_file.file_path
+            if not file_path:
+                raise Exception("File path is not available")
+
+            file_path = _extract_file_path(file_path)
+            token = context.bot.token
+            local_file_path = Path(f"/data/{token}/{file_path}")
+
             with tempfile.TemporaryDirectory(prefix="voice_video_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
-                await tg_file.download_to_drive(custom_path=str(audio_path))
 
-                # Всегда получаем точную длительность из файла, а не из Telegram API
-                # так как Telegram может округлять до целых секунд
+                if not local_file_path.exists():
+                    raise Exception(f"File not found: {file_path}")
+
+                shutil.copy2(local_file_path, audio_path)
+
                 audio_duration = await asyncio.to_thread(
                     self._get_audio_duration, audio_path
                 )
 
                 video_duration = await asyncio.to_thread(self._get_video_duration)
-                # Учитываем дополнительную секунду при проверке
                 if audio_duration + 1.0 >= video_duration:
                     await context.message.reply_text(
                         "Голосовое длиннее доступного видео, не могу ответить :("
@@ -54,7 +78,6 @@ class VoiceVideoHandler(Handler):
                     audio_duration, video_duration
                 )
 
-                # Получаем длительность фонового аудио, если оно существует
                 bg_audio_duration = None
                 if self.BACKGROUND_AUDIO_PATH.exists():
                     bg_audio_duration = await asyncio.to_thread(
@@ -95,7 +118,7 @@ class VoiceVideoHandler(Handler):
         except Exception as e:
             logger.exception("Error processing voice message: %s", e)
             await context.message.reply_text(
-                f"Ошибка при обработке голосового сообщения: {str(e)}"
+                "Ошибка при обработке голосового сообщения"
             )
             return True
 
@@ -106,7 +129,6 @@ class VoiceVideoHandler(Handler):
         if start >= video_duration:
             start = 0.0
 
-        # Добавляем 1 секунду к длительности видео
         video_duration_needed = audio_duration + 1.0
         remaining = video_duration - start
         if remaining < video_duration_needed:
@@ -115,7 +137,6 @@ class VoiceVideoHandler(Handler):
         return start
 
     def _store_new_offset(self, start: float, duration: float, video_duration: float):
-        # Сохраняем позицию с учетом дополнительной секунды в конце
         new_offset = start + duration + 1.0
         if new_offset >= video_duration:
             new_offset = 0.0
@@ -131,7 +152,6 @@ class VoiceVideoHandler(Handler):
         if start >= bg_audio_duration:
             start = 0.0
 
-        # Проверяем, что от стартовой позиции хватит аудио
         remaining = bg_audio_duration - start
         if remaining < video_duration_needed:
             start = 0.0
@@ -141,7 +161,6 @@ class VoiceVideoHandler(Handler):
     def _store_background_audio_offset(
         self, start: float, duration: float, bg_audio_duration: float
     ):
-        # Сохраняем позицию фонового аудио с учетом дополнительной секунды в конце
         new_offset = start + duration + 1.0
         if new_offset >= bg_audio_duration:
             new_offset = 0.0
@@ -166,17 +185,14 @@ class VoiceVideoHandler(Handler):
     ):
         with VideoFileClip(str(self.VIDEO_PATH)) as video:
             with AudioFileClip(str(audio_path)) as audio:
-                # Используем точную длительность из аудиофайла
                 precise_audio_duration = audio.duration
                 audio_clip = audio
 
-                # Вырезаем видео на основе точной длительности аудио + 1 секунда
                 video_duration_needed = precise_audio_duration + 1.0
                 video_end = min(start + video_duration_needed, video.duration)
                 video_chunk = video.subclipped(start, video_end).without_audio()
 
                 try:
-                    # Добавляем фоновое аудио
                     bg_audio = None
                     if (
                         self.BACKGROUND_AUDIO_PATH.exists()
@@ -185,7 +201,6 @@ class VoiceVideoHandler(Handler):
                     ):
                         try:
                             bg_audio = AudioFileClip(str(self.BACKGROUND_AUDIO_PATH))
-                            # Обрезаем фоновое аудио с нужного сдвига до нужной длительности
                             bg_audio_end = min(
                                 bg_audio_start + video_duration_needed,
                                 bg_audio_duration,
@@ -193,33 +208,25 @@ class VoiceVideoHandler(Handler):
                             bg_audio_clip = bg_audio.subclipped(
                                 bg_audio_start, bg_audio_end
                             )
-                            # Устанавливаем громкость 5%
                             bg_audio_clip = bg_audio_clip.with_volume_scaled(0.05)
-                            # Убеждаемся, что оба клипа начинаются одновременно
                             bg_audio_clip = bg_audio_clip.with_start(0)
                             audio_clip_synced = audio_clip.with_start(0)
-                            # Объединяем основное аудио с фоновым
                             composite_audio = CompositeAudioClip(
                                 [bg_audio_clip, audio_clip_synced]
                             )
                             final_clip = video_chunk.with_audio(composite_audio)
                         except Exception as e:
                             logger.warning("Failed to add background audio: %s", e)
-                            # Если не удалось добавить фоновое аудио, используем только основное
                             if bg_audio is not None:
                                 bg_audio.close()
                             final_clip = video_chunk.with_audio(audio_clip)
                     else:
-                        # Если файл фонового аудио не найден, используем только основное аудио
                         final_clip = video_chunk.with_audio(audio_clip)
 
-                    # Финальная длительность = точная длительность аудио + 1 секунда
-                    # Но не больше реальной длительности клипа
                     desired_duration = precise_audio_duration + 1.0
                     actual_duration = final_clip.duration
                     final_duration = min(desired_duration, actual_duration)
 
-                    # Обрезаем только если нужно и если это возможно
                     if final_duration < actual_duration and final_duration > 0:
                         final_clip = final_clip.subclipped(0, final_duration)
                     try:
@@ -231,7 +238,6 @@ class VoiceVideoHandler(Handler):
                         )
                     finally:
                         final_clip.close()
-                        # Закрываем фоновое аудио только после записи финального файла
                         if bg_audio is not None:
                             bg_audio.close()
                 finally:
