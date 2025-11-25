@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import ChatBotContext
@@ -11,16 +12,8 @@ from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.pagination import PageFormatContext, Paginator
 from steward.helpers.tg_update_helpers import get_message
-from steward.helpers.validation import (
-    check,
-    try_get,
-    validate_message_text,
-    validate_update,
-)
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
-from steward.session.steps.keyboard_step import KeyboardStep
-from steward.session.steps.question_step import QuestionStep
 
 logger = logging.getLogger(__name__)
 
@@ -385,9 +378,6 @@ class SubscribeHandler(SessionHandlerBase):
         from steward.delayed_action.channel_subscription import (
             ChannelSubscriptionDelayedAction,
         )
-        from steward.delayed_action.generators.channel_subscription_generator import (
-            ChannelSubscriptionGenerator,
-        )
 
         TIMEZONE = ZoneInfo("Europe/Minsk")
         now = datetime.now(TIMEZONE)
@@ -400,16 +390,15 @@ class SubscribeHandler(SessionHandlerBase):
             if start <= now:
                 start = start + timedelta(days=1)
 
-            generator = ChannelSubscriptionGenerator(
-                subscription_id=subscription.id,  # Используем ID подписки
-                target_time=t,
-                start=start,
+            self.repository.db.delayed_actions.append(
+                ChannelSubscriptionDelayedAction(
+                    subscription_id=subscription.id,
+                    generator=ConstantGenerator(
+                        start=start,
+                        period=timedelta(days=1),
+                    ),
+                )
             )
-            delayed_action = ChannelSubscriptionDelayedAction(
-                subscription_id=subscription.id,  # Используем ID подписки
-                generator=generator,
-            )
-            self.repository.db.delayed_actions.append(delayed_action)
 
         await self.repository.save()
 
