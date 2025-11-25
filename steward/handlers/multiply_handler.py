@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from telegram import InputFile
@@ -13,8 +15,21 @@ from steward.session.step import Step
 
 logger = logging.getLogger(__name__)
 
-# Максимальная длительность голосового сообщения в секундах (10 минут)
 MAX_VOICE_DURATION = 600
+
+
+def _extract_file_path(file_path: str) -> str:
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        parsed_url = urlparse(file_path)
+        path = parsed_url.path
+        if path.startswith("/file/bot"):
+            file_path = path[len("/file/bot") :]
+            first_slash_idx = file_path.find("/")
+            if first_slash_idx > 0:
+                file_path = file_path[first_slash_idx + 1 :]
+        else:
+            file_path = path.lstrip("/")
+    return file_path
 
 
 class CollectVoiceStep(Step):
@@ -32,47 +47,46 @@ class CollectVoiceStep(Step):
             self.is_waiting = True
             return False
 
-        # Проверяем, что сообщение содержит голосовое сообщение
         if not context.message.voice:
             await context.message.reply_text(
                 "Это не голосовое сообщение. Пожалуйста, отправьте голосовое сообщение."
             )
             return False
 
-        # Получаем голосовое сообщение и его длительность
         voice = context.message.voice
         try:
-            # Скачиваем временно для получения длительности
-            # Используем context.bot.get_file() и download_to_drive()
-            # Устанавливаем правильный бот в объект File для работы с локальным сервером
             tg_file = await context.bot.get_file(voice.file_id)
-            # Устанавливаем бот в объект File для правильной работы download_to_drive
-            tg_file._bot = context.bot
+            file_path = tg_file.file_path
+            if not file_path:
+                raise Exception("File path is not available")
+
+            file_path = _extract_file_path(file_path)
+            token = context.bot.token
+            local_file_path = Path(f"/data/{token}/{file_path}")
+
             with tempfile.TemporaryDirectory(prefix="multiply_voice_temp_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
 
-                # Используем download_to_drive напрямую, так как он правильно работает
-                # с локальным сервером Telegram API
-                await tg_file.download_to_drive(custom_path=str(audio_path))
+                if not local_file_path.exists():
+                    raise Exception(f"File not found: {file_path}")
 
-                # Получаем длительность аудио
+                shutil.copy2(local_file_path, audio_path)
+
                 audio_duration = await asyncio.to_thread(
                     self._get_audio_duration, audio_path
                 )
 
-                # Сохраняем информацию о голосовом сообщении и боте
                 context.session_context[self.name] = {
                     "voice": voice,
                     "duration": audio_duration,
                 }
-                # Сохраняем бота для использования в on_session_finished
                 context.session_context["bot"] = context.bot
 
         except Exception as e:
             logger.exception("Error getting voice duration: %s", e)
             await context.message.reply_text(
-                f"Ошибка при обработке голосового сообщения: {str(e)}"
+                "Ошибка при обработке голосового сообщения"
             )
             return False
 
@@ -100,7 +114,6 @@ class CollectCountStep(Step):
 
     async def chat(self, context):
         if not self.is_waiting:
-            # Получаем длительность голосового сообщения
             voice_info = context.session_context.get("voice_info", {})
             self.voice_duration = voice_info.get("duration")
 
@@ -108,16 +121,15 @@ class CollectCountStep(Step):
                 await context.message.reply_text(
                     "Ошибка: не удалось определить длительность голосового сообщения"
                 )
-                return True  # Пропускаем этот шаг
+                return True
 
-            # Вычисляем максимальное количество повторений
             max_count = int(MAX_VOICE_DURATION / self.voice_duration)
             if max_count < 1:
                 await context.message.reply_text(
                     f"Голосовое сообщение слишком длинное (больше {MAX_VOICE_DURATION // 60} минут). "
                     "Не могу создать повторение."
                 )
-                return True  # Пропускаем этот шаг
+                return True
 
             await context.message.reply_text(
                 f"Сколько раз повторить голосовое сообщение? "
@@ -126,7 +138,6 @@ class CollectCountStep(Step):
             self.is_waiting = True
             return False
 
-        # Парсим количество
         if not context.message.text:
             await context.message.reply_text(
                 "Пожалуйста, введите число (количество повторений)"
@@ -142,7 +153,6 @@ class CollectCountStep(Step):
                 )
                 return False
 
-            # Проверяем максимальное количество повторений
             if self.voice_duration is None:
                 await context.message.reply_text(
                     "Ошибка: не удалось определить длительность голосового сообщения"
@@ -184,15 +194,13 @@ class MultiplyHandler(SessionHandlerBase):
         )
 
     def try_activate_session(self, update, session_context):
-        # Активируем сессию только если команда /multiply без дополнительных аргументов
         if not validate_command_msg(update, "multiply"):
             return False
 
-        # Проверяем, что нет подкоманд
         assert update.message and update.message.text
         parts = update.message.text.split()
         if len(parts) > 1:
-            return False  # Не обрабатываем аргументы
+            return False
 
         return True
 
@@ -206,10 +214,7 @@ class MultiplyHandler(SessionHandlerBase):
             )
             return
 
-        # Получаем file_id из сохраненного voice объекта
-        voice_file_id = voice_info["voice"].file_id
         bot = session_context.get("bot")
-
         if bot is None:
             await get_message(update).chat.send_message(
                 "Ошибка: не удалось получить бота"
@@ -217,26 +222,30 @@ class MultiplyHandler(SessionHandlerBase):
             return
 
         try:
-            # Получаем файл через бота, как в voice_video_handler
-            # Используем сохраненный бот из контекста сессии
-            tg_file = await bot.get_file(voice_file_id)
-            # Устанавливаем бот в объект File для правильной работы download_to_drive
-            tg_file._bot = bot
+            voice = voice_info["voice"]
+            tg_file = await bot.get_file(voice.file_id)
+            file_path = tg_file.file_path
+            if not file_path:
+                raise Exception("File path is not available")
+
+            file_path = _extract_file_path(file_path)
+            token = bot.token
+            local_file_path = Path(f"/data/{token}/{file_path}")
+
             with tempfile.TemporaryDirectory(prefix="multiply_voice_") as tmp_dir:
                 tmp_dir_path = Path(tmp_dir)
                 audio_path = tmp_dir_path / "voice.ogg"
 
-                # Используем download_to_drive напрямую, так как он правильно работает
-                # с локальным сервером Telegram API
-                await tg_file.download_to_drive(custom_path=str(audio_path))
+                if not local_file_path.exists():
+                    raise Exception(f"File not found: {file_path}")
 
-                # Создаем повторенное аудио
+                shutil.copy2(local_file_path, audio_path)
+
                 output_path = tmp_dir_path / "multiplied.ogg"
                 await asyncio.to_thread(
                     self._multiply_audio, audio_path, output_path, count
                 )
 
-                # Отправляем результат
                 with output_path.open("rb") as final_file:
                     await get_message(update).chat.send_voice(
                         InputFile(final_file, filename="multiplied.ogg")
@@ -245,7 +254,7 @@ class MultiplyHandler(SessionHandlerBase):
         except Exception as e:
             logger.exception("Error processing voice message: %s", e)
             await get_message(update).chat.send_message(
-                f"Ошибка при обработке голосового сообщения: {str(e)}"
+                "Ошибка при обработке голосового сообщения"
             )
 
     async def on_stop(self, update, session_context):
@@ -258,27 +267,18 @@ class MultiplyHandler(SessionHandlerBase):
         """Повторяет аудио count раз"""
         from moviepy.audio.AudioClip import concatenate_audioclips
 
-        # Загружаем оригинальное аудио один раз
         original_audio = AudioFileClip(str(input_path))
 
         try:
-            # Создаем список с одним и тем же клипом count раз
-            # concatenate_audioclips правильно обработает это
             audio_clips = [original_audio] * count
-
-            # Объединяем все копии
             final_audio = concatenate_audioclips(audio_clips)
 
             try:
-                # Сохраняем результат в формате ogg
-                # Используем ffmpeg для конвертации в ogg/opus
-                # Указываем -ar 48000 в ffmpeg_params для конвертации sample rate
-                # libopus поддерживает только 48000, 24000, 16000, 12000, 8000
                 final_audio.write_audiofile(
                     str(output_path),
                     codec="libopus",
                     bitrate="64k",
-                    ffmpeg_params=["-ar", "48000"],  # Устанавливаем sample rate 48000
+                    ffmpeg_params=["-ar", "48000"],
                     logger=None,
                 )
             finally:

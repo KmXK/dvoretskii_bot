@@ -5,6 +5,7 @@ services:
     volumes:
       - bot_logs:/var/log
       - ./db.json:/app/db.json
+      - telegram_data:/data:ro
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DOWNLOAD_PROXY=${DOWNLOAD_PROXY}
