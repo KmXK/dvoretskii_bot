@@ -59,6 +59,7 @@ from steward.handlers.subscribe_handler import (
 )
 from steward.handlers.translate_handler import TranslateHandler
 from steward.handlers.voice_video_handler import VoiceVideoHandler
+from steward.handlers.watch_handler import WatchHandler
 from steward.logging.configure import configure_logging
 
 logger: logging.Logger
@@ -104,6 +105,7 @@ def get_handlers(log_file: None | str):
             RuleAnswerHandler,
             VoiceVideoHandler,
             MultiplyHandler,
+            WatchHandler,
         ],
     )
 
