@@ -14,7 +14,11 @@ from steward.handlers.admin_handler import (
 )
 from steward.handlers.add_rule_handler import AddRuleHandler
 from steward.handlers.ai_handler import AIHandler
-from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
+from steward.handlers.army_handler import (
+    ArmyAddHandler,
+    ArmyRemoveHandler,
+    ArmyViewHandler,
+)
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
 from steward.handlers.delete_rule_handler import DeleteRuleHandler
@@ -75,9 +79,9 @@ def get_handlers(log_file: None | str):
             AdminAddHandler,
             AdminRemoveHandler,
             DbHandler,
-            AddArmyHandler,
-            DeleteArmyHandler,
-            ArmyHandler,
+            ArmyViewHandler,
+            ArmyAddHandler,
+            ArmyRemoveHandler,
             FeatureRequestEditHandler,
             FeatureRequestViewHandler,
             IdHandler,

@@ -3,6 +3,7 @@ import logging
 from enum import Enum
 from typing import Callable
 
+import humanize
 import humanize.i18n
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -11,6 +12,7 @@ from steward.bot.context import CallbackBotContext, ChatBotContext
 from steward.data.models.army import Army
 from steward.handlers.command_handler import CommandHandler, required
 from steward.handlers.handler import Handler
+from steward.helpers.command_validation import validate_command_msg
 
 
 def date_to_timestamp(date: str) -> float:
@@ -23,15 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 @CommandHandler(
-    "add_army",
+    "army",
     only_admin=True,
-    arguments_template=r"(?P<name>.+) (?P<start_date>.+) (?P<end_date>.+)",
+    arguments_template=r"add (?P<name>.+) (?P<start_date>.+) (?P<end_date>.+)",
     arguments_mapping={
         "start_date": required(date_to_timestamp),
         "end_date": required(date_to_timestamp),
     },
 )
-class AddArmyHandler(Handler):
+class ArmyAddHandler(Handler):
     async def chat(
         self, context: ChatBotContext, name: str, start_date: float, end_date: float
     ):
@@ -40,11 +42,11 @@ class AddArmyHandler(Handler):
         await context.message.reply_markdown("Добавил человечка")
 
     def help(self):
-        return "/add_army <name> <start_date> <end_date> - начать отслеживать срок человека в армии"
+        return None
 
 
-@CommandHandler("delete_army", only_admin=True, arguments_template=r"(?P<name>.+)")
-class DeleteArmyHandler(Handler):
+@CommandHandler("army", only_admin=True, arguments_template=r"remove (?P<name>.+)")
+class ArmyRemoveHandler(Handler):
     async def chat(self, context: ChatBotContext, name: str):
         army_to_delete = next(
             (x for x in self.repository.db.army if x.name == name), None
@@ -58,32 +60,41 @@ class DeleteArmyHandler(Handler):
             await context.message.reply_markdown("Удалил человечка")
 
     def help(self):
-        return "/delete_army <name> - перестать отслеживать срок человека в армии"
+        return None
 
 
-@CommandHandler("army", only_admin=False)
-class ArmyHandler(Handler):
+class ArmyViewHandler(Handler):
     class OutputType(Enum):
         HUMANIZE = "humanize"
         DAYS = "days"
 
-    async def chat(self, context):
+    async def chat(self, context: ChatBotContext):
+        if not validate_command_msg(context.update, "army"):
+            return False
+
+        assert context.message.text
+        parts = context.message.text.split()
+        if len(parts) > 1 and parts[1] in ["add", "remove"]:
+            return False
+
         if len(self.repository.db.army) == 0:
             await context.message.reply_markdown("В армейку никого не добавили")
+            return True
 
         await self._get_list(
-            ArmyHandler.OutputType.DAYS,
+            ArmyViewHandler.OutputType.DAYS,
             lambda *args, **kwargs: context.message.reply_markdown(*args, **kwargs),
         )
+        return True
 
     async def callback(self, context: CallbackBotContext):
         data = context.callback_query.data
         if not data or len(data) == 0 or not data.startswith("army_handler"):
             return False
 
-        output_type = ArmyHandler.OutputType(data.split("|")[1])
-        if output_type not in ArmyHandler.OutputType:
-            output_type = ArmyHandler.OutputType.DAYS
+        output_type = ArmyViewHandler.OutputType(data.split("|")[1])
+        if output_type not in ArmyViewHandler.OutputType:
+            output_type = ArmyViewHandler.OutputType.DAYS
 
         assert context.update.effective_message
         await self._get_list(
@@ -107,7 +118,7 @@ class ArmyHandler(Handler):
                 - datetime.datetime.fromtimestamp(army.start_date)
             )
             if last.total_seconds() > 0:
-                if output_type == ArmyHandler.OutputType.DAYS:
+                if output_type == ArmyViewHandler.OutputType.DAYS:
                     text.append(
                         f"{army.name} - осталось {humanize.precisedelta(last, format='%0d', minimum_unit='hours', suppress=['years', 'months'])} ({percent * 100:.2f}%)"
                     )
@@ -118,12 +129,12 @@ class ArmyHandler(Handler):
             else:
                 text.append(f"{army.name} - дембель")
 
-        if output_type == ArmyHandler.OutputType.HUMANIZE:
+        if output_type == ArmyViewHandler.OutputType.HUMANIZE:
             button_name = "Только дни"
-            button_type = ArmyHandler.OutputType.DAYS
-        elif output_type == ArmyHandler.OutputType.DAYS:
+            button_type = ArmyViewHandler.OutputType.DAYS
+        elif output_type == ArmyViewHandler.OutputType.DAYS:
             button_name = "Месяцы + дни"
-            button_type = ArmyHandler.OutputType.HUMANIZE
+            button_type = ArmyViewHandler.OutputType.HUMANIZE
 
         try:
             await send_func(
@@ -143,4 +154,4 @@ class ArmyHandler(Handler):
             logger.error(e)
 
     def help(self):
-        return "/army - посмотреть статус армейцев"
+        return "/army [add <name> <start_date> <end_date>|remove <name>] - управлять армейцами"
