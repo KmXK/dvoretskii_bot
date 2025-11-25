@@ -6,6 +6,7 @@ services:
       - bot_logs:/var/log
       - ./db.json:/app/db.json
       - telegram_data:/data:ro
+      - ./data:/app/data:ro
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DOWNLOAD_PROXY=${DOWNLOAD_PROXY}
