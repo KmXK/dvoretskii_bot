@@ -7,13 +7,16 @@ from dotenv import load_dotenv
 from steward.bot.bot import Bot
 from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
-from steward.handlers.add_admin_handler import AddAdminHandler
+from steward.handlers.admin_handler import (
+    AdminAddHandler,
+    AdminRemoveHandler,
+    AdminViewHandler,
+)
 from steward.handlers.add_rule_handler import AddRuleHandler
 from steward.handlers.ai_handler import AIHandler
 from steward.handlers.army_handler import AddArmyHandler, ArmyHandler, DeleteArmyHandler
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
-from steward.handlers.delete_admin_handler import DeleteAdminHandler
 from steward.handlers.delete_rule_handler import DeleteRuleHandler
 from steward.handlers.download_handler import DownloadHandler
 from steward.handlers.everyone_handler import EveryoneHandler
@@ -22,7 +25,6 @@ from steward.handlers.feature_request_handler import (
     FeatureRequestEditHandler,
     FeatureRequestViewHandler,
 )
-from steward.handlers.get_admins_handler import GetAdminsHandler
 from steward.handlers.get_rules_handler import GetRulesHandler
 from steward.handlers.handler import Handler
 from steward.handlers.help_handler import HelpHandler
@@ -69,9 +71,9 @@ def get_handlers(log_file: None | str):
             AddRuleHandler,
             DeleteRuleHandler,
             ReactionCounterHandler,
-            GetAdminsHandler,
-            AddAdminHandler,
-            DeleteAdminHandler,
+            AdminViewHandler,
+            AdminAddHandler,
+            AdminRemoveHandler,
             DbHandler,
             AddArmyHandler,
             DeleteArmyHandler,
