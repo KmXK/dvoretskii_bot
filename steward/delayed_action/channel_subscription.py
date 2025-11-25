@@ -1,13 +1,13 @@
 import logging
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from aiohttp import ClientSession
 
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
-from steward.delayed_action.generators.base import Generator
+from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.class_mark import class_mark
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,6 @@ async def get_posts_from_rss(channel_username: str) -> list[dict[str, int]]:
                 content = await response.text()
                 root = ET.fromstring(content)
 
-                # Находим все item элементы
                 for item in root.findall(".//item"):
                     link_elem = item.find("link")
                     if link_elem is None or link_elem.text is None:
@@ -46,7 +45,6 @@ async def get_posts_from_rss(channel_username: str) -> list[dict[str, int]]:
                     except (ValueError, IndexError):
                         continue
 
-                # Сортируем по ID (по возрастанию)
                 posts.sort(key=lambda x: x["id"])
     except Exception as e:
         logger.exception(f"Error fetching RSS feed: {e}")
@@ -54,17 +52,16 @@ async def get_posts_from_rss(channel_username: str) -> list[dict[str, int]]:
     return posts
 
 
-@dataclass
+@dataclass(kw_only=True)
 @class_mark("delayed_action/channel_subscription")
 class ChannelSubscriptionDelayedAction(DelayedAction):
-    """Отложенная отправка новых постов из канала"""
+    subscription_id: int
 
-    subscription_id: int  # ID подписки
+    generator: ConstantGenerator
 
     async def execute(self, context: DelayedActionContext):
         """Выполняет получение и пересылку новых постов из канала"""
         try:
-            # Получаем подписку из базы данных по ID
             subscription = next(
                 (
                     s
@@ -79,7 +76,6 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                 )
                 return
 
-            # Получаем посты из RSS
             posts = await get_posts_from_rss(subscription.channel_username)
 
             if not posts:
@@ -88,19 +84,15 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                 )
                 return
 
-            # Находим новые посты (ID больше last_post_id)
             new_posts = [
                 post for post in posts if post["id"] > subscription.last_post_id
             ]
 
             if not new_posts:
-                # Нет новых постов, ничего не отправляем
                 return
 
-            # Отправляем все новые посты
             for post in new_posts:
                 try:
-                    # Получаем сообщение по ID
                     message = await context.client.get_messages(
                         subscription.channel_id, ids=post["id"]
                     )
@@ -114,9 +106,7 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                     logger.exception(
                         f"Error forwarding message {post['id']} from channel {subscription.channel_id}: {e}"
                     )
-                    # Продолжаем отправку остальных постов даже если один не удался
 
-            # Обновляем last_post_id на максимальный ID из отправленных постов
             if new_posts:
                 subscription.last_post_id = max(post["id"] for post in new_posts)
                 await context.repository.save()

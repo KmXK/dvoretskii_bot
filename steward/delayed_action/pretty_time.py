@@ -39,14 +39,14 @@ class PrettyTimeGenerator(Generator):
                 return t
 
 
-@dataclass
+@dataclass(kw_only=True)
 @class_mark("delayed_action/pretty_time")
 class PrettyTimeDelayedAction(DelayedAction):
-    chat_id: int
     generator: PrettyTimeGenerator = field(
-        default_factory=PrettyTimeGenerator,
-        init=False,
+        default_factory=PrettyTimeGenerator, init=False
     )
+
+    chat_id: int
 
     async def execute(self, context: DelayedActionContext):
         await context.bot.send_message(
