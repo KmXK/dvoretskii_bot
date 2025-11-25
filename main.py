@@ -12,7 +12,12 @@ from steward.handlers.admin_handler import (
     AdminRemoveHandler,
     AdminViewHandler,
 )
-from steward.handlers.add_rule_handler import AddRuleHandler
+from steward.handlers.rule_handler import (
+    RuleAddHandler,
+    RuleListViewHandler,
+    RuleRemoveHandler,
+    RuleViewHandler,
+)
 from steward.handlers.ai_handler import AIHandler
 from steward.handlers.army_handler import (
     ArmyAddHandler,
@@ -21,7 +26,6 @@ from steward.handlers.army_handler import (
 )
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
-from steward.handlers.delete_rule_handler import DeleteRuleHandler
 from steward.handlers.download_handler import DownloadHandler
 from steward.handlers.everyone_handler import EveryoneHandler
 from steward.handlers.exchange_rates_handler import ExchangeRateHandler
@@ -29,7 +33,6 @@ from steward.handlers.feature_request_handler import (
     FeatureRequestEditHandler,
     FeatureRequestViewHandler,
 )
-from steward.handlers.get_rules_handler import GetRulesHandler
 from steward.handlers.handler import Handler
 from steward.handlers.help_handler import HelpHandler
 from steward.handlers.holidays_handler import HolidaysHandler
@@ -71,9 +74,10 @@ def get_handlers(log_file: None | str):
             SilenceEnforcerHandler,
             PashaRelatedMessageHandler,
             DownloadHandler,
-            GetRulesHandler,
-            AddRuleHandler,
-            DeleteRuleHandler,
+            RuleListViewHandler,
+            RuleViewHandler,
+            RuleAddHandler,
+            RuleRemoveHandler,
             ReactionCounterHandler,
             AdminViewHandler,
             AdminAddHandler,
