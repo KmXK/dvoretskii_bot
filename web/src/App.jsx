@@ -6,6 +6,14 @@ function App() {
   const [count, setCount] = useState(0)
   const [webApp, setWebApp] = useState(null)
 
+  return (
+    <>
+      <div>
+        Hello world!
+      </div>
+    </>
+  )
+
   useEffect(() => {
     // Инициализируем Telegram Web App
     init()
