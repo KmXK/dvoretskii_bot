@@ -39,6 +39,7 @@ from steward.handlers.holidays_handler import HolidaysHandler
 from steward.handlers.id_handler import IdHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.message_info_handler import MessageInfoHandler
+from steward.handlers.miniapp_handler import MiniAppHandler
 from steward.handlers.multiply_handler import MultiplyHandler
 from steward.handlers.pasha_handler import (
     PashaHandler,
@@ -70,6 +71,7 @@ def get_handlers(log_file: None | str):
     # TODO: Create bot context for bot
     handlers: list[Handler] = init_handlers(
         [
+            MiniAppHandler,
             ChatCollectHandler,
             SilenceCommandHandler,
             SilenceEnforcerHandler,
