@@ -1,3 +1,4 @@
+import logging
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -49,7 +50,7 @@ class MiniAppHandler(Handler):
             )
             return True
         except Exception as e:
-            logger.exception(f"Error in MiniAppHandler: {e}")
+            logging.exception(f"Error in MiniAppHandler: {e}")
             await context.message.reply_text(f"Ошибка: {str(e)}")
             return True
 
