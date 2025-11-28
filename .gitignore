@@ -177,3 +177,11 @@ bin/
 
 .telegram_bot_api_data
 .steward_session.session*
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+web/key.pem
+web/cert.pem
+nginx/ssl/
