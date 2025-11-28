@@ -1,9 +1,10 @@
 import logging
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
-from urllib.parse import urlparse
+import os
+from dataclasses import dataclass
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout
+from aiohttp_socks import ProxyConnector
+from bs4 import BeautifulSoup
 
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
@@ -12,42 +13,63 @@ from steward.helpers.class_mark import class_mark
 
 logger = logging.getLogger(__name__)
 
-RSS_BASE_URL = "https://tg.i-c-a.su/rss"
+TELEGRAM_CHANNEL_URL = "https://t.me/s"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
-async def get_posts_from_rss(channel_username: str) -> list[dict[str, int]]:
-    """Получает список постов из RSS фида с их ID"""
-    rss_url = f"{RSS_BASE_URL}/{channel_username}"
+async def get_posts_from_html(channel_username: str) -> list[dict[str, int]]:
+    """Получает список постов из HTML страницы Telegram канала с их ID"""
+    channel_url = f"{TELEGRAM_CHANNEL_URL}/{channel_username}"
     posts = []
 
     try:
-        async with ClientSession() as session:
-            async with session.get(rss_url) as response:
+        connector = None
+        proxy_url = os.environ.get("DOWNLOAD_PROXY")
+        if proxy_url:
+            connector = ProxyConnector.from_url(proxy_url)
+
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+
+        timeout = ClientTimeout(total=30, connect=10)
+
+        async with ClientSession(
+            connector=connector, timeout=timeout, headers=headers
+        ) as session:
+            async with session.get(channel_url) as response:
                 if response.status != 200:
-                    logger.warning(f"Failed to fetch RSS: {response.status}")
+                    logger.warning(f"Failed to fetch HTML: {response.status}")
                     return posts
 
                 content = await response.text()
-                root = ET.fromstring(content)
+                soup = BeautifulSoup(content, "html.parser")
 
-                for item in root.findall(".//item"):
-                    link_elem = item.find("link")
-                    if link_elem is None or link_elem.text is None:
+                messages = soup.find_all("div", class_="tgme_widget_message")
+
+                for message in messages:
+                    data_post = message.get("data-post", "")
+                    if not data_post:
                         continue
 
-                    # Извлекаем ID из URL (последнее число после слеша)
-                    # Например: https://t.me/smartfeetbaby/491 -> 491
-                    link = link_elem.text
-                    path = urlparse(link).path
                     try:
-                        message_id = int(path.rstrip("/").split("/")[-1])
-                        posts.append({"id": message_id, "link": link})
+                        parts = data_post.split("/")
+                        if len(parts) >= 2:
+                            message_id = int(parts[-1])
+                            link = f"https://t.me/{data_post}"
+                            posts.append({"id": message_id, "link": link})
                     except (ValueError, IndexError):
                         continue
 
                 posts.sort(key=lambda x: x["id"])
     except Exception as e:
-        logger.exception(f"Error fetching RSS feed: {e}")
+        logger.exception(f"Error fetching HTML page: {e}")
 
     return posts
 
@@ -76,11 +98,11 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                 )
                 return
 
-            posts = await get_posts_from_rss(subscription.channel_username)
+            posts = await get_posts_from_html(subscription.channel_username)
 
             if not posts:
                 logger.warning(
-                    f"No posts found in RSS for channel {subscription.channel_username}"
+                    f"No posts found in HTML for channel {subscription.channel_username}"
                 )
                 return
 

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -6,7 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import ChatBotContext
 from steward.data.models.channel_subscription import ChannelSubscription
-from steward.delayed_action.channel_subscription import get_posts_from_rss
+from steward.delayed_action.channel_subscription import get_posts_from_html
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
@@ -16,6 +17,89 @@ from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
 
 logger = logging.getLogger(__name__)
+
+
+def parse_time_input(text: str) -> list[time]:
+    """
+    Парсит ввод времени пользователя.
+    Поддерживает:
+    - Одиночное время: "12:00"
+    - Несколько времен через пробел: "12:00 13:00 14:00"
+    - Промежутки: "12:00-14:00,60" (начальное-конечное включительно, шаг в минутах)
+
+    Возвращает список объектов time.
+    """
+    times = []
+    text = text.strip()
+
+    # Паттерн для промежутка: HH:MM-HH:MM,минуты
+    interval_pattern = r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2}),(\d+)"
+
+    # Сначала обрабатываем промежутки
+    while True:
+        match = re.search(interval_pattern, text)
+        if not match:
+            break
+
+        start_hour = int(match.group(1))
+        start_minute = int(match.group(2))
+        end_hour = int(match.group(3))
+        end_minute = int(match.group(4))
+        step_minutes = int(match.group(5))
+
+        if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59):
+            raise ValueError(
+                f"Неверное начальное время: {start_hour}:{start_minute:02d}"
+            )
+        if not (0 <= end_hour <= 23 and 0 <= end_minute <= 59):
+            raise ValueError(f"Неверное конечное время: {end_hour}:{end_minute:02d}")
+        if step_minutes <= 0:
+            raise ValueError("Шаг должен быть положительным числом")
+
+        start_time = time(hour=start_hour, minute=start_minute)
+        end_time = time(hour=end_hour, minute=end_minute)
+
+        # Генерируем времена в промежутке
+        current = datetime.combine(datetime.today(), start_time)
+        end_dt = datetime.combine(datetime.today(), end_time)
+
+        if current > end_dt:
+            raise ValueError("Начальное время должно быть меньше или равно конечному")
+
+        interval_times = []
+        while current <= end_dt:
+            t = current.time()
+            if t not in times and t not in interval_times:
+                interval_times.append(t)
+            current += timedelta(minutes=step_minutes)
+
+        times.extend(interval_times)
+
+        # Удаляем обработанный промежуток из текста
+        text = text[: match.start()] + text[match.end() :]
+
+    # Обрабатываем оставшиеся одиночные времена
+    parts = text.split()
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        time_parts = part.split(":")
+        if len(time_parts) != 2:
+            raise ValueError(f"Неверный формат времени: {part}")
+
+        hour = int(time_parts[0])
+        minute = int(time_parts[1])
+
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Неверное время: {hour}:{minute:02d}")
+
+        t = time(hour=hour, minute=minute)
+        if t not in times:
+            times.append(t)
+
+    return sorted(times)
 
 
 class CollectChannelPostStep(Step):
@@ -85,12 +169,12 @@ class VerifyChannelStep(Step):
 
             if not channel_username:
                 await context.message.reply_text(
-                    "У канала нет username, невозможно получить RSS фид"
+                    "У канала нет username, невозможно получить посты из канала"
                 )
                 return True
 
             try:
-                posts = await get_posts_from_rss(channel_username)
+                posts = await get_posts_from_html(channel_username)
                 if posts:
                     last_post = posts[-1]
                     message = await context.client.get_messages(
@@ -108,7 +192,7 @@ class VerifyChannelStep(Step):
                         self.last_message_sent = True
                 else:
                     await context.message.reply_text(
-                        "Не удалось получить последнее сообщение из RSS фида канала"
+                        "Не удалось получить последнее сообщение из канала"
                     )
                     return True
             except Exception as e:
@@ -175,8 +259,20 @@ class CollectTimesStep(Step):
             return True
 
         if not self.is_waiting:
+            help_text = (
+                "Введите время отправки постов. Поддерживаются следующие форматы:\n\n"
+                "• Одиночное время: 12:00\n"
+                "• Несколько времен через пробел: 12:00 13:00 14:00\n"
+                "• Промежуток: 12:00-14:00,60\n"
+                "  (начальное и конечное включительно, шаг в минутах)\n\n"
+                "Примеры:\n"
+                "• 09:00 12:00 18:00\n"
+                "• 10:00-12:00,30 (создаст 10:00, 10:30, 11:00, 11:30, 12:00)\n"
+                "• 08:00 14:00-16:00,60 20:00\n\n"
+                "После ввода всех времен нажмите кнопку 'Закончить ввод'."
+            )
             await context.message.reply_text(
-                "Введите время отправки постов в формате HH:MM (можно несколько раз, каждое время отдельным сообщением). После ввода всех времен нажмите кнопку 'Закончить ввод'.",
+                help_text,
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -193,40 +289,58 @@ class CollectTimesStep(Step):
 
         if not context.message.text:
             await context.message.reply_text(
-                "Пожалуйста, введите время в формате HH:MM"
+                "Пожалуйста, введите время в одном из поддерживаемых форматов"
             )
             return False
 
         try:
-            parts = context.message.text.split(":")
-            if len(parts) != 2:
+            parsed_times = parse_time_input(context.message.text)
+
+            if not parsed_times:
                 await context.message.reply_text(
-                    "Неверный формат времени. Используйте формат HH:MM (например, 16:00)"
+                    "Не удалось распознать время. Проверьте формат ввода."
                 )
                 return False
 
-            hour = int(parts[0])
-            minute = int(parts[1])
+            added_times = []
+            already_exists_count = 0
 
-            if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                await context.message.reply_text(
-                    "Неверное время. Часы должны быть от 0 до 23, минуты от 0 до 59"
-                )
-                return False
+            for t in parsed_times:
+                if t not in self.times:
+                    self.times.append(t)
+                    added_times.append(t)
+                else:
+                    already_exists_count += 1
 
-            t = time(hour=hour, minute=minute)
-            if t not in self.times:
-                self.times.append(t)
-                await context.message.reply_text(
-                    f"Время {t.strftime('%H:%M')} добавлено"
+            self.times.sort()
+
+            response_parts = []
+            if added_times:
+                if len(added_times) == 1:
+                    response_parts.append(
+                        f"Добавлено время: {added_times[0].strftime('%H:%M')}"
+                    )
+                else:
+                    times_str = ", ".join([t.strftime("%H:%M") for t in added_times])
+                    response_parts.append(
+                        f"Добавлено {len(added_times)} времен: {times_str}"
+                    )
+
+            if already_exists_count > 0:
+                response_parts.append(
+                    f"{already_exists_count} время(а) уже было(и) добавлено(ы)"
                 )
-            else:
-                await context.message.reply_text("Это время уже добавлено")
+
+            await context.message.reply_text("\n".join(response_parts))
             return False
 
-        except (ValueError, IndexError):
+        except ValueError as e:
+            await context.message.reply_text(f"Ошибка: {str(e)}")
+            return False
+        except Exception as e:
+            logger.exception(f"Error parsing time input: {e}")
             await context.message.reply_text(
-                "Неверный формат времени. Используйте формат HH:MM (например, 16:00)"
+                "Произошла ошибка при обработке времени. Проверьте формат ввода."
             )
             return False
 
@@ -238,8 +352,20 @@ class CollectTimesStep(Step):
             return True
 
         if not self.is_waiting:
+            help_text = (
+                "Введите время отправки постов. Поддерживаются следующие форматы:\n\n"
+                "• Одиночное время: 12:00\n"
+                "• Несколько времен через пробел: 12:00 13:00 14:00\n"
+                "• Промежуток: 12:00-14:00,60\n"
+                "  (начальное и конечное включительно, шаг в минутах)\n\n"
+                "Примеры:\n"
+                "• 09:00 12:00 18:00\n"
+                "• 10:00-12:00,30 (создаст 10:00, 10:30, 11:00, 11:30, 12:00)\n"
+                "• 08:00 14:00-16:00,60 20:00\n\n"
+                "После ввода всех времен нажмите кнопку 'Закончить ввод'."
+            )
             await context.callback_query.message.chat.send_message(
-                "Введите время отправки постов в формате HH:MM (можно несколько раз, каждое время отдельным сообщением). После ввода всех времен нажмите кнопку 'Закончить ввод'.",
+                help_text,
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -318,7 +444,7 @@ class SubscribeHandler(SessionHandlerBase):
                 )
                 return
 
-        posts = await get_posts_from_rss(channel_username)
+        posts = await get_posts_from_html(channel_username)
         last_post_id = max(post["id"] for post in posts) if posts else 0
 
         max_id = (
