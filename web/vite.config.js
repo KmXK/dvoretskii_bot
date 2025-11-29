@@ -17,5 +17,8 @@ export default defineConfig({
     } : false,
     host: '0.0.0.0',
     port: 5173,
+    'allowedHosts': [
+        process.env.DOMAIN
+    ]
   },
 })
