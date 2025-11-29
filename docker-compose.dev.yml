@@ -1,0 +1,31 @@
+# Dev конфигурация
+# Использование: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  bot:
+    entrypoint: ["/bin/sh", "/scripts/wait-for-tunnel.sh"]
+    command: ["python", "main.py", "--prod"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - tunnel-data:/shared:ro
+    depends_on:
+      - bore
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./steward
+          target: /app/steward
+
+  bore:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.bore
+    volumes:
+      - tunnel-data:/shared
+    network_mode: "service:web"
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  tunnel-data:
