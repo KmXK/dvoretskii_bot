@@ -1,7 +1,12 @@
+# Базовая конфигурация - общие сервисы
+# Использование:
+#   Прод:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Dev:   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
 services:
   bot:
     build: .
-    command: [ "python", "main.py", "--prod" ]
+    command: ["python", "main.py", "--prod"]
     volumes:
       - bot_logs:/var/log
       - ./db.json:/app/db.json
@@ -10,7 +15,6 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DOWNLOAD_PROXY=${DOWNLOAD_PROXY}
-      - CLOUDFLARE_BYPASS_PORT=9002
       - TELEGRAM_API_PORT=${TELEGRAM_API_PORT}
       - TRANSLATE_KEY_ID=${TRANSLATE_KEY_ID}
       - TRANSLATE_KEY_SECRET=${TRANSLATE_KEY_SECRET}
@@ -28,24 +32,12 @@ services:
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_API_HOST=http://telegram-api:8081
-      - WEB_APP_URL=https://${DOMAIN:-localhost}
+      - WEB_APP_URL=https://${DOMAIN}
     depends_on:
       - telegram-api
-      # - cloudflare-bypass
-      - fluentbit
     networks:
       - bot
     restart: always
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: localhost:24224
-        tag: app.logs
-    develop:
-      watch:
-        - action: sync+restart
-          path: ./steward
-          target: /app/steward
 
   web:
     build:
@@ -58,29 +50,10 @@ services:
       - /app/node_modules
     networks:
       - bot
-    restart: always
+    restart: unless-stopped
     environment:
       - NODE_ENV=development
       - DOMAIN=${DOMAIN:-localhost}
-
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
-      - ACME_EMAIL=${ACME_EMAIL}
-    networks:
-      - bot
-    restart: always
-    depends_on:
-      - web
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
@@ -93,54 +66,13 @@ services:
     volumes:
       - telegram_data:/data
     ports:
-      - "${TELEGRAM_API_PORT}:8081"
+      - "${TELEGRAM_API_PORT:-8081}:8081"
     networks:
       - bot
 
-  # cloudflare-bypass:
-  #   image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
-  #   ports:
-  #     - "9002:8000"
-  #   networks:
-  #     - bot
-
-  config-generator:
-    build:
-      context: ./fluentbit
-      dockerfile: Dockerfile.config_creator
-    volumes:
-      - ./fluentbit:/templates:ro
-      - config-volume:/output
-    environment:
-      - YC_GROUP_ID=${YC_GROUP_ID}
-    entrypoint: ""
-    command: >
-      sh -c "
-        echo 'Generating config files...' &&
-        envsubst < /templates/fluentbit.conf > /output/fluent-bit.conf &&
-        envsubst < /templates/parsers.conf > /output/parsers.conf &&
-        echo 'Config file generated successfully.'
-      "
-
-  fluentbit:
-    container_name: fluentbit
-    image: cr.yandex/yc/fluent-bit-plugin-yandex:v2.1.1-fluent-bit-2.1.7
-    ports:
-      - 24224:24224
-      - 24224:24224/udp
-    restart: always
-    depends_on:
-      config-generator:
-        condition: service_completed_successfully
-    volumes:
-      - config-volume:/fluent-bit/etc:ro
-
 volumes:
-  bot_logs:
   telegram_data:
-  config-volume:
-  caddy_data:
-  caddy_config:
+  bot_logs:
 
 networks:
   bot:

@@ -1,0 +1,71 @@
+# Прод конфигурация
+
+services:
+  bot:
+    build: .
+    command: ["python", "main.py", "--prod"]
+    environment:
+      - WEB_APP_URL=https://${DOMAIN}
+    depends_on:
+      - fluentbit
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: app.logs
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    networks:
+      - bot
+    restart: always
+    depends_on:
+      - web
+
+  config-generator:
+    build:
+      context: ./fluentbit
+      dockerfile: Dockerfile.config_creator
+    volumes:
+      - ./fluentbit:/templates:ro
+      - config-volume:/output
+    environment:
+      - YC_GROUP_ID=${YC_GROUP_ID}
+    entrypoint: ""
+    command: >
+      sh -c "
+        echo 'Generating config files...' &&
+        envsubst < /templates/fluentbit.conf > /output/fluent-bit.conf &&
+        envsubst < /templates/parsers.conf > /output/parsers.conf &&
+        echo 'Config file generated successfully.'
+      "
+
+  fluentbit:
+    container_name: fluentbit
+    image: cr.yandex/yc/fluent-bit-plugin-yandex:v2.1.1-fluent-bit-2.1.7
+    ports:
+      - 24224:24224
+      - 24224:24224/udp
+    restart: always
+    depends_on:
+      config-generator:
+        condition: service_completed_successfully
+    volumes:
+      - config-volume:/fluent-bit/etc:ro
+
+volumes:
+  config-volume:
+  caddy_data:
+  caddy_config:
+

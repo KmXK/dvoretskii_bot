@@ -1,0 +1,7 @@
+FROM ekzhang/bore:latest
+
+COPY bore-wrapper.sh /bore-wrapper.sh
+RUN chmod +x /bore-wrapper.sh
+
+ENTRYPOINT ["/bin/sh", "/bore-wrapper.sh"]
+
