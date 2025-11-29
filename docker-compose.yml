@@ -61,38 +61,7 @@ services:
     restart: always
     environment:
       - NODE_ENV=development
-      - SSL_DOMAIN=${SSL_DOMAIN:-localhost}
-
-  nginx:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    ports:
-      - "443:443"
-      - "80:80"
-    volumes:
-      - certbot-certs:/etc/letsencrypt:ro
-      - certbot-www:/var/www/certbot:ro
-    environment:
-      # Режим: dev (самоподписанный) или prod (Let's Encrypt)
-      - NGINX_MODE=${NGINX_MODE:-dev}
-      # Домен для SSL сертификата (обязательно для prod)
-      - SSL_DOMAIN=${SSL_DOMAIN:-localhost}
-    depends_on:
-      - web
-    networks:
-      - bot
-    restart: always
-
-  # Certbot для получения Let's Encrypt сертификатов
-  certbot:
-    image: certbot/certbot:latest
-    volumes:
-      - certbot-certs:/etc/letsencrypt
-      - certbot-www:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
-    networks:
-      - bot
+      - DOMAIN=${DOMAIN:-localhost}
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
