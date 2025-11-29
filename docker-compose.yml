@@ -61,10 +61,8 @@ services:
     restart: always
     environment:
       - NODE_ENV=development
-      # HTTPS отключен, так как nginx обеспечивает HTTPS
-      # - VITE_HTTPS=true
+      - SSL_DOMAIN=${SSL_DOMAIN:-localhost}
 
-  # Nginx для HTTPS (раскомментируйте для использования)
   nginx:
     build:
       context: ./nginx
@@ -73,13 +71,28 @@ services:
       - "443:443"
       - "80:80"
     volumes:
-      # Конфиг можно монтировать для быстрых изменений
-      - ./nginx/nginx-dev.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-certs:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    environment:
+      # Режим: dev (самоподписанный) или prod (Let's Encrypt)
+      - NGINX_MODE=${NGINX_MODE:-dev}
+      # Домен для SSL сертификата (обязательно для prod)
+      - SSL_DOMAIN=${SSL_DOMAIN:-localhost}
     depends_on:
       - web
     networks:
       - bot
     restart: always
+
+  # Certbot для получения Let's Encrypt сертификатов
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot-certs:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - bot
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
@@ -138,6 +151,8 @@ volumes:
   bot_logs:
   telegram_data:
   config-volume:
+  certbot-certs:
+  certbot-www:
 
 networks:
   bot:
