@@ -1,6 +1,7 @@
 #!/bin/sh
 # Ждёт появления tunnel URL и запускает команду
 
+rm -f /shared/tunnel_url
 echo "Ожидаю tunnel URL..."
 
 while [ ! -f /shared/tunnel_url ]; do
