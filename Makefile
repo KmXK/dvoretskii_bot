@@ -2,7 +2,7 @@
 
 # Dev режим - web + bore туннель
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
 
 # Прод режим - всё включено (bot, caddy, fluentbit)
 prod:
