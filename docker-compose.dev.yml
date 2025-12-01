@@ -16,13 +16,6 @@ services:
           path: ./steward
           target: /app/steward
 
-  web:
-    develop:
-      watch:
-        - action: sync+restart
-          path: ./web/src
-          target: /app/src
-
   localhost-run:
     build:
       context: ./scripts
