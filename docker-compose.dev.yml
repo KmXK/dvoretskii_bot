@@ -7,7 +7,7 @@ services:
     command: ["python", "main.py", "--prod"]
     volumes:
       - ./scripts:/scripts:ro
-      - tunnel-info:/shared:ro
+      - tunnel-info:/shared
     depends_on:
       - localhost-run
     develop:
