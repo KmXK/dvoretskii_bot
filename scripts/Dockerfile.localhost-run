@@ -1,0 +1,9 @@
+
+FROM alpine:latest
+
+RUN apk --no-cache add openssh-client
+
+COPY tunnel.sh /tunnel.sh
+RUN chmod +x /tunnel.sh
+
+ENTRYPOINT ["/tunnel.sh"]

@@ -7,25 +7,32 @@ services:
     command: ["python", "main.py", "--prod"]
     volumes:
       - ./scripts:/scripts:ro
-      - tunnel-data:/shared:ro
+      - tunnel-info:/shared:ro
     depends_on:
-      - bore
+      - localhost-run
     develop:
       watch:
         - action: sync+restart
           path: ./steward
           target: /app/steward
 
-  bore:
+
+  localhost-run:
     build:
       context: ./scripts
-      dockerfile: Dockerfile.bore
+      dockerfile: Dockerfile.localhost-run
+    environment:
+      - LOCAL_PORT=5173
     volumes:
-      - tunnel-data:/shared
+      - tunnel-info:/shared
     network_mode: "service:web"
     depends_on:
       - web
     restart: unless-stopped
 
 volumes:
-  tunnel-data:
+  tunnel-info:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
