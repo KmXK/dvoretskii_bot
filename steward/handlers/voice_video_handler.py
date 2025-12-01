@@ -1,244 +1,143 @@
 import asyncio
 import logging
-import shutil
+import os
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 
-from moviepy.audio.AudioClip import CompositeAudioClip
-from moviepy.audio.io.AudioFileClip import AudioFileClip
-from moviepy.video.io.VideoFileClip import VideoFileClip
 from telegram import InputFile
 
 from steward.handlers.handler import Handler
 
 logger = logging.getLogger(__name__)
 
+VIDEO_PATH = Path("data/videos/stupid_video.mp4")
+BG_AUDIO_PATH = Path("data/audio/lofi.mp3")
 
-def _extract_file_path(file_path: str) -> str:
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        parsed_url = urlparse(file_path)
-        path = parsed_url.path
-        if path.startswith("/file/bot"):
-            file_path = path[len("/file/bot") :]
-            first_slash_idx = file_path.find("/")
-            if first_slash_idx > 0:
-                file_path = file_path[first_slash_idx + 1 :]
-        else:
-            file_path = path.lstrip("/")
-    return file_path
+VIDEO_VARIANTS = [
+    (1600.0, Path("data/videos/stupid_video_240p.mp4")),
+    (360.0, Path("data/videos/stupid_video_480p.mp4")),
+    (0.0, Path("data/videos/stupid_video_720p.mp4")),
+]
+
+
+def _pick_video(audio_dur: float) -> Path:
+    for threshold, path in VIDEO_VARIANTS:
+        if audio_dur >= threshold and path.exists():
+            return path
+    raise Exception(f"Invalid configuration: no video found for audio duration {audio_dur} seconds")
+
+
+async def _get_duration(path: Path) -> float:
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    return float(stdout.decode().strip())
+
+
+async def _run_ffmpeg(*args: str):
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", *args,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise Exception(f"ffmpeg failed: {stderr.decode()}")
 
 
 class VoiceVideoHandler(Handler):
-    VIDEO_PATH = Path("data/videos/stupid_video.mp4")
-    BACKGROUND_AUDIO_PATH = Path("data/audio/lofi.mp3")
     VIDEO_OFFSET_KEY = "stupid_video"
-    BACKGROUND_AUDIO_OFFSET_KEY = "lofi_audio"
+    BG_AUDIO_OFFSET_KEY = "lofi_audio"
 
     async def chat(self, context):
-        voice = context.message.voice
-        if voice is None:
+        if not context.message.voice:
             return False
-
-        if not self.VIDEO_PATH.exists():
-            logger.warning("VoiceVideoHandler skipped: %s not found", self.VIDEO_PATH)
+        if not VIDEO_PATH.exists():
+            logger.warning("VoiceVideoHandler skipped: %s not found", VIDEO_PATH)
             return False
 
         try:
-            tg_file = await context.bot.get_file(voice.file_id)
-            file_path = tg_file.file_path
-            if not file_path:
+            tg_file = await context.bot.get_file(context.message.voice.file_id)
+            if not tg_file.file_path:
                 raise Exception("File path is not available")
 
-            file_path = _extract_file_path(file_path)
-            token = context.bot.token
-            local_file_path = Path(f"/data/{token}/{file_path}")
+            fp = tg_file.file_path
+            if "/file/bot" in fp:
+                fp = fp.split("/file/bot", 1)[1].split("/", 1)[1]
+            audio_path = Path(f"/data/{context.bot.token}/{fp}")
+            if not audio_path.exists():
+                raise Exception(f"File not found: {audio_path}")
 
-            with tempfile.TemporaryDirectory(prefix="voice_video_") as tmp_dir:
-                tmp_dir_path = Path(tmp_dir)
-                audio_path = tmp_dir_path / "voice.ogg"
+            tasks = [_get_duration(audio_path), _get_duration(VIDEO_PATH)]
+            has_bg = BG_AUDIO_PATH.exists()
+            if has_bg:
+                tasks.append(_get_duration(BG_AUDIO_PATH))
 
-                if not local_file_path.exists():
-                    raise Exception(f"File not found: {file_path}")
+            durations = await asyncio.gather(*tasks)
+            audio_dur, video_dur = durations[0], durations[1]
+            bg_dur = durations[2] if has_bg else None
 
-                shutil.copy2(local_file_path, audio_path)
+            needed = audio_dur + 1.0
+            if needed >= video_dur:
+                await context.message.reply_text("Голосовое длиннее доступного видео, не могу ответить :(")
+                return True
 
-                audio_duration = await asyncio.to_thread(
-                    self._get_audio_duration, audio_path
-                )
+            video_path = _pick_video(audio_dur)
 
-                video_duration = await asyncio.to_thread(self._get_video_duration)
-                if audio_duration + 1.0 >= video_duration:
-                    await context.message.reply_text(
-                        "Голосовое длиннее доступного видео, не могу ответить :("
-                    )
-                    return True
+            video_start = self._pick_offset(self.VIDEO_OFFSET_KEY, needed, video_dur)
+            bg_start = self._pick_offset(self.BG_AUDIO_OFFSET_KEY, needed, bg_dur) if bg_dur else None
 
-                start_position = self._pick_start_position(
-                    audio_duration, video_duration
-                )
-
-                bg_audio_duration = None
-                if self.BACKGROUND_AUDIO_PATH.exists():
-                    bg_audio_duration = await asyncio.to_thread(
-                        self._get_audio_duration, self.BACKGROUND_AUDIO_PATH
-                    )
-
-                merged_path = tmp_dir_path / "merged.mp4"
-
-                bg_audio_start = None
-                if bg_audio_duration is not None:
-                    bg_audio_start = self._pick_background_audio_start_position(
-                        audio_duration + 1.0, bg_audio_duration
-                    )
-
-                await asyncio.to_thread(
-                    self._render_video,
-                    start_position,
-                    audio_duration,
-                    audio_path,
-                    merged_path,
-                    bg_audio_duration,
-                    bg_audio_start,
-                )
-
-                self._store_new_offset(start_position, audio_duration, video_duration)
-                if bg_audio_duration is not None and bg_audio_start is not None:
-                    self._store_background_audio_offset(
-                        bg_audio_start, audio_duration, bg_audio_duration
-                    )
+            fd, out_path = tempfile.mkstemp(suffix=".mp4")
+            os.close(fd)
+            try:
+                await self._render(video_path, video_start, needed, audio_path, out_path, bg_start)
+                self._update_offset(self.VIDEO_OFFSET_KEY, video_start + needed, video_dur)
+                if bg_dur and bg_start is not None:
+                    self._update_offset(self.BG_AUDIO_OFFSET_KEY, bg_start + needed, bg_dur)
                 await self.repository.save()
 
-                with merged_path.open("rb") as final_file:
-                    await context.message.reply_video(
-                        InputFile(final_file, filename="reply.mp4")
-                    )
+                with open(out_path, "rb") as f:
+                    await context.message.reply_video(InputFile(f, filename="reply.mp4"))
+            finally:
+                os.unlink(out_path)
 
             return True
         except Exception as e:
             logger.exception("Error processing voice message: %s", e)
-            await context.message.reply_text(
-                "Ошибка при обработке голосового сообщения"
-            )
+            await context.message.reply_text("Ошибка при обработке голосового сообщения")
             return True
 
-    def _pick_start_position(
-        self, audio_duration: float, video_duration: float
-    ) -> float:
-        start = self.repository.db.data_offsets.get(self.VIDEO_OFFSET_KEY, 0.0)
-        if start >= video_duration:
-            start = 0.0
+    def _pick_offset(self, key: str, needed: float, total: float) -> float:
+        start = self.repository.db.data_offsets.get(key, 0.0)
+        return 0.0 if start >= total or total - start < needed else start
 
-        video_duration_needed = audio_duration + 1.0
-        remaining = video_duration - start
-        if remaining < video_duration_needed:
-            start = 0.0
+    def _update_offset(self, key: str, val: float, total: float):
+        self.repository.db.data_offsets[key] = val if val < total else 0.0
 
-        return start
-
-    def _store_new_offset(self, start: float, duration: float, video_duration: float):
-        new_offset = start + duration + 1.0
-        if new_offset >= video_duration:
-            new_offset = 0.0
-        self.repository.db.data_offsets[self.VIDEO_OFFSET_KEY] = new_offset
-
-    def _pick_background_audio_start_position(
-        self, video_duration_needed: float, bg_audio_duration: float
-    ) -> float:
-        """Выбирает стартовую позицию для фонового аудио с проверкой, что его хватит"""
-        start = self.repository.db.data_offsets.get(
-            self.BACKGROUND_AUDIO_OFFSET_KEY, 0.0
-        )
-        if start >= bg_audio_duration:
-            start = 0.0
-
-        remaining = bg_audio_duration - start
-        if remaining < video_duration_needed:
-            start = 0.0
-
-        return start
-
-    def _store_background_audio_offset(
-        self, start: float, duration: float, bg_audio_duration: float
-    ):
-        new_offset = start + duration + 1.0
-        if new_offset >= bg_audio_duration:
-            new_offset = 0.0
-        self.repository.db.data_offsets[self.BACKGROUND_AUDIO_OFFSET_KEY] = new_offset
-
-    def _get_audio_duration(self, path: Path) -> float:
-        with AudioFileClip(str(path)) as clip:
-            return clip.duration
-
-    def _get_video_duration(self) -> float:
-        with VideoFileClip(str(self.VIDEO_PATH)) as clip:
-            return clip.duration
-
-    def _render_video(
-        self,
-        start: float,
-        duration: float,
-        audio_path: Path,
-        output_path: Path,
-        bg_audio_duration: float | None = None,
-        bg_audio_start: float | None = None,
-    ):
-        with VideoFileClip(str(self.VIDEO_PATH)) as video:
-            with AudioFileClip(str(audio_path)) as audio:
-                precise_audio_duration = audio.duration
-                audio_clip = audio
-
-                video_duration_needed = precise_audio_duration + 1.0
-                video_end = min(start + video_duration_needed, video.duration)
-                video_chunk = video.subclipped(start, video_end).without_audio()
-
-                try:
-                    bg_audio = None
-                    if (
-                        self.BACKGROUND_AUDIO_PATH.exists()
-                        and bg_audio_duration is not None
-                        and bg_audio_start is not None
-                    ):
-                        try:
-                            bg_audio = AudioFileClip(str(self.BACKGROUND_AUDIO_PATH))
-                            bg_audio_end = min(
-                                bg_audio_start + video_duration_needed,
-                                bg_audio_duration,
-                            )
-                            bg_audio_clip = bg_audio.subclipped(
-                                bg_audio_start, bg_audio_end
-                            )
-                            bg_audio_clip = bg_audio_clip.with_volume_scaled(0.05)
-                            bg_audio_clip = bg_audio_clip.with_start(0)
-                            audio_clip_synced = audio_clip.with_start(0)
-                            composite_audio = CompositeAudioClip(
-                                [bg_audio_clip, audio_clip_synced]
-                            )
-                            final_clip = video_chunk.with_audio(composite_audio)
-                        except Exception as e:
-                            logger.warning("Failed to add background audio: %s", e)
-                            if bg_audio is not None:
-                                bg_audio.close()
-                            final_clip = video_chunk.with_audio(audio_clip)
-                    else:
-                        final_clip = video_chunk.with_audio(audio_clip)
-
-                    desired_duration = precise_audio_duration + 1.0
-                    actual_duration = final_clip.duration
-                    final_duration = min(desired_duration, actual_duration)
-
-                    if final_duration < actual_duration and final_duration > 0:
-                        final_clip = final_clip.subclipped(0, final_duration)
-                    try:
-                        final_clip.write_videofile(
-                            str(output_path),
-                            codec="libx264",
-                            audio_codec="aac",
-                            logger=None,
-                        )
-                    finally:
-                        final_clip.close()
-                        if bg_audio is not None:
-                            bg_audio.close()
-                finally:
-                    video_chunk.close()
+    async def _render(self, video: Path, start: float, dur: float, audio: Path, out: str, bg_start: float | None):
+        if bg_start is not None:
+            fd, mixed_audio = tempfile.mkstemp(suffix=".aac")
+            os.close(fd)
+            try:
+                await _run_ffmpeg(
+                    "-i", str(audio),
+                    "-ss", str(bg_start), "-t", str(dur), "-i", str(BG_AUDIO_PATH),
+                    "-filter_complex", "[1:a]volume=0.05[bg];[0:a][bg]amix=inputs=2:duration=first[a]",
+                    "-map", "[a]", "-c:a", "aac", mixed_audio,
+                )
+                await _run_ffmpeg(
+                    "-ss", str(start), "-i", str(video),
+                    "-i", mixed_audio,
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", str(dur), "-c", "copy", out,
+                )
+            finally:
+                os.unlink(mixed_audio)
+        else:
+            await _run_ffmpeg(
+                "-ss", str(start), "-i", str(video),
+                "-i", str(audio),
+                "-map", "0:v", "-map", "1:a",
+                "-t", str(dur), "-c:v", "copy", "-c:a", "aac", out,
+            )
