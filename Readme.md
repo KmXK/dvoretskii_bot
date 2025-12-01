@@ -8,7 +8,7 @@
 | `web` | Mini App (React + Vite, порт 5173) |
 | `telegram-api` | Локальный Telegram Bot API |
 | `caddy` | HTTPS reverse proxy (Let's Encrypt) — только прод |
-| `bore` | HTTPS туннель (bore.pub) — только dev |
+| `localhost.run` | HTTPS туннель — только dev |
 | `fluentbit` | Логирование в Yandex Cloud — только прод |
 
 ## Быстрый старт
@@ -21,9 +21,10 @@ cp example.env .env
 ### Dev (локальная разработка)
 ```bash
 make dev                              # запустить web + bore, покажет URL
-make dev-bot URL=https://bore.pub:XXX # запустить бота с этим URL
 make logs-dev                         # логи
 ```
+
+Для корректной работы HTTPS туннеля через localhost.run для тестирования миниаппы нужно включить чек "Enable host networking" для Docker Desktop (актуально для Windows)
 
 ### Prod
 ```bash
