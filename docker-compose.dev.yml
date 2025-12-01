@@ -37,4 +37,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  tunnel-info
+  tunnel-info:
