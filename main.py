@@ -37,6 +37,7 @@ from steward.handlers.handler import Handler
 from steward.handlers.help_handler import HelpHandler
 from steward.handlers.holidays_handler import HolidaysHandler
 from steward.handlers.id_handler import IdHandler
+from steward.handlers.link_handler import LinkHandler
 from steward.handlers.logs_handler import LogsHandler
 from steward.handlers.message_info_handler import MessageInfoHandler
 from steward.handlers.miniapp_handler import MiniAppHandler
@@ -76,7 +77,6 @@ def get_handlers(log_file: None | str):
             SilenceCommandHandler,
             SilenceEnforcerHandler,
             PashaRelatedMessageHandler,
-            DownloadHandler,
             RuleListViewHandler,
             RuleViewHandler,
             RuleAddHandler,
@@ -99,6 +99,7 @@ def get_handlers(log_file: None | str):
             SubscribeHandler,
             TranslateHandler,
             ExchangeRateHandler,
+            LinkHandler,
             HolidaysHandler,
             EveryoneHandler,
             PashaHandler,
@@ -108,6 +109,7 @@ def get_handlers(log_file: None | str):
             VoiceVideoHandler,
             MultiplyHandler,
             WatchHandler,
+            DownloadHandler,
         ],
     )
 
