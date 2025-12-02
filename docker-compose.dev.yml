@@ -15,6 +15,9 @@ services:
         - action: sync+restart
           path: ./steward
           target: /app/steward
+        - action: sync+restart
+          path: ./main.py
+          target: /app/main.py
 
   localhost-run:
     build:
