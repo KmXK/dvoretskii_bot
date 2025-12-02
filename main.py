@@ -49,6 +49,7 @@ from steward.handlers.pasha_handler import (
 )
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.reaction_counter_handler import ReactionCounterHandler
+from steward.handlers.remind_handler import RemindAddHandler, RemindEditHandler, RemindRemoveHandler, RemindersHandler
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.silence_handler import (
     SilenceCommandHandler,
@@ -100,6 +101,10 @@ def get_handlers(log_file: None | str):
             TranslateHandler,
             ExchangeRateHandler,
             LinkHandler,
+            RemindRemoveHandler,
+            RemindEditHandler,
+            RemindAddHandler,
+            RemindersHandler,
             HolidaysHandler,
             EveryoneHandler,
             PashaHandler,
