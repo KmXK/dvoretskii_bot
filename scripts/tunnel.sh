@@ -3,6 +3,8 @@
 LOCAL_PORT=${LOCAL_PORT:-80}
 LOCAL_HOST=${LOCAL_HOST:-localhost}
 
+rm -f /shared/tunnel_url
+
 echo "Starting localhost.run tunnel..."
 echo "Forwarding ${LOCAL_HOST}:${LOCAL_PORT} to localhost.run"
 
