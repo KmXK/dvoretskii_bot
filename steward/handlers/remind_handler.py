@@ -60,6 +60,75 @@ def parse_repeat(s: str) -> int | None:
     return None if val == "*" else int(val)
 
 
+DAY_NAMES = {
+    "пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6,
+    "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+    "weekday": [0, 1, 2, 3, 4], "weekend": [5, 6],
+}
+DAY_NAMES_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+
+def parse_days(s: str) -> list[int] | None:
+    s = s.lower()
+    if s in DAY_NAMES:
+        val = DAY_NAMES[s]
+        return val if isinstance(val, list) else [val]
+
+    days = set()
+    for part in s.split(","):
+        part = part.strip()
+        if "-" in part:
+            start, end = part.split("-", 1)
+            start_idx = DAY_NAMES.get(start.strip())
+            end_idx = DAY_NAMES.get(end.strip())
+            if start_idx is None or end_idx is None or isinstance(start_idx, list) or isinstance(end_idx, list):
+                return None
+            if start_idx <= end_idx:
+                days.update(range(start_idx, end_idx + 1))
+            else:
+                days.update(range(start_idx, 7))
+                days.update(range(0, end_idx + 1))
+        else:
+            idx = DAY_NAMES.get(part)
+            if idx is None or isinstance(idx, list):
+                return None
+            days.add(idx)
+
+    return sorted(days) if days else None
+
+
+def format_days(days: list[int]) -> str:
+    if not days:
+        return ""
+    if days == [0, 1, 2, 3, 4]:
+        return "пн-пт"
+    if days == [5, 6]:
+        return "сб-вс"
+    if days == [0, 1, 2, 3, 4, 5, 6]:
+        return ""
+
+    ranges = []
+    start = days[0]
+    end = days[0]
+    for d in days[1:]:
+        if d == end + 1:
+            end = d
+        else:
+            ranges.append((start, end))
+            start = end = d
+    ranges.append((start, end))
+
+    parts = []
+    for s, e in ranges:
+        if s == e:
+            parts.append(DAY_NAMES_SHORT[s])
+        elif e - s == 1:
+            parts.append(f"{DAY_NAMES_SHORT[s]},{DAY_NAMES_SHORT[e]}")
+        else:
+            parts.append(f"{DAY_NAMES_SHORT[s]}-{DAY_NAMES_SHORT[e]}")
+    return ",".join(parts)
+
+
 def format_interval(seconds: int) -> str:
     if seconds >= 86400 and seconds % 86400 == 0:
         d = seconds // 86400
@@ -79,10 +148,12 @@ def format_reminder(r: ReminderDelayedAction) -> str:
     repeat_str = ""
     if gen.interval_seconds:
         interval_str = format_interval(gen.interval_seconds)
+        days_str = format_days(gen.days) if gen.days else ""
+        days_str = f" {days_str}" if days_str else ""
         if gen.repeat_remaining is None:
-            repeat_str = f" (∞ каждые {interval_str})"
+            repeat_str = f" (∞ каждые {interval_str}{days_str})"
         else:
-            repeat_str = f" (x{gen.repeat_remaining} каждые {interval_str})"
+            repeat_str = f" (x{gen.repeat_remaining} каждые {interval_str}{days_str})"
     return f"`{r.id}` {time_str}{repeat_str} — {r.text}"
 
 
@@ -98,9 +169,10 @@ class RemindAddHandler(Handler):
         if not args.strip():
             await context.message.reply_text(
                 "Использование:\n"
-                "/remind <время> [x<кол-во>] <текст>\n\n"
+                "/remind <время> [x<кол-во>] [дни] <текст>\n\n"
                 "Примеры времени: 10m, 2h30m, 15:30, 25.12 10:00\n"
-                "Повторение: x3 (3 раза), x* (бесконечно)\n\n"
+                "Повторение: x3 (3 раза), x* (бесконечно)\n"
+                "Дни: weekday, weekend, пн-пт, пн,ср,пт\n\n"
                 "Управление:\n"
                 "/remind remove <id>\n"
                 "/remind edit <id> <новый текст>\n"
@@ -138,18 +210,39 @@ class RemindAddHandler(Handler):
             return True
 
         has_repeat = False
-        if len(parts) > text_start and parts[text_start].startswith("x"):
-            has_repeat = True
-            repeat_count = parse_repeat(parts[text_start])
-            text_start += 1
-            if not interval_seconds:
-                await context.message.reply_text("Повторение работает только с интервалом или временем (10m, 1h, 15:30...)")
-                return True
+        days = None
+
+        while len(parts) > text_start:
+            if parts[text_start].startswith("x"):
+                has_repeat = True
+                repeat_count = parse_repeat(parts[text_start])
+                text_start += 1
+                if not interval_seconds:
+                    await context.message.reply_text("Повторение работает только с интервалом или временем (10m, 1h, 15:30...)")
+                    return True
+            elif parsed_days := parse_days(parts[text_start]):
+                days = parsed_days
+                has_repeat = True
+                text_start += 1
+            else:
+                break
+
+        if days and not interval_seconds:
+            await context.message.reply_text("Дни работают только с интервалом или временем (10m, 1h, 15:30...)")
+            return True
 
         text = " ".join(parts[text_start:])
         if not text:
             await context.message.reply_text("Укажи текст напоминания")
             return True
+
+        generator = ReminderGenerator(
+            next_fire=next_fire,
+            interval_seconds=interval_seconds if has_repeat else None,
+            repeat_remaining=repeat_count,
+            days=days,
+        )
+        generator.skip_to_allowed_day()
 
         reminder = ReminderDelayedAction(
             id=str(uuid.uuid4())[:8],
@@ -157,11 +250,7 @@ class RemindAddHandler(Handler):
             user_id=context.message.from_user.id,
             text=text,
             created_at=datetime.now(timezone.utc),
-            generator=ReminderGenerator(
-                next_fire=next_fire,
-                interval_seconds=interval_seconds if has_repeat else None,
-                repeat_remaining=repeat_count,
-            ),
+            generator=generator,
         )
 
         self.repository.db.delayed_actions.append(reminder)

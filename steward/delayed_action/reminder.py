@@ -13,11 +13,18 @@ class ReminderGenerator(Generator):
     next_fire: datetime.datetime
     interval_seconds: int | None = None
     repeat_remaining: int | None = None
+    days: list[int] | None = None
 
     def get_next(self, now: datetime.datetime):
         if self.next_fire.tzinfo is None:
             self.next_fire = self.next_fire.replace(tzinfo=datetime.timezone.utc)
         return self.next_fire
+
+    def skip_to_allowed_day(self):
+        if not self.days:
+            return
+        while self.next_fire.weekday() not in self.days:
+            self.next_fire += datetime.timedelta(days=1)
 
 
 @dataclass
@@ -38,6 +45,7 @@ class ReminderDelayedAction(DelayedAction):
         gen = self.generator
         if gen.interval_seconds and (gen.repeat_remaining is None or gen.repeat_remaining > 1):
             gen.next_fire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=gen.interval_seconds)
+            gen.skip_to_allowed_day()
             if gen.repeat_remaining is not None:
                 gen.repeat_remaining -= 1
             await context.repository.save()
