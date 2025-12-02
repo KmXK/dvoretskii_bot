@@ -1,24 +1,42 @@
 import asyncio
 import json
+import logging
+import re
 import shlex
 from os import environ
 from urllib.parse import quote
 
 from steward.bot.context import ChatBotContext
-from steward.handlers.command_handler import CommandHandler, required
+from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
+
+
+logger = logging.getLogger(__name__)
 
 
 @CommandHandler(
     "link",
-    arguments_template=r"(?P<url>\S+)( (?P<short>\S+))?",
+    arguments_template=r"((?P<url>\S+)( (?P<short>\S+))?)?",
     arguments_mapping={
-        "url": required(str),
+        "url": lambda x: x or "",
         "short": lambda x: x or "",
     },
 )
 class LinkHandler(Handler):
     async def chat(self, context: ChatBotContext, url: str, short: str):
+        if not url:
+            reply = context.message.reply_to_message
+            if reply and reply.text:
+                match = re.search(r'(https?://\S+|\S+\.\S+/\S*|\S+\.[a-z]{2,})', reply.text)
+                if match:
+                    url = match.group(0)
+            if not url:
+                await context.message.reply_text("Укажи ссылку или ответь на сообщение со ссылкой")
+                return True
+
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+
         template = environ.get("SHORTENER_CURL_TEMPLATE")
         if not template:
             await context.message.reply_text("Сервис сокращения ссылок не настроен")
@@ -36,14 +54,17 @@ class LinkHandler(Handler):
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                await context.message.reply_text(f"Ошибка: {stderr.decode().strip()}")
+                logger.error(f"Error: {stderr.decode().strip()}")
+                await context.message.reply_text("Ошибка сокращения ссылки")
                 return True
 
+            logger.info(f"Result: {json.loads(stdout.decode().strip())}")
             await context.message.reply_text(json.loads(stdout.decode().strip())["result"])
         except Exception as e:
-            await context.message.reply_text(f"Ошибка: {e}")
+            logger.exception(e)
+            await context.message.reply_text("Ошибка сокращения ссылки")
 
         return True
 
     def help(self) -> str | None:
-        return "/link <url> [<short>] - создать короткую ссылку"
+        return "/link [<url>] [<short>] - создать короткую ссылку (или реплай на сообщение со ссылкой)"
