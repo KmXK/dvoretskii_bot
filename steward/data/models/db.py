@@ -9,6 +9,7 @@ from dacite import Config, from_dict
 from steward.data.models.pasha_ai_message import PashaAiMessage
 from steward.data.models.saved_links import SavedLinks
 from steward.delayed_action.base import DelayedAction
+from steward.delayed_action.reminder import CompletedReminder
 from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
@@ -28,6 +29,7 @@ class Database:
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
     delayed_actions: list[DelayedAction] = field(default_factory=list)
+    completed_reminders: list[CompletedReminder] = field(default_factory=list)
     saved_links: SavedLinks = field(default_factory=SavedLinks)
     data_offsets: dict[str, float] = field(default_factory=dict)
     channel_subscriptions: list[ChannelSubscription] = field(default_factory=list)
