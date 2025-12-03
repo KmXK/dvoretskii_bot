@@ -111,9 +111,13 @@ class Repository:
 
         await self._storage.write_dict(serialize_to_dict(self.db))
         for callback in self._save_callbacks:
-            result = callback()
-            if isawaitable(result):
-                await result
+            try:
+                result = callback()
+                if isawaitable(result):
+                    await result
+            except Exception as e:
+                logging.exception(e)
+                pass
 
     def subscribe_on_save(self, callback: Callable[[], Awaitable[Any] | None]):
         self._save_callbacks.add(callback)
