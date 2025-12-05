@@ -188,3 +188,6 @@ bin/
 web/key.pem
 web/cert.pem
 nginx/ssl/
+
+# npm
+web/package-lock.json
