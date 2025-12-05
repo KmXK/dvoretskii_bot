@@ -19,6 +19,15 @@ services:
           path: ./main.py
           target: /app/main.py
 
+  web:
+    develop:
+      watch:
+        - action: sync
+          path: ./web/src
+          target: /app/src
+        - action: rebuild
+          path: ./web/package.json
+
   localhost-run:
     build:
       context: ./scripts
