@@ -69,6 +69,8 @@ services:
       - config-volume:/fluent-bit/etc:ro
 
   grafana:
+    environment:
+      - GF_SERVER_ROOT_URL=https://grafana.${DOMAIN}
     expose:
       - "3000"
 
