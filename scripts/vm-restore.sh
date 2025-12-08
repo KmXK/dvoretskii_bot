@@ -7,35 +7,52 @@
 #   AWS_SECRET_ACCESS_KEY
 #
 # Optional:
-#   AWS_REGION (default: us-east-1)
+#   AWS_REGION (default: ru-central1)
 #   S3_ENDPOINT (for S3-compatible storage like Yandex Cloud, MinIO)
 
 set -e
 
-BACKUP_SRC="${1:?Usage: $0 <s3://bucket/path/to/backup> [storage_data_path]}"
-STORAGE_PATH="${2:-./victoria-metrics-data}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+if [[ -f "$ENV_FILE" ]]; then
+  eval "$(grep -E '^YC_S3_' "$ENV_FILE")"
+fi
+
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-$YC_S3_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-$YC_S3_KEY_SECRET}"
+
+: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID or YC_S3_KEY_ID is not set}"
+: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY or YC_S3_KEY_SECRET is not set}"
+
+BACKUP_SRC="${1:?Usage: $0 <s3://bucket/path/to/backup> [storage_target]}"
+STORAGE_TARGET="${2:-dvoretskii_bot_victoriametrics_data}"
 
 echo "Restoring from: $BACKUP_SRC"
-echo "Target path: $STORAGE_PATH"
+echo "Target: $STORAGE_TARGET"
 
-# Docker-based restore
+if [[ "$STORAGE_TARGET" == */* ]]; then
+  VOLUME_ARG="$(realpath "$STORAGE_TARGET"):/data"
+else
+  VOLUME_ARG="$STORAGE_TARGET:/data"
+fi
+
 docker run --rm \
-  -v "$(realpath "$STORAGE_PATH"):/data" \
+  -v "$VOLUME_ARG" \
   -e AWS_ACCESS_KEY_ID \
   -e AWS_SECRET_ACCESS_KEY \
-  ${AWS_REGION:+-e AWS_REGION} \
-  ${S3_ENDPOINT:+-e customS3Endpoint="$S3_ENDPOINT"} \
   victoriametrics/vmrestore:latest \
+  -customS3Endpoint="${S3_ENDPOINT:-https://storage.yandexcloud.net}" \
   -src="$BACKUP_SRC" \
   -storageDataPath=/data
 
-echo "Done. Start VM with:"
-echo "  docker run -v $(realpath "$STORAGE_PATH"):/victoria-metrics-data victoriametrics/victoria-metrics -storageDataPath=/victoria-metrics-data"
+echo "Done."
 
 # Examples:
-#   ./vm-restore.sh s3://my-bucket/vm-backups/2024-01-01
-#   ./vm-restore.sh s3://my-bucket/vm-backups/2024-01-01 /var/lib/victoria-metrics
+#   Into named volume (default):
+#     ./vm-restore.sh s3://bucket/vm-backup
+#     ./vm-restore.sh s3://bucket/vm-backup my_volume_name
 #
-# For Yandex Cloud S3:
-#   S3_ENDPOINT=https://storage.yandexcloud.net ./vm-restore.sh s3://bucket/backup
+#   Into local directory:
+#     ./vm-restore.sh s3://bucket/vm-backup ./victoria-metrics-data
+#     ./vm-restore.sh s3://bucket/vm-backup /var/lib/victoria-metrics
 
