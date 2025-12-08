@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from steward.bot.bot import Bot
+from steward.metrics import MetricsEngine, NoopMetricsEngine, PrometheusMetricsEngine
 from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.admin_handler import (
@@ -155,7 +156,16 @@ def main():
     repository = Repository(JsonFileStorage("db.json"))
     handlers = get_handlers(args.log_file)
 
-    Bot(handlers, repository).start(
+    metrics_engine: MetricsEngine
+    if os.environ.get("METRICS_ENABLED") == "true":
+        metrics_port = int(os.environ.get("METRICS_PORT", "9090"))
+        metrics_engine = PrometheusMetricsEngine()
+        metrics_engine.start_server(metrics_port)
+        logging.info(f"Metrics server started on port {metrics_port}")
+    else:
+        metrics_engine = NoopMetricsEngine()
+
+    Bot(handlers, repository, metrics_engine).start(
         token,
         drop_pending_updates=True,
         local_server=os.environ.get("TELEGRAM_API_HOST") if not is_test else None,

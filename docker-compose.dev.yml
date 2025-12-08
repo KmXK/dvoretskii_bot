@@ -1,5 +1,6 @@
 # Dev конфигурация
 # Использование: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# С метриками: docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile metrics up -d
 
 services:
   bot:
@@ -18,6 +19,10 @@ services:
         - action: sync+restart
           path: ./main.py
           target: /app/main.py
+    environment:
+      - METRICS_ENABLED=${METRICS_ENABLED:-false}
+    expose:
+      - "${METRICS_PORT:-9090}"
 
   web:
     develop:
@@ -40,6 +45,13 @@ services:
     depends_on:
       - web
     restart: unless-stopped
+
+  grafana:
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
 
 volumes:
   tunnel-info:

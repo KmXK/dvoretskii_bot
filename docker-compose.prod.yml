@@ -6,6 +6,9 @@ services:
     command: ["python", "main.py", "--prod"]
     environment:
       - WEB_APP_URL=https://${DOMAIN}
+      - METRICS_ENABLED=true
+    expose:
+      - "${METRICS_PORT:-9090}"
     depends_on:
       - fluentbit
     logging:
@@ -32,6 +35,7 @@ services:
     restart: always
     depends_on:
       - web
+      - grafana
 
   config-generator:
     build:
@@ -64,8 +68,11 @@ services:
     volumes:
       - config-volume:/fluent-bit/etc:ro
 
+  grafana:
+    expose:
+      - "3000"
+
 volumes:
   config-volume:
   caddy_data:
   caddy_config:
-
