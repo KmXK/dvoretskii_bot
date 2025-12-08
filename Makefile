@@ -1,18 +1,17 @@
-.PHONY: dev prod down logs logs-dev url
+.PHONY: dev dev-metrics prod down logs logs-dev
 
-# Dev режим - web + bore туннель
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
 
-# Прод режим - всё включено (bot, caddy, fluentbit)
+dev-metrics:
+	METRICS_ENABLED=true docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile metrics watch
+
 prod:
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile metrics up -d --build
 
-# Остановить все контейнеры
 down:
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.dev.yml down
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.dev.yml --profile metrics down
 
-# Логи
 logs:
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f
 

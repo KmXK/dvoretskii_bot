@@ -33,6 +33,8 @@ services:
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
       - TELEGRAM_API_HOST=http://telegram-api:8081
       - WEB_APP_URL=https://${DOMAIN}
+      - METRICS_ENABLED=${METRICS_ENABLED:-false}
+      - METRICS_PORT=${METRICS_PORT:-9090}
     depends_on:
       - telegram-api
     networks:
@@ -70,9 +72,46 @@ services:
     networks:
       - bot
 
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.96.0
+    container_name: victoriametrics
+    profiles:
+      - metrics
+    command:
+      - "-storageDataPath=/storage"
+      - "-retentionPeriod=6m"
+      - "-promscrape.config=/etc/prometheus/prometheus.yml"
+    volumes:
+      - victoriametrics_data:/storage
+      - ./monitoring/victoriametrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - bot
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: grafana
+    profiles:
+      - metrics
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - bot
+    depends_on:
+      - victoriametrics
+    restart: unless-stopped
+
 volumes:
   telegram_data:
   bot_logs:
+  victoriametrics_data:
+  grafana_data:
 
 networks:
   bot:

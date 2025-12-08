@@ -30,6 +30,7 @@ from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
+from steward.metrics import MetricsEngine
 from steward.session.session_registry import try_get_session_handler
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,11 @@ class Bot:
         self,
         handlers: list[Handler],
         repository: Repository,
+        metrics: MetricsEngine,
     ):
         self.handlers = handlers
         self.repository = repository
+        self.metrics = metrics
 
         self.hints_updater = InlineHintsUpdater(repository, handlers)
 
@@ -183,6 +186,18 @@ class Bot:
         update = context.update
 
         try:
+            user = get_from_user(update)
+            chat_id = str(update.effective_chat.id) if update.effective_chat else "unknown"
+            user_id = str(user.id)
+            self.metrics.inc("bot_messages_total", {
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "action_type": action,
+            })
+        except UnsupportedUpdateType:
+            pass
+
+        try:
             session_handler = try_get_session_handler(update)
             if session_handler is not None:
                 if await getattr(session_handler, action)(context):
@@ -201,6 +216,7 @@ class Bot:
                     and await getattr(handler, action)(context)
                 ):
                     logging.debug(f"Used handler {handler}")
+                    self.metrics.inc("bot_handler_calls_total", {"handler": handler.__class__.__name__})
                     if func is not None:
                         await func()
                     break

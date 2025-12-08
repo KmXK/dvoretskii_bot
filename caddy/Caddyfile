@@ -1,13 +1,22 @@
 {$DOMAIN:localhost} {
     reverse_proxy web:5173
 
-    # Логирование
     log {
         output stdout
         format console
     }
 
-    # TLS настройки - Let's Encrypt автоматически
+    tls {$ACME_EMAIL}
+}
+
+grafana.{$DOMAIN:localhost} {
+    reverse_proxy grafana:3000
+
+    log {
+        output stdout
+        format console
+    }
+
     tls {$ACME_EMAIL}
 }
 
