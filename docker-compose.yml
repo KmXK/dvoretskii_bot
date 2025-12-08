@@ -88,6 +88,51 @@ services:
       - bot
     restart: unless-stopped
 
+  vmbackup:
+    image: victoriametrics/vmbackup:v1.96.0
+    container_name: vmbackup
+    profiles:
+      - metrics
+    volumes:
+      - victoriametrics_data:/storage:ro
+    environment:
+      - AWS_ACCESS_KEY_ID=${YC_S3_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${YC_S3_KEY_SECRET}
+      - BACKUP_INTERVAL=${BACKUP_INTERVAL:-24h}
+      - S3_BUCKET=${YC_S3_BUCKET:-metrics-backup}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$AWS_ACCESS_KEY_ID" ] || [ -z "$$AWS_SECRET_ACCESS_KEY" ]; then
+          echo "S3 credentials not configured (YC_S3_KEY_ID/YC_S3_KEY_SECRET). Backup disabled."
+          exit 0
+        fi
+        echo "Waiting for VictoriaMetrics..."
+        until wget -q --spider http://victoriametrics:8428/health 2>/dev/null; do
+          echo "VM not ready, retrying in 5s..."
+          sleep 5
+        done
+        echo "VictoriaMetrics is up"
+        while true; do
+          echo "Starting backup at $$(date)"
+          if /vmbackup-prod \
+            -storageDataPath=/storage \
+            -snapshot.createURL=http://victoriametrics:8428/snapshot/create \
+            -dst=s3://$$S3_BUCKET/vm-backup \
+            -customS3Endpoint=https://storage.yandexcloud.net; then
+            echo "Backup completed at $$(date). Sleeping for $$BACKUP_INTERVAL"
+            sleep $$BACKUP_INTERVAL
+          else
+            echo "Backup failed at $$(date). Retrying in 60s..."
+            sleep 60
+          fi
+        done
+    depends_on:
+      - victoriametrics
+    networks:
+      - bot
+    restart: on-failure
+
   grafana:
     image: grafana/grafana:10.2.3
     container_name: grafana
