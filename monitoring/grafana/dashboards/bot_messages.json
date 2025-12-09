@@ -11,7 +11,7 @@
       {
         "name": "chat_name",
         "type": "query",
-        "datasource": "Prometheus",
+        "datasource": "VictoriaMetrics",
         "query": "label_values(bot_messages_total, chat_name)",
         "refresh": 2,
         "includeAll": true,
@@ -27,7 +27,7 @@
       {
         "name": "user_name",
         "type": "query",
-        "datasource": "Prometheus",
+        "datasource": "VictoriaMetrics",
         "query": "label_values(bot_messages_total{chat_name=~\"$chat_name\"}, user_name)",
         "refresh": 2,
         "includeAll": true,
@@ -48,7 +48,7 @@
       "title": "Messages by Chat & User",
       "type": "timeseries",
       "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
-      "datasource": "Prometheus",
+      "datasource": "VictoriaMetrics",
       "targets": [
         {
           "refId": "A",
@@ -88,7 +88,7 @@
       "title": "Total Messages",
       "type": "stat",
       "gridPos": {"h": 6, "w": 8, "x": 0, "y": 12},
-      "datasource": "Prometheus",
+      "datasource": "VictoriaMetrics",
       "targets": [
         {
           "refId": "A",
@@ -126,7 +126,7 @@
       "title": "Messages by Action Type",
       "type": "piechart",
       "gridPos": {"h": 6, "w": 8, "x": 8, "y": 12},
-      "datasource": "Prometheus",
+      "datasource": "VictoriaMetrics",
       "targets": [
         {
           "refId": "A",
@@ -154,7 +154,7 @@
       "title": "Top Users",
       "type": "bargauge",
       "gridPos": {"h": 6, "w": 8, "x": 16, "y": 12},
-      "datasource": "Prometheus",
+      "datasource": "VictoriaMetrics",
       "targets": [
         {
           "refId": "A",
