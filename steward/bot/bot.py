@@ -122,7 +122,7 @@ class Bot:
             )
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logging.info(update)
+        logging.info("Got update")
         if update.message is not None:
             ctx = ChatBotContext(
                 self.repository,
@@ -139,7 +139,6 @@ class Bot:
                 None,
             )
         elif update.message_reaction:
-            logging.info("123123")
             ctx = ReactionBotContext(
                 self.repository,
                 self.bot,
