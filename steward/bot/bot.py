@@ -187,11 +187,16 @@ class Bot:
 
         try:
             user = get_from_user(update)
-            chat_id = str(update.effective_chat.id) if update.effective_chat else "unknown"
+            chat = update.effective_chat
+            chat_id = str(chat.id) if chat else "unknown"
+            chat_name = (chat.title or chat.username or chat.first_name or chat_id) if chat else "unknown"
             user_id = str(user.id)
+            user_name = user.username or user.first_name or user_id
             self.metrics.inc("bot_messages_total", {
                 "chat_id": chat_id,
+                "chat_name": chat_name,
                 "user_id": user_id,
+                "user_name": user_name,
                 "action_type": action,
             })
         except UnsupportedUpdateType:
