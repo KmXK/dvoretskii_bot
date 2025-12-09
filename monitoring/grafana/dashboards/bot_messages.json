@@ -1,0 +1,193 @@
+{
+  "uid": "bot-messages",
+  "title": "Bot Messages",
+  "tags": ["bot"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "chat_name",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(bot_messages_total, chat_name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "user_name",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(bot_messages_total{chat_name=~\"$chat_name\"}, user_name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Messages by Chat & User",
+      "type": "timeseries",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(increase(bot_messages_total{chat_name=~\"$chat_name\", user_name=~\"$user_name\"}[10y]))",
+          "legendFormat": "{{chat_name}} / {{user_name}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": ["sum", "last"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {"mode": "none"}
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Messages",
+      "type": "stat",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 12},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum(increase(bot_messages_total{chat_name=~\"$chat_name\", user_name=~\"$user_name\"}[$__range])))",
+          "legendFormat": "Total"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 100},
+              {"color": "red", "value": 500}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Messages by Action Type",
+      "type": "piechart",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 12},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "round(sum by (action_type) (increase(bot_messages_total{chat_name=~\"$chat_name\", user_name=~\"$user_name\"}[$__range])))",
+          "legendFormat": "{{action_type}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": ["value", "percent"]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Top Users",
+      "type": "bargauge",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 12},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, round(sum by (user_name) (increase(bot_messages_total{chat_name=~\"$chat_name\"}[$__range]))))",
+          "legendFormat": "{{user_name}}"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  }
+}
+
