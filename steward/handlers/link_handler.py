@@ -9,6 +9,7 @@ from urllib.parse import quote
 from steward.bot.context import ChatBotContext
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
+from steward.helpers.limiter import Duration, check_limit
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 )
 class LinkHandler(Handler):
     async def chat(self, context: ChatBotContext, url: str, short: str):
+        check_limit("link_per_user", 2, 20 * Duration.SECOND, name=str(context.message.from_user.id))
+
         if not url:
             reply = context.message.reply_to_message
             if reply and reply.text:
