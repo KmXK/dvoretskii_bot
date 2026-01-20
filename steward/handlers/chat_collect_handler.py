@@ -7,15 +7,17 @@ class ChatCollectHandler(Handler):
         self._update_chats()
 
     async def chat(self, context):
-        if context.message.chat.id not in self.chats_ids:
-            self.repository.db.chats.append(
-                Chat(
-                    context.message.chat.id,
-                    context.message.chat.title or "Unknown",
+        chat_id = context.message.chat.id
+        if chat_id not in self.chats_ids:
+            if not any(chat.id == chat_id for chat in self.repository.db.chats):
+                self.repository.db.chats.append(
+                    Chat(
+                        chat_id,
+                        context.message.chat.title or "Unknown",
+                    )
                 )
-            )
-            await self.repository.save()
-            self._update_chats()
+                await self.repository.save()
+                self._update_chats()
 
         return False
 
