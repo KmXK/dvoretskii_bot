@@ -1,6 +1,7 @@
 import logging
 import re
 import textwrap
+import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -183,6 +184,10 @@ class RuleAddHandler(SessionHandlerBase):
             responses=session_context["responses"],
             tags=[],
         )
+
+        # Проверка на дубликаты id перед добавлением
+        while any(rule.id == self.rule.id for rule in self.repository.db.rules):
+            self.rule.id = uuid.uuid4().hex
 
         self.repository.db.rules.append(self.rule)
         await self.repository.save()

@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -24,4 +24,4 @@ class Rule:
     pattern: RulePattern
     responses: list[Response]
     tags: list[str]
-    id: str = uuid.uuid4().hex
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)

@@ -34,7 +34,7 @@ class Database:
     data_offsets: dict[str, float] = field(default_factory=dict)
     channel_subscriptions: list[ChannelSubscription] = field(default_factory=list)
 
-    version: int = 3
+    version: int = 4
 
 
 PARSE_CONFIG = Config(
@@ -43,7 +43,9 @@ PARSE_CONFIG = Config(
         set,
     ],
     type_hooks={
-        datetime: lambda s: datetime.fromisoformat(s) if isinstance(s, str) else datetime.fromtimestamp(s, tz=timezone.utc),
+        datetime: lambda s: datetime.fromisoformat(s)
+        if isinstance(s, str)
+        else datetime.fromtimestamp(s, tz=timezone.utc),
         timedelta: lambda s: timedelta(seconds=s),
         time: lambda s: time.fromisoformat(s)
         if isinstance(s, str)

@@ -162,4 +162,25 @@ class Repository:
 
             data["version"] = 3
 
+        if data["version"] == 3:
+            if "chats" in data and isinstance(data["chats"], list):
+                seen_ids = set()
+                unique_chats = []
+                for chat in data["chats"]:
+                    chat_id = chat.get("id")
+                    if chat_id is not None and chat_id not in seen_ids:
+                        seen_ids.add(chat_id)
+                        unique_chats.append(chat)
+                data["chats"] = unique_chats
+            if "rules" in data and isinstance(data["rules"], list):
+                seen_ids = set()
+                unique_rules = []
+                for rule in data["rules"]:
+                    rule_id = rule.get("id")
+                    if rule_id is not None and rule_id not in seen_ids:
+                        seen_ids.add(rule_id)
+                        unique_rules.append(rule)
+                data["rules"] = unique_rules
+            data["version"] = 4
+
         return data
