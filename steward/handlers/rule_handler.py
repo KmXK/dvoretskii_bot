@@ -1,7 +1,6 @@
 import logging
 import re
 import textwrap
-import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -134,17 +133,25 @@ class RuleAddHandler(SessionHandlerBase):
                 CollectResponsesStep("responses"),
                 QuestionStep(
                     "probabilities",
-                    lambda ctx: f"Напишите вероятности ответов ({len(ctx['responses'])})(через пробел)",
+                    lambda ctx: f"Напишите промилле для ответов ({len(ctx['responses'])})(через пробел). Например 100 = 10%, 200 = 20%. Сумма не должна превышать 1000.",
                     filter_answer=validate_message_text(
                         [
                             try_get(lambda t: t.split(" ")),
                             try_get(
                                 lambda ids: [int(id) for id in ids],
-                                "Вероятности должны быть целыми числами",
+                                "Промилле должны быть целыми числами",
                             ),
                             check(
                                 lambda ids, ctx: len(ids) == len(ctx["responses"]),
-                                "Количество вероятностей не совпадает с количеством ответов",
+                                "Количество промилле не совпадает с количеством ответов",
+                            ),
+                            check(
+                                lambda ids: all(0 <= id <= 1000 for id in ids),
+                                "Каждое значение промилле должно быть от 0 до 1000",
+                            ),
+                            check(
+                                lambda ids: sum(ids) <= 1000,
+                                "Сумма промилле не должна превышать 1000",
                             ),
                         ]
                     ),
@@ -175,7 +182,16 @@ class RuleAddHandler(SessionHandlerBase):
         for index, response in enumerate(session_context["responses"]):
             response.probability = session_context["probabilities"][index]
 
+        # Генерация ID как у подписок
+        max_id = (
+            max(rule.id for rule in self.repository.db.rules)
+            if self.repository.db.rules
+            else 0
+        )
+        new_id = max_id + 1
+
         self.rule = Rule(
+            id=new_id,
             from_users=session_context["from_users"],
             pattern=RulePattern(
                 regex=session_context["pattern"],
@@ -184,10 +200,6 @@ class RuleAddHandler(SessionHandlerBase):
             responses=session_context["responses"],
             tags=[],
         )
-
-        # Проверка на дубликаты id перед добавлением
-        while any(rule.id == self.rule.id for rule in self.repository.db.rules):
-            self.rule.id = uuid.uuid4().hex
 
         self.repository.db.rules.append(self.rule)
         await self.repository.save()
@@ -212,24 +224,29 @@ class RuleRemoveHandler(Handler):
         if len(parts) < 3 or parts[1] != "remove":
             return False
 
-        try:
-            rule_ids = parts[2:]
+        rule_ids = parts[2:]
 
-            for rule_id in rule_ids:
-                rule_to_remove = next(
-                    (x for x in self.repository.db.rules if x.id == rule_id),
-                    None,
+        for rule_id_str in rule_ids:
+            try:
+                rule_id = int(rule_id_str)
+            except ValueError:
+                await context.message.reply_text(
+                    f"Ошибка. Id правила должно быть целым числом: {rule_id_str}"
                 )
-                if rule_to_remove is None:
-                    await context.message.reply_text(
-                        f"Ошибка. Правила с id={rule_id} не существует"
-                    )
-                else:
-                    self.repository.db.rules.remove(rule_to_remove)
-                    await self.repository.save()
-                    await context.message.reply_markdown(f"Правило {rule_id} удалено")
-        except IndexError:
-            await context.message.reply_text("Ошибка. Укажите id правил(а)")
+                continue
+
+            rule_to_remove = next(
+                (x for x in self.repository.db.rules if x.id == rule_id),
+                None,
+            )
+            if rule_to_remove is None:
+                await context.message.reply_text(
+                    f"Ошибка. Правила с id={rule_id} не существует"
+                )
+            else:
+                self.repository.db.rules.remove(rule_to_remove)
+                await self.repository.save()
+                await context.message.reply_markdown(f"Правило {rule_id} удалено")
         return True
 
     def help(self):
@@ -248,9 +265,15 @@ class RuleViewHandler(Handler):
         if len(parts) < 2:
             return False
 
-        rule_id = parts[1]
-        if rule_id in ["add", "remove"]:
+        rule_id_str = parts[1]
+        if rule_id_str in ["add", "remove"]:
             return False
+
+        try:
+            rule_id = int(rule_id_str)
+        except ValueError:
+            await context.message.reply_text("Id правила должно быть целым числом")
+            return True
 
         rule = next((x for x in self.repository.db.rules if x.id == rule_id), None)
 

@@ -34,7 +34,7 @@ class Database:
     data_offsets: dict[str, float] = field(default_factory=dict)
     channel_subscriptions: list[ChannelSubscription] = field(default_factory=list)
 
-    version: int = 4
+    version: int = 5
 
 
 PARSE_CONFIG = Config(

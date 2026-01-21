@@ -183,4 +183,68 @@ class Repository:
                 data["rules"] = unique_rules
             data["version"] = 4
 
+        if data["version"] == 4:
+            if "rules" in data and isinstance(data["rules"], list):
+                max_id = 0
+                for rule in data["rules"]:
+                    rule_id = rule.get("id")
+
+                    if isinstance(rule_id, str):
+                        max_id += 1
+                        rule["id"] = max_id
+                    elif isinstance(rule_id, int):
+                        if rule_id > max_id:
+                            max_id = rule_id
+
+                    if "responses" in rule and isinstance(rule["responses"], list):
+                        responses = rule["responses"]
+                        if len(responses) > 0:
+                            old_sum = sum(
+                                response.get("probability", 0)
+                                for response in responses
+                                if isinstance(response, dict)
+                            )
+
+                            if old_sum > 0:
+                                new_probabilities = []
+                                for response in responses:
+                                    if isinstance(response, dict):
+                                        old_prob = response.get("probability", 0)
+                                        new_prob = round((old_prob * 1000) / old_sum)
+                                        new_probabilities.append(new_prob)
+                                    else:
+                                        new_probabilities.append(0)
+
+                                new_sum = sum(new_probabilities)
+                                if new_sum > 1000:
+                                    factor = 1000 / new_sum
+                                    new_probabilities = [
+                                        max(1, round(prob * factor))
+                                        for prob in new_probabilities
+                                    ]
+                                    new_sum = sum(new_probabilities)
+                                    if new_sum != 1000:
+                                        diff = 1000 - new_sum
+                                        for i in range(len(new_probabilities)):
+                                            if new_probabilities[i] > 0:
+                                                new_probabilities[i] += diff
+                                                break
+
+                                for i, response in enumerate(responses):
+                                    if isinstance(response, dict) and i < len(
+                                        new_probabilities
+                                    ):
+                                        response["probability"] = new_probabilities[i]
+                            else:
+                                if len(responses) > 0:
+                                    prob_per_response = 1000 // len(responses)
+                                    remainder = 1000 % len(responses)
+                                    for i, response in enumerate(responses):
+                                        if isinstance(response, dict):
+                                            response["probability"] = (
+                                                prob_per_response
+                                                + (1 if i < remainder else 0)
+                                            )
+            data["version"] = 5
+
         return data
