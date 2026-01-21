@@ -30,21 +30,30 @@ class RuleAnswerHandler(Handler):
             return
 
         rule = random.choice(available_rules)
-        probability_max = sum(rule.probability for rule in rule.responses)
-        logging.info(f"sum is {probability_max}")
+        probability_sum = sum(response.probability for response in rule.responses)
+        logging.info(f"sum of promille is {probability_sum}")
 
-        probability_choice = random.randint(0, probability_max - 1)
+        probability_choice = random.randint(0, 999)
         logging.info(f"probability choice is {probability_choice}")
+
+        if probability_choice >= probability_sum:
+            logging.info("bot will not respond (probability_choice >= probability_sum)")
+            return
+
         lower_bound = 0
         response_index = 0
 
-        # while upper_bound is less than probability_max
         while (
-            lower_bound + rule.responses[response_index].probability - 1
-            < probability_choice
+            response_index < len(rule.responses)
+            and lower_bound + rule.responses[response_index].probability
+            <= probability_choice
         ):
             lower_bound += rule.responses[response_index].probability
             response_index += 1
+
+        if response_index >= len(rule.responses):
+            logging.warning("response_index out of bounds, not responding")
+            return
 
         logging.info(f"selected {response_index} response")
 
