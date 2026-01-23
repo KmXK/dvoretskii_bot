@@ -19,6 +19,8 @@ with open("jailbreak.txt", "r", encoding="utf-8") as f:
     JAILBREAK_PROMPT = f.read()
 with open("pasha.txt", "r", encoding="utf-8") as f:
     PASHA_PROMPT = f.read()
+with open("tarot.txt", "r", encoding="utf-8") as f:
+    TAROT_PROMPT = f.read()
 
 
 async def make_ai_query_ext(

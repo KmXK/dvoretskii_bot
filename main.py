@@ -5,19 +5,12 @@ import os
 from dotenv import load_dotenv
 
 from steward.bot.bot import Bot
-from steward.metrics import MetricsEngine, NoopMetricsEngine, PrometheusMetricsEngine
 from steward.bot.bot_utils import init_handlers
 from steward.data.repository import JsonFileStorage, Repository
 from steward.handlers.admin_handler import (
     AdminAddHandler,
     AdminRemoveHandler,
     AdminViewHandler,
-)
-from steward.handlers.rule_handler import (
-    RuleAddHandler,
-    RuleListViewHandler,
-    RuleRemoveHandler,
-    RuleViewHandler,
 )
 from steward.handlers.ai_handler import AIHandler
 from steward.handlers.army_handler import (
@@ -50,8 +43,19 @@ from steward.handlers.pasha_handler import (
 )
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
 from steward.handlers.reaction_counter_handler import ReactionCounterHandler
-from steward.handlers.remind_handler import RemindAddHandler, RemindEditHandler, RemindRemoveHandler, RemindersHandler
+from steward.handlers.remind_handler import (
+    RemindAddHandler,
+    RemindEditHandler,
+    RemindersHandler,
+    RemindRemoveHandler,
+)
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
+from steward.handlers.rule_handler import (
+    RuleAddHandler,
+    RuleListViewHandler,
+    RuleRemoveHandler,
+    RuleViewHandler,
+)
 from steward.handlers.silence_handler import (
     SilenceCommandHandler,
     SilenceEnforcerHandler,
@@ -61,10 +65,12 @@ from steward.handlers.subscribe_handler import (
     SubscribeRemoveHandler,
     SubscribeViewHandler,
 )
+from steward.handlers.tarot_handler import TarotHandler
 from steward.handlers.translate_handler import TranslateHandler
 from steward.handlers.voice_video_handler import VoiceVideoHandler
 from steward.handlers.watch_handler import WatchHandler
 from steward.logging.configure import configure_logging
+from steward.metrics import MetricsEngine, NoopMetricsEngine, PrometheusMetricsEngine
 
 logger: logging.Logger
 
@@ -100,6 +106,7 @@ def get_handlers(log_file: None | str):
             SubscribeViewHandler,
             SubscribeHandler,
             TranslateHandler,
+            TarotHandler,
             ExchangeRateHandler,
             LinkHandler,
             RemindRemoveHandler,
