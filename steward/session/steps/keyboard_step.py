@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -14,7 +14,7 @@ class KeyboardStep(Step):
     def __init__(
         self,
         name: str,
-        msg: str,
+        msg: str | Callable[[dict], str],
         keyboard: Keyboard | KeyboardLine,
     ):
         self.name = name
@@ -43,7 +43,8 @@ class KeyboardStep(Step):
                 for keyboard_line in self.keyboard
             ])
 
-            await context.message.reply_text(self.msg, reply_markup=markup)
+            msg_text = self.msg(context.session_context) if callable(self.msg) else self.msg
+            await context.message.reply_text(msg_text, reply_markup=markup)
 
             self.is_waiting = True
             return False

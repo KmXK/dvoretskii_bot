@@ -18,6 +18,18 @@ from steward.handlers.army_handler import (
     ArmyRemoveHandler,
     ArmyViewHandler,
 )
+from steward.handlers.bill_handler import (
+    BillAddHandler,
+    BillCloseHandler,
+    BillDetailsAddHandler,
+    BillDetailsEditHandler,
+    BillEditHandler,
+    BillHelpHandler,
+    BillListViewHandler,
+    BillPayHandler,
+    BillPersonHandler,
+    BillViewHandler,
+)
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
 from steward.handlers.download_handler import DownloadHandler
@@ -123,6 +135,16 @@ def get_handlers(log_file: None | str):
             MultiplyHandler,
             WatchHandler,
             DownloadHandler,
+            BillListViewHandler,
+            BillAddHandler,
+            BillEditHandler,
+            BillCloseHandler,
+            BillPayHandler,
+            BillViewHandler,
+            BillPersonHandler,
+            BillDetailsAddHandler,
+            BillDetailsEditHandler,
+            BillHelpHandler,
         ],
     )
 
