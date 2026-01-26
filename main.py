@@ -39,6 +39,7 @@ from steward.handlers.feature_request_handler import (
     FeatureRequestEditHandler,
     FeatureRequestViewHandler,
 )
+from steward.handlers.google_drive_handler import GoogleDriveListHandler
 from steward.handlers.handler import Handler
 from steward.handlers.help_handler import HelpHandler
 from steward.handlers.holidays_handler import HolidaysHandler
@@ -145,6 +146,7 @@ def get_handlers(log_file: None | str):
             BillDetailsAddHandler,
             BillDetailsEditHandler,
             BillHelpHandler,
+            GoogleDriveListHandler,
         ],
     )
 
