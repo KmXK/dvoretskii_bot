@@ -1,299 +1,301 @@
 import logging
+import re
 from collections import defaultdict
 
 from steward.bot.context import ChatBotContext
-from steward.data.models.bill import (
-    Bill,
-    DetailsInfo,
-    Optimization,
-    Payment,
-    Transaction,
-)
-from steward.handlers.command_handler import CommandHandler
+from steward.data.models.bill import Bill, DetailsInfo, Payment, Transaction
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
-from steward.helpers.tg_update_helpers import get_message, is_valid_markdown, split_long_message
-from steward.helpers.validation import (
-    check,
-    try_get,
-    validate_message_text,
+from steward.helpers.google_drive import (
+    find_file_in_folder,
+    get_file_link,
+    is_available as google_drive_available,
+    read_spreadsheet_values,
 )
+from steward.helpers.pagination import PageFormatContext, Paginator
+from steward.helpers.tg_update_helpers import get_message, is_valid_markdown, split_long_message
+from steward.helpers.validation import check, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.steps.keyboard_step import KeyboardStep
 from steward.session.steps.question_step import QuestionStep
 
 logger = logging.getLogger(__name__)
 
+FINANCES_FOLDER_ID = "1_YgOgjiqOyMZ1_jVAND_7HG9GfE7MpHX"
 
-def optimize_debts(debts: dict[str, dict[str, float]]) -> list[Optimization]:
-    net_balances: dict[str, float] = defaultdict(float)
+_AMOUNT_RE = re.compile(r"[\d\s]+[,.]?\d*")
 
-    for debtor, creditors in debts.items():
-        for creditor, amount in creditors.items():
-            net_balances[debtor] -= amount
-            net_balances[creditor] += amount
 
-    creditors = {k: v for k, v in net_balances.items() if v > 0.01}
-    debtors = {k: -v for k, v in net_balances.items() if v < -0.01}
+def _md_escape(s: str) -> str:
+    for c in "_*`[":
+        s = s.replace(c, "\\" + c)
+    return s
 
-    optimized = []
-    creditors_list = sorted(creditors.items(), key=lambda x: x[1], reverse=True)
-    debtors_list = sorted(debtors.items(), key=lambda x: x[1], reverse=True)
 
-    i, j = 0, 0
-    while i < len(creditors_list) and j < len(debtors_list):
-        creditor, creditor_amount = creditors_list[i]
-        debtor, debtor_amount = debtors_list[j]
+def _parse_amount(s: str) -> float:
+    s = s.strip().replace(",", ".")
+    m = _AMOUNT_RE.search(s)
+    if not m:
+        raise ValueError(f"Неверная сумма: {s}")
+    raw = m.group(0).replace(" ", "").strip()
+    value = float(raw)
+    if "-" in s[: m.start()]:
+        value = -value
+    return value
 
-        if creditor_amount < 0.01:
-            i += 1
+
+def parse_transactions_from_sheet(rows: list[list[str]]) -> list[Transaction]:
+    out = []
+    for i, row in enumerate(rows):
+        if i == 0 and row and "Наименование" in (row[0] if row else ""):
             continue
-        if debtor_amount < 0.01:
-            j += 1
+        if len(row) < 4:
             continue
-
-        amount = min(creditor_amount, debtor_amount)
-        optimized.append(Optimization(debtor=debtor, creditor=creditor, amount=amount))
-
-        creditor_amount -= amount
-        debtor_amount -= amount
-
-        creditors_list[i] = (creditor, creditor_amount)
-        debtors_list[j] = (debtor, debtor_amount)
-
-        if creditor_amount < 0.01:
-            i += 1
-        if debtor_amount < 0.01:
-            j += 1
-
-    return optimized
-
-
-def format_bill_report(bill: Bill, details_infos: list[DetailsInfo]) -> str:
-    debts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-
-    for transaction in bill.transactions:
-        amount_per_person = transaction.amount / len(transaction.debtors)
-        for debtor in transaction.debtors:
-            if debtor != transaction.creditor:
-                debts[debtor][transaction.creditor] += amount_per_person
-
-    total_payments_by_debtor: dict[str, float] = defaultdict(float)
-    for payment in bill.payments:
-        if payment.bill_id == bill.id:
-            total_payments_by_debtor[payment.person] += payment.amount
-
-    for debtor in list(debts.keys()):
-        if debtor in total_payments_by_debtor:
-            total_debt = sum(debts[debtor].values())
-            if total_debt > 0:
-                payment_remaining = total_payments_by_debtor[debtor]
-                for creditor in sorted(debts[debtor].keys()):
-                    if payment_remaining <= 0:
-                        break
-                    debt_amount = debts[debtor][creditor]
-                    if debt_amount > 0:
-                        reduction = min(debt_amount, payment_remaining)
-                        debts[debtor][creditor] -= reduction
-                        payment_remaining -= reduction
-
-    lines = [f"📋 Счет: {bill.name} (ID: {bill.id})", ""]
-
-    if bill.transactions:
-        lines.append("💳 Транзакции:")
-        lines.append("```")
-        lines.append(f"{'Товар':<25} {'Сумма':<12} {'Должники':<25} {'Кому':<15}")
-        lines.append("-" * 77)
-
-        for transaction in bill.transactions:
-            debtors_str = ", ".join(transaction.debtors)
-            lines.append(
-                f"{transaction.item_name[:23]:<25} "
-                f"{transaction.amount:<12.2f} "
-                f"{debtors_str[:23]:<25} "
-                f"{transaction.creditor[:13]:<15}"
+        item_name = (row[0] or "").strip()
+        if not item_name:
+            continue
+        try:
+            amount = _parse_amount(row[1] or "0")
+        except ValueError:
+            continue
+        debtors_str = (row[2] or "").strip()
+        debtors = [d.strip() for d in debtors_str.split(",") if d.strip()]
+        creditor = (row[3] or "").strip()
+        if not debtors or not creditor:
+            continue
+        out.append(
+            Transaction(
+                item_name=item_name,
+                amount=amount,
+                debtors=debtors,
+                creditor=creditor,
             )
-        lines.append("```")
+        )
+    return out
 
-    if debts:
-        lines.append("📊 Долги по должникам:")
+
+def debts_from_transactions(transactions: list[Transaction]) -> dict[str, dict[str, float]]:
+    debts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for t in transactions:
+        per_person = t.amount / len(t.debtors)
+        for d in t.debtors:
+            if d != t.creditor:
+                debts[d][t.creditor] += per_person
+    return debts
+
+
+def apply_payments(
+    debts: dict[str, dict[str, float]], payments: list[Payment]
+) -> dict[str, dict[str, float]]:
+    total_by_debtor: dict[str, float] = defaultdict(float)
+    for p in payments:
+        total_by_debtor[p.person] += p.amount
+    for debtor in list(debts.keys()):
+        if debtor not in total_by_debtor:
+            continue
+        remaining = total_by_debtor[debtor]
+        for creditor in sorted(debts[debtor].keys()):
+            if remaining <= 0:
+                break
+            amt = debts[debtor][creditor]
+            if amt > 0:
+                red = min(amt, remaining)
+                debts[debtor][creditor] -= red
+                remaining -= red
+    return debts
+
+
+def net_debts(debts: dict[str, dict[str, float]]) -> list[tuple[str, str, float]]:
+    net: dict[str, float] = defaultdict(float)
+    for debtor, creds in debts.items():
+        for creditor, amount in creds.items():
+            if amount > 0.01:
+                net[debtor] -= amount
+                net[creditor] += amount
+    creditors = {k: v for k, v in net.items() if v > 0.01}
+    debtors = {k: -v for k, v in net.items() if v < -0.01}
+    result = []
+    cr_list = sorted(creditors.items(), key=lambda x: -x[1])
+    dr_list = sorted(debtors.items(), key=lambda x: -x[1])
+    i = j = 0
+    while i < len(cr_list) and j < len(dr_list):
+        cred, c_val = cr_list[i]
+        deb, d_val = dr_list[j]
+        if c_val < 0.01:
+            i += 1
+            continue
+        if d_val < 0.01:
+            j += 1
+            continue
+        amt = min(c_val, d_val)
+        result.append((deb, cred, amt))
+        c_val -= amt
+        d_val -= amt
+        cr_list[i] = (cred, c_val)
+        dr_list[j] = (deb, d_val)
+        if c_val < 0.01:
+            i += 1
+        if d_val < 0.01:
+            j += 1
+    return result
+
+
+def _format_report(
+    netted: list[tuple[str, str, float]],
+    payments: list[Payment],
+    details_infos: list[DetailsInfo],
+    title: str | None = None,
+    file_link: str | None = None,
+) -> str:
+    lines = []
+    if title:
+        lines.append(_md_escape(title))
+        lines.append("")
+    if netted:
+        lines.append("📊 Кто кому должен:")
         lines.append("```")
         lines.append(f"{'Должник':<18} {'Кому':<18} {'Сумма':<12}")
         lines.append("-" * 48)
-
-        for debtor in sorted(debts.keys()):
-            for creditor, amount in sorted(debts[debtor].items()):
-                if amount > 0.01:
-                    lines.append(
-                        f"{debtor[:16]:<18} {creditor[:16]:<18} {amount:<12.2f}"
-                    )
+        for debtor, creditor, amount in sorted(netted, key=lambda x: (-x[2], x[0], x[1])):
+            lines.append(f"{debtor[:16]:<18} {creditor[:16]:<18} {amount:<12.2f}")
         lines.append("```")
-
-    if bill.optimizations:
-        lines.append("✨ Оптимизированные переводы:")
-        lines.append("```")
-        lines.append(f"{'Должник':<18} {'Кому':<18} {'Сумма':<12}")
-        lines.append("-" * 48)
-
-        grouped_by_debtor = defaultdict(list)
-        for opt in bill.optimizations:
-            grouped_by_debtor[opt.debtor].append(opt)
-
-        for debtor in sorted(grouped_by_debtor.keys()):
-            for opt in sorted(grouped_by_debtor[debtor], key=lambda x: x.creditor):
-                lines.append(
-                    f"{opt.debtor[:16]:<18} {opt.creditor[:16]:<18} {opt.amount:<12.2f}"
-                )
-        lines.append("```")
-
-    if bill.optimizations:
-        payments_by_debtor_creditor: dict[tuple[str, str], float] = defaultdict(float)
-        total_payments_by_debtor: dict[str, float] = defaultdict(float)
-        for payment in bill.payments:
-            if payment.bill_id == bill.id:
-                total_payments_by_debtor[payment.person] += payment.amount
-                if payment.creditor:
-                    payments_by_debtor_creditor[(payment.person, payment.creditor)] += payment.amount
-
-        remaining_debts = []
-        grouped_by_debtor = defaultdict(list)
-        for opt in bill.optimizations:
-            grouped_by_debtor[opt.debtor].append(opt)
-
-        for debtor in sorted(grouped_by_debtor.keys()):
-            for opt in sorted(grouped_by_debtor[debtor], key=lambda x: x.creditor):
-                paid_for_this_creditor = payments_by_debtor_creditor.get((debtor, opt.creditor), 0.0)
-                remaining = opt.amount - paid_for_this_creditor
-
-                if remaining > 0.01:
-                    remaining_debts.append((debtor, opt.creditor, remaining))
-
-        if remaining_debts:
-            lines.append("📉 Оставшаяся сумма долга:")
-            lines.append("```")
-            lines.append(f"{'Должник':<18} {'Кому':<18} {'Остаток':<12}")
-            lines.append("-" * 48)
-
-            for debtor, creditor, remaining in remaining_debts:
-                lines.append(
-                    f"{debtor[:16]:<18} {creditor[:16]:<18} {remaining:<12.2f}"
-                )
-            lines.append("```")
-
-    if bill.payments:
-        lines.append("💸 Платежи:")
+        lines.append("")
+    if payments:
+        lines.append("💸 Совершенные переводы:")
         lines.append("```")
         lines.append(f"{'Кто заплатил':<18} {'Кому':<18} {'Сумма':<12} {'Дата':<15}")
         lines.append("-" * 63)
-
-        payments_for_bill = [p for p in bill.payments if p.bill_id == bill.id]
-        payments_for_bill.sort(key=lambda x: x.timestamp)
-
-        debtor_optimizations = defaultdict(list)
-        for opt in bill.optimizations:
-            debtor_optimizations[opt.debtor].append(opt)
-
-        for debtor in debtor_optimizations:
-            debtor_optimizations[debtor].sort(key=lambda x: x.creditor)
-
-        for payment in payments_for_bill:
-            debtor = payment.person
-            date_str = payment.timestamp.strftime("%Y-%m-%d %H:%M")
-
-            if payment.creditor:
-                creditor_str = payment.creditor
-            elif debtor in debtor_optimizations:
-                opts = debtor_optimizations[debtor]
-                if len(opts) == 1:
-                    creditor_str = opts[0].creditor
-                else:
-                    creditor_names = ", ".join([opt.creditor for opt in opts])
-                    creditor_str = (
-                        creditor_names if len(creditor_names) <= 16 else "несколько"
-                    )
-            else:
-                creditor_str = "неизвестно"
-
-            lines.append(
-                f"{payment.person[:16]:<18} {creditor_str[:16]:<18} {payment.amount:<12.2f} {date_str:<15}"
-            )
+        for p in sorted(payments, key=lambda x: x.timestamp):
+            date_str = p.timestamp.strftime("%Y-%m-%d %H:%M")
+            cred = (p.creditor or "—")[:16]
+            lines.append(f"{p.person[:16]:<18} {cred:<18} {p.amount:<12.2f} {date_str:<15}")
         lines.append("```")
+        lines.append("")
+    if netted and details_infos:
+        creditors = {c for (_, c, _) in netted}
+        relevant = [d for d in details_infos if d.name in creditors]
+        if relevant:
+            lines.append("💳 Данные для перевода:")
+            for d in relevant:
+                lines.append(f"• {_md_escape(d.name)}: {_md_escape(d.description)}")
+    if not netted and not payments and not (netted and details_infos):
+        lines.append("Нет долгов и переводов.")
+    if file_link:
+        lines.append("")
+        lines.append(f"🔗 {_md_escape(file_link)}")
+    return "\n".join(lines).strip()
 
-    if bill.optimizations and details_infos:
-        creditors_in_optimizations = {opt.creditor for opt in bill.optimizations}
-        relevant_details = [
-            info for info in details_infos if info.name in creditors_in_optimizations
-        ]
-        if relevant_details:
-            lines.append("💳 Платежные данные:")
-            for info in relevant_details:
-                lines.append(f"• {info.name}: {info.description}")
 
+def _get_bills_folder_id() -> str:
+    return FINANCES_FOLDER_ID
+
+
+def _get_folder_link(folder_id: str) -> str:
+    return f"https://drive.google.com/drive/folders/{folder_id}"
+
+
+def _read_bill_raw_rows(file_id: str) -> list[list[str]]:
+    rows = read_spreadsheet_values(file_id)
+    return rows or []
+
+
+def _load_bill_transactions(file_id: str) -> list[Transaction]:
+    rows = _read_bill_raw_rows(file_id)
+    if rows:
+        rows = rows[:-1]
+    return parse_transactions_from_sheet(rows)
+
+
+def _format_raw_rows(rows: list[list[str]]) -> str:
+    if not rows:
+        return "Файл пуст"
+    lines = ["```"]
+    for i, row in enumerate(rows):
+        cells = [str(c or "").strip()[:20] for c in (row[:4] if row else [])]
+        while len(cells) < 4:
+            cells.append("")
+        lines.append(f"{cells[0]:<20} | {cells[1]:<12} | {cells[2]:<25} | {cells[3]}")
+    lines.append("```")
     return "\n".join(lines)
 
 
-def parse_transactions(text: str) -> list[Transaction]:
-    transactions = []
-    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
-
-    for line in lines:
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 4:
-            raise ValueError(f"Неверный формат транзакции: {line}")
-
-        item_name = parts[0]
-        try:
-            amount = float(parts[1])
-        except ValueError:
-            raise ValueError(f"Неверная сумма: {parts[1]}")
-
-        debtors = [d.strip() for d in parts[2].split(",") if d.strip()]
-        if not debtors:
-            raise ValueError(f"Нет должников: {line}")
-
-        creditor = parts[3]
-
-        transactions.append(
-            Transaction(
-                item_name=item_name, amount=amount, debtors=debtors, creditor=creditor
-            )
-        )
-
-    return transactions
+def _load_all_transactions(bills: list[Bill]) -> list[Transaction]:
+    all_tx = []
+    for bill in bills:
+        all_tx.extend(_load_bill_transactions(bill.file_id))
+    return all_tx
 
 
-def format_transactions_for_edit(transactions: list[Transaction]) -> str:
-    lines = []
-    for t in transactions:
-        debtors_str = ", ".join(t.debtors)
-        lines.append(f"{t.item_name}|{t.amount}|{debtors_str}|{t.creditor}")
-    return "\n".join(lines)
+def _build_report_for_transactions(
+    transactions: list[Transaction],
+    payments: list[Payment],
+    details_infos: list[DetailsInfo],
+    title: str | None = None,
+    file_link: str | None = None,
+) -> str:
+    debts = debts_from_transactions(transactions)
+    debts = apply_payments(debts, payments)
+    netted = net_debts(debts)
+    return _format_report(netted, payments, details_infos, title=title, file_link=file_link)
+
+
+def _format_bill_page(ctx: PageFormatContext[Bill]) -> str:
+    from steward.helpers.formats import format_lined_list
+
+    if not ctx.data:
+        return "Нет счетов"
+    items = [(bill.id, f"{bill.name} ({get_file_link(bill.file_id) or '—'})") for bill in ctx.data]
+    return format_lined_list(items=items, delimiter=": ")
 
 
 class BillListViewHandler(Handler):
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "bill"):
             return False
-
         assert context.message.text
         parts = context.message.text.split()
-        if len(parts) > 1:
+        if len(parts) != 2 or parts[1].lower() != "all":
             return False
-
         bills = self.repository.db.bills
         if not bills:
-            await context.message.reply_text("Нет сохраненных счетов")
+            await context.message.reply_text("Нет счетов")
             return True
+        return await self._get_paginator().show_list(context.update)
 
-        lines = ["📋 Список счетов:", ""]
-        for bill in bills:
-            lines.append(f"• {bill.name} (ID: {bill.id})")
+    async def callback(self, context: ChatBotContext):
+        from steward.helpers.keyboard import parse_and_validate_keyboard
+        from steward.helpers.pagination import parse_pagination
 
-        await context.message.reply_text("\n".join(lines))
-        return True
+        if not context.callback_query or not context.callback_query.data:
+            return False
+        parsed = parse_and_validate_keyboard(
+            "bill_list",
+            context.callback_query.data,
+            parse_func=parse_pagination,
+        )
+        if parsed is None:
+            return False
+        return await self._get_paginator().process_parsed_callback(
+            context.update,
+            parsed,
+        )
+
+    def _get_paginator(self) -> Paginator:
+        paginator = Paginator(
+            unique_keyboard_name="bill_list",
+            list_header="📋 Счета",
+            page_size=15,
+            page_format_func=_format_bill_page,
+            always_show_pagination=True,
+        )
+        paginator.data_func = lambda: sorted(
+            self.repository.db.bills,
+            key=lambda b: b.id,
+        )
+        return paginator
 
     def help(self):
-        return "/bill - посмотреть все счета"
+        return "/bill all — список всех счетов"
 
 
 class BillAddHandler(SessionHandlerBase):
@@ -302,26 +304,9 @@ class BillAddHandler(SessionHandlerBase):
             [
                 QuestionStep(
                     "name",
-                    "Введите название счета:",
+                    "Введите имя счета (имя файла на Google Диске):",
                     filter_answer=validate_message_text(
-                        [
-                            check(
-                                lambda t: len(t.strip()) > 0,
-                                "Название не может быть пустым",
-                            )
-                        ]
-                    ),
-                ),
-                QuestionStep(
-                    "transactions_text",
-                    "Введите транзакции в формате:\nнаименование товара|сумма|кто должен(через запятую)|кому должны\nКаждая транзакция с новой строки:",
-                    filter_answer=validate_message_text(
-                        [
-                            try_get(
-                                lambda t: parse_transactions(t),
-                                "Ошибка парсинга транзакций. Проверьте формат.",
-                            )
-                        ]
+                        [check(lambda t: len(t.strip()) > 0, "Имя не может быть пустым")]
                     ),
                 ),
             ]
@@ -330,209 +315,51 @@ class BillAddHandler(SessionHandlerBase):
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):
             return False
-
         assert update.message and update.message.text
         parts = update.message.text.split()
         if len(parts) < 2 or parts[1] != "add":
             return False
-
         return True
 
     async def on_session_finished(self, update, session_context):
-        max_id = max((bill.id for bill in self.repository.db.bills), default=0)
-        new_id = max_id + 1
-
-        transactions = session_context["transactions_text"]
-        bill = Bill(
-            id=new_id,
-            name=session_context["name"].strip(),
-            transactions=transactions,
-        )
-
-        debts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        for transaction in transactions:
-            amount_per_person = transaction.amount / len(transaction.debtors)
-            for debtor in transaction.debtors:
-                if debtor != transaction.creditor:
-                    debts[debtor][transaction.creditor] += amount_per_person
-
-        bill.optimizations = optimize_debts(debts)
-
-        self.repository.db.bills.append(bill)
-        await self.repository.save()
-
-        report = format_bill_report(bill, self.repository.db.details_infos)
-        chunks = split_long_message(report)
-        for chunk in chunks:
-            parse_mode = "Markdown" if is_valid_markdown(chunk) else None
-            await get_message(update).chat.send_message(chunk, parse_mode=parse_mode)
-
-    def help(self):
-        return None
-
-
-class BillViewHandler(Handler):
-    async def chat(self, context: ChatBotContext):
-        if not validate_command_msg(context.update, "bill"):
-            return False
-
-        assert context.message.text
-        parts = context.message.text.split()
-        if len(parts) < 2:
-            return False
-
-        if parts[1] in ["add", "edit", "person", "pay", "details", "help", "close"]:
-            return False
-
-        identifier = parts[1]
-
-        bill = None
-        try:
-            bill_id = int(identifier)
-            bill = next((b for b in self.repository.db.bills if b.id == bill_id), None)
-        except ValueError:
-            bill = next(
-                (b for b in self.repository.db.bills if b.name == identifier), None
+        name = session_context["name"].strip()
+        if not google_drive_available():
+            await get_message(update).chat.send_message("Google Drive недоступен")
+            return
+        folder_id = _get_bills_folder_id()
+        file_id = find_file_in_folder(folder_id, name)
+        if not file_id:
+            await get_message(update).chat.send_message(
+                f"Файл '{name}' не найден в папке «финансы». Создайте его на Google Диске и попробуйте снова."
             )
-
-        if bill is None:
-            await context.message.reply_text(f"Счет '{identifier}' не найден")
-            return True
-
-        if not bill.optimizations:
-            debts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            for transaction in bill.transactions:
-                amount_per_person = transaction.amount / len(transaction.debtors)
-                for debtor in transaction.debtors:
-                    if debtor != transaction.creditor:
-                        debts[debtor][transaction.creditor] += amount_per_person
-
-            total_payments_by_debtor: dict[str, float] = defaultdict(float)
-            for payment in bill.payments:
-                if payment.bill_id == bill.id:
-                    total_payments_by_debtor[payment.person] += payment.amount
-
-            for debtor in list(debts.keys()):
-                if debtor in total_payments_by_debtor:
-                    total_debt = sum(debts[debtor].values())
-                    if total_debt > 0:
-                        payment_remaining = total_payments_by_debtor[debtor]
-                        for creditor in sorted(debts[debtor].keys()):
-                            if payment_remaining <= 0:
-                                break
-                            debt_amount = debts[debtor][creditor]
-                            if debt_amount > 0:
-                                reduction = min(debt_amount, payment_remaining)
-                                debts[debtor][creditor] -= reduction
-                                payment_remaining -= reduction
-
-            bill.optimizations = optimize_debts(debts)
-            await self.repository.save()
-
-        report = format_bill_report(bill, self.repository.db.details_infos)
-        chunks = split_long_message(report)
-        for i, chunk in enumerate(chunks):
-            parse_mode = "Markdown" if is_valid_markdown(chunk) else None
-            if i == 0:
-                await context.message.reply_text(chunk, parse_mode=parse_mode)
-            else:
-                await context.message.chat.send_message(chunk, parse_mode=parse_mode)
-        return True
-
-    def help(self):
-        return None
-
-
-class BillEditHandler(SessionHandlerBase):
-    def __init__(self):
-        super().__init__(
-            [
-                QuestionStep(
-                    "transactions_text",
-                    lambda ctx: f"Текущие транзакции:\n```\n{format_transactions_for_edit(ctx['bill'].transactions)}\n```\n\nВведите новые транзакции в том же формате (они полностью заменят старые):",
-                    filter_answer=validate_message_text(
-                        [
-                            try_get(
-                                lambda t: parse_transactions(t),
-                                "Ошибка парсинга транзакций. Проверьте формат.",
-                            )
-                        ]
-                    ),
-                ),
-            ]
-        )
-
-    def try_activate_session(self, update, session_context):
-        if not validate_command_msg(update, "bill"):
-            return False
-
-        assert update.message and update.message.text
-        parts = update.message.text.split()
-        if len(parts) < 2:
-            return False
-
-        identifier = None
-        if len(parts) >= 3 and parts[1] == "edit":
-            identifier = parts[2]
-        elif len(parts) >= 3 and parts[2] == "edit":
-            identifier = parts[1]
+            return
+        existing = next((b for b in self.repository.db.bills if b.name.lower() == name.lower()), None)
+        if existing:
+            existing.file_id = file_id
         else:
-            return False
-
-        if identifier is None:
-            return False
-
-        bill = None
-        try:
-            bill_id = int(identifier)
-            bill = next((b for b in self.repository.db.bills if b.id == bill_id), None)
-        except ValueError:
-            bill = next(
-                (b for b in self.repository.db.bills if b.name == identifier), None
-            )
-
-        if bill is None:
-            return False
-
-        session_context["bill"] = bill
-        return True
-
-    async def on_session_finished(self, update, session_context):
-        bill = session_context["bill"]
-        bill.transactions = session_context["transactions_text"]
-
-        debts: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        for transaction in bill.transactions:
-            amount_per_person = transaction.amount / len(transaction.debtors)
-            for debtor in transaction.debtors:
-                if debtor != transaction.creditor:
-                    debts[debtor][transaction.creditor] += amount_per_person
-
-        total_payments_by_debtor: dict[str, float] = defaultdict(float)
-        for payment in bill.payments:
-            if payment.bill_id == bill.id:
-                total_payments_by_debtor[payment.person] += payment.amount
-
-        for debtor in list(debts.keys()):
-            if debtor in total_payments_by_debtor:
-                total_debt = sum(debts[debtor].values())
-                if total_debt > 0:
-                    payment_remaining = total_payments_by_debtor[debtor]
-                    for creditor in sorted(debts[debtor].keys()):
-                        if payment_remaining <= 0:
-                            break
-                        debt_amount = debts[debtor][creditor]
-                        if debt_amount > 0:
-                            reduction = min(debt_amount, payment_remaining)
-                            debts[debtor][creditor] -= reduction
-                            payment_remaining -= reduction
-
-        bill.optimizations = optimize_debts(debts)
+            next_id = max((b.id for b in self.repository.db.bills), default=0) + 1
+            self.repository.db.bills.append(Bill(id=next_id, name=name, file_id=file_id))
         await self.repository.save()
-
-        report = format_bill_report(bill, self.repository.db.details_infos)
-        chunks = split_long_message(report)
-        for chunk in chunks:
+        link = get_file_link(file_id)
+        raw_rows = _read_bill_raw_rows(file_id)
+        transactions = parse_transactions_from_sheet(raw_rows)
+        report = _build_report_for_transactions(
+            transactions,
+            self.repository.db.payments,
+            self.repository.db.details_infos,
+            title=None,
+            file_link=link,
+        )
+        lines = [
+            f"✅ Счет '{name}' добавлен.",
+            "",
+            "📄 Данные с диска:",
+            _format_raw_rows(raw_rows),
+            "",
+            report,
+        ]
+        msg = "\n".join(lines)
+        for chunk in split_long_message(msg):
             parse_mode = "Markdown" if is_valid_markdown(chunk) else None
             await get_message(update).chat.send_message(chunk, parse_mode=parse_mode)
 
@@ -540,92 +367,115 @@ class BillEditHandler(SessionHandlerBase):
         return None
 
 
-class BillCloseHandler(Handler):
+class BillReportHandler(Handler):
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "bill"):
             return False
-
         assert context.message.text
         parts = context.message.text.split()
-        if len(parts) < 3 or parts[1] != "close":
+        if len(parts) < 2:
             return False
-
-        identifier = parts[2]
-
-        bill = None
+        if parts[1].lower() in ("add", "all", "pay", "details", "help", "report"):
+            return False
+        if not google_drive_available():
+            await context.message.reply_text("Google Drive недоступен")
+            return True
+        identifier = " ".join(parts[1:]).strip()
+        if not identifier:
+            return False
         try:
             bill_id = int(identifier)
             bill = next((b for b in self.repository.db.bills if b.id == bill_id), None)
         except ValueError:
-            bill = next(
-                (b for b in self.repository.db.bills if b.name == identifier), None
-            )
-
-        if bill is None:
+            bill = next((b for b in self.repository.db.bills if b.name.lower() == identifier.lower()), None)
+        if not bill:
             await context.message.reply_text(f"Счет '{identifier}' не найден")
             return True
-
-        self.repository.db.bills.remove(bill)
-        await self.repository.save()
-
-        await context.message.reply_text(
-            f"Счет '{bill.name}' (ID: {bill.id}) удален из базы данных"
+        transactions = _load_bill_transactions(bill.file_id)
+        report = _build_report_for_transactions(
+            transactions,
+            self.repository.db.payments,
+            self.repository.db.details_infos,
+            title=f"📋 Счет: {bill.name}",
+            file_link=get_file_link(bill.file_id),
         )
+        for i, chunk in enumerate(split_long_message(report)):
+            if i == 0:
+                await context.message.reply_text(chunk, parse_mode="Markdown")
+            else:
+                await context.message.chat.send_message(chunk, parse_mode="Markdown")
         return True
 
     def help(self):
         return None
 
 
-@CommandHandler("bill", r"person\s+(?P<name>.+)")
-class BillPersonHandler(Handler):
-    async def chat(self, context: ChatBotContext, name: str):
-        person_name = name.strip()
-
-        total_debts: dict[str, float] = defaultdict(float)
-        total_owed: dict[str, float] = defaultdict(float)
-
-        for bill in self.repository.db.bills:
-            for opt in bill.optimizations:
-                if opt.debtor == person_name:
-                    total_debts[opt.creditor] += opt.amount
-                if opt.creditor == person_name:
-                    total_owed[opt.debtor] += opt.amount
-
-        lines = [f"👤 Статистика для: {person_name}", ""]
-
-        if total_debts:
-            lines.append("💸 Должен:")
-            lines.append("```")
-            lines.append(f"{'Кому':<18} {'Сумма':<12}")
-            lines.append("-" * 30)
-            for creditor, amount in sorted(
-                total_debts.items(), key=lambda x: x[1], reverse=True
-            ):
-                lines.append(f"{creditor[:16]:<18} {amount:<12.2f}")
-            lines.append("```")
-            lines.append("")
-
-        if total_owed:
-            lines.append("💰 Должны:")
-            lines.append("```")
-            lines.append(f"{'Кто':<18} {'Сумма':<12}")
-            lines.append("-" * 30)
-            for debtor, amount in sorted(
-                total_owed.items(), key=lambda x: x[1], reverse=True
-            ):
-                lines.append(f"{debtor[:16]:<18} {amount:<12.2f}")
-            lines.append("```")
-            lines.append("")
-
-        if not total_debts and not total_owed:
-            lines.append("Нет долгов")
-
-        await context.message.reply_text("\n".join(lines), parse_mode="Markdown")
+class BillMainReportHandler(Handler):
+    async def chat(self, context: ChatBotContext):
+        if not validate_command_msg(context.update, "bill"):
+            return False
+        assert context.message.text
+        parts = context.message.text.split()
+        if len(parts) != 1:
+            return False
+        bills = self.repository.db.bills
+        if not bills:
+            await context.message.reply_text("Нет счетов")
+            return True
+        if not google_drive_available():
+            await context.message.reply_text("Google Drive недоступен")
+            return True
+        all_tx = _load_all_transactions(bills)
+        report = _build_report_for_transactions(
+            all_tx,
+            self.repository.db.payments,
+            self.repository.db.details_infos,
+            title="📋 Отчет по всем должникам",
+            file_link=_get_folder_link(_get_bills_folder_id()),
+        )
+        for i, chunk in enumerate(split_long_message(report)):
+            if i == 0:
+                await context.message.reply_text(chunk, parse_mode="Markdown")
+            else:
+                await context.message.chat.send_message(chunk, parse_mode="Markdown")
         return True
 
     def help(self):
-        return None
+        return "/bill — основной отчёт по всем должникам"
+
+
+class BillReportAllHandler(Handler):
+    async def chat(self, context: ChatBotContext):
+        if not validate_command_msg(context.update, "bill"):
+            return False
+        assert context.message.text
+        parts = context.message.text.split()
+        if len(parts) < 2 or parts[1].lower() != "report":
+            return False
+        if not google_drive_available():
+            await context.message.reply_text("Google Drive недоступен")
+            return True
+        bills = self.repository.db.bills
+        if not bills:
+            await context.message.reply_text("Нет счетов")
+            return True
+        all_tx = _load_all_transactions(bills)
+        report = _build_report_for_transactions(
+            all_tx,
+            self.repository.db.payments,
+            self.repository.db.details_infos,
+            title="📋 Отчет по всем счетам",
+            file_link=_get_folder_link(_get_bills_folder_id()),
+        )
+        for i, chunk in enumerate(split_long_message(report)):
+            if i == 0:
+                await context.message.reply_text(chunk, parse_mode="Markdown")
+            else:
+                await context.message.chat.send_message(chunk, parse_mode="Markdown")
+        return True
+
+    def help(self):
+        return "/bill report — сводный отчет по всем счетам"
 
 
 class BillPayHandler(SessionHandlerBase):
@@ -635,188 +485,86 @@ class BillPayHandler(SessionHandlerBase):
                 KeyboardStep(
                     "confirm",
                     lambda ctx: self._format_confirmation(ctx),
-                    [
-                        [
-                            ("✅ Подтвердить", "confirm_yes", True),
-                            ("❌ Отменить", "confirm_no", False),
-                        ]
-                    ],
+                    [[("✅ Подтвердить", "confirm_yes", True), ("❌ Отменить", "confirm_no", False)]],
                 ),
             ]
         )
-        self._pending_session_data = None
+        self._pending: dict | None = None
 
     async def chat(self, context):
         if not validate_command_msg(context.update, "bill"):
             return False
-
         assert context.message.text
-        text = context.message.text.strip()
-        parts = text.split()
+        parts = context.message.text.strip().split()
         if len(parts) < 3 or parts[1] != "pay":
             return False
-
-        bill_identifier = parts[2] if len(parts) > 2 else None
-        if bill_identifier is None:
-            await context.message.reply_text("Укажите ID или имя счета")
-            return True
-
-        bill = None
-        try:
-            bill_id_int = int(bill_identifier)
-            bill = next(
-                (b for b in self.repository.db.bills if b.id == bill_id_int), None
-            )
-        except ValueError:
-            bill = next(
-                (b for b in self.repository.db.bills if b.name == bill_identifier), None
-            )
-
-        if bill is None:
-            await context.message.reply_text(f"Счет '{bill_identifier}' не найден")
-            return True
-
-        if len(parts) < 4:
-            await context.message.reply_text("Укажите, кто должен")
-            return True
-
-        debtor = parts[3].strip()
-
+        debtor = parts[2].strip()
         creditor = None
         amount_str = None
-
-        if len(parts) > 4:
-            next_part = parts[4].strip()
-            next_part_lower = next_part.lower()
-            if next_part_lower not in ["все", "all", ""]:
+        if len(parts) > 3:
+            n = parts[3].strip()
+            if n.lower() not in ("все", "all"):
                 try:
-                    float(next_part)
-                    amount_str = next_part
+                    float(n)
+                    amount_str = n
                 except ValueError:
-                    creditor = next_part
-                    if len(parts) > 5:
-                        amount_str = parts[5].strip()
-
-        amount = None
-        if amount_str:
+                    creditor = n
+                    if len(parts) > 4:
+                        amount_str = parts[4].strip()
+        if not google_drive_available():
+            await context.message.reply_text("Google Drive недоступен")
+            return True
+        bills = self.repository.db.bills
+        all_tx = _load_all_transactions(bills)
+        debts = debts_from_transactions(all_tx)
+        debts = apply_payments(debts, self.repository.db.payments)
+        netted = net_debts(debts)
+        relevant = [(d, c, a) for (d, c, a) in netted if d == debtor]
+        if creditor:
+            relevant = [(d, c, a) for (d, c, a) in relevant if c == creditor]
+        if not relevant:
+            await context.message.reply_text("Нет подходящего долга для этого платежа")
+            return True
+        total_debt = sum(a for (_, _, a) in relevant)
+        total_paid = sum(
+            p.amount
+            for p in self.repository.db.payments
+            if p.person == debtor and (not creditor or p.creditor == creditor)
+        )
+        remaining = total_debt - total_paid
+        if amount_str is None:
+            payment_amount = remaining
+        else:
             try:
-                amount = float(amount_str)
+                payment_amount = float(amount_str)
             except ValueError:
                 await context.message.reply_text(f"Неверная сумма: {amount_str}")
                 return True
-
-        relevant_opts = [opt for opt in bill.optimizations if opt.debtor == debtor]
-        if creditor:
-            relevant_opts = [opt for opt in relevant_opts if opt.creditor == creditor]
-
-        if not relevant_opts:
-            if creditor:
-                await context.message.reply_text(
-                    f"Не найдено оптимизаций для '{debtor}' -> '{creditor}' в счете '{bill.name}'"
-                )
-            else:
-                await context.message.reply_text(
-                    f"Не найдено оптимизаций для '{debtor}' в счете '{bill.name}'"
-                )
-            return True
-
-        total_debt = sum(opt.amount for opt in relevant_opts)
-        if creditor:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id
-                and p.person == debtor
-                and p.creditor == creditor
-            )
-        else:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id and p.person == debtor
-            )
-        remaining_debt = total_debt - total_paid
-
-        if amount is None:
-            payment_amount = remaining_debt
-        else:
-            payment_amount = amount
-
-        if payment_amount <= 0:
-            await context.message.reply_text("Сумма должна быть больше нуля")
-            return True
-
-        if payment_amount > remaining_debt + 0.01:
+        if payment_amount <= 0 or payment_amount > remaining + 0.01:
             await context.message.reply_text(
-                f"Сумма превышает долг. Остаток долга: {remaining_debt:.2f}"
+                f"Сумма должна быть от 0.01 до {remaining:.2f} (остаток долга)"
             )
             return True
-
-        self._pending_session_data = {
-            "bill": bill,
+        self._pending = {
             "debtor": debtor,
             "creditor": creditor,
-            "amount": amount_str,
+            "amount": payment_amount,
         }
         return await super().chat(context)
 
     def _format_confirmation(self, ctx: dict) -> str:
-        bill = ctx["bill"]
         debtor = ctx["debtor"]
         creditor = ctx.get("creditor")
-        amount = ctx.get("amount")
-
-        relevant_opts = [opt for opt in bill.optimizations if opt.debtor == debtor]
-        if creditor:
-            relevant_opts = [opt for opt in relevant_opts if opt.creditor == creditor]
-
-        total_debt = sum(opt.amount for opt in relevant_opts)
-        if creditor:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id
-                and p.person == debtor
-                and p.creditor == creditor
-            )
-        else:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id and p.person == debtor
-            )
-        remaining_debt = total_debt - total_paid
-
-        if amount is None:
-            payment_amount = remaining_debt
-        else:
-            payment_amount = float(amount)
-
-        lines = ["💳 Подтверждение платежа", ""]
-        lines.append(f"Счет: {bill.name} (ID: {bill.id})")
-        lines.append(f"Кто должен: {debtor}")
-        if creditor:
-            lines.append(f"Кому должен: {creditor}")
-        else:
-            lines.append("Кому должен: всем")
-        lines.append(f"Сумма: {payment_amount:.2f}")
-        lines.append("")
-
-        if creditor:
-            opt = next((opt for opt in relevant_opts if opt.creditor == creditor), None)
-            if opt:
-                lines.append(f"Долг по оптимизации: {opt.amount:.2f}")
-        else:
-            lines.append(f"Общий долг по оптимизациям: {total_debt:.2f}")
-            lines.append(f"Уже заплачено: {total_paid:.2f}")
-            lines.append(f"Остаток: {remaining_debt:.2f}")
-
+        amount = ctx["amount"]
+        lines = ["💳 Подтверждение платежа", "", f"Кто должен: {debtor}"]
+        lines.append(f"Кому: {creditor or 'всем'}")
+        lines.append(f"Сумма: {amount:.2f}")
         return "\n".join(lines)
 
     def try_activate_session(self, update, session_context):
-        if self._pending_session_data:
-            session_context.update(self._pending_session_data)
-            self._pending_session_data = None
+        if self._pending:
+            session_context.update(self._pending)
+            self._pending = None
             return True
         return False
 
@@ -824,89 +572,17 @@ class BillPayHandler(SessionHandlerBase):
         if not session_context.get("confirm", False):
             await get_message(update).chat.send_message("Платеж отменен")
             return
-
-        bill = session_context["bill"]
-        debtor = session_context["debtor"]
-        creditor = session_context.get("creditor")
-        amount_str = session_context.get("amount")
-
-        relevant_opts = [opt for opt in bill.optimizations if opt.debtor == debtor]
-        if creditor:
-            relevant_opts = [opt for opt in relevant_opts if opt.creditor == creditor]
-
-        total_debt = sum(opt.amount for opt in relevant_opts)
-        if creditor:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id
-                and p.person == debtor
-                and p.creditor == creditor
-            )
-        else:
-            total_paid = sum(
-                p.amount
-                for p in bill.payments
-                if p.bill_id == bill.id and p.person == debtor
-            )
-        remaining_debt = total_debt - total_paid
-
-        if amount_str is None:
-            payment_amount = remaining_debt
-        else:
-            payment_amount = float(amount_str)
-
-        if creditor:
-            payment = Payment(
-                bill_id=bill.id,
-                person=debtor,
-                amount=payment_amount,
-                creditor=creditor,
-            )
-            bill.payments.append(payment)
-            await get_message(update).chat.send_message(
-                f"✅ Платеж зарегистрирован: {debtor} заплатил {payment_amount:.2f} {creditor}"
-            )
-        else:
-            payment_remaining = payment_amount
-
-            payments_created = []
-            for opt in sorted(relevant_opts, key=lambda x: x.creditor):
-                if payment_remaining <= 0.01:
-                    break
-
-                already_paid_for_this_creditor = sum(
-                    p.amount
-                    for p in bill.payments
-                    if p.bill_id == bill.id
-                    and p.person == debtor
-                    and p.creditor == opt.creditor
-                )
-                opt_remaining = opt.amount - already_paid_for_this_creditor
-
-                if opt_remaining > 0.01:
-                    opt_payment = min(opt_remaining, payment_remaining)
-                    payment = Payment(
-                        bill_id=bill.id,
-                        person=debtor,
-                        amount=opt_payment,
-                        creditor=opt.creditor,
-                    )
-                    bill.payments.append(payment)
-                    payments_created.append((opt.creditor, opt_payment))
-                    payment_remaining -= opt_payment
-
-            if payments_created:
-                payments_info = ", ".join([f"{amt:.2f} {cred}" for cred, amt in payments_created])
-                await get_message(update).chat.send_message(
-                    f"✅ Платежи зарегистрированы: {debtor} заплатил {payments_info}"
-                )
-            else:
-                await get_message(update).chat.send_message(
-                    f"✅ Платеж зарегистрирован: {debtor} заплатил {payment_amount:.2f}"
-                )
-
+        p = Payment(
+            person=session_context["debtor"],
+            amount=session_context["amount"],
+            creditor=session_context.get("creditor"),
+        )
+        self.repository.db.payments.append(p)
         await self.repository.save()
+        cred = session_context.get("creditor") or "указанным"
+        await get_message(update).chat.send_message(
+            f"✅ Платеж: {p.person} заплатил {p.amount:.2f} — {cred}"
+        )
 
     def help(self):
         return None
@@ -920,23 +596,14 @@ class BillDetailsAddHandler(SessionHandlerBase):
                     "name",
                     "Введите имя для платежных данных:",
                     filter_answer=validate_message_text(
-                        [
-                            check(
-                                lambda t: len(t.strip()) > 0, "Имя не может быть пустым"
-                            )
-                        ]
+                        [check(lambda t: len(t.strip()) > 0, "Имя не может быть пустым")]
                     ),
                 ),
                 QuestionStep(
                     "description",
-                    "Введите описание способов перевода денег:",
+                    "Введите описание способов перевода:",
                     filter_answer=validate_message_text(
-                        [
-                            check(
-                                lambda t: len(t.strip()) > 0,
-                                "Описание не может быть пустым",
-                            )
-                        ]
+                        [check(lambda t: len(t.strip()) > 0, "Описание не может быть пустым")]
                     ),
                 ),
             ]
@@ -945,37 +612,24 @@ class BillDetailsAddHandler(SessionHandlerBase):
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):
             return False
-
         assert update.message and update.message.text
         parts = update.message.text.split()
         if len(parts) < 3 or parts[1] != "details" or parts[2] != "add":
             return False
-
         return True
 
     async def on_session_finished(self, update, session_context):
-        details_info = DetailsInfo(
+        info = DetailsInfo(
             name=session_context["name"].strip(),
             description=session_context["description"].strip(),
         )
-
-        existing = next(
-            (
-                p
-                for p in self.repository.db.details_infos
-                if p.name == details_info.name
-            ),
-            None,
-        )
+        existing = next((d for d in self.repository.db.details_infos if d.name == info.name), None)
         if existing:
-            existing.description = details_info.description
+            existing.description = info.description
         else:
-            self.repository.db.details_infos.append(details_info)
-
+            self.repository.db.details_infos.append(info)
         await self.repository.save()
-        await get_message(update).chat.send_message(
-            f"Платежные данные для '{details_info.name}' сохранены"
-        )
+        await get_message(update).chat.send_message(f"Платежные данные для '{info.name}' сохранены")
 
     def help(self):
         return None
@@ -989,12 +643,7 @@ class BillDetailsEditHandler(SessionHandlerBase):
                     "description",
                     lambda ctx: f"Текущее описание для '{ctx['details_info'].name}':\n{ctx['details_info'].description}\n\nВведите новое описание:",
                     filter_answer=validate_message_text(
-                        [
-                            check(
-                                lambda t: len(t.strip()) > 0,
-                                "Описание не может быть пустым",
-                            )
-                        ]
+                        [check(lambda t: len(t.strip()) > 0, "Описание не может быть пустым")]
                     ),
                 ),
             ]
@@ -1003,31 +652,22 @@ class BillDetailsEditHandler(SessionHandlerBase):
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):
             return False
-
         assert update.message and update.message.text
         parts = update.message.text.split()
         if len(parts) < 4 or parts[1] != "details" or parts[2] != "edit":
             return False
-
         name = " ".join(parts[3:])
-        details_info = next(
-            (p for p in self.repository.db.details_infos if p.name == name), None
-        )
-
+        details_info = next((d for d in self.repository.db.details_infos if d.name == name), None)
         if details_info is None:
             return False
-
         session_context["details_info"] = details_info
         return True
 
     async def on_session_finished(self, update, session_context):
-        details_info = session_context["details_info"]
-        details_info.description = session_context["description"].strip()
+        di = session_context["details_info"]
+        di.description = session_context["description"].strip()
         await self.repository.save()
-
-        await get_message(update).chat.send_message(
-            f"Платежные данные для '{details_info.name}' обновлены"
-        )
+        await get_message(update).chat.send_message(f"Платежные данные для '{di.name}' обновлены")
 
     def help(self):
         return None
@@ -1037,31 +677,22 @@ class BillHelpHandler(Handler):
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "bill"):
             return False
-
         assert context.message.text
         parts = context.message.text.split()
         if len(parts) < 2 or parts[1] != "help":
             return False
+        help_text = """📋 /bill
 
-        help_text = """📋 Помощь по команде /bill
-
-/bill - посмотреть все счета
-/bill add - добавить новый счет
-/bill {id}/{name} - посмотреть отчет по счету
-/bill {id}/{name} edit - изменить транзакции в счете
-/bill edit {id}/{name} - изменить транзакции в счете
-/bill close {id}/{name} - удалить счет из базы данных
-/bill person {name} - статистика по человеку
-/bill pay {bill id/name} {кто должен} [кому должен] [сколько] - зарегистрировать платеж
-/bill details add - добавить платежные данные
-/bill details edit {name} - изменить платежные данные
-
-Формат транзакций при добавлении/редактировании:
-наименование товара|сумма|кто должен(через запятую)|кому должны
-Каждая транзакция с новой строки"""
-
+/bill — основной отчёт по всем должникам
+/bill all — список всех счетов
+/bill report — сводный отчет по всем счетам
+/bill {id} или /bill {имя} — отчет по счету
+/bill add — добавить счет (имя = имя файла на Google Диске)
+/bill pay {кто должен} [кому] [сколько] — зарегистрировать перевод
+/bill details add — добавить платежные данные
+/bill details edit {имя} — изменить платежные данные"""
         await context.message.reply_text(help_text)
         return True
 
     def help(self):
-        return "/bill help - помощь по команде /bill"
+        return "/bill help — помощь по /bill"

@@ -13,7 +13,7 @@ from steward.delayed_action.reminder import CompletedReminder
 from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
-from .bill import Bill, DetailsInfo
+from .bill import Bill, DetailsInfo, Payment
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .feature_request import FeatureRequest
@@ -35,6 +35,7 @@ class Database:
     data_offsets: dict[str, float] = field(default_factory=dict)
     channel_subscriptions: list[ChannelSubscription] = field(default_factory=list)
     bills: list[Bill] = field(default_factory=list)
+    payments: list[Payment] = field(default_factory=list)
     details_infos: list[DetailsInfo] = field(default_factory=list)
 
     version: int = 6

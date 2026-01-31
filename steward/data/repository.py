@@ -247,4 +247,25 @@ class Repository:
                                             )
             data["version"] = 5
 
+        if "bills" in data and "payments" not in data:
+            payments = []
+            for bill in data.get("bills", []):
+                for p in bill.get("payments", []):
+                    if isinstance(p, dict):
+                        payments.append(
+                            {
+                                "person": p.get("person", ""),
+                                "amount": p.get("amount", 0),
+                                "creditor": p.get("creditor"),
+                                "timestamp": p.get("timestamp"),
+                            }
+                        )
+            data["payments"] = payments
+            del data["bills"]
+
+        if "bills" in data and isinstance(data["bills"], list):
+            for i, bill in enumerate(data["bills"]):
+                if isinstance(bill, dict) and "id" not in bill:
+                    bill["id"] = i + 1
+
         return data
