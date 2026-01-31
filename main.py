@@ -20,15 +20,14 @@ from steward.handlers.army_handler import (
 )
 from steward.handlers.bill_handler import (
     BillAddHandler,
-    BillCloseHandler,
     BillDetailsAddHandler,
     BillDetailsEditHandler,
-    BillEditHandler,
     BillHelpHandler,
     BillListViewHandler,
+    BillMainReportHandler,
     BillPayHandler,
-    BillPersonHandler,
-    BillViewHandler,
+    BillReportAllHandler,
+    BillReportHandler,
 )
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
@@ -136,16 +135,15 @@ def get_handlers(log_file: None | str):
             MultiplyHandler,
             WatchHandler,
             DownloadHandler,
+            BillMainReportHandler,
             BillListViewHandler,
             BillAddHandler,
-            BillEditHandler,
-            BillCloseHandler,
+            BillReportHandler,
             BillPayHandler,
-            BillViewHandler,
-            BillPersonHandler,
             BillDetailsAddHandler,
             BillDetailsEditHandler,
             BillHelpHandler,
+            BillReportAllHandler,
             GoogleDriveListHandler,
         ],
     )
