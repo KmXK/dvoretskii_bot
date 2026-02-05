@@ -39,7 +39,7 @@ def _md_escape(s: str) -> str:
 
 
 def _parse_amount(s: str) -> float:
-    s = s.strip().replace(",", ".")
+    s = s.strip().replace("\u00a0", " ").replace(",", ".")
     m = _AMOUNT_RE.search(s)
     if not m:
         raise ValueError(f"Неверная сумма: {s}")
@@ -137,9 +137,7 @@ def _amount_per_debtor_for_closed(
             reduce_closed = min(amt_c, reduce_amt)
             amount_to_remove[debtor] += reduce_closed
             total_paid -= reduce_amt
-        amount_to_remove[debtor] = min(
-            amount_to_remove[debtor], total_closed_debt
-        )
+        amount_to_remove[debtor] = min(amount_to_remove[debtor], total_closed_debt)
     return dict(amount_to_remove)
 
 
@@ -169,7 +167,9 @@ def _payments_to_remove_for_closed(
     return to_remove, to_reduce
 
 
-def _net_direct_debts(debts: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
+def _net_direct_debts(
+    debts: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
     working: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for debtor, creds in debts.items():
         for creditor, amount in creds.items():
@@ -337,11 +337,25 @@ def _load_bill_transactions(file_id: str) -> list[Transaction]:
         rows = rows[:-1]
     return parse_transactions_from_sheet(rows)
 
+
 def _load_all_transactions(bills: list[Bill]) -> list[Transaction]:
     all_tx = []
     for bill in bills:
         all_tx.extend(_load_bill_transactions(bill.file_id))
     return all_tx
+
+
+def _format_debug_rows(rows: list[list[str]], bill_name: str) -> str:
+    lines = [f"🔍 DEBUG [{bill_name}] — строки из таблицы:"]
+    if not rows:
+        lines.append("(пусто)")
+    else:
+        for i, row in enumerate(rows):
+            row_str = (
+                " | ".join(str(cell) for cell in row) if row else "(пустая строка)"
+            )
+            lines.append(f"{i}: {row_str}")
+    return "\n".join(lines)
 
 
 def _format_bill_page(ctx: PageFormatContext[Bill]) -> str:
@@ -503,12 +517,15 @@ class BillReportHandler(Handler):
             "help",
             "report",
             "close",
+            "debug",
         ):
             return False
         if not google_drive_available():
             await context.message.reply_text("Google Drive недоступен")
             return True
-        identifier = " ".join(parts[1:]).strip()
+        debug_mode = parts[-1].lower() == "debug"
+        identifier_parts = parts[1:-1] if debug_mode else parts[1:]
+        identifier = " ".join(identifier_parts).strip()
         if not identifier:
             return False
         try:
@@ -526,7 +543,12 @@ class BillReportHandler(Handler):
         if not bill:
             await context.message.reply_text(f"Счет '{identifier}' не найден")
             return True
-        transactions = _load_bill_transactions(bill.file_id)
+        raw_rows = _read_bill_raw_rows(bill.file_id)
+        if debug_mode:
+            debug_msg = _format_debug_rows(raw_rows, bill.name)
+            for chunk in split_long_message(debug_msg):
+                await context.message.chat.send_message(chunk)
+        transactions = parse_transactions_from_sheet(raw_rows[:-1] if raw_rows else [])
         all_bills = self.repository.db.bills
         all_tx = _load_all_transactions(all_bills)
         debts_this = debts_from_transactions(transactions)
@@ -695,7 +717,9 @@ class BillDetailsEditHandler(SessionHandlerBase):
             [
                 QuestionStep(
                     "description",
-                    lambda ctx: f"Текущее описание для '{ctx['details_info'].name}':\n{ctx['details_info'].description}\n\nВведите новое описание:",
+                    lambda ctx: (
+                        f"Текущее описание для '{ctx['details_info'].name}':\n{ctx['details_info'].description}\n\nВведите новое описание:"
+                    ),
                     filter_answer=validate_message_text(
                         [
                             check(
@@ -822,6 +846,7 @@ class BillHelpHandler(Handler):
 /bill — общий отчет по всем счетам
 /bill all — список всех счетов
 /bill {id} — отчет по счету
+/bill {id} debug — отчет по счету с выводом сырых данных из таблицы
 /bill add — добавить счет (имя = имя файла в папке «финансы»)
 /bill pay {кто} {кому} {сумма} — зарегистрировать перевод
 /bill close {id1} {id2} ... — закрыть счета
