@@ -510,6 +510,7 @@ class BillReportHandler(Handler):
             "report",
             "close",
             "debug",
+            "force",
         ):
             return False
         if not google_drive_available():
@@ -629,6 +630,8 @@ class BillPayHandler(Handler):
         parts = context.message.text.strip().split()
         if len(parts) < 5 or parts[1] != "pay":
             return False
+        if len(parts) >= 4 and parts[2] == "force":
+            return False
         person = parts[2].strip()
         creditor = parts[3].strip()
         try:
@@ -645,6 +648,46 @@ class BillPayHandler(Handler):
         await context.message.reply_text(
             f"✅ Платеж: {person} → {creditor} {amount:.2f}"
         )
+        return True
+
+    def help(self):
+        return None
+
+
+class BillPayForceDeleteHandler(Handler):
+    async def chat(self, context: ChatBotContext):
+        if not validate_command_msg(context.update, "bill"):
+            return False
+        assert context.message.text
+        parts = context.message.text.strip().split()
+        if len(parts) != 5 or parts[1:4] != ["pay", "force", "delete"]:
+            return False
+        if not self.repository.is_admin(context.message.from_user.id):
+            await context.message.reply_text("Эта команда доступна только админам")
+            return True
+        try:
+            count = int(parts[4])
+        except ValueError:
+            await context.message.reply_text(f"Неверное количество: {parts[5]}")
+            return True
+        if count <= 0:
+            await context.message.reply_text("Количество должно быть больше 0")
+            return True
+        payments = self.repository.db.payments
+        if count > len(payments):
+            count = len(payments)
+        if count == 0:
+            await context.message.reply_text("Нет платежей для удаления")
+            return True
+        deleted = payments[-count:]
+        del payments[-count:]
+        await self.repository.save()
+        lines = [f"🗑 Удалено {len(deleted)} платежей:"]
+        for p in deleted:
+            cred = p.creditor or "—"
+            date_str = p.timestamp.strftime("%Y-%m-%d %H:%M")
+            lines.append(f"• {p.person} → {cred} {p.amount:.2f} ({date_str})")
+        await context.message.reply_text("\n".join(lines))
         return True
 
     def help(self):
@@ -841,6 +884,7 @@ class BillHelpHandler(Handler):
 /bill {id} debug — отчет по счету с выводом сырых данных из таблицы
 /bill add — добавить счет (имя = имя файла в папке «финансы»)
 /bill pay {кто} {кому} {сумма} — зарегистрировать перевод
+/bill pay force delete {count} — удалить последние N платежей (админ)
 /bill close {id1} {id2} ... — закрыть счета
 /bill details add {пользователь} — добавить платежные данные
 /bill details edit {пользователь} — изменить платежные данные"""
