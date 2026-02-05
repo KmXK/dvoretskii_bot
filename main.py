@@ -26,6 +26,7 @@ from steward.handlers.bill_handler import (
     BillHelpHandler,
     BillListViewHandler,
     BillMainReportHandler,
+    BillPayForceDeleteHandler,
     BillPayHandler,
     BillReportHandler,
 )
@@ -141,6 +142,7 @@ def get_handlers(log_file: None | str):
             BillListViewHandler,
             BillAddHandler,
             BillReportHandler,
+            BillPayForceDeleteHandler,
             BillPayHandler,
             BillCloseHandler,
             BillDetailsAddHandler,
