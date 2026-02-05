@@ -95,21 +95,11 @@ def debts_from_transactions(
 def apply_payments(
     debts: dict[str, dict[str, float]], payments: list[Payment]
 ) -> dict[str, dict[str, float]]:
-    total_by_debtor: dict[str, float] = defaultdict(float)
     for p in payments:
-        total_by_debtor[p.person] += p.amount
-    for debtor in list(debts.keys()):
-        if debtor not in total_by_debtor:
+        if not p.creditor:
             continue
-        remaining = total_by_debtor[debtor]
-        for creditor in sorted(debts[debtor].keys()):
-            if remaining <= 0:
-                break
-            amt = debts[debtor][creditor]
-            if amt > 0:
-                red = min(amt, remaining)
-                debts[debtor][creditor] -= red
-                remaining -= red
+        if p.person in debts and p.creditor in debts[p.person]:
+            debts[p.person][p.creditor] -= p.amount
     return debts
 
 
@@ -174,7 +164,9 @@ def _net_direct_debts(
     for debtor, creds in debts.items():
         for creditor, amount in creds.items():
             if amount > 0.01:
-                working[debtor][creditor] = amount
+                working[debtor][creditor] += amount
+            elif amount < -0.01:
+                working[creditor][debtor] += -amount
     people = set(working.keys()) | {c for creds in working.values() for c in creds}
     for a in people:
         for b in people:
