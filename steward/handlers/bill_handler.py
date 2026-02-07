@@ -352,15 +352,27 @@ def _format_debug_rows(rows: list[list[str]], bill_name: str) -> str:
     return "\n".join(lines)
 
 
+def _escape_md(text: str) -> str:
+    return (
+        text.replace("_", "\\_")
+        .replace("*", "\\*")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+    )
+
+
 def _format_bill_page(ctx: PageFormatContext[Bill]) -> str:
     from steward.helpers.formats import format_lined_list
 
     if not ctx.data:
         return "Нет счетов"
-    items = [
-        (bill.id, f"{bill.name} ({get_file_link(bill.file_id) or '—'})")
-        for bill in ctx.data
-    ]
+    items = []
+    for bill in ctx.data:
+        link = get_file_link(bill.file_id)
+        name = _escape_md(bill.name)
+        if link:
+            name = f"[{name}]({link})"
+        items.append((bill.id, name))
     return format_lined_list(items=items, delimiter=": ")
 
 
