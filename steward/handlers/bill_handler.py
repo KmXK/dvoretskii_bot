@@ -3,7 +3,9 @@ import re
 from collections import defaultdict
 from typing import Callable
 
-from steward.bot.context import ChatBotContext
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+from steward.bot.context import CallbackBotContext, ChatBotContext
 from steward.data.models.bill import Bill, DetailsInfo, Payment, Transaction
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
@@ -579,6 +581,111 @@ class BillReportHandler(Handler):
         return None
 
 
+_BILL_NAV_KB = "bill_nav"
+
+
+def _build_bill_nav_keyboard(
+    bills: list[Bill],
+    current: str,
+) -> InlineKeyboardMarkup:
+    sorted_bills = sorted(bills, key=lambda b: b.id)
+    bill_ids = [str(b.id) for b in sorted_bills]
+
+    def cb(target: str) -> str:
+        prefix = "~" if target == current else ""
+        return f"{_BILL_NAV_KB}|{prefix}{target}"
+
+    if current == "общий":
+        prev_target = bill_ids[-1] if bill_ids else "общий"
+        next_target = bill_ids[0] if bill_ids else "общий"
+    else:
+        idx = bill_ids.index(current) if current in bill_ids else 0
+        prev_target = bill_ids[idx - 1] if idx > 0 else "общий"
+        next_target = bill_ids[idx + 1] if idx < len(bill_ids) - 1 else "общий"
+
+    first_target = bill_ids[0] if bill_ids else "общий"
+    last_target = bill_ids[-1] if bill_ids else "общий"
+
+    общий_label = "• общий" if current == "общий" else "общий"
+
+    row1 = [
+        InlineKeyboardButton("<<", callback_data=cb(first_target)),
+        InlineKeyboardButton("<", callback_data=cb(prev_target)),
+        InlineKeyboardButton(общий_label, callback_data=cb("общий")),
+        InlineKeyboardButton(">", callback_data=cb(next_target)),
+        InlineKeyboardButton(">>", callback_data=cb(last_target)),
+    ]
+
+    last_5 = sorted_bills[-5:]
+    row2 = [
+        InlineKeyboardButton(
+            f"• {b.id}" if str(b.id) == current else str(b.id),
+            callback_data=cb(str(b.id)),
+        )
+        for b in last_5
+    ]
+
+    rows = [row1]
+    if row2:
+        rows.append(row2)
+    return InlineKeyboardMarkup(rows)
+
+
+def _generate_main_report_text(
+    bills: list[Bill],
+    payments: list[Payment],
+    details_infos: list[DetailsInfo],
+) -> str:
+    all_tx = _load_all_transactions(bills)
+    participants = _participants_from_transactions(all_tx)
+    payments_relevant = _payments_relevant_to_participants(payments, participants)
+    debts = debts_from_transactions(all_tx)
+    debts = apply_payments(debts, payments)
+    debts = _net_direct_debts(debts)
+    debts_list = debts_to_list(debts)
+    closable = [b.id for b in bills] if not debts_list else None
+    return _format_report(
+        debts_list,
+        payments_relevant,
+        details_infos,
+        title="📋 Общий отчет",
+        closable_bill_ids=closable,
+    )
+
+
+def _generate_single_bill_report_text(
+    bill: Bill,
+    all_bills: list[Bill],
+    payments: list[Payment],
+    details_infos: list[DetailsInfo],
+) -> str:
+    raw_rows = _read_bill_raw_rows(bill.file_id)
+    transactions = parse_transactions_from_sheet(raw_rows[:-1] if raw_rows else [])
+    all_tx = _load_all_transactions(all_bills)
+    debts_this = debts_from_transactions(transactions)
+    debts_this = apply_payments(debts_this, payments)
+    debts_this = _net_direct_debts(debts_this)
+    debts_list_this = debts_to_list(debts_this)
+    debts_all = debts_from_transactions(all_tx)
+    debts_all = apply_payments(debts_all, payments)
+    debts_all = _net_direct_debts(debts_all)
+    debts_list_all = debts_to_list(debts_all)
+    closable_this = [bill.id] if not debts_list_this else None
+    closable_all = [b.id for b in all_bills] if not debts_list_all else None
+    participants = _participants_from_transactions(transactions)
+    payments_relevant = _payments_relevant_to_participants(payments, participants)
+    return _format_report(
+        debts_list_this,
+        payments_relevant,
+        details_infos,
+        title=f"📋 Счет: {bill.name}",
+        file_link=get_file_link(bill.file_id),
+        closable_bill_ids=closable_this,
+        debts_list_all=debts_list_all,
+        closable_bill_ids_all=closable_all,
+    )
+
+
 class BillMainReportHandler(Handler):
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "bill"):
@@ -594,28 +701,69 @@ class BillMainReportHandler(Handler):
         if not google_drive_available():
             await context.message.reply_text("Google Drive недоступен")
             return True
-        all_tx = _load_all_transactions(bills)
-        participants = _participants_from_transactions(all_tx)
-        payments_relevant = _payments_relevant_to_participants(
-            self.repository.db.payments, participants
+        report = _generate_main_report_text(
+            bills, self.repository.db.payments, self.repository.db.details_infos
         )
-        debts = debts_from_transactions(all_tx)
-        debts = apply_payments(debts, self.repository.db.payments)
-        debts = _net_direct_debts(debts)
-        debts_list = debts_to_list(debts)
-        closable = [b.id for b in bills] if not debts_list else None
-        report = _format_report(
-            debts_list,
-            payments_relevant,
-            self.repository.db.details_infos,
-            title="📋 Общий отчет",
-            closable_bill_ids=closable,
-        )
-        for i, chunk in enumerate(split_long_message(report)):
+        keyboard = _build_bill_nav_keyboard(bills, "общий")
+        chunks = split_long_message(report)
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            markup = keyboard if is_last else None
             if i == 0:
-                await context.message.reply_text(chunk, parse_mode="Markdown")
+                await context.message.reply_text(
+                    chunk, parse_mode="Markdown", reply_markup=markup
+                )
             else:
-                await context.message.chat.send_message(chunk, parse_mode="Markdown")
+                await context.message.chat.send_message(
+                    chunk, parse_mode="Markdown", reply_markup=markup
+                )
+        return True
+
+    async def callback(self, context: CallbackBotContext):
+        if not context.callback_query.data:
+            return False
+        data = context.callback_query.data
+        if not data.startswith(f"{_BILL_NAV_KB}|"):
+            return False
+        target = data.split("|", 1)[1]
+        if target.startswith("~"):
+            await context.callback_query.answer()
+            return True
+        bills = self.repository.db.bills
+        if not bills:
+            await context.callback_query.answer("Нет счетов")
+            return True
+        if not google_drive_available():
+            await context.callback_query.answer("Google Drive недоступен")
+            return True
+        if target == "общий":
+            report = _generate_main_report_text(
+                bills, self.repository.db.payments, self.repository.db.details_infos
+            )
+        else:
+            try:
+                bill_id = int(target)
+            except ValueError:
+                await context.callback_query.answer("Неверный ID")
+                return True
+            bill = next((b for b in bills if b.id == bill_id), None)
+            if not bill:
+                await context.callback_query.answer(f"Счет {target} не найден")
+                return True
+            report = _generate_single_bill_report_text(
+                bill,
+                bills,
+                self.repository.db.payments,
+                self.repository.db.details_infos,
+            )
+        keyboard = _build_bill_nav_keyboard(bills, target)
+        chunks = split_long_message(report)
+        text = chunks[0] if chunks else "Нет данных"
+        parse_mode = "Markdown" if is_valid_markdown(text) else None
+        await context.callback_query.message.edit_text(
+            text=text, parse_mode=parse_mode, reply_markup=keyboard
+        )
+        await context.callback_query.answer()
         return True
 
     def help(self):
