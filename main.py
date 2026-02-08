@@ -51,9 +51,9 @@ from steward.handlers.message_info_handler import MessageInfoHandler
 from steward.handlers.miniapp_handler import MiniAppHandler
 from steward.handlers.newtext_handler import NewTextHandler
 from steward.handlers.multiply_handler import MultiplyHandler
+from steward.handlers.ai_related_handler import AiRelatedMessageHandler
 from steward.handlers.pasha_handler import (
     PashaHandler,
-    PashaRelatedMessageHandler,
     PashaSessionHandler,
 )
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
@@ -112,7 +112,7 @@ def get_handlers(log_file: None | str):
             ChatCollectHandler,
             SilenceCommandHandler,
             SilenceEnforcerHandler,
-            PashaRelatedMessageHandler,
+            AiRelatedMessageHandler,
             RuleListViewHandler,
             RuleViewHandler,
             RuleAddHandler,

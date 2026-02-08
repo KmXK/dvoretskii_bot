@@ -1,6 +1,8 @@
+import asyncio
 import logging
 from os import environ
 
+import httpx
 from aiohttp import ClientSession
 from openai import OpenAI
 
@@ -65,10 +67,6 @@ async def make_yandex_ai_query(
                 raise e
 
 
-async def make_yandex_ai_query(user_id, model, text, system_prompt=None):
-    return await make_yandex_ai_query(user_id, model, [("user", text)], system_prompt)
-
-
 deepseek_client = None
 
 
@@ -97,24 +95,28 @@ def make_deepseek_query(user_id, text, system_prompt=""):
 openrouter_client = None
 
 
-def make_openrouter_query(user_id, model, text, system_prompt=""):
+async def make_openrouter_query(user_id, model, messages: list[tuple[str, str]], system_prompt=""):
     global openrouter_client
     if not openrouter_client:
         openrouter_client = OpenAI(
             api_key=environ.get("OPENROUTER_KEY"),
             base_url="https://openrouter.ai/api/v1",
+            timeout=httpx.Timeout(120.0, connect=30.0),
         )
 
     check_limit("openrouter_total", 20, Duration.MINUTE)
     check_limit("openrouter_per_user", 7, 20 * Duration.SECOND, name=user_id)
 
-    response = openrouter_client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text},
-        ],
-        stream=False,
-    )
+    def _call():
+        return openrouter_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                *[{"role": role, "content": content} for role, content in messages],
+            ],
+            stream=False,
+        )
+
+    response = await asyncio.to_thread(_call)
     assert isinstance(response.choices[0].message.content, str)
     return response.choices[0].message.content

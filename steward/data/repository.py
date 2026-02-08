@@ -268,4 +268,15 @@ class Repository:
                 if isinstance(bill, dict) and "id" not in bill:
                     bill["id"] = i + 1
 
+        if data.get("version") == 6:
+            if "pasha_ai_messages" in data:
+                ai_messages = {}
+                for key, value in data["pasha_ai_messages"].items():
+                    if isinstance(value, dict):
+                        value["handler"] = "pasha"
+                    ai_messages[key] = value
+                data["ai_messages"] = ai_messages
+                del data["pasha_ai_messages"]
+            data["version"] = 7
+
         return data
