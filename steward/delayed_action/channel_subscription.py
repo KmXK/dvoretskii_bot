@@ -81,8 +81,20 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
 
     generator: ConstantGenerator
 
+    async def _resolve_channel(self, context: DelayedActionContext, subscription):
+        if subscription.channel_username:
+            try:
+                return await context.client.get_input_entity(
+                    subscription.channel_username
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to resolve channel by username @{subscription.channel_username}, "
+                    f"falling back to channel_id"
+                )
+        return subscription.channel_id
+
     async def execute(self, context: DelayedActionContext):
-        """Выполняет получение и пересылку новых постов из канала"""
         try:
             subscription = next(
                 (
@@ -97,6 +109,8 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                     f"Subscription with id {self.subscription_id} not found in database"
                 )
                 return
+
+            channel_entity = await self._resolve_channel(context, subscription)
 
             posts = await get_posts_from_html(subscription.channel_username)
 
@@ -116,13 +130,13 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
             for post in new_posts:
                 try:
                     message = await context.client.get_messages(
-                        subscription.channel_id, ids=post["id"]
+                        channel_entity, ids=post["id"]
                     )
                     if message:
                         await context.client.forward_messages(
                             subscription.chat_id,
                             message,
-                            from_peer=subscription.channel_id,
+                            from_peer=channel_entity,
                         )
                 except Exception as e:
                     logger.exception(
