@@ -6,7 +6,7 @@ from typing import Any, Callable, Sized
 
 from dacite import Config, from_dict
 
-from steward.data.models.pasha_ai_message import PashaAiMessage
+from steward.data.models.ai_message import AiMessage
 from steward.data.models.saved_links import SavedLinks
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.reminder import CompletedReminder
@@ -26,7 +26,7 @@ from .user import User
 @dataclass
 class Database:
     admin_ids: set[int] = field(default_factory=set)
-    pasha_ai_messages: dict[str, PashaAiMessage] = field(default_factory=dict)
+    ai_messages: dict[str, AiMessage] = field(default_factory=dict)
     army: list[Army] = field(default_factory=list)
     chats: list[Chat] = field(default_factory=list)
     silenced_chats: dict[int, datetime] = field(default_factory=dict)
@@ -45,7 +45,7 @@ class Database:
     user_rewards: list[UserReward] = field(default_factory=list)
     todo_items: list[TodoItem] = field(default_factory=list)
 
-    version: int = 6
+    version: int = 7
 
 
 PARSE_CONFIG = Config(

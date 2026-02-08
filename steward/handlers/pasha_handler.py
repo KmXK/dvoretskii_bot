@@ -1,16 +1,16 @@
-from time import time
-
-import telethon
-from async_lru import alru_cache
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telethon import TelegramClient
 
 from steward.bot.context import ChatBotContext
-from steward.data.models.pasha_ai_message import PashaAiMessage
 from steward.handlers.handler import Handler
 from steward.helpers.ai import PASHA_PROMPT, make_yandex_ai_query
+from steward.helpers.ai_context import execute_ai_request, register_ai_handler
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
+
+register_ai_handler(
+    "pasha",
+    lambda uid, msgs: make_yandex_ai_query(uid, msgs, PASHA_PROMPT),
+)
 
 
 class GptStep(Step):
@@ -35,7 +35,7 @@ class GptStep(Step):
                 ),
             )
             self.is_waiting = True
-            return False  # to stay on this handler in session
+            return False
 
         context.session_context[self.name].append(("user", context.message.text))
 
@@ -77,104 +77,22 @@ class PashaSessionHandler(SessionHandlerBase):
         return "/pasha - начать диалог с Пашей"
 
 
-@alru_cache(1024)
-async def get_message_by_id(tg_client: TelegramClient, chat_id, message_id):
-    message = await tg_client.get_messages(chat_id, ids=message_id)
-    assert message is None or isinstance(message, telethon.types.Message)
-    return message
-
-
-async def make_prompt_from_message(context: ChatBotContext, text: str):
-    result = []
-
-    message = await get_message_by_id(
-        context.client,
-        context.message.chat.id,
-        context.message.id,
-    )
-
-    result.append(("user", text))
-
-    while message:
-        reply_to_msg_id = 0
-        if message.reply_to and message.reply_to.reply_to_msg_id:  # type: ignore
-            reply_to_msg_id = message.reply_to.reply_to_msg_id  # type: ignore
-        elif (
-            f"{context.message.chat.id}_{message.id}"
-            in context.repository.db.pasha_ai_messages
-        ):
-            reply_to_msg_id = context.repository.db.pasha_ai_messages[
-                f"{context.message.chat.id}_{message.id}"
-            ].message_id
-
-        if reply_to_msg_id == 0:
-            break
-
-        message = await get_message_by_id(
-            context.client,
-            context.message.chat.id,
-            reply_to_msg_id,
-        )
-
-        if message and message.message:
-            if message.from_id and message.from_id.user_id == context.bot.id:  # type: ignore
-                result.append(("assistant", message.message))
-            else:
-                result.append(("user", message.message))
-
-    return [*reversed(result)]
-
-
-async def _execute_pasha_ai_request(context: ChatBotContext, text):
-    response = await make_yandex_ai_query(
-        context.message.from_user.id,
-        await make_prompt_from_message(context, text),
-        PASHA_PROMPT,
-    )
-    message = await context.message.reply_markdown(response)
-
-    context.repository.db.pasha_ai_messages[
-        f"{context.message.chat.id}_{message.id}"
-    ] = PashaAiMessage(time(), context.message.id)
-
-    if len(context.repository.db.pasha_ai_messages) > 1000:
-        oldest_message = min(
-            context.repository.db.pasha_ai_messages,
-            key=lambda k: context.repository.db.pasha_ai_messages[k].timestamp,
-        )
-        del context.repository.db.pasha_ai_messages[oldest_message]
-    await context.repository.save()
-
-
 class PashaHandler(Handler):
-    async def chat(
-        self,
-        context: ChatBotContext,
-    ):
+    async def chat(self, context: ChatBotContext):
         if not context.message or not context.message.text:
             return False
 
         if context.message.text.startswith("/pasha") and len(context.message.text) > 7:
             text = context.message.text[7:]
-            await _execute_pasha_ai_request(context, text)
+            await execute_ai_request(
+                context,
+                text,
+                lambda uid, msgs: make_yandex_ai_query(uid, msgs, PASHA_PROMPT),
+                "pasha",
+            )
             return True
         else:
             return False
 
     def help(self):
         return "/pasha <text> - задать вопрос Паше"
-
-
-class PashaRelatedMessageHandler(Handler):
-    async def chat(self, context: ChatBotContext):
-        if (
-            not context.message
-            or not context.message.text
-            or not context.message.reply_to_message
-            or f"{context.message.chat.id}_{context.message.reply_to_message.id}"
-            not in context.repository.db.pasha_ai_messages
-        ):
-            return False
-
-        await _execute_pasha_ai_request(context, context.message.text)
-        return True
