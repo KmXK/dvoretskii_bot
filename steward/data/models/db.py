@@ -17,7 +17,10 @@ from .bill import Bill, DetailsInfo, Payment
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .feature_request import FeatureRequest
+from .reward import Reward, UserReward
 from .rule import Rule
+from .todo_item import TodoItem
+from .user import User
 
 
 @dataclass
@@ -37,6 +40,10 @@ class Database:
     bills: list[Bill] = field(default_factory=list)
     payments: list[Payment] = field(default_factory=list)
     details_infos: list[DetailsInfo] = field(default_factory=list)
+    users: list[User] = field(default_factory=list)
+    rewards: list[Reward] = field(default_factory=list)
+    user_rewards: list[UserReward] = field(default_factory=list)
+    todo_items: list[TodoItem] = field(default_factory=list)
 
     version: int = 6
 

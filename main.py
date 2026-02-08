@@ -46,6 +46,7 @@ from steward.handlers.holidays_handler import HolidaysHandler
 from steward.handlers.id_handler import IdHandler
 from steward.handlers.link_handler import LinkHandler
 from steward.handlers.logs_handler import LogsHandler
+from steward.handlers.me_handler import MeHandler
 from steward.handlers.message_info_handler import MessageInfoHandler
 from steward.handlers.miniapp_handler import MiniAppHandler
 from steward.handlers.newtext_handler import NewTextHandler
@@ -62,6 +63,13 @@ from steward.handlers.remind_handler import (
     RemindEditHandler,
     RemindersHandler,
     RemindRemoveHandler,
+)
+from steward.handlers.reward_handler import (
+    RewardAddHandler,
+    RewardListHandler,
+    RewardPresentHandler,
+    RewardRemoveHandler,
+    RewardTakeHandler,
 )
 from steward.handlers.rule_answer_handler import RuleAnswerHandler
 from steward.handlers.rule_handler import (
@@ -80,6 +88,12 @@ from steward.handlers.subscribe_handler import (
     SubscribeViewHandler,
 )
 from steward.handlers.tarot_handler import TarotHandler
+from steward.handlers.todo_handler import (
+    TodoAddHandler,
+    TodoDoneHandler,
+    TodoListHandler,
+    TodoRemoveHandler,
+)
 from steward.handlers.translate_handler import TranslateHandler
 from steward.handlers.voice_video_handler import VoiceVideoHandler
 from steward.handlers.watch_handler import WatchHandler
@@ -113,6 +127,16 @@ def get_handlers(log_file: None | str):
             ArmyRemoveHandler,
             FeatureRequestEditHandler,
             FeatureRequestViewHandler,
+            MeHandler,
+            RewardListHandler,
+            RewardAddHandler,
+            RewardRemoveHandler,
+            RewardPresentHandler,
+            RewardTakeHandler,
+            TodoDoneHandler,
+            TodoRemoveHandler,
+            TodoAddHandler,
+            TodoListHandler,
             IdHandler,
             PrettyTimeHandler,
             MessageInfoHandler,
