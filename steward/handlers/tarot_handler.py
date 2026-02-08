@@ -10,7 +10,7 @@ from telegram import InputFile
 
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
-from steward.helpers.ai import TAROT_PROMPT, AIModels, make_ai_query_ext
+from steward.helpers.ai import TAROT_PROMPT, make_yandex_ai_query
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +205,8 @@ class TarotHandler(Handler):
                     card_json = json.dumps(card, ensure_ascii=False, indent=2)
                     prompt_text += f"[Карта{i + 1}]\n{card_json}\n\n"
 
-                ai_response = await make_ai_query_ext(
+                ai_response = await make_yandex_ai_query(
                     context.message.from_user.id,
-                    AIModels.YANDEXGPT_5_PRO,
                     [("user", prompt_text)],
                     TAROT_PROMPT,
                 )

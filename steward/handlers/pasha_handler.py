@@ -8,7 +8,7 @@ from telethon import TelegramClient
 from steward.bot.context import ChatBotContext
 from steward.data.models.pasha_ai_message import PashaAiMessage
 from steward.handlers.handler import Handler
-from steward.helpers.ai import PASHA_PROMPT, AIModels, make_ai_query_ext
+from steward.helpers.ai import PASHA_PROMPT, make_yandex_ai_query
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
 
@@ -39,9 +39,8 @@ class GptStep(Step):
 
         context.session_context[self.name].append(("user", context.message.text))
 
-        response = await make_ai_query_ext(
+        response = await make_yandex_ai_query(
             context.update.message.from_user.id,
-            AIModels.YANDEXGPT_5_PRO,
             context.session_context[self.name],
             PASHA_PROMPT,
         )
@@ -127,9 +126,8 @@ async def make_prompt_from_message(context: ChatBotContext, text: str):
 
 
 async def _execute_pasha_ai_request(context: ChatBotContext, text):
-    response = await make_ai_query_ext(
+    response = await make_yandex_ai_query(
         context.message.from_user.id,
-        AIModels.YANDEXGPT_5_PRO,
         await make_prompt_from_message(context, text),
         PASHA_PROMPT,
     )

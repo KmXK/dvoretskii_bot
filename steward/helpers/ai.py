@@ -9,7 +9,7 @@ from steward.helpers.limiter import Duration, check_limit
 logger = logging.getLogger(__name__)
 
 
-class AIModels:
+class YandexModelTypes:
     YANDEXGPT_PASHA = "YANDEXGPT_PASHA"
     YANDEXGPT_5_PRO = "YANDEXGPT_5_PRO"
     LLAMA_70B = "LLAMA_70B"
@@ -23,11 +23,11 @@ with open("prompts/tarot.txt", "r", encoding="utf-8") as f:
     TAROT_PROMPT = f.read()
 
 
-async def make_ai_query_ext(
+async def make_yandex_ai_query(
     user_id,
-    model,
     messages: list[tuple[str, str]],
     system_prompt=None,
+    model: YandexModelTypes = YandexModelTypes.YANDEXGPT_5_PRO,
 ):
     check_limit("ai_total", 20, Duration.MINUTE, name="total")
     check_limit("ai_per_user", 7, 20 * Duration.SECOND, name=user_id)
@@ -58,8 +58,8 @@ async def make_ai_query_ext(
                 raise e
 
 
-async def make_ai_query(user_id, model, text, system_prompt=None):
-    return await make_ai_query_ext(user_id, model, [("user", text)], system_prompt)
+async def make_yandex_ai_query(user_id, model, text, system_prompt=None):
+    return await make_yandex_ai_query(user_id, model, [("user", text)], system_prompt)
 
 
 deepseek_client = None
