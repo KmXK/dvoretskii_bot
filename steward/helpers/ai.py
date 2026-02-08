@@ -15,11 +15,11 @@ class AIModels:
     LLAMA_70B = "LLAMA_70B"
 
 
-with open("jailbreak.txt", "r", encoding="utf-8") as f:
+with open("prompts/jailbreak.txt", "r", encoding="utf-8") as f:
     JAILBREAK_PROMPT = f.read()
-with open("pasha.txt", "r", encoding="utf-8") as f:
+with open("prompts/pasha.txt", "r", encoding="utf-8") as f:
     PASHA_PROMPT = f.read()
-with open("tarot.txt", "r", encoding="utf-8") as f:
+with open("prompts/tarot.txt", "r", encoding="utf-8") as f:
     TAROT_PROMPT = f.read()
 
 
