@@ -95,67 +95,47 @@ def debts_from_transactions(
 
 
 def apply_payments(
-    debts: dict[str, dict[str, float]], payments: list[Payment]
+    debts: dict[str, dict[str, float]],
+    payments: list[Payment],
+    *,
+    clamp_zero: bool = False,
 ) -> dict[str, dict[str, float]]:
     for p in payments:
         if not p.creditor:
             continue
         if p.person in debts and p.creditor in debts[p.person]:
             debts[p.person][p.creditor] -= p.amount
+            if clamp_zero and debts[p.person][p.creditor] < 0:
+                debts[p.person][p.creditor] = 0
     return debts
 
 
-def _amount_per_debtor_for_closed(
-    debts_closed: dict[str, dict[str, float]],
-    debts_other: dict[str, dict[str, float]],
-    payments: list[Payment],
-) -> dict[str, float]:
-    amount_to_remove: dict[str, float] = defaultdict(float)
-    for debtor in set(debts_closed.keys()) | set(debts_other.keys()):
-        creds_closed = debts_closed.get(debtor, {})
-        creds_other = debts_other.get(debtor, {})
-        total_closed_debt = sum(creds_closed.values())
-        if total_closed_debt < 0.01:
-            continue
-        all_creds = sorted(set(creds_closed.keys()) | set(creds_other.keys()))
-        total_paid = sum(p.amount for p in payments if p.person == debtor)
-        for creditor in all_creds:
-            amt_c = creds_closed.get(creditor, 0)
-            amt_o = creds_other.get(creditor, 0)
-            total_debt = amt_c + amt_o
-            if total_debt < 0.01 or total_paid < 0.01:
-                continue
-            reduce_amt = min(total_debt, total_paid)
-            reduce_closed = min(amt_c, reduce_amt)
-            amount_to_remove[debtor] += reduce_closed
-            total_paid -= reduce_amt
-        amount_to_remove[debtor] = min(amount_to_remove[debtor], total_closed_debt)
-    return dict(amount_to_remove)
-
-
 def _payments_to_remove_for_closed(
-    amount_per_debtor: dict[str, float],
+    debts_closed: dict[str, dict[str, float]],
     payments: list[Payment],
 ) -> tuple[list[Payment], list[tuple[Payment, float]]]:
     to_remove: list[Payment] = []
     to_reduce: list[tuple[Payment, float]] = []
-    sorted_payments = sorted(payments, key=lambda p: p.timestamp)
-    consumed: dict[str, float] = defaultdict(float)
-    for p in sorted_payments:
-        need = amount_per_debtor.get(p.person, 0) - consumed[p.person]
-        if need < 0.01:
+    remaining: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for debtor, creds in debts_closed.items():
+        for creditor, amount in creds.items():
+            remaining[debtor][creditor] = amount
+    for p in sorted(payments, key=lambda x: x.timestamp):
+        if not p.creditor:
             continue
-        if p.amount <= need + 0.01:
+        debt = remaining.get(p.person, {}).get(p.creditor, 0)
+        if debt < 0.01:
+            continue
+        if p.amount <= debt + 0.01:
             to_remove.append(p)
-            consumed[p.person] += p.amount
+            remaining[p.person][p.creditor] -= p.amount
         else:
-            new_amount = round(p.amount - need, 2)
+            new_amount = round(p.amount - debt, 2)
             if new_amount < 0.01:
                 to_remove.append(p)
-                consumed[p.person] += p.amount
             else:
                 to_reduce.append((p, new_amount))
-                consumed[p.person] += need
+            remaining[p.person][p.creditor] = 0
     return to_remove, to_reduce
 
 
@@ -215,7 +195,7 @@ def _bills_closable(
     for b in other_bills:
         tx_other.extend(load_transactions(b.file_id))
     debts_closed = debts_from_transactions(tx_closed)
-    debts_closed = apply_payments(debts_closed, payments)
+    debts_closed = apply_payments(debts_closed, payments, clamp_zero=True)
     debts_closed = _net_direct_debts(debts_closed)
     remaining = debts_to_list(debts_closed)
     return len(remaining) == 0
@@ -482,7 +462,6 @@ class BillAddHandler(SessionHandlerBase):
         raw_rows = _read_bill_raw_rows(file_id)
         transactions = parse_transactions_from_sheet(raw_rows)
         debts = debts_from_transactions(transactions)
-        debts = apply_payments(debts, self.repository.db.payments)
         debts = _net_direct_debts(debts)
         debts_list = debts_to_list(debts)
         closable = [bill_id] if not debts_list else None
@@ -559,7 +538,7 @@ class BillReportHandler(Handler):
         all_bills = self.repository.db.bills
         all_tx = _load_all_transactions(all_bills)
         debts_this = debts_from_transactions(transactions)
-        debts_this = apply_payments(debts_this, self.repository.db.payments)
+        debts_this = apply_payments(debts_this, self.repository.db.payments, clamp_zero=True)
         debts_this = _net_direct_debts(debts_this)
         debts_list_this = debts_to_list(debts_this)
         debts_all = debts_from_transactions(all_tx)
@@ -675,7 +654,7 @@ def _generate_single_bill_report_text(
     transactions = parse_transactions_from_sheet(raw_rows[:-1] if raw_rows else [])
     all_tx = _load_all_transactions(all_bills)
     debts_this = debts_from_transactions(transactions)
-    debts_this = apply_payments(debts_this, payments)
+    debts_this = apply_payments(debts_this, payments, clamp_zero=True)
     debts_this = _net_direct_debts(debts_this)
     debts_list_this = debts_to_list(debts_this)
     debts_all = debts_from_transactions(all_tx)
@@ -997,21 +976,13 @@ class BillCloseHandler(Handler):
                 "или остаются непогашенные долги. Проверьте отчёт по счёту."
             )
             return True
-        bills_to_close_ids = {b.id for b in bills_to_close}
-        other_bills = [b for b in bills if b.id not in bills_to_close_ids]
         tx_closed = []
         for b in bills_to_close:
             tx_closed.extend(_load_bill_transactions(b.file_id))
-        tx_other = []
-        for b in other_bills:
-            tx_other.extend(_load_bill_transactions(b.file_id))
         debts_closed = debts_from_transactions(tx_closed)
-        debts_other = debts_from_transactions(tx_other)
-        amount_per_debtor = _amount_per_debtor_for_closed(
-            debts_closed, debts_other, self.repository.db.payments
-        )
+        debts_closed = _net_direct_debts(debts_closed)
         to_remove, to_reduce = _payments_to_remove_for_closed(
-            amount_per_debtor, self.repository.db.payments
+            debts_closed, self.repository.db.payments
         )
         for p in to_remove:
             self.repository.db.payments.remove(p)
