@@ -98,10 +98,12 @@ openrouter_client = None
 async def make_openrouter_query(user_id, model, messages: list[tuple[str, str]], system_prompt=""):
     global openrouter_client
     if not openrouter_client:
+        proxy = environ.get("DOWNLOAD_PROXY")
         openrouter_client = OpenAI(
             api_key=environ.get("OPENROUTER_KEY"),
             base_url="https://openrouter.ai/api/v1",
             timeout=httpx.Timeout(120.0, connect=30.0),
+            http_client=httpx.Client(proxy=proxy) if proxy else None,
         )
 
     check_limit("openrouter_total", 20, Duration.MINUTE)
