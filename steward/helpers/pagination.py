@@ -184,6 +184,7 @@ class Paginator[T]:
             list[list[InlineKeyboardButton]],
         ] = lambda x: [x],
         metadata: str | Callable[[int], str] = "",
+        parse_mode: str = "markdown",
     ):
         self.unique_keyboard_name = unique_keyboard_name
         self.list_header = list_header
@@ -195,12 +196,13 @@ class Paginator[T]:
         self.start_from_last_page = start_from_last_page
         self.keyboard_decorator = keyboard_decorator
         self.metadata = metadata
+        self.parse_mode = parse_mode
 
     async def show_list(self, update: Update):
         text, keyboard = self._get_data_page()
         await update.message.reply_text(
             text=text,
-            parse_mode="markdown",
+            parse_mode=self.parse_mode,
             reply_markup=None
             if keyboard is None
             else InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
@@ -230,7 +232,7 @@ class Paginator[T]:
             text, keyboard = self._get_data_page(parsed.page_number)
             await update.callback_query.message.edit_text(
                 text=text,
-                parse_mode="markdown",
+                parse_mode=self.parse_mode,
                 reply_markup=None
                 if keyboard is None
                 else InlineKeyboardMarkup(self.keyboard_decorator(keyboard)),
