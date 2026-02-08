@@ -15,12 +15,19 @@ class YandexModelTypes:
     LLAMA_70B = "LLAMA_70B"
 
 
-with open("prompts/jailbreak.txt", "r", encoding="utf-8") as f:
-    JAILBREAK_PROMPT = f.read()
-with open("prompts/pasha.txt", "r", encoding="utf-8") as f:
-    PASHA_PROMPT = f.read()
-with open("prompts/tarot.txt", "r", encoding="utf-8") as f:
-    TAROT_PROMPT = f.read()
+class OpenRouterModel:
+    GROK_4_FAST = "x-ai/grok-4-fast"
+    AUTO = "openrouter/auto"
+
+
+def get_prompt(prompt_name: str):
+    with open(f"prompts/{prompt_name}.txt", "r", encoding="utf-8") as f:
+        return f.read()
+
+JAILBREAK_PROMPT = get_prompt("jailbreak")
+PASHA_PROMPT = get_prompt("pasha")
+TAROT_PROMPT = get_prompt("tarot")
+GROK_SHORT_AGGRESSIVE = get_prompt("grok_short_aggressive")
 
 
 async def make_yandex_ai_query(
@@ -77,6 +84,32 @@ def make_deepseek_query(user_id, text, system_prompt=""):
 
     response = deepseek_client.chat.completions.create(
         model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text},
+        ],
+        stream=False,
+    )
+    assert isinstance(response.choices[0].message.content, str)
+    return response.choices[0].message.content
+
+
+openrouter_client = None
+
+
+def make_openrouter_query(user_id, model, text, system_prompt=""):
+    global openrouter_client
+    if not openrouter_client:
+        openrouter_client = OpenAI(
+            api_key=environ.get("OPENROUTER_KEY"),
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+    check_limit("openrouter_total", 20, Duration.MINUTE)
+    check_limit("openrouter_per_user", 7, 20 * Duration.SECOND, name=user_id)
+
+    response = openrouter_client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
