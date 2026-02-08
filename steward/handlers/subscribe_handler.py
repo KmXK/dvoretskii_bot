@@ -174,11 +174,18 @@ class VerifyChannelStep(Step):
                 return True
 
             try:
+                if channel_username:
+                    channel_entity = await context.client.get_input_entity(
+                        channel_username
+                    )
+                else:
+                    channel_entity = channel_id
+
                 posts = await get_posts_from_html(channel_username)
                 if posts:
                     last_post = posts[-1]
                     message = await context.client.get_messages(
-                        channel_id, ids=last_post["id"]
+                        channel_entity, ids=last_post["id"]
                     )
                     if message:
                         await context.message.chat.send_message(
@@ -187,7 +194,7 @@ class VerifyChannelStep(Step):
                         await context.client.forward_messages(
                             context.message.chat_id,
                             message,
-                            from_peer=channel_id,
+                            from_peer=channel_entity,
                         )
                         self.last_message_sent = True
                 else:
