@@ -6,6 +6,7 @@ from steward.bot.context import ChatBotContext
 from steward.delayed_action.watch import WatchDelayedAction
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
+from steward.helpers.cake_price import cake_fetcher
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,10 @@ class WatchHandler(Handler):
 
         now = datetime.now(tz=ZoneInfo("Europe/Minsk"))
         time_str = now.strftime("%d.%m.%Y %H:%M")
+
+        cake = await cake_fetcher.get_status()
+        if cake:
+            time_str += f"\n{cake.format()}"
 
         sent_message = await context.message.reply_text(time_str)
 
