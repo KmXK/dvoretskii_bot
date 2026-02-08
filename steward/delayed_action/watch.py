@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from steward.delayed_action.base import DelayedAction, Generator
 from steward.delayed_action.context import DelayedActionContext
+from steward.helpers.cake_price import cake_fetcher
 from steward.helpers.class_mark import class_mark
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,11 @@ class WatchDelayedAction(DelayedAction):
     async def execute(self, context: DelayedActionContext):
         now = datetime.now(tz=ZoneInfo("Europe/Minsk"))
         time_str = now.strftime("%d.%m.%Y %H:%M")
-        
+
+        cake = await cake_fetcher.get_status()
+        if cake:
+            time_str += f"\n{cake.format()}"
+
         try:
             await context.bot.edit_message_text(
                 chat_id=self.chat_id,
