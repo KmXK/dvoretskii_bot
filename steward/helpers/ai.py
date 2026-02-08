@@ -30,6 +30,7 @@ JAILBREAK_PROMPT = get_prompt("jailbreak")
 PASHA_PROMPT = get_prompt("pasha")
 TAROT_PROMPT = get_prompt("tarot")
 GROK_SHORT_AGGRESSIVE = get_prompt("grok_short_aggressive")
+CONCISE = get_prompt("concise")
 
 
 async def make_yandex_ai_query(
