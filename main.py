@@ -157,7 +157,6 @@ def get_handlers(log_file: None | str):
             PashaHandler,
             PashaSessionHandler,
             AIHandler,
-            RuleAnswerHandler,
             VoiceVideoHandler,
             MultiplyHandler,
             WatchHandler,
@@ -173,6 +172,8 @@ def get_handlers(log_file: None | str):
             BillDetailsEditHandler,
             BillHelpHandler,
             GoogleDriveListHandler,
+
+            RuleAnswerHandler,
         ],
     )
 
