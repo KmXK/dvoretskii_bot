@@ -80,11 +80,11 @@ class Bot:
                 .local_mode(True)
             )
 
+        from steward.bot.message_splitter import patch_send_message
+        patch_send_message()
+
         application = applicationBuilder.concurrent_updates(True).build()
         self.bot = application.bot
-
-        from steward.bot.message_splitter import patch_bot_send_message
-        patch_bot_send_message(self.bot)
 
         application.add_handler(MessageHandler(filters.ALL, self._chat, block=False))
         application.add_handler(MessageReactionHandler(self._chat, block=False))

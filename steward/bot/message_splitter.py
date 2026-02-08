@@ -1,4 +1,5 @@
 from telegram.constants import MessageLimit
+from telegram.ext import ExtBot
 
 MAX_LEN = MessageLimit.MAX_TEXT_LENGTH
 
@@ -27,23 +28,28 @@ def split_message(text: str) -> list[str]:
     return chunks
 
 
-def patch_bot_send_message(bot):
-    original = bot.send_message
+_original_send_message = ExtBot.send_message
 
-    async def send_message_split(*args, **kwargs):
-        text = kwargs.get("text") or (args[1] if len(args) > 1 else None)
-        if not text or len(text) <= MAX_LEN:
-            return await original(*args, **kwargs)
 
-        chat_id = kwargs.get("chat_id") or (args[0] if args else None)
-        parts = split_message(text)
+async def _splitting_send_message(self, *args, **kwargs):
+    text = kwargs.get("text") or (args[1] if len(args) > 1 else None)
+    if not text or len(text) <= MAX_LEN:
+        return await _original_send_message(self, *args, **kwargs)
 
-        kwargs.pop("text", None)
-        clean_args = args[2:] if len(args) > 1 else args[1:] if args else ()
+    chat_id = kwargs.get("chat_id") or (args[0] if args else None)
+    parts = split_message(text)
 
-        last_message = None
-        for part in parts:
-            last_message = await original(chat_id, part, *clean_args, **kwargs)
-        return last_message
+    if "text" in kwargs:
+        kwargs.pop("text")
+        clean_args = args
+    else:
+        clean_args = (args[0],) + args[2:] if len(args) > 1 else args
 
-    bot.send_message = send_message_split
+    last_message = None
+    for part in parts:
+        last_message = await _original_send_message(self, *clean_args, text=part, **kwargs)
+    return last_message
+
+
+def patch_send_message():
+    ExtBot.send_message = _splitting_send_message
