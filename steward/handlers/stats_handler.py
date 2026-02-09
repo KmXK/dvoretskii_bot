@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -55,17 +56,29 @@ PERIOD_LABELS = {
     StatsPeriod.ALL_TIME: "За всё время",
 }
 
-PERIOD_RANGE = {
-    StatsPeriod.DAY: "24h",
-    StatsPeriod.MONTH: "30d",
-    StatsPeriod.ALL_TIME: "180d",
-}
+def _period_range(period: StatsPeriod) -> str:
+    now = datetime.now()
+    if period == StatsPeriod.DAY:
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return f"{max(int((now - midnight).total_seconds()), 60)}s"
+    if period == StatsPeriod.MONTH:
+        first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return f"{max(int((now - first).total_seconds()), 60)}s"
+    return "180d"
 
-PREV_OFFSET: dict[StatsPeriod, str | None] = {
-    StatsPeriod.DAY: "24h",
-    StatsPeriod.MONTH: "30d",
-    StatsPeriod.ALL_TIME: None,
-}
+
+def _prev_period(period: StatsPeriod) -> tuple[str, str] | None:
+    now = datetime.now()
+    if period == StatsPeriod.DAY:
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        offset = f"{max(int((now - midnight).total_seconds()), 60)}s"
+        return "86400s", offset
+    if period == StatsPeriod.MONTH:
+        first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        offset = f"{max(int((now - first).total_seconds()), 60)}s"
+        prev_month_days = (first - timedelta(days=1)).day
+        return f"{prev_month_days * 86400}s", offset
+    return None
 
 
 def _promql(
@@ -74,6 +87,7 @@ def _promql(
     period: StatsPeriod,
     chat_id: str,
     top_n: int | None = None,
+    range_str: str | None = None,
     offset: str | None = None,
 ) -> str:
     filters = dict(metric.filters)
@@ -81,8 +95,9 @@ def _promql(
         filters["chat_id"] = chat_id
 
     label_filter = ", ".join(f'{k}="{v}"' for k, v in filters.items())
+    r = range_str or _period_range(period)
     offset_str = f" offset {offset}" if offset else ""
-    expr = f"increase({metric.metric_name}{{{label_filter}}}[{PERIOD_RANGE[period]}]{offset_str})"
+    expr = f"increase({metric.metric_name}{{{label_filter}}}[{r}]{offset_str})"
     agg = f"sum by (user_id, user_name) ({expr})"
 
     return f"topk({top_n}, {agg})" if top_n else agg
@@ -223,9 +238,12 @@ class StatsHandler(Handler):
         current = await metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
 
         prev_map: dict[str, float] | None = None
-        offset = PREV_OFFSET[period]
-        if offset:
-            prev_results = await metrics.query(_promql(m, scope, period, chat_id, offset=offset))
+        prev = _prev_period(period)
+        if prev:
+            prev_range, prev_offset = prev
+            prev_results = await metrics.query(
+                _promql(m, scope, period, chat_id, range_str=prev_range, offset=prev_offset),
+            )
             prev_map = {s.labels.get("user_id", ""): s.value for s in prev_results}
 
         header = f"{m.label}\n{SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
