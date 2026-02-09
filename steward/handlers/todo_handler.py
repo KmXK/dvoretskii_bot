@@ -84,11 +84,35 @@ class TodoAddHandler(SessionHandlerBase):
             ),
         ])
 
+    async def chat(self, context):
+        if not validate_command_msg(context.update, "todo"):
+            return False
+        parts = context.message.text.split(maxsplit=2)
+        if len(parts) < 2 or parts[1] != "add":
+            return False
+        if len(parts) == 3:
+            return await self._add_inline(context, parts[2])
+        return await super().chat(context)
+
+    async def _add_inline(self, context: ChatBotContext, text: str):
+        max_id = max(
+            (t.id for t in self.repository.db.todo_items), default=0
+        )
+        todo = TodoItem(
+            id=max_id + 1,
+            chat_id=context.message.chat.id,
+            text=text,
+        )
+        self.repository.db.todo_items.append(todo)
+        await self.repository.save()
+        await context.message.reply_text(f"Событие добавлено (id: {todo.id})")
+        return True
+
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "todo"):
             return False
-        parts = update.message.text.split()
-        if len(parts) < 2 or parts[1] != "add":
+        parts = update.message.text.split(maxsplit=2)
+        if len(parts) != 2 or parts[1] != "add":
             return False
         session_context["chat_id"] = update.message.chat.id
         return True
