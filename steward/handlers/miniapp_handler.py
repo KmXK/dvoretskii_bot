@@ -27,8 +27,8 @@ class MiniAppHandler(Handler):
             
             # Telegram требует HTTPS для Web App кнопок
             # Если URL начинается с http://, используем обычную URL кнопку
-            if web_url.startswith("https://"):
-                # Создаем кнопку с Web App (только для HTTPS)
+            is_private = context.message.chat.type == "private"
+            if is_private and web_url.startswith("https://"):
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "Открыть приложение",
@@ -36,7 +36,6 @@ class MiniAppHandler(Handler):
                     )]
                 ])
             else:
-                # Для HTTP используем обычную URL кнопку
                 keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "Открыть приложение",
