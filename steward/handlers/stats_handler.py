@@ -2,11 +2,12 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
-from steward.metrics.base import MetricSample
+from steward.metrics.base import ContextMetrics, MetricSample
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class StatsHandler(Handler):
             return False
 
         chat_id = str(context.message.chat_id)
-        text, keyboard = await self._build_main(StatsScope.CHAT, StatsPeriod.DAY, 0, chat_id)
+        text, keyboard = await self._build_main(context.metrics, StatsScope.CHAT, StatsPeriod.DAY, 0, chat_id)
         await context.message.reply_markdown(text=text, reply_markup=keyboard)
         return True
 
@@ -165,26 +166,29 @@ class StatsHandler(Handler):
             return False
 
         if view.startswith("m"):
-            text, keyboard = await self._build_main(scope, period, int(view[1:]), chat_id)
+            text, keyboard = await self._build_main(context.metrics, scope, period, int(view[1:]), chat_id)
         elif view.startswith("d"):
-            text, keyboard = await self._build_detail(scope, period, int(view[1:]), chat_id)
+            text, keyboard = await self._build_detail(context.metrics, scope, period, int(view[1:]), chat_id)
         else:
             return False
 
-        await context.callback_query.message.edit_text(
-            text=text, parse_mode="markdown", reply_markup=keyboard,
-        )
+        try:
+            await context.callback_query.message.edit_text(
+                text=text, parse_mode="markdown", reply_markup=keyboard,
+            )
+        except BadRequest:
+            pass
         return True
 
     async def _build_main(
-        self, scope: StatsScope, period: StatsPeriod, offset: int, chat_id: str,
+        self, metrics: ContextMetrics, scope: StatsScope, period: StatsPeriod, offset: int, chat_id: str,
     ) -> tuple[str, InlineKeyboardMarkup]:
         n = len(STATS)
         indices = [(offset + i) % n for i in range(min(WINDOW_SIZE, n))]
 
         sections = []
         for i in indices:
-            result = await self.metrics.query(_promql(STATS[i], scope, period, chat_id, top_n=MAIN_TOP_N))
+            result = await metrics.query(_promql(STATS[i], scope, period, chat_id, top_n=MAIN_TOP_N))
             sections.append(_format_section(result, STATS[i].label))
 
         header = f"📊 {SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
@@ -209,19 +213,19 @@ class StatsHandler(Handler):
         return text, InlineKeyboardMarkup(rows)
 
     async def _build_detail(
-        self, scope: StatsScope, period: StatsPeriod, idx: int, chat_id: str,
+        self, metrics: ContextMetrics, scope: StatsScope, period: StatsPeriod, idx: int, chat_id: str,
     ) -> tuple[str, InlineKeyboardMarkup]:
         if idx < 0 or idx >= len(STATS):
             return "Метрика не найдена", InlineKeyboardMarkup([])
 
         m = STATS[idx]
 
-        current = await self.metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
+        current = await metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
 
         prev_map: dict[str, float] | None = None
         offset = PREV_OFFSET[period]
         if offset:
-            prev_results = await self.metrics.query(_promql(m, scope, period, chat_id, offset=offset))
+            prev_results = await metrics.query(_promql(m, scope, period, chat_id, offset=offset))
             prev_map = {s.labels.get("user_id", ""): s.value for s in prev_results}
 
         header = f"{m.label}\n{SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
