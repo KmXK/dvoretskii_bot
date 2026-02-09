@@ -30,7 +30,7 @@ from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
-from steward.metrics import MetricsEngine
+from steward.metrics import ContextMetrics, MetricsEngine
 from steward.session.session_registry import try_get_session_handler
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,6 @@ class Bot:
         for handler in handlers:
             handler.repository = repository
             handler.bot = self.bot
-            handler.metrics = metrics
 
     def start(
         self,
@@ -125,6 +124,9 @@ class Bot:
                 close_loop=False,
             )
 
+    def _empty_metrics(self) -> ContextMetrics:
+        return ContextMetrics(self.metrics, {})
+
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("Got update")
         if update.message is not None:
@@ -134,6 +136,7 @@ class Bot:
                 self.client,
                 update,
                 context,
+                self._empty_metrics(),
                 update.message,
             )
 
@@ -149,6 +152,7 @@ class Bot:
                 self.client,
                 update,
                 context,
+                self._empty_metrics(),
                 update.message_reaction,
             )
 
@@ -171,6 +175,7 @@ class Bot:
             self.client,
             update,
             context,
+            self._empty_metrics(),
             update.callback_query,
         )
 
@@ -195,15 +200,15 @@ class Bot:
             chat_name = (chat.title or chat.username or chat.first_name or chat_id) if chat else "unknown"
             user_id = str(user.id)
             user_name = user.username or user.first_name or user_id
-            self.metrics.inc("bot_messages_total", {
+            context.metrics = ContextMetrics(self.metrics, {
                 "chat_id": chat_id,
                 "chat_name": chat_name,
                 "user_id": user_id,
                 "user_name": user_name,
-                "action_type": action,
             })
+            context.metrics.inc("bot_messages_total", {"action_type": action})
         except UnsupportedUpdateType:
-            pass
+            context.metrics = ContextMetrics(self.metrics, {})
 
         try:
             session_handler = try_get_session_handler(update)

@@ -2,7 +2,6 @@ from telegram.ext import ExtBot
 
 from steward.bot.context import CallbackBotContext, ChatBotContext, ReactionBotContext
 from steward.data.repository import Repository
-from steward.metrics import MetricsEngine
 
 
 class Handler:
@@ -15,7 +14,6 @@ class Handler:
     # initialized externally (# TODO: перепридумать!)
     repository: Repository
     bot: ExtBot[None]
-    metrics: MetricsEngine
 
     # to initialize handler
     async def init(self):

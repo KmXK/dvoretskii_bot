@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes, ExtBot
 from telethon import TelegramClient
 
 from steward.data.repository import Repository
+from steward.metrics.base import ContextMetrics
 
 
 @dataclass
@@ -19,6 +20,7 @@ class BotContext:
 class BotActionContext(BotContext):
     update: Update
     tg_context: ContextTypes.DEFAULT_TYPE
+    metrics: ContextMetrics
 
 
 @dataclass
