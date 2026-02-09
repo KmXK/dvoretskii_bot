@@ -82,6 +82,7 @@ from steward.handlers.silence_handler import (
     SilenceCommandHandler,
     SilenceEnforcerHandler,
 )
+from steward.handlers.stats_handler import StatsHandler
 from steward.handlers.subscribe_handler import (
     SubscribeHandler,
     SubscribeRemoveHandler,
@@ -172,6 +173,7 @@ def get_handlers(log_file: None | str):
             BillDetailsEditHandler,
             BillHelpHandler,
             GoogleDriveListHandler,
+            StatsHandler,
 
             RuleAnswerHandler,
         ],
@@ -217,7 +219,8 @@ def main():
     metrics_engine: MetricsEngine
     if os.environ.get("METRICS_ENABLED") == "true":
         metrics_port = int(os.environ.get("METRICS_PORT", "9090"))
-        metrics_engine = PrometheusMetricsEngine()
+        vm_url = os.environ.get("VICTORIAMETRICS_URL", "http://victoriametrics:8428")
+        metrics_engine = PrometheusMetricsEngine(vm_url=vm_url)
         metrics_engine.start_server(metrics_port)
         logging.info(f"Metrics server started on port {metrics_port}")
     else:

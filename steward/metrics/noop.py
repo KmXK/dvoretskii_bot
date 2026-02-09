@@ -1,4 +1,5 @@
-from steward.metrics.base import Labels, MetricsEngine
+from steward.metrics.base import Labels, MetricSample, MetricsEngine
+
 
 class NoopMetricsEngine(MetricsEngine):
     def inc(self, name: str, labels: Labels, value: float = 1) -> None:
@@ -12,4 +13,7 @@ class NoopMetricsEngine(MetricsEngine):
 
     def start_server(self, port: int) -> None:
         pass
+
+    async def query(self, promql: str) -> list[MetricSample]:
+        return []
 
