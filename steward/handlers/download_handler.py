@@ -42,6 +42,16 @@ URL_REGEX = (
 
 YT_LIMIT = "YT_LIMIT_OBJECT"
 
+DOWNLOAD_TYPE_MAP = {
+    "tiktok": "tiktok",
+    "instagram.com": "reels",
+    "youtube.com": "youtube",
+    "youtu.be": "youtube",
+    "pinterest.com": "pinterest",
+    "pin.it": "pinterest",
+    "music.yandex": "music",
+}
+
 
 class DownloadHandler(Handler):
     # TODO: Make process pool
@@ -93,7 +103,7 @@ class DownloadHandler(Handler):
                     if not isinstance(handlers, list):
                         handlers = [handlers]
 
-                    # success = False
+                    success = False
                     for handler in handlers:
                         success = False
                         for i in range(1):
@@ -106,8 +116,10 @@ class DownloadHandler(Handler):
                         if success:
                             break
 
-                    # if not success:
-                    #     await context.message.reply_text("не смог =(")
+                    if success:
+                        download_type = DOWNLOAD_TYPE_MAP.get(handlerPath, handlerPath)
+                        context.metrics.inc("bot_downloads_total", {"download_type": download_type})
+
                     return True
 
     async def callback(self, context):

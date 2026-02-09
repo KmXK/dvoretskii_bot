@@ -31,6 +31,7 @@ def stat(label: str, metric_name: str, **filters) -> StatMetric:
 STATS = [
     stat("💬 Топ по сообщениям", "bot_messages_total", action_type="chat"),
     stat("❤️ Топ по реакциям", "bot_messages_total", action_type="reaction"),
+    stat("🎬 Топ по видосикам", "bot_downloads_total"),
 ]
 
 
