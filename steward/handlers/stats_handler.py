@@ -1,6 +1,6 @@
 import logging
+from dataclasses import dataclass, field
 from enum import Enum
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
@@ -9,6 +9,27 @@ from steward.helpers.command_validation import validate_command_msg
 from steward.metrics.base import MetricSample
 
 logger = logging.getLogger(__name__)
+
+MAIN_TOP_N = 3
+DETAIL_TOP_N = 15
+WINDOW_SIZE = 2
+
+
+@dataclass
+class StatMetric:
+    label: str
+    metric_name: str
+    filters: dict[str, str] = field(default_factory=dict)
+
+
+def stat(label: str, metric_name: str, **filters) -> StatMetric:
+    return StatMetric(label=label, metric_name=metric_name, filters=filters)
+
+
+STATS = [
+    stat("💬 Топ по сообщениям", "bot_messages_total", action_type="chat"),
+    stat("❤️ Топ по реакциям", "bot_messages_total", action_type="reaction"),
+]
 
 
 class StatsScope(Enum):
@@ -39,53 +60,81 @@ PERIOD_RANGE = {
     StatsPeriod.ALL_TIME: "180d",
 }
 
+PREV_OFFSET: dict[StatsPeriod, str | None] = {
+    StatsPeriod.DAY: "24h",
+    StatsPeriod.MONTH: "30d",
+    StatsPeriod.ALL_TIME: None,
+}
 
-def _build_promql(action_type: str, scope: StatsScope, period: StatsPeriod, chat_id: str) -> str:
-    label_filter = f'action_type="{action_type}"'
+
+def _promql(
+    metric: StatMetric,
+    scope: StatsScope,
+    period: StatsPeriod,
+    chat_id: str,
+    top_n: int | None = None,
+    offset: str | None = None,
+) -> str:
+    filters = dict(metric.filters)
     if scope == StatsScope.CHAT:
-        label_filter += f', chat_id="{chat_id}"'
+        filters["chat_id"] = chat_id
 
-    metric = f"bot_messages_total{{{label_filter}}}"
-    expr = f"increase({metric}[{PERIOD_RANGE[period]}])"
+    label_filter = ", ".join(f'{k}="{v}"' for k, v in filters.items())
+    offset_str = f" offset {offset}" if offset else ""
+    expr = f"increase({metric.metric_name}{{{label_filter}}}[{PERIOD_RANGE[period]}]{offset_str})"
+    agg = f"sum by (user_id, user_name) ({expr})"
 
-    return f"topk(3, sum by (user_id, user_name) ({expr}))"
-
-
-def _build_keyboard(scope: StatsScope, period: StatsPeriod, chat_id: str) -> InlineKeyboardMarkup:
-    scope_buttons = []
-    for s in StatsScope:
-        text = SCOPE_LABELS[s]
-        if s == scope:
-            text = f"· {text} ·"
-        scope_buttons.append(InlineKeyboardButton(
-            text,
-            callback_data=f"stats|{s.value}|{period.value}|{chat_id}",
-        ))
-
-    period_buttons = []
-    for p in StatsPeriod:
-        text = PERIOD_LABELS[p]
-        if p == period:
-            text = f"· {text} ·"
-        period_buttons.append(InlineKeyboardButton(
-            text,
-            callback_data=f"stats|{scope.value}|{p.value}|{chat_id}",
-        ))
-
-    return InlineKeyboardMarkup([scope_buttons, period_buttons])
+    return f"topk({top_n}, {agg})" if top_n else agg
 
 
-def _format_top(items: list[MetricSample], label: str) -> str:
+def _cb(scope: StatsScope, period: StatsPeriod, view: str, chat_id: str) -> str:
+    return f"st|{scope.value}|{period.value}|{view}|{chat_id}"
+
+
+def _format_line(i: int, item: MetricSample, prev_map: dict[str, float] | None = None) -> str:
+    name = item.labels.get("user_name", "???")
+    value = int(item.value) if item.value == int(item.value) else round(item.value, 1)
+    line = f"{i}. `@{name}` — {value}"
+
+    if prev_map is not None:
+        prev_val = prev_map.get(item.labels.get("user_id", ""))
+        if prev_val and prev_val > 0:
+            pct = (item.value - prev_val) / prev_val * 100
+            sign = "+" if pct >= 0 else ""
+            line += f" ({sign}{pct:.1f}%)"
+
+    return line
+
+
+def _format_section(items: list[MetricSample], label: str) -> str:
     if not items:
         return f"{label}:\nНет данных"
 
     lines = [f"{label}:"]
     for i, item in enumerate(items, 1):
-        logging.info(item.labels)
-        name = item.labels.get("user_name", "???")
-        value = int(item.value) if item.value == int(item.value) else round(item.value, 1)
-        lines.append(f"{i}. `@{name}` — {value}")
+        lines.append(_format_line(i, item))
     return "\n".join(lines)
+
+
+def _scope_period_rows(
+    scope: StatsScope, period: StatsPeriod, view: str, chat_id: str,
+) -> list[list[InlineKeyboardButton]]:
+    return [
+        [
+            InlineKeyboardButton(
+                f"· {SCOPE_LABELS[s]} ·" if s == scope else SCOPE_LABELS[s],
+                callback_data=_cb(s, period, view, chat_id),
+            )
+            for s in StatsScope
+        ],
+        [
+            InlineKeyboardButton(
+                f"· {PERIOD_LABELS[p]} ·" if p == period else PERIOD_LABELS[p],
+                callback_data=_cb(scope, p, view, chat_id),
+            )
+            for p in StatsPeriod
+        ],
+    ]
 
 
 class StatsHandler(Handler):
@@ -94,50 +143,101 @@ class StatsHandler(Handler):
             return False
 
         chat_id = str(context.message.chat_id)
-        scope = StatsScope.CHAT
-        period = StatsPeriod.DAY
-
-        text, keyboard = await self._build_stats(scope, period, chat_id)
+        text, keyboard = await self._build_main(StatsScope.CHAT, StatsPeriod.DAY, 0, chat_id)
         await context.message.reply_markdown(text=text, reply_markup=keyboard)
         return True
 
     async def callback(self, context: CallbackBotContext) -> bool:
         data = context.callback_query.data
-        if not data or not data.startswith("stats|"):
+        if not data or not data.startswith("st|"):
             return False
 
         parts = data.split("|")
-        if len(parts) != 4:
+        if len(parts) != 5:
             return False
 
         try:
             scope = StatsScope(parts[1])
             period = StatsPeriod(parts[2])
-            chat_id = parts[3]
+            view = parts[3]
+            chat_id = parts[4]
         except ValueError:
             return False
 
-        text, keyboard = await self._build_stats(scope, period, chat_id)
-        await context.callback_query.message.edit_text(parse_mode="markdown", text=text, reply_markup=keyboard)
+        if view.startswith("m"):
+            text, keyboard = await self._build_main(scope, period, int(view[1:]), chat_id)
+        elif view.startswith("d"):
+            text, keyboard = await self._build_detail(scope, period, int(view[1:]), chat_id)
+        else:
+            return False
+
+        await context.callback_query.message.edit_text(
+            text=text, parse_mode="markdown", reply_markup=keyboard,
+        )
         return True
 
-    async def _build_stats(
-        self,
-        scope: StatsScope,
-        period: StatsPeriod,
-        chat_id: str,
+    async def _build_main(
+        self, scope: StatsScope, period: StatsPeriod, offset: int, chat_id: str,
     ) -> tuple[str, InlineKeyboardMarkup]:
-        messages_top = await self.metrics.query(_build_promql("chat", scope, period, chat_id))
-        reactions_top = await self.metrics.query(_build_promql("reaction", scope, period, chat_id))
+        n = len(STATS)
+        indices = [(offset + i) % n for i in range(min(WINDOW_SIZE, n))]
+
+        sections = []
+        for i in indices:
+            result = await self.metrics.query(_promql(STATS[i], scope, period, chat_id, top_n=MAIN_TOP_N))
+            sections.append(_format_section(result, STATS[i].label))
 
         header = f"📊 {SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
-        messages_text = _format_top(messages_top, "💬 Топ по сообщениям")
-        reactions_text = _format_top(reactions_top, "❤️ Топ по реакциям")
+        text = header + "\n\n" + "\n\n".join(sections)
 
-        text = f"{header}\n\n{messages_text}\n\n{reactions_text}"
-        keyboard = _build_keyboard(scope, period, chat_id)
+        rows = _scope_period_rows(scope, period, f"m{offset}", chat_id)
 
-        return text, keyboard
+        rows.append([
+            InlineKeyboardButton(
+                STATS[i].label,
+                callback_data=_cb(scope, period, f"d{i}", chat_id),
+            )
+            for i in indices
+        ])
+
+        if n > WINDOW_SIZE:
+            rows.append([
+                InlineKeyboardButton("‹", callback_data=_cb(scope, period, f"m{(offset - 1) % n}", chat_id)),
+                InlineKeyboardButton("›", callback_data=_cb(scope, period, f"m{(offset + 1) % n}", chat_id)),
+            ])
+
+        return text, InlineKeyboardMarkup(rows)
+
+    async def _build_detail(
+        self, scope: StatsScope, period: StatsPeriod, idx: int, chat_id: str,
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        if idx < 0 or idx >= len(STATS):
+            return "Метрика не найдена", InlineKeyboardMarkup([])
+
+        m = STATS[idx]
+
+        current = await self.metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
+
+        prev_map: dict[str, float] | None = None
+        offset = PREV_OFFSET[period]
+        if offset:
+            prev_results = await self.metrics.query(_promql(m, scope, period, chat_id, offset=offset))
+            prev_map = {s.labels.get("user_id", ""): s.value for s in prev_results}
+
+        header = f"{m.label}\n{SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
+
+        if not current:
+            text = f"{header}\n\nНет данных"
+        else:
+            lines = [header, ""]
+            for i, item in enumerate(current, 1):
+                lines.append(_format_line(i, item, prev_map))
+            text = "\n".join(lines)
+
+        rows = _scope_period_rows(scope, period, f"d{idx}", chat_id)
+        rows.append([InlineKeyboardButton("← Назад", callback_data=_cb(scope, period, f"m{idx}", chat_id))])
+
+        return text, InlineKeyboardMarkup(rows)
 
     def help(self):
         return "/stats — статистика чата"
