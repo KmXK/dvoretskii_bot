@@ -57,6 +57,7 @@ from steward.handlers.pasha_handler import (
     PashaSessionHandler,
 )
 from steward.handlers.pretty_time_handler import PrettyTimeHandler
+from steward.handlers.react_handler import ReactHandler
 from steward.handlers.reaction_counter_handler import ReactionCounterHandler
 from steward.handlers.remind_handler import (
     RemindAddHandler,
@@ -118,6 +119,7 @@ def get_handlers(log_file: None | str):
             RuleViewHandler,
             RuleAddHandler,
             RuleRemoveHandler,
+            ReactHandler,
             ReactionCounterHandler,
             AdminViewHandler,
             AdminAddHandler,
