@@ -1,6 +1,14 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 Labels = dict[str, str]
+
+
+@dataclass
+class MetricSample:
+    labels: dict[str, str]
+    value: float
+
 
 class MetricsEngine(ABC):
     @abstractmethod
@@ -14,4 +22,7 @@ class MetricsEngine(ABC):
 
     @abstractmethod
     def start_server(self, port: int) -> None: ...
+
+    @abstractmethod
+    async def query(self, promql: str) -> list[MetricSample]: ...
 

@@ -1,12 +1,19 @@
+import logging
+
+import aiohttp
 from prometheus_client import Counter, Gauge, Histogram, REGISTRY, start_http_server
 
-from steward.metrics.base import Labels, MetricsEngine
+from steward.metrics.base import Labels, MetricSample, MetricsEngine
+
+logger = logging.getLogger(__name__)
+
 
 class PrometheusMetricsEngine(MetricsEngine):
-    def __init__(self):
+    def __init__(self, vm_url: str | None = None):
         self._counters: dict[str, Counter] = {}
         self._gauges: dict[str, Gauge] = {}
         self._histograms: dict[str, Histogram] = {}
+        self._vm_url = vm_url
 
     def _get_counter(self, name: str, labels: Labels) -> Counter:
         if name not in self._counters:
@@ -34,4 +41,27 @@ class PrometheusMetricsEngine(MetricsEngine):
 
     def start_server(self, port: int) -> None:
         start_http_server(port, registry=REGISTRY)
+
+    async def query(self, promql: str) -> list[MetricSample]:
+        if not self._vm_url:
+            return []
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self._vm_url}/api/v1/query",
+                    params={"query": promql},
+                ) as resp:
+                    data = await resp.json()
+                    if data.get("status") != "success":
+                        logger.warning("VM query failed: %s", data)
+                        return []
+                    results = []
+                    for item in data.get("data", {}).get("result", []):
+                        labels = item.get("metric", {})
+                        value = float(item.get("value", [0, "0"])[1])
+                        results.append(MetricSample(labels=labels, value=value))
+                    return results
+        except Exception as e:
+            logger.exception("VM query error: %s", e)
+            return []
 
