@@ -13,18 +13,18 @@ class MiniAppHandler(Handler):
         try:
             # Получаем URL веб-приложения из переменной окружения
             web_url = os.environ.get("WEB_APP_URL", "http://localhost:5173")
-            
+
             # Получаем username бота
             bot_username = context.bot.username
-            
+
             if not bot_username:
                 await context.message.reply_text("Не удалось получить имя бота")
                 return True
-            
+
             # Формируем ссылку на мини-приложение
             # Формат: https://t.me/{bot_username}/{app_name}
-            mini_app_url = f"https://t.me/{bot_username}/app?startapp=webapp"
-            
+            mini_app_url = f"https://t.me/{bot_username}/dvoretskiy_webapp?startapp=webapp"
+
             # Telegram требует HTTPS для Web App кнопок
             # Если URL начинается с http://, используем обычную URL кнопку
             is_private = context.message.chat.type == "private"
@@ -42,9 +42,9 @@ class MiniAppHandler(Handler):
                         url=web_url
                     )]
                 ])
-            
-            await context.message.reply_text(
-                f"Открыть мини-приложение:\n{mini_app_url}",
+
+            await context.message.reply_markdown(
+                f"Открыть мини-приложение:\n[{mini_app_url}]({mini_app_url})",
                 reply_markup=keyboard
             )
             return True
