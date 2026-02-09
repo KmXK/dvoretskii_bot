@@ -100,9 +100,12 @@ class ReactHandler(Handler):
                 logger.warning("Rate limit hit for react, stopping at %d/%d", i - 1, pending.count)
                 break
             try:
-                await context.bot.set_message_reaction(
-                    chat_id=chat_id, message_id=msg_id, reaction=[],
-                )
+                try:
+                    await context.bot.set_message_reaction(
+                        chat_id=chat_id, message_id=msg_id, reaction=[],
+                    )
+                except Exception:
+                    pass
                 await context.bot.set_message_reaction(
                     chat_id=chat_id, message_id=msg_id, reaction=[reaction],
                 )
