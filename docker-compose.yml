@@ -80,7 +80,7 @@ services:
       - metrics
     command:
       - "-storageDataPath=/storage"
-      - "-retentionPeriod=6"
+      - "-retentionPeriod=18"
       - "-promscrape.config=/etc/prometheus/prometheus.yml"
     volumes:
       - victoriametrics_data:/storage

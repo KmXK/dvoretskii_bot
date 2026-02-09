@@ -71,7 +71,7 @@ def _period_range(period: StatsPeriod) -> str:
     if period == StatsPeriod.MONTH:
         first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         return f"{max(int((now - first).total_seconds()), 60)}s"
-    return "180d"
+    return "540d"
 
 
 def _prev_period(period: StatsPeriod) -> tuple[str, str] | None:
