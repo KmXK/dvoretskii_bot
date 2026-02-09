@@ -93,7 +93,7 @@ def _cb(scope: StatsScope, period: StatsPeriod, view: str, chat_id: str) -> str:
 
 
 def _format_line(i: int, item: MetricSample, prev_map: dict[str, float] | None = None) -> str:
-    name = item.labels.get("user_name", "???")
+    name = item.labels.get("user_name", f"@{item.labels.get('user_id', '???')}")
     value = int(item.value) if item.value == int(item.value) else round(item.value, 1)
     line = f"{i}. `@{name}` — {value}"
 
