@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -56,8 +56,15 @@ PERIOD_LABELS = {
     StatsPeriod.ALL_TIME: "За всё время",
 }
 
+MSK = timezone(timedelta(hours=3))
+
+
+def _now_msk() -> datetime:
+    return datetime.now(MSK)
+
+
 def _period_range(period: StatsPeriod) -> str:
-    now = datetime.now()
+    now = _now_msk()
     if period == StatsPeriod.DAY:
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return f"{max(int((now - midnight).total_seconds()), 60)}s"
@@ -68,7 +75,7 @@ def _period_range(period: StatsPeriod) -> str:
 
 
 def _prev_period(period: StatsPeriod) -> tuple[str, str] | None:
-    now = datetime.now()
+    now = _now_msk()
     if period == StatsPeriod.DAY:
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         offset = f"{max(int((now - midnight).total_seconds()), 60)}s"
