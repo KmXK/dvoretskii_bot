@@ -12,11 +12,11 @@ class ChatCollectHandler(Handler):
 
         chat_id = context.message.chat.id
         if chat_id not in self.chats_ids:
-            if not any(chat.id == chat_id for chat in self.repository.db.chats):
+            if not any(chat.id == chat_id for chat in self.repository.db.chats) or self.repository.db.chats.get(chat_id).name == "Unknown":
                 self.repository.db.chats.append(
                     Chat(
                         chat_id,
-                        context.message.chat.title or "Unknown",
+                        context.message.chat.title or f"@{context.message.chat.username}",
                     )
                 )
                 changed = True
