@@ -7,6 +7,7 @@ from steward.delayed_action.watch import WatchDelayedAction
 from steward.handlers.command_handler import CommandHandler
 from steward.handlers.handler import Handler
 from steward.helpers.cake_price import cake_fetcher
+from steward.helpers.webapp import get_webapp_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,10 @@ class WatchHandler(Handler):
         if cake:
             time_str += f"\n{cake.format()}"
 
-        sent_message = await context.message.reply_text(time_str)
+        sent_message = await context.message.reply_text(
+            time_str,
+            reply_markup=get_webapp_keyboard(context.bot, chat_id, is_private=context.message.chat.type == "private"),
+        )
 
         try:
             await context.bot.pin_chat_message(

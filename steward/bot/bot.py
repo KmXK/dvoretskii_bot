@@ -12,6 +12,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ExtBot,
+    InlineQueryHandler,
     MessageHandler,
     MessageReactionHandler,
     filters,
@@ -30,6 +31,7 @@ from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
+from steward.helpers.webapp import get_webapp_inline_button
 from steward.metrics import ContextMetrics, MetricsEngine
 from steward.session.session_registry import try_get_session_handler
 
@@ -89,6 +91,7 @@ class Bot:
         application.add_handler(MessageHandler(filters.ALL, self._chat, block=False))
         application.add_handler(MessageReactionHandler(self._chat, block=False))
         application.add_handler(CallbackQueryHandler(self._callback, block=False))
+        application.add_handler(InlineQueryHandler(self._inline_query, block=False))
 
         async def post_init(*_):
             await self.repository.migrate()
@@ -126,6 +129,14 @@ class Bot:
 
     def _empty_metrics(self) -> ContextMetrics:
         return ContextMetrics(self.metrics, {})
+
+    async def _inline_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.inline_query
+        if query is None:
+            return
+
+        button = get_webapp_inline_button()
+        await query.answer([], button=button, cache_time=300)
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("Got update")
