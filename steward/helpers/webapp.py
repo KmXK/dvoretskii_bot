@@ -31,7 +31,7 @@ def get_webapp_keyboard(
     if direct_url and is_private:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                "📱 Приложение",
+                "🤡",
                 web_app=WebAppInfo(url=direct_url),
             )]
         ])
@@ -40,7 +40,7 @@ def get_webapp_keyboard(
     if not link:
         return None
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 Приложение", url=link)]
+        [InlineKeyboardButton("🤡", url=link)]
     ])
 
 
