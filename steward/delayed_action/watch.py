@@ -29,6 +29,7 @@ class WatchDelayedAction(DelayedAction):
 
     chat_id: int
     message_id: int
+    is_private: bool
 
     async def execute(self, context: DelayedActionContext):
         now = datetime.now(tz=ZoneInfo("Europe/Minsk"))
@@ -43,7 +44,7 @@ class WatchDelayedAction(DelayedAction):
                 chat_id=self.chat_id,
                 message_id=self.message_id,
                 text=time_str,
-                reply_markup=get_webapp_keyboard(context.bot, self.chat_id, is_private=context.message.chat.type == "private"),
+                reply_markup=get_webapp_keyboard(context.bot, self.chat_id, is_private=self.is_private),
             )
         except Exception as e:
             logger.warning(f"Failed to update watch message: {e}")

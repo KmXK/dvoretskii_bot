@@ -67,6 +67,7 @@ class WatchHandler(Handler):
         watch_action = WatchDelayedAction(
             chat_id=chat_id,
             message_id=sent_message.message_id,
+            is_private=context.message.chat.type == "private",
         )
         self.repository.db.delayed_actions.append(watch_action)
         await self.repository.save()
