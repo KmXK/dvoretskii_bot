@@ -12,8 +12,7 @@ from steward.helpers.emoji import (
 from steward.helpers.keyboard import parse_and_validate_keyboard
 from steward.helpers.pagination import (
     PageFormatContext,
-    PaginationParseResult,
-    Paginator,
+    get_data_page,
     parse_pagination,
 )
 
@@ -31,6 +30,53 @@ class MeHandler(Handler):
             return False
 
         user_id = context.message.from_user.id
+        text, keyboard = self._build_profile(user_id)
+        await context.message.reply_html(text, reply_markup=keyboard)
+        return True
+
+    async def callback(self, context: CallbackBotContext):
+        parsed = parse_and_validate_keyboard(
+            "me_rewards",
+            context.callback_query.data,
+        )
+        if parsed is not None:
+            user_id = int(parsed.metadata)
+            text, keyboard = self._build_rewards(user_id, 0)
+            await context.callback_query.message.edit_text(
+                text=text, parse_mode="HTML", reply_markup=keyboard,
+            )
+            return True
+
+        back_parsed = parse_and_validate_keyboard(
+            "me_back",
+            context.callback_query.data,
+        )
+        if back_parsed is not None:
+            user_id = int(back_parsed.metadata)
+            text, keyboard = self._build_profile(user_id)
+            await context.callback_query.message.edit_text(
+                text=text, parse_mode="HTML", reply_markup=keyboard,
+            )
+            return True
+
+        pagination_parsed = parse_and_validate_keyboard(
+            "me_rewards_list",
+            context.callback_query.data,
+            parse_func=parse_pagination,
+        )
+        if pagination_parsed is not None:
+            if pagination_parsed.is_current_page:
+                return True
+            user_id = int(pagination_parsed.metadata)
+            text, keyboard = self._build_rewards(user_id, pagination_parsed.page_number)
+            await context.callback_query.message.edit_text(
+                text=text, parse_mode="HTML", reply_markup=keyboard,
+            )
+            return True
+
+        return False
+
+    def _build_profile(self, user_id: int):
         rewards_map = {r.id: r for r in self.repository.db.rewards}
         user_reward_ids = [
             ur.reward_id
@@ -56,55 +102,37 @@ class MeHandler(Handler):
             ]
         ])
 
-        await context.message.reply_html(text, reply_markup=keyboard)
-        return True
+        return text, keyboard
 
-    async def callback(self, context: CallbackBotContext):
-        parsed = parse_and_validate_keyboard(
-            "me_rewards",
-            context.callback_query.data,
-        )
-        if parsed is not None:
-            user_id = int(parsed.metadata)
-            paginator = self._get_paginator(user_id)
-            text, keyboard = paginator._get_data_page()
-            await context.callback_query.message.chat.send_message(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([keyboard]) if keyboard else None,
-            )
-            return True
-
-        pagination_parsed = parse_and_validate_keyboard(
-            "me_rewards_list",
-            context.callback_query.data,
-            parse_func=parse_pagination,
-        )
-        if pagination_parsed is not None:
-            user_id = int(pagination_parsed.metadata)
-            return await self._get_paginator(user_id).process_parsed_callback(
-                context.update, pagination_parsed
-            )
-
-        return False
-
-    def _get_paginator(self, user_id: int) -> Paginator:
+    def _build_rewards(self, user_id: int, page: int):
         rewards_map = {r.id: r for r in self.repository.db.rewards}
-
-        paginator = Paginator(
-            unique_keyboard_name="me_rewards_list",
-            list_header="Ваши достижения",
-            page_size=10,
-            page_format_func=format_rewards_page,
-            parse_mode="HTML",
-        )
-        paginator.data_func = lambda: [
+        user_rewards = [
             rewards_map[ur.reward_id]
             for ur in self.repository.db.user_rewards
             if ur.user_id == user_id and ur.reward_id in rewards_map
         ]
-        paginator.metadata = str(user_id)
-        return paginator
+
+        text, pagination_buttons = get_data_page(
+            data=user_rewards,
+            page=page,
+            page_size=10,
+            list_header="Ваши достижения",
+            unique_keyboard_name="me_rewards_list",
+            page_format_func=format_rewards_page,
+            always_show_pagination=True,
+            metadata=str(user_id),
+        )
+
+        rows = []
+        if pagination_buttons:
+            rows.append(pagination_buttons)
+        rows.append([
+            InlineKeyboardButton(
+                "← Назад", callback_data=f"me_back|{user_id}",
+            )
+        ])
+
+        return text, InlineKeyboardMarkup(rows)
 
     def help(self):
         return "/me - профиль"

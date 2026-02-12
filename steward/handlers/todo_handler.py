@@ -71,30 +71,23 @@ class TodoListHandler(Handler):
         return paginator
 
     def help(self):
-        return "/todo [add|remove <id>|done <id>] — управлять событиями"
+        return "/todo [remove <id>|done <id>] | [text] — управлять событиями"
 
 
-class TodoAddHandler(SessionHandlerBase):
-    def __init__(self):
-        super().__init__([
-            QuestionStep(
-                "text",
-                "Описание события",
-                filter_answer=validate_message_text([]),
-            ),
-        ])
+_TODO_SUBCOMMANDS = ("list", "done", "remove")
 
-    async def chat(self, context):
+
+class TodoAddHandler(Handler):
+    async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "todo"):
             return False
-        parts = context.message.text.split(maxsplit=2)
-        if len(parts) < 2 or parts[1] != "add":
+        parts = context.message.text.split(maxsplit=1)
+        if len(parts) < 2:
             return False
-        if len(parts) == 3:
-            return await self._add_inline(context, parts[2])
-        return await super().chat(context)
+        text = parts[1].strip()
+        if not text or text.split()[0] in _TODO_SUBCOMMANDS:
+            return False
 
-    async def _add_inline(self, context: ChatBotContext, text: str):
         max_id = max(
             (t.id for t in self.repository.db.todo_items), default=0
         )
@@ -107,30 +100,6 @@ class TodoAddHandler(SessionHandlerBase):
         await self.repository.save()
         await context.message.reply_text(f"Событие добавлено (id: {todo.id})")
         return True
-
-    def try_activate_session(self, update, session_context):
-        if not validate_command_msg(update, "todo"):
-            return False
-        parts = update.message.text.split(maxsplit=2)
-        if len(parts) != 2 or parts[1] != "add":
-            return False
-        session_context["chat_id"] = update.message.chat.id
-        return True
-
-    async def on_session_finished(self, update, session_context):
-        max_id = max(
-            (t.id for t in self.repository.db.todo_items), default=0
-        )
-        todo = TodoItem(
-            id=max_id + 1,
-            chat_id=session_context["chat_id"],
-            text=session_context["text"],
-        )
-        self.repository.db.todo_items.append(todo)
-        await self.repository.save()
-
-        message = get_message(update)
-        await message.chat.send_message(f"Событие добавлено (id: {todo.id})")
 
     def help(self):
         return None
@@ -212,10 +181,12 @@ class MarkDoneStep(Step):
         data = context.callback_query.data
         if data == "todo_done_reward|yes":
             context.session_context["add_reward"] = True
+            await context.callback_query.message.edit_reply_markup(reply_markup=None)
             self.is_waiting = False
             return True
         elif data == "todo_done_reward|no":
             context.session_context["add_reward"] = False
+            await context.callback_query.message.edit_reply_markup(reply_markup=None)
             self.is_waiting = False
             return True
         return False
