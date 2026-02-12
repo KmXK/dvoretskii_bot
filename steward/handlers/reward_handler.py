@@ -27,8 +27,6 @@ def format_rewards_page(ctx: PageFormatContext[Reward]) -> str:
 
 
 class RewardListHandler(Handler):
-    only_for_admin = True
-
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "rewards"):
             return False
@@ -68,21 +66,21 @@ class RewardListHandler(Handler):
 
 
 class RewardAddHandler(SessionHandlerBase):
-    only_for_admin = True
-
     def __init__(self):
-        super().__init__([
-            QuestionStep(
-                "name",
-                "Название и описание достижения",
-                filter_answer=validate_message_text([]),
-            ),
-            QuestionStep(
-                "emoji",
-                "Эмоджи достижения",
-                filter_answer=extract_emoji,
-            ),
-        ])
+        super().__init__(
+            [
+                QuestionStep(
+                    "name",
+                    "Название и описание достижения",
+                    filter_answer=validate_message_text([]),
+                ),
+                QuestionStep(
+                    "emoji",
+                    "Эмоджи достижения",
+                    filter_answer=extract_emoji,
+                ),
+            ]
+        )
 
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "rewards"):
@@ -153,8 +151,6 @@ class RewardRemoveHandler(Handler):
 
 
 class RewardPresentHandler(Handler):
-    only_for_admin = True
-
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "rewards"):
             return False
@@ -211,9 +207,7 @@ class RewardPresentHandler(Handler):
         identifier = identifier.lstrip("@")
         try:
             user_id = int(identifier)
-            return next(
-                (u for u in self.repository.db.users if u.id == user_id), None
-            )
+            return next((u for u in self.repository.db.users if u.id == user_id), None)
         except ValueError:
             pass
         return next(
@@ -291,9 +285,7 @@ class RewardTakeHandler(Handler):
         identifier = identifier.lstrip("@")
         try:
             user_id = int(identifier)
-            return next(
-                (u for u in self.repository.db.users if u.id == user_id), None
-            )
+            return next((u for u in self.repository.db.users if u.id == user_id), None)
         except ValueError:
             pass
         return next(

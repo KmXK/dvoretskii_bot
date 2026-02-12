@@ -1,4 +1,5 @@
 import html
+import re
 
 from telegram import MessageEntity
 
@@ -39,5 +40,8 @@ def extract_emoji(update, session_context):
             if entity.type == MessageEntity.CUSTOM_EMOJI:
                 custom_emoji_id = entity.custom_emoji_id
                 break
+
+    if not custom_emoji_id and re.search(r'[a-zA-Zа-яА-ЯёЁ0-9]', msg.text):
+        return Error("Отправьте эмоджи, а не текст")
 
     return {"text": msg.text, "custom_emoji_id": custom_emoji_id}
