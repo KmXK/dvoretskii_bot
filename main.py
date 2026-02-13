@@ -90,6 +90,7 @@ from steward.handlers.subscribe_handler import (
     SubscribeViewHandler,
 )
 from steward.handlers.tarot_handler import TarotHandler
+from steward.handlers.timezone_handler import TimezoneHandler
 from steward.handlers.todo_handler import (
     TodoAddHandler,
     TodoDoneHandler,
@@ -155,6 +156,7 @@ def get_handlers(log_file: None | str):
             RemindEditHandler,
             RemindAddHandler,
             RemindersHandler,
+            TimezoneHandler,
             HolidaysHandler,
             EveryoneHandler,
             PashaHandler,
