@@ -18,6 +18,7 @@ from steward.handlers.army_handler import (
     ArmyRemoveHandler,
     ArmyViewHandler,
 )
+from steward.handlers.ban_handler import BanCommandHandler, BanEnforcerHandler
 from steward.handlers.bill_handler import (
     BillAddHandler,
     BillCloseHandler,
@@ -115,6 +116,8 @@ def get_handlers(log_file: None | str):
             ChatCollectHandler,
             SilenceCommandHandler,
             SilenceEnforcerHandler,
+            BanCommandHandler,
+            BanEnforcerHandler,
             AiRelatedMessageHandler,
             RuleListViewHandler,
             RuleViewHandler,

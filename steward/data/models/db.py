@@ -13,6 +13,7 @@ from steward.delayed_action.reminder import CompletedReminder
 from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
+from .banned_user import BannedUser
 from .bill import Bill, DetailsInfo, Payment
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
@@ -44,6 +45,7 @@ class Database:
     rewards: list[Reward] = field(default_factory=list)
     user_rewards: list[UserReward] = field(default_factory=list)
     todo_items: list[TodoItem] = field(default_factory=list)
+    banned_users: list[BannedUser] = field(default_factory=list)
 
     version: int = 7
 
