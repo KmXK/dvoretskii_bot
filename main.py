@@ -19,6 +19,10 @@ from steward.handlers.army_handler import (
     ArmyViewHandler,
 )
 from steward.handlers.ban_handler import BanCommandHandler, BanEnforcerHandler
+from steward.handlers.birthday_handler import (
+    BirthdayRemoveHandler,
+    BirthdayViewHandler,
+)
 from steward.handlers.bill_handler import (
     BillAddHandler,
     BillCloseHandler,
@@ -132,6 +136,8 @@ def get_handlers(log_file: None | str):
             ArmyViewHandler,
             ArmyAddHandler,
             ArmyRemoveHandler,
+            BirthdayRemoveHandler,
+            BirthdayViewHandler,
             FeatureRequestEditHandler,
             FeatureRequestViewHandler,
             MeHandler,
