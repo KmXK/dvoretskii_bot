@@ -1,5 +1,7 @@
 import datetime
 import logging
+from datetime import timezone, timedelta
+
 from aiohttp import web
 
 from steward.data.models.feature_request import (
@@ -8,8 +10,11 @@ from steward.data.models.feature_request import (
     FeatureRequestStatus,
 )
 from steward.data.repository import Repository
+from steward.metrics.base import MetricsEngine
 
 logger = logging.getLogger(__name__)
+
+MSK = timezone(timedelta(hours=3))
 
 
 def serialize_army(army):
@@ -163,9 +168,117 @@ async def handle_feature_request_create(request: web.Request):
     return web.json_response(serialize_feature_request(fr), status=201)
 
 
-async def start_api_server(repository: Repository, port: int = 8080):
+WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _period_range(period: str) -> str:
+    now = datetime.datetime.now(MSK)
+    if period == "week":
+        monday = now - timedelta(days=now.weekday())
+        start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return f"{max(int((now - start).total_seconds()), 60)}s"
+
+
+def _user_promql(metric: str, user_id: str, range_str: str, **filters) -> str:
+    filters["user_id"] = user_id
+    label_filter = ", ".join(f'{k}="{v}"' for k, v in filters.items())
+    return f"sum(increase({metric}{{{label_filter}}}[{range_str}]))"
+
+
+def _extract_val(samples) -> int:
+    return int(samples[0].value) if samples and samples[0].value else 0
+
+
+async def _query_stats(metrics: MetricsEngine, user_id: str, range_str: str) -> dict:
+    msgs, reacts, vids = (
+        await metrics.query(_user_promql("bot_messages_total", user_id, range_str, action_type="chat")),
+        await metrics.query(_user_promql("bot_messages_total", user_id, range_str, action_type="reaction")),
+        await metrics.query(_user_promql("bot_downloads_total", user_id, range_str)),
+    )
+    return {
+        "messages": _extract_val(msgs),
+        "reactions": _extract_val(reacts),
+        "videos": _extract_val(vids),
+    }
+
+
+async def handle_profile(request: web.Request):
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    user_id = request.match_info["user_id"]
+    period = request.query.get("period", "day")
+
+    rewards_map = {r.id: r for r in repository.db.rewards}
+    user_rewards = [
+        {
+            "id": r.id,
+            "name": r.name,
+            "emoji": r.emoji,
+            "description": r.description,
+            "custom_emoji_id": r.custom_emoji_id,
+        }
+        for ur in repository.db.user_rewards
+        if ur.user_id == int(user_id)
+        and (r := rewards_map.get(ur.reward_id)) is not None
+    ]
+
+    stats = await _query_stats(metrics, user_id, _period_range(period))
+
+    return web.json_response({
+        "rewards": user_rewards,
+        "stats": stats,
+    })
+
+
+async def handle_profile_history(request: web.Request):
+    metrics: MetricsEngine = request.app["metrics"]
+    user_id = request.match_info["user_id"]
+    period = request.query.get("period", "day")
+
+    now = datetime.datetime.now(MSK)
+    days_count = 30 if period == "month" else 7
+    history = []
+
+    for days_ago in range(days_count - 1, -1, -1):
+        day = now - timedelta(days=days_ago)
+        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        if days_ago == 0:
+            range_str = f"{max(int((now - day_start).total_seconds()), 60)}s"
+            offset_str = ""
+        else:
+            range_str = "86400s"
+            offset_str = f"{days_ago * 86400}s"
+
+        def build(metric, offset, r=range_str, **flt):
+            flt["user_id"] = user_id
+            lf = ", ".join(f'{k}="{v}"' for k, v in flt.items())
+            off = f" offset {offset}" if offset else ""
+            return f"sum(increase({metric}{{{lf}}}[{r}]{off}))"
+
+        msgs = await metrics.query(build("bot_messages_total", offset_str, action_type="chat"))
+        reacts = await metrics.query(build("bot_messages_total", offset_str, action_type="reaction"))
+        vids = await metrics.query(build("bot_downloads_total", offset_str))
+
+        label = day_start.strftime("%d.%m") if period == "month" else WEEKDAYS[day_start.weekday()]
+
+        history.append({
+            "label": label,
+            "messages": _extract_val(msgs),
+            "reactions": _extract_val(reacts),
+            "videos": _extract_val(vids),
+        })
+
+    return web.json_response(history)
+
+
+async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080):
     app = web.Application()
     app["repository"] = repository
+    app["metrics"] = metrics
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
@@ -173,6 +286,8 @@ async def start_api_server(repository: Repository, port: int = 8080):
     app.router.add_post("/api/feature-requests", handle_feature_request_create)
     app.router.add_get("/api/feature-requests/{id}", handle_feature_request_detail)
     app.router.add_patch("/api/feature-requests/{id}", handle_feature_request_update)
+    app.router.add_get("/api/profile/{user_id}", handle_profile)
+    app.router.add_get("/api/profile/{user_id}/history", handle_profile_history)
 
     runner = web.AppRunner(app)
     await runner.setup()

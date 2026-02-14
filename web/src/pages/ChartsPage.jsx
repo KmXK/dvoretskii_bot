@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import BackButton from '../components/BackButton'
+
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell,
@@ -52,7 +52,6 @@ export default function ChartsPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6"
     >
-      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-6">Charts</h1>
 
       <div className="bg-spotify-dark rounded-xl p-4 mb-4">
