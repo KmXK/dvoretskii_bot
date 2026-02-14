@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
+import BackButton from '../components/BackButton'
 
 const STATUS = { OPEN: 0, DONE: 1, DENIED: 2, IN_PROGRESS: 3, TESTING: 4 }
 
@@ -471,6 +472,7 @@ export default function FeaturesPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4"
     >
+      <BackButton />
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-bold text-white">Фича-реквесты</h1>
         <button

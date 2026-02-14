@@ -12,6 +12,56 @@ from steward.data.repository import Repository
 logger = logging.getLogger(__name__)
 
 
+def serialize_army(army):
+    now = datetime.datetime.now()
+    end = datetime.datetime.fromtimestamp(army.end_date)
+    start = datetime.datetime.fromtimestamp(army.start_date)
+    remaining = (end - now).total_seconds()
+    total = (end - start).total_seconds()
+    percent = max(0.0, min(1.0, 1 - remaining / total)) if total > 0 else 1.0
+    return {
+        "name": army.name,
+        "start_date": army.start_date,
+        "end_date": army.end_date,
+        "remaining_seconds": max(0, remaining),
+        "percent": percent,
+        "done": remaining <= 0,
+    }
+
+
+async def handle_army(request: web.Request):
+    repository: Repository = request.app["repository"]
+    items = sorted(repository.db.army, key=lambda a: (a.end_date, a.start_date))
+    return web.json_response([serialize_army(a) for a in items])
+
+
+def serialize_todo(item):
+    return {
+        "id": item.id,
+        "chat_id": item.chat_id,
+        "text": item.text,
+        "is_done": item.is_done,
+    }
+
+
+async def handle_todos(request: web.Request):
+    repository: Repository = request.app["repository"]
+    return web.json_response(
+        [serialize_todo(t) for t in repository.db.todo_items]
+    )
+
+
+async def handle_todo_toggle(request: web.Request):
+    repository: Repository = request.app["repository"]
+    todo_id = int(request.match_info["id"])
+    todo = next((t for t in repository.db.todo_items if t.id == todo_id), None)
+    if not todo:
+        return web.json_response({"error": "not found"}, status=404)
+    todo.is_done = not todo.is_done
+    await repository.save()
+    return web.json_response(serialize_todo(todo))
+
+
 def serialize_feature_request(fr):
     return {
         "id": fr.id,
@@ -116,6 +166,9 @@ async def handle_feature_request_create(request: web.Request):
 async def start_api_server(repository: Repository, port: int = 8080):
     app = web.Application()
     app["repository"] = repository
+    app.router.add_get("/api/army", handle_army)
+    app.router.add_get("/api/todos", handle_todos)
+    app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
     app.router.add_get("/api/feature-requests", handle_feature_requests)
     app.router.add_post("/api/feature-requests", handle_feature_request_create)
     app.router.add_get("/api/feature-requests/{id}", handle_feature_request_detail)

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
 import * as Dialog from '@radix-ui/react-dialog'
+import BackButton from '../components/BackButton'
 
 const SYMBOLS = ['🍒', '🍋', '💎', '7️⃣', '🔔', '⭐']
 const CELL_SIZE = 80
@@ -91,6 +92,9 @@ export default function CasinoPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 flex flex-col items-center"
     >
+      <div className="w-full max-w-sm">
+        <BackButton />
+      </div>
       <h1 className="text-2xl font-bold text-white mb-2">Casino</h1>
       <p className="text-spotify-text text-sm mb-8">Try your luck</p>
 

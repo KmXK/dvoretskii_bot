@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
+import BackButton from '../components/BackButton'
 import {
   useReactTable,
   getCoreRowModel,
@@ -63,6 +64,7 @@ export default function TablePage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6"
     >
+      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-6">Users</h1>
 
       <input
