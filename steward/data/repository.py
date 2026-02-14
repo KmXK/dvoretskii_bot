@@ -279,4 +279,13 @@ class Repository:
                 del data["pasha_ai_messages"]
             data["version"] = 7
 
+        if data.get("version") == 7:
+            for fr in data.get("feature_requests", []):
+                if isinstance(fr, dict):
+                    if "priority" not in fr or fr["priority"] not in range(1, 6):
+                        fr["priority"] = 5
+                    if "notes" not in fr:
+                        fr["notes"] = []
+            data["version"] = 8
+
         return data

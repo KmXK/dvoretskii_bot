@@ -7,6 +7,8 @@ class FeatureRequestStatus(IntEnum):
     OPEN = 0
     DONE = 1
     DENIED = 2
+    IN_PROGRESS = 3
+    TESTING = 4
 
 
 @dataclass
@@ -27,7 +29,8 @@ class FeatureRequest:
     message_id: Optional[int]
     chat_id: Optional[int]
 
-    priority: int = 100
+    priority: int = 5
+    notes: list[str] = field(default_factory=list)
     history: list[FeatureRequestChange] = field(default_factory=list)
 
     @property

@@ -207,55 +207,56 @@ class Chat:
 
 ## Стек UI-библиотек
 
-| Библиотека | Назначение |
-|---|---|
-| **Tailwind CSS** | Utility-first CSS — весь стиль через классы в JSX |
-| **Radix UI** | Headless UI-примитивы (Dialog, Tabs, DropdownMenu, Tooltip и т.д.) |
-| **Framer Motion** | Анимации: переходы экранов, казино-механики, микроинтерактив |
-| **React Router** | Клиентский роутинг между экранами |
-| **Recharts** | Графики и диаграммы (BarChart, LineChart, PieChart) |
-| **TanStack Table** | Headless таблицы: сортировка, фильтрация, пагинация |
+| Библиотека         | Назначение                                                         |
+| ------------------ | ------------------------------------------------------------------ |
+| **Tailwind CSS**   | Utility-first CSS — весь стиль через классы в JSX                  |
+| **Radix UI**       | Headless UI-примитивы (Dialog, Tabs, DropdownMenu, Tooltip и т.д.) |
+| **Framer Motion**  | Анимации: переходы экранов, казино-механики, микроинтерактив       |
+| **React Router**   | Клиентский роутинг между экранами                                  |
+| **Recharts**       | Графики и диаграммы (BarChart, LineChart, PieChart)                |
+| **TanStack Table** | Headless таблицы: сортировка, фильтрация, пагинация                |
 
 ### Как использовать стек
 
 **Tailwind** — основной способ стилизации:
+
 ```jsx
-<div className="bg-zinc-900 rounded-xl p-4 hover:bg-zinc-800 transition-colors">
-  <h2 className="text-white text-lg font-bold">Title</h2>
-  <p className="text-zinc-400 text-sm">Secondary text</p>
+<div className='bg-zinc-900 rounded-xl p-4 hover:bg-zinc-800 transition-colors'>
+    <h2 className='text-white text-lg font-bold'>Title</h2>
+    <p className='text-zinc-400 text-sm'>Secondary text</p>
 </div>
 ```
 
 **Radix UI** — логика + Tailwind стили:
+
 ```jsx
-import * as Dialog from '@radix-ui/react-dialog'
+import * as Dialog from '@radix-ui/react-dialog';
 
 <Dialog.Root>
-  <Dialog.Trigger className="bg-green-500 text-black px-4 py-2 rounded-full font-semibold">
-    Open
-  </Dialog.Trigger>
-  <Dialog.Portal>
-    <Dialog.Overlay className="fixed inset-0 bg-black/60" />
-    <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-zinc-900 rounded-xl p-6">
-      <Dialog.Title className="text-white text-lg font-bold">Modal</Dialog.Title>
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>
+    <Dialog.Trigger className='bg-green-500 text-black px-4 py-2 rounded-full font-semibold'>Open</Dialog.Trigger>
+    <Dialog.Portal>
+        <Dialog.Overlay className='fixed inset-0 bg-black/60' />
+        <Dialog.Content className='fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-zinc-900 rounded-xl p-6'>
+            <Dialog.Title className='text-white text-lg font-bold'>Modal</Dialog.Title>
+        </Dialog.Content>
+    </Dialog.Portal>
+</Dialog.Root>;
 ```
 
 **Framer Motion** — анимации:
+
 ```jsx
-import { motion } from 'framer-motion'
+import { motion } from 'framer-motion';
 
 <motion.div
-  initial={{ opacity: 0, y: 20 }}
-  animate={{ opacity: 1, y: 0 }}
-  exit={{ opacity: 0, y: -20 }}
-  transition={{ duration: 0.3 }}
-  className="bg-zinc-800 rounded-xl p-4"
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: -20 }}
+    transition={{ duration: 0.3 }}
+    className='bg-zinc-800 rounded-xl p-4'
 >
-  Animated content
-</motion.div>
+    Animated content
+</motion.div>;
 ```
 
 ### Структура фронтенда

@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
 
 const cards = [
   { title: 'Rewards', desc: 'Награды участников', emoji: '🏆', color: 'from-amber-500/20 to-amber-900/20' },
@@ -7,9 +8,12 @@ const cards = [
   { title: 'Bills', desc: 'Общие расходы', emoji: '💰', color: 'from-green-500/20 to-green-900/20' },
   { title: 'Todo', desc: 'Список задач', emoji: '📝', color: 'from-rose-500/20 to-rose-900/20' },
   { title: 'Birthdays', desc: 'Дни рождения', emoji: '🎂', color: 'from-pink-500/20 to-pink-900/20' },
+  { title: 'Features', desc: 'Фича-реквесты', emoji: '💡', color: 'from-cyan-500/20 to-cyan-900/20', to: '/features' },
 ]
 
 export default function HomePage() {
+  const navigate = useNavigate()
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -27,6 +31,7 @@ export default function HomePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.08, duration: 0.3 }}
+            onClick={() => card.to && navigate(card.to)}
             className={`bg-gradient-to-br ${card.color} bg-spotify-gray rounded-xl p-4 cursor-pointer
               hover:scale-[1.03] active:scale-[0.98] transition-transform`}
           >

@@ -5,6 +5,7 @@ import HomePage from './pages/HomePage'
 import ChartsPage from './pages/ChartsPage'
 import TablePage from './pages/TablePage'
 import CasinoPage from './pages/CasinoPage'
+import FeaturesPage from './pages/FeaturesPage'
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
             <Route path="/charts" element={<ChartsPage />} />
             <Route path="/table" element={<TablePage />} />
             <Route path="/casino" element={<CasinoPage />} />
+            <Route path="/features" element={<FeaturesPage />} />
           </Routes>
         </AnimatePresence>
         <NavBar />

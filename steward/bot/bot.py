@@ -26,6 +26,7 @@ from steward.bot.context import (
     ReactionBotContext,
 )
 from steward.birthday_checker import BirthdayChecker
+from steward.api.server import start_api_server
 from steward.bot.delayed_action_handler import DelayedActionHandler
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
@@ -125,6 +126,12 @@ class Bot:
             self.birthday_checker = BirthdayChecker(self.repository, self.bot)
             asyncio.ensure_future(
                 self.birthday_checker.start(),
+                loop=asyncio.get_event_loop(),
+            )
+
+            api_port = int(environ.get("API_PORT", "8080"))
+            asyncio.ensure_future(
+                start_api_server(self.repository, api_port),
                 loop=asyncio.get_event_loop(),
             )
 
