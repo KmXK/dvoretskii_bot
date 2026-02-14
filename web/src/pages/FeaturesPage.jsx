@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
+import { useTelegram } from '../context/TelegramContext'
 
 const STATUS = { OPEN: 0, DONE: 1, DENIED: 2, IN_PROGRESS: 3, TESTING: 4 }
 
@@ -304,7 +305,7 @@ function FeatureCardModal({ feature, open, onClose, onSave }) {
   )
 }
 
-function CreateFeatureModal({ open, onClose, onCreate }) {
+function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -316,10 +317,12 @@ function CreateFeatureModal({ open, onClose, onCreate }) {
     if (!text.trim()) return
     setSaving(true)
     try {
+      const payload = { text: text.trim() }
+      if (authorName) payload.author_name = authorName
       const res = await fetch('/api/feature-requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.trim() }),
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         const created = await res.json()
@@ -365,6 +368,9 @@ function CreateFeatureModal({ open, onClose, onCreate }) {
 }
 
 export default function FeaturesPage() {
+  const { firstName, lastName, username } = useTelegram()
+  const authorName = username || [firstName, lastName].filter(Boolean).join(' ') || ''
+
   const [features, setFeatures] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -591,6 +597,7 @@ export default function FeaturesPage() {
         open={showCreate}
         onClose={() => setShowCreate(false)}
         onCreate={handleCreate}
+        authorName={authorName}
       />
     </motion.div>
   )
