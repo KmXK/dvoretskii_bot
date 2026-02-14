@@ -44,7 +44,13 @@ services:
     network_mode: "service:web"
     depends_on:
       - web
-    restart: unless-stopped
+    restart: always
+    healthcheck:
+      test: ["CMD", "/healthcheck-tunnel.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   grafana:
     ports:

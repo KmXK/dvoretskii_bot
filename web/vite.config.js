@@ -1,11 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import fs from 'fs'
 import path from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     // HTTPS отключен, так как nginx обеспечивает HTTPS
     // Включайте только если запускаете Vite напрямую без nginx
@@ -18,5 +19,11 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     'allowedHosts': true,
+    proxy: {
+      '/api': {
+        target: 'http://bot:8080',
+        changeOrigin: true,
+      },
+    },
   },
 })

@@ -12,7 +12,7 @@ from steward.data.models.feature_request import (
 )
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
-from steward.helpers.formats import format_lined_list
+from steward.helpers.formats import escape_markdown, format_lined_list
 from steward.helpers.keyboard import parse_and_validate_keyboard
 from steward.helpers.pagination import (
     PageFormatContext,
@@ -21,13 +21,27 @@ from steward.helpers.pagination import (
     parse_pagination,
 )
 
+STATUS_LABELS = {
+    FeatureRequestStatus.OPEN: "Открыт",
+    FeatureRequestStatus.DONE: "Завершён",
+    FeatureRequestStatus.DENIED: "Отклонён",
+    FeatureRequestStatus.IN_PROGRESS: "В работе",
+    FeatureRequestStatus.TESTING: "На тестировании",
+}
+
+PRIORITY_EMOJI = {1: "🔴", 2: "🟠", 3: "🟡", 4: "🔵", 5: "⚪"}
+
 
 def format_page(ctx: PageFormatContext[FeatureRequest]) -> str:
-    def format_fq(fq: FeatureRequest):
-        return f"`{fq.author_name}`: {re.sub('@[a-zA-Z0-9]+', lambda m: f'`{m.group(0)}`', fq.text)}"
+    def format_fr(fr: FeatureRequest):
+        author = escape_markdown(fr.author_name)
+        text = escape_markdown(fr.text)
+        text = re.sub(r"@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", text)
+        p_emoji = PRIORITY_EMOJI.get(fr.priority, "⚪")
+        return f"{p_emoji} `{author}`: {text}"
 
     return format_lined_list(
-        items=[(fq.id, format_fq(fq)) for fq in ctx.data], delimiter=". "
+        items=[(fr.id, format_fr(fr)) for fr in ctx.data], delimiter=". "
     )
 
 
@@ -36,11 +50,13 @@ class FilterType(Enum):
     DONE = 1
     DENIED = 2
     OPENED = 3
+    IN_PROGRESS = 4
+    TESTING = 5
 
 
 class FeatureRequestViewHandler(Handler):
     async def chat(self, context):
-        if not validate_command_msg(context.update, ["fq", "featurerequest"]):
+        if not validate_command_msg(context.update, ["fr", "featurerequest"]):
             return False
 
         assert context.message.text
@@ -50,6 +66,17 @@ class FeatureRequestViewHandler(Handler):
             return await self._get_paginator(FilterType.OPENED).show_list(
                 context.update
             )
+
+        if len(data) >= 3 and data[1].isdigit():
+            fr_id = int(data[1])
+            subcommand = data[2].lower()
+
+            if subcommand == "priority":
+                return await self._set_priority(context, fr_id, data[3:])
+
+            if subcommand == "note":
+                note_text = " ".join(data[3:])
+                return await self._add_note(context, fr_id, note_text)
 
         if len(data) == 2 and data[1].isdigit():
             return await self._show_feature_request(context, int(data[1]))
@@ -103,6 +130,8 @@ class FeatureRequestViewHandler(Handler):
                 ("Завершённые", FilterType.DONE),
                 ("Отклонённые", FilterType.DENIED),
                 ("Открытые", FilterType.OPENED),
+                ("В работе", FilterType.IN_PROGRESS),
+                ("Тестирование", FilterType.TESTING),
             ]
             if x[1] != type
         ]
@@ -122,43 +151,113 @@ class FeatureRequestViewHandler(Handler):
             )
             return True
 
-        fq = self.repository.db.feature_requests[id - 1]
+        fr = self.repository.db.feature_requests[id - 1]
 
-        status_map = {
-            FeatureRequestStatus.OPEN: "Открыт",
-            FeatureRequestStatus.DONE: "Завершён",
-            FeatureRequestStatus.DENIED: "Отклонён",
-        }
+        status_text = STATUS_LABELS.get(fr.status, "Неизвестен")
+        p_emoji = PRIORITY_EMOJI.get(fr.priority, "⚪")
 
-        status_text = status_map.get(fq.status, "Неизвестен")
-
-        formatted_text = re.sub("@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", fq.text)
+        escaped_text = escape_markdown(fr.text)
+        formatted_text = re.sub(
+            r"@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", escaped_text
+        )
+        escaped_author = escape_markdown(fr.author_name)
 
         date_str = ""
-        if fq.creation_timestamp:
-            dt = datetime.datetime.fromtimestamp(fq.creation_timestamp)
+        if fr.creation_timestamp:
+            dt = datetime.datetime.fromtimestamp(fr.creation_timestamp)
             date_str = f"\nДата: {dt.strftime('%d.%m.%Y %H:%M')}"
 
         history_text = ""
-        if fq.history:
+        if fr.history:
             history_text = "\n\nИстория изменений:"
-            for change in fq.history:
+            for change in fr.history:
                 change_dt = datetime.datetime.fromtimestamp(change.timestamp)
-                change_status = status_map.get(change.status, "Неизвестен")
+                change_status = STATUS_LABELS.get(change.status, "Неизвестен")
                 history_text += (
                     f"\n• {change_status} ({change_dt.strftime('%d.%m.%Y %H:%M')})"
                 )
 
+        notes_text = ""
+        if fr.notes:
+            notes_text = "\n\nПримечания:"
+            for i, note in enumerate(fr.notes, 1):
+                escaped_note = escape_markdown(note)
+                notes_text += f"\n{i}\\. {escaped_note}"
+
         message_text = (
-            f"Фича-реквест #{fq.id}\n"
+            f"Фича-реквест #{fr.id}\n"
             f"Статус: {status_text}\n"
-            f"Автор: `{fq.author_name}`\n"
+            f"Приоритет: {p_emoji} {fr.priority}\n"
+            f"Автор: `{escaped_author}`\n"
             f"Текст: {formatted_text}"
             f"{date_str}"
             f"{history_text}"
+            f"{notes_text}"
         )
 
         await context.message.reply_markdown(message_text)
+        return True
+
+    async def _set_priority(self, context: ChatBotContext, fr_id: int, args: list[str]):
+        if not args or not args[0].isdigit():
+            await context.message.reply_text("Укажите приоритет от 1 до 5")
+            return True
+
+        priority = int(args[0])
+        if priority < 1 or priority > 5:
+            await context.message.reply_text("Приоритет должен быть от 1 до 5")
+            return True
+
+        if fr_id <= 0 or fr_id > len(self.repository.db.feature_requests):
+            await context.message.reply_text(
+                "Фича-реквеста с таким номером не существует"
+            )
+            return True
+
+        fr = self.repository.db.feature_requests[fr_id - 1]
+
+        user_id = context.message.from_user.id
+        if fr.author_id != user_id and not self.repository.is_admin(user_id):
+            await context.message.reply_text(
+                "Вы не можете изменять приоритет этого фича-реквеста"
+            )
+            return True
+
+        fr.priority = priority
+        await self.repository.save()
+
+        p_emoji = PRIORITY_EMOJI.get(priority, "⚪")
+        await context.message.reply_text(
+            f"Приоритет фича-реквеста #{fr_id} изменён на {p_emoji} {priority}"
+        )
+        return True
+
+    async def _add_note(self, context: ChatBotContext, fr_id: int, note_text: str):
+        if not note_text.strip():
+            await context.message.reply_text("Укажите текст примечания")
+            return True
+
+        if fr_id <= 0 or fr_id > len(self.repository.db.feature_requests):
+            await context.message.reply_text(
+                "Фича-реквеста с таким номером не существует"
+            )
+            return True
+
+        fr = self.repository.db.feature_requests[fr_id - 1]
+
+        user_id = context.message.from_user.id
+        if fr.author_id != user_id and not self.repository.is_admin(user_id):
+            await context.message.reply_text(
+                "Вы не можете добавлять примечания к этому фича-реквесту"
+            )
+            return True
+
+        fr.notes.append(note_text.strip())
+        await self.repository.save()
+
+        await context.message.reply_text(
+            f"Примечание добавлено к фича-реквесту #{fr_id}"
+        )
         return True
 
     async def _add_feature(self, message: Message, text):
@@ -186,19 +285,21 @@ class FeatureRequestViewHandler(Handler):
             always_show_pagination=True,
         )
 
-        filters = [
-            lambda x: x,
-            lambda x: x.status == FeatureRequestStatus.DONE,
-            lambda x: x.status == FeatureRequestStatus.DENIED,
-            lambda x: x.status == FeatureRequestStatus.OPEN,
-        ]
+        status_filters = {
+            FilterType.ALL: lambda x: True,
+            FilterType.DONE: lambda x: x.status == FeatureRequestStatus.DONE,
+            FilterType.DENIED: lambda x: x.status == FeatureRequestStatus.DENIED,
+            FilterType.OPENED: lambda x: x.status == FeatureRequestStatus.OPEN,
+            FilterType.IN_PROGRESS: lambda x: x.status == FeatureRequestStatus.IN_PROGRESS,
+            FilterType.TESTING: lambda x: x.status == FeatureRequestStatus.TESTING,
+        }
 
-        paginator.data_func = lambda: [
-            *filter(
-                filters[type.value],
-                self.repository.db.feature_requests,
-            ),
-        ]
+        filter_func = status_filters.get(type, lambda x: True)
+
+        paginator.data_func = lambda: sorted(
+            filter(filter_func, self.repository.db.feature_requests),
+            key=lambda fr: fr.priority,
+        )
         paginator.metadata = str(type.value)
         paginator.keyboard_decorator = lambda x: [
             x,
@@ -208,17 +309,12 @@ class FeatureRequestViewHandler(Handler):
         return paginator
 
     def help(self):
-        # TODO: Может сделать описание в разных хендлерах, а потом для хинтов их объединять?
-        # Сейчас просто при указании 2+ одинаковых команд будет показывать лишь первое описание
-        return (
-            "/fq [id|list|done|deny|reopen <ids>] | [text] - управлять фича-реквестами"
-        )
+        return "/fr [id|list|done|deny|reopen|inprogress|testing <ids>] | [<id> priority <1-5>] | [<id> note <text>] | [text] - управлять фича-реквестами"
 
 
-# TODO: list of args (args mapping argument)
 class FeatureRequestEditHandler(Handler):
     async def chat(self, context):
-        if not validate_command_msg(context.update, ["featurerequest", "fq"]):
+        if not validate_command_msg(context.update, ["featurerequest", "fr"]):
             return False
 
         data = context.message.text.split(" ")
@@ -226,37 +322,66 @@ class FeatureRequestEditHandler(Handler):
         if len(data) < 2:
             return False
 
-        if data[1] in ["done", "deny", "reopen"]:
+        status_commands = {
+            "done": (
+                [
+                    "Фича-реквест уже выполнен",
+                    "Фича-реквест уже отклонён",
+                    None,
+                    None,
+                    None,
+                ],
+                FeatureRequestStatus.DONE,
+            ),
+            "deny": (
+                [
+                    "Фича-реквест уже выполнен",
+                    "Фича-реквест уже отклонён",
+                    None,
+                    None,
+                    None,
+                ],
+                FeatureRequestStatus.DENIED,
+            ),
+            "reopen": (
+                [
+                    None,
+                    None,
+                    "Фича-реквест и так открыт",
+                    None,
+                    None,
+                ],
+                FeatureRequestStatus.OPEN,
+            ),
+            "inprogress": (
+                [
+                    None,
+                    None,
+                    None,
+                    "Фича-реквест уже в работе",
+                    None,
+                ],
+                FeatureRequestStatus.IN_PROGRESS,
+            ),
+            "testing": (
+                [
+                    None,
+                    None,
+                    None,
+                    None,
+                    "Фича-реквест уже на тестировании",
+                ],
+                FeatureRequestStatus.TESTING,
+            ),
+        }
+
+        if data[1] in status_commands:
             if len(data) < 3:
                 await context.message.reply_text("Укажите номера фичи-реквеста(ов)")
                 return True
 
-            return await {
-                "done": self._command(
-                    [
-                        "Фича-реквест уже выполнен",
-                        "Фича-реквест уже отклонён",
-                        None,
-                    ],
-                    FeatureRequestStatus.DONE,
-                ),
-                "deny": self._command(
-                    [
-                        "Фича-реквест уже выполнен",
-                        "Фича-реквест уже отклонён",
-                        None,
-                    ],
-                    FeatureRequestStatus.DENIED,
-                ),
-                "reopen": self._command(
-                    [
-                        None,
-                        None,
-                        "Фича-реквест и так открыт",
-                    ],
-                    FeatureRequestStatus.OPEN,
-                ),
-            }[data[1]](context, data[2:])
+            error_list, new_status = status_commands[data[1]]
+            return await self._command(error_list, new_status)(context, data[2:])
 
         return False
 
@@ -279,19 +404,19 @@ class FeatureRequestEditHandler(Handler):
                     )
                     continue
 
-                fq = self.repository.db.feature_requests[id - 1]
+                fr = self.repository.db.feature_requests[id - 1]
 
-                error = self._validate_fq(
+                error = self._validate_fr(
                     context,
-                    fq,
+                    fr,
                     error_list,
                 )
 
                 if error is not None:
-                    results.append((fq.id, error, None))
+                    results.append((fr.id, error, None))
                     continue
 
-                fq.history.append(
+                fr.history.append(
                     FeatureRequestChange(
                         author_id=context.message.from_user.id,
                         timestamp=datetime.datetime.now().timestamp(),
@@ -299,7 +424,7 @@ class FeatureRequestEditHandler(Handler):
                         status=new_status,
                     )
                 )
-                results.append((fq.id, None, fq.text))
+                results.append((fr.id, None, fr.text))
 
             await self.repository.save()
 
@@ -327,25 +452,27 @@ class FeatureRequestEditHandler(Handler):
 
         return wrapper
 
-    def _validate_fq(
+    def _validate_fr(
         self,
         context: ChatBotContext,
-        fq: FeatureRequest,
+        fr: FeatureRequest,
         messages: list[str | None],
     ):
         validation_statuses = [
             FeatureRequestStatus.DONE,
             FeatureRequestStatus.DENIED,
             FeatureRequestStatus.OPEN,
+            FeatureRequestStatus.IN_PROGRESS,
+            FeatureRequestStatus.TESTING,
         ]
 
         for i, validation_status in enumerate(validation_statuses):
-            if fq.status == validation_status and messages[i] is not None:
+            if fr.status == validation_status and messages[i] is not None:
                 return messages[i]
 
         user_id = context.message.from_user.id
 
-        if fq.author_id != user_id and not self.repository.is_admin(user_id):
+        if fr.author_id != user_id and not self.repository.is_admin(user_id):
             return "Вы не можете редактировать статус этого фича-реквеста"
 
         return None

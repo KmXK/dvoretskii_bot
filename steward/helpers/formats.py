@@ -1,3 +1,12 @@
+def escape_markdown(text: str) -> str:
+    return (
+        text.replace("_", "\\_")
+        .replace("*", "\\*")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+    )
+
+
 def format_lined_list[T](items: list[tuple[T, str]], delimiter: str = ". "):
     max_number_item = max(items, key=lambda x: len(str(x[0])))
     max_length = len(str(max_number_item[0]))

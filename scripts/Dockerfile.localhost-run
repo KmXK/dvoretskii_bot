@@ -1,9 +1,9 @@
-
 FROM alpine:latest
 
 RUN apk --no-cache add openssh-client
 
 COPY tunnel.sh /tunnel.sh
-RUN chmod +x /tunnel.sh
+COPY healthcheck-tunnel.sh /healthcheck-tunnel.sh
+RUN chmod +x /tunnel.sh /healthcheck-tunnel.sh
 
 ENTRYPOINT ["/tunnel.sh"]
