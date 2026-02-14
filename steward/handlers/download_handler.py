@@ -336,11 +336,27 @@ class DownloadHandler(Handler):
                         os.listdir(dir), key=lambda x: f"{int(x.split('.')[0]):03d}"
                     )
                 ]
-                images = [x for x in all_files if not x.endswith(".mp3")]
+                
+                # Separate videos, images, and audio
+                video_extensions = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".m4v"]
+                videos = [x for x in all_files if any(x.lower().endswith(ext) for ext in video_extensions)]
                 audios = [x for x in all_files if x.endswith(".mp3")]
+                images = [x for x in all_files if x not in videos and x not in audios]
 
-                await self._send_images(message, images)
+                # Send images if any
+                if len(images) > 0:
+                    await self._send_images(message, images)
 
+                # Send videos individually
+                for video_path in videos:
+                    with open(video_path, "rb") as file:
+                        await message.reply_video(
+                            InputFile(file, filename=f"{type_name} Video"),
+                            disable_notification=True,
+                            supports_streaming=True,
+                        )
+
+                # Send audio if any
                 if len(audios) > 0:
                     with open(os.path.join(dir, audios[0]), "rb") as file:
                         await message.reply_audio(
