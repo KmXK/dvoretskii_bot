@@ -8,6 +8,7 @@ import ChartsPage from './pages/ChartsPage'
 import FeaturesPage from './pages/FeaturesPage'
 import HomePage from './pages/HomePage'
 import ProfilePage from './pages/ProfilePage'
+import NotFoundPage from './pages/NotFoundPage'
 import TodoPage from './pages/TodoPage'
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
               <Route path="/features" element={<FeaturesPage />} />
               <Route path="/army" element={<ArmyPage />} />
               <Route path="/todo" element={<TodoPage />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AnimatePresence>
           <NavBar />
