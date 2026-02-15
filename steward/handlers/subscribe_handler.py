@@ -514,16 +514,6 @@ class SubscribeHandler(SessionHandlerBase):
         return "/subscribe [add|remove <id>] - управлять подписками на каналы"
 
 
-def _escape_markdown(text: str) -> str:
-    """Экранирует специальные символы Markdown v1"""
-    return (
-        text.replace("_", "\\_")
-        .replace("*", "\\*")
-        .replace("`", "\\`")
-        .replace("[", "\\[")
-    )
-
-
 def format_subscription_page(ctx: PageFormatContext[ChannelSubscription]) -> str:
     def format_subscription(sub: ChannelSubscription):
         times_str = ", ".join([t.strftime("%H:%M") for t in sub.times])
@@ -532,10 +522,10 @@ def format_subscription_page(ctx: PageFormatContext[ChannelSubscription]) -> str
             if sub.channel_username
             else f"ID {sub.channel_id}"
         )
-        channel_display = _escape_markdown(channel_display)
+        channel_display = escape_markdown(channel_display)
         return f"{channel_display} ({sub.id}) - {times_str}"
 
-    from steward.helpers.formats import format_lined_list
+    from steward.helpers.formats import escape_markdown, format_lined_list
 
     return format_lined_list(
         items=[(sub.id, format_subscription(sub)) for sub in ctx.data],

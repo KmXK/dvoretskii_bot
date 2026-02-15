@@ -1,5 +1,11 @@
 {$DOMAIN:localhost} {
-    reverse_proxy web:5173
+    handle /api/* {
+        reverse_proxy bot:8080
+    }
+
+    handle {
+        reverse_proxy web:5173
+    }
 
     log {
         output stdout

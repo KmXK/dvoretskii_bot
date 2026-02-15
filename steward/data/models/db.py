@@ -49,7 +49,7 @@ class Database:
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
 
-    version: int = 7
+    version: int = 8
 
 
 PARSE_CONFIG = Config(
