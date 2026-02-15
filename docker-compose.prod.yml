@@ -17,6 +17,14 @@ services:
         fluentd-address: localhost:24224
         tag: app.logs
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.prod
+    volumes:
+      - web_dist:/output
+    restart: "no"
+
   caddy:
     image: caddy:2-alpine
     ports:
@@ -25,6 +33,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - web_dist:/srv/web:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
@@ -34,8 +43,10 @@ services:
       - bot
     restart: always
     depends_on:
-      - web
-      - grafana
+      web:
+        condition: service_completed_successfully
+      grafana:
+        condition: service_started
 
   config-generator:
     build:
@@ -75,6 +86,7 @@ services:
       - "3000"
 
 volumes:
+  web_dist:
   config-volume:
   caddy_data:
   caddy_config:

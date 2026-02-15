@@ -25,6 +25,11 @@ services:
       - "${METRICS_PORT:-9090}"
 
   web:
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
     develop:
       watch:
         - action: sync
