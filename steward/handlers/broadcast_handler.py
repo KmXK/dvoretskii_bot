@@ -1,5 +1,4 @@
 import logging
-import re
 
 from telegram.error import ChatMigrated
 
@@ -11,7 +10,28 @@ from steward.session.step import Step
 
 logger = logging.getLogger(__name__)
 
-CHAT_NAMES_PATTERN = re.compile(r"\(([^)]+)\)")
+
+def _parse_chat_names(text):
+    names = []
+    i = 0
+    while i < len(text):
+        if text[i] == "(":
+            depth = 1
+            start = i + 1
+            i += 1
+            while i < len(text) and depth > 0:
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                i += 1
+            if depth == 0:
+                name = text[start : i - 1].strip()
+                if name:
+                    names.append(name)
+        else:
+            i += 1
+    return names
 
 
 class BroadcastStep(Step):
@@ -123,7 +143,7 @@ class BroadcastSessionHandler(SessionHandlerBase):
         if args.lower() == "stop":
             return False
 
-        chat_names = CHAT_NAMES_PATTERN.findall(args)
+        chat_names = _parse_chat_names(args)
         if not chat_names:
             return False
 
