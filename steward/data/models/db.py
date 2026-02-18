@@ -23,7 +23,6 @@ from .reward import Reward, UserReward
 from .rule import Rule
 from .todo_item import TodoItem
 from .user import User
-from .video_reaction import VideoReaction
 
 
 @dataclass
@@ -49,7 +48,9 @@ class Database:
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
-    video_reactions: list[VideoReaction] = field(default_factory=list)
+    # Связь: bot_message_id -> (user_id автора, video_type)
+    # Для маппинга реакций на видео к автору ссылки
+    video_message_authors: dict[str, tuple[int, str]] = field(default_factory=dict)
 
     version: int = 9
 

@@ -28,7 +28,6 @@ from telegram import (
 from elevenlabs.client import ElevenLabs
 from elevenlabs.types import SpeechToTextChunkResponseModel
 
-from steward.data.models.video_reaction import VideoReaction
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
 from steward.helpers.limiter import Duration, check_limit
@@ -694,22 +693,23 @@ class DownloadHandler(Handler):
         """
         Регистрирует связь между сообщением пользователя (ссылка) 
         и сообщением бота (видео) для подсчета реакций.
+        Хранит минимальную связь: bot_message_id -> (user_id автора, video_type)
         """
-        video_reaction = VideoReaction(
-            chat_id=message.chat_id,
-            user_id=message.from_user.id if message.from_user else 0,
-            user_message_id=message.message_id,
-            bot_message_id=bot_message.message_id,
-            video_type=video_type,
-            reactions={},
-        )
+        user_id = message.from_user.id if message.from_user else 0
         
-        self.repository.db.video_reactions.append(video_reaction)
+        # Ключ: "chat_id:message_id" для уникальности
+        key = f"{message.chat_id}:{bot_message.message_id}"
+        self.repository.db.video_message_authors[key] = (user_id, video_type)
+        
+        # Также сохраняем для сообщения со ссылкой
+        user_key = f"{message.chat_id}:{message.message_id}"
+        self.repository.db.video_message_authors[user_key] = (user_id, video_type)
+        
         await self.repository.save()
         
         logger.info(
-            f"Registered video reaction: user {video_reaction.user_id} "
-            f"posted {video_type} (msg {video_reaction.user_message_id} -> {video_reaction.bot_message_id})"
+            f"Registered video author mapping: user {user_id} posted {video_type} "
+            f"(msg {message.message_id} -> {bot_message.message_id})"
         )
 
     @asynccontextmanager

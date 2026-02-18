@@ -52,20 +52,32 @@
 
 ## Технические детали
 
-### Модель данных
+### Хранилище
+
+**Минимальная связь в db.json:**
 ```python
-@dataclass
-class VideoReaction:
-    chat_id: int                      # ID чата
-    user_id: int                      # ID автора (кто кинул ссылку)
-    user_message_id: int              # ID сообщения со ссылкой
-    bot_message_id: int               # ID сообщения с видео от бота
-    video_type: str                   # tiktok/reels/youtube/pinterest
-    reactions: dict[int, set[str]]    # user_id -> set of emojis
+video_message_authors: dict[str, tuple[int, str]]
+# Ключ: "chat_id:message_id"
+# Значение: (user_id автора, video_type)
+```
+Хранит только маппинг сообщений к авторам видео.
+
+**Статистика в метриках Prometheus:**
+```
+video_reactions_total{
+  author_user_id,    # ID автора видео
+  reactor_user_id,   # ID того, кто поставил реакцию
+  chat_id,           # ID чата
+  video_type,        # tiktok/reels/youtube/pinterest
+  emoji              # Эмодзи реакции
+}
 ```
 
-### Хранилище
-Данные сохраняются в `db.json` в поле `video_reactions`.
+Преимущества метрик:
+- Не захламляют `db.json`
+- Готовы для визуализации в Grafana
+- Масштабируемость через VictoriaMetrics
+- Автоматическая агрегация
 
 ### Обработчики
 1. **ReactionCounterHandler** — отслеживает реакции

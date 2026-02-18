@@ -11,7 +11,7 @@ class ReactionCounterHandler(Handler):
     async def reaction(self, context: ReactionBotContext):
         """
         Обрабатывает реакции на сообщения бота с видео И на сообщения пользователя со ссылкой.
-        Связывает реакции с автором оригинального видео (кто кинул ссылку).
+        Использует метрики Prometheus для подсчёта.
         """
         info = await get_reactions_info(context)
         
@@ -21,43 +21,39 @@ class ReactionCounterHandler(Handler):
         message_reaction = context.message_reaction
         chat_id = message_reaction.chat.id
         message_id = message_reaction.message_id
-        user_id = message_reaction.user.id
+        reactor_user_id = message_reaction.user.id
         
-        # Найти VideoReaction для этого сообщения
-        # Проверяем оба варианта: сообщение бота с видео И сообщение пользователя со ссылкой
-        video_reaction = None
-        for vr in context.repository.db.video_reactions:
-            if vr.chat_id == chat_id and (
-                vr.bot_message_id == message_id or vr.user_message_id == message_id
-            ):
-                video_reaction = vr
-                break
+        # Найти автора видео по bot_message_id
+        key = f"{chat_id}:{message_id}"
+        author_info = context.repository.db.video_message_authors.get(key)
         
-        if not video_reaction:
+        if not author_info:
             # Это не связанное с видео сообщение
-            logger.debug(f"No video_reaction found for message {message_id} in chat {chat_id}")
+            logger.debug(f"No video author mapping for message {message_id} in chat {chat_id}")
             return
         
-        # Обновить счетчик реакций
-        if user_id not in video_reaction.reactions:
-            video_reaction.reactions[user_id] = set()
+        author_user_id, video_type = author_info
         
-        # Добавить новые реакции
+        # Инкрементируем метрики для добавленных реакций
         for emoji in info.added:
-            video_reaction.reactions[user_id].add(emoji)
+            context.metrics.inc(
+                "video_reactions_total",
+                {
+                    "author_user_id": str(author_user_id),
+                    "reactor_user_id": str(reactor_user_id),
+                    "chat_id": str(chat_id),
+                    "video_type": video_type,
+                    "emoji": emoji,
+                },
+            )
+            logger.info(
+                f"Reaction added: user {reactor_user_id} -> {emoji} on video by {author_user_id} ({video_type})"
+            )
         
-        # Удалить убранные реакции
+        # Декрементируем метрики для удалённых реакций (если нужно)
+        # Примечание: Counter в Prometheus не поддерживает декремент,
+        # но можно игнорировать удаления или использовать Gauge
         for emoji in info.removed:
-            video_reaction.reactions[user_id].discard(emoji)
-        
-        # Если юзер убрал все реакции, удалить его из списка
-        if not video_reaction.reactions[user_id]:
-            del video_reaction.reactions[user_id]
-        
-        await context.repository.save()
-        
-        logger.info(
-            f"Updated reactions for video by user {video_reaction.user_id}: "
-            f"{video_reaction.get_total_reactions()} users, "
-            f"{video_reaction.get_reactions_count()} total reactions"
-        )
+            logger.info(
+                f"Reaction removed: user {reactor_user_id} -> {emoji} on video by {author_user_id} ({video_type})"
+            )
