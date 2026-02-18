@@ -28,6 +28,7 @@ from telegram import (
 from elevenlabs.client import ElevenLabs
 from elevenlabs.types import SpeechToTextChunkResponseModel
 
+from steward.data.models.video_reaction import VideoReaction
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
 from steward.helpers.limiter import Duration, check_limit
@@ -269,13 +270,20 @@ class DownloadHandler(Handler):
                     )
 
                 with open(filepath, "rb") as file:
-                    await message.reply_video(
+                    sent_message = await message.reply_video(
                         InputFile(file, filename=f"{type_name} Video"),
                         supports_streaming=True,
                         width=int(width) if width is not None else None,
                         height=int(height) if height is not None else None,
                         reply_markup=reply_markup,
                     )
+                
+                # Сохранить связь для подсчета реакций
+                await self._register_video_reaction(
+                    message=message,
+                    bot_message=sent_message,
+                    video_type=type_name,
+                )
 
                 logger.info(f"video {type_name} downloaded successfully")
 
@@ -676,6 +684,33 @@ class DownloadHandler(Handler):
 
         except Exception as e:
             raise e
+
+    async def _register_video_reaction(
+        self,
+        message: Message,
+        bot_message: Message,
+        video_type: str,
+    ):
+        """
+        Регистрирует связь между сообщением пользователя (ссылка) 
+        и сообщением бота (видео) для подсчета реакций.
+        """
+        video_reaction = VideoReaction(
+            chat_id=message.chat_id,
+            user_id=message.from_user.id if message.from_user else 0,
+            user_message_id=message.message_id,
+            bot_message_id=bot_message.message_id,
+            video_type=video_type,
+            reactions={},
+        )
+        
+        self.repository.db.video_reactions.append(video_reaction)
+        await self.repository.save()
+        
+        logger.info(
+            f"Registered video reaction: user {video_reaction.user_id} "
+            f"posted {video_type} (msg {video_reaction.user_message_id} -> {video_reaction.bot_message_id})"
+        )
 
     @asynccontextmanager
     async def _download_file(self, url: str, use_proxy=False):

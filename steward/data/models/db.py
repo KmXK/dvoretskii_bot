@@ -23,6 +23,7 @@ from .reward import Reward, UserReward
 from .rule import Rule
 from .todo_item import TodoItem
 from .user import User
+from .video_reaction import VideoReaction
 
 
 @dataclass
@@ -48,8 +49,9 @@ class Database:
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
+    video_reactions: list[VideoReaction] = field(default_factory=list)
 
-    version: int = 8
+    version: int = 9
 
 
 PARSE_CONFIG = Config(
