@@ -4,7 +4,7 @@ import { TelegramProvider } from './context/TelegramContext'
 import NavBar from './components/NavBar'
 import ArmyPage from './pages/ArmyPage'
 import CasinoPage from './pages/CasinoPage'
-import ChartsPage from './pages/ChartsPage'
+import PokerPage from './pages/PokerPage'
 import FeaturesPage from './pages/FeaturesPage'
 import HomePage from './pages/HomePage'
 import ProfilePage from './pages/ProfilePage'
@@ -19,7 +19,7 @@ export default function App() {
           <AnimatePresence mode="wait">
             <Routes>
               <Route path="/" element={<HomePage />} />
-              <Route path="/charts" element={<ChartsPage />} />
+              <Route path="/poker" element={<PokerPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/casino" element={<CasinoPage />} />
               <Route path="/features" element={<FeaturesPage />} />

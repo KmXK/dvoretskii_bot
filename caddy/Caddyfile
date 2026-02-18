@@ -10,6 +10,10 @@
         reverse_proxy bot:8080
     }
 
+    handle /ws/* {
+        reverse_proxy bot:8080
+    }
+
     handle {
         root * /srv/web
         encode gzip zstd

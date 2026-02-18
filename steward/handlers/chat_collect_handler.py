@@ -27,11 +27,17 @@ class ChatCollectHandler(Handler):
             username = from_user.username
             existing = self.users_by_id.get(user_id)
             if existing is None:
-                self.repository.db.users.append(User(user_id, username))
+                self.repository.db.users.append(User(user_id, username, [chat_id]))
                 changed = True
-            elif existing.username != username:
-                existing.username = username
-                changed = True
+            else:
+                if existing.username != username:
+                    existing.username = username
+                    changed = True
+                if not hasattr(existing, 'chat_ids'):
+                    existing.chat_ids = []
+                if chat_id not in existing.chat_ids:
+                    existing.chat_ids.append(chat_id)
+                    changed = True
 
         if changed:
             await self.repository.save()

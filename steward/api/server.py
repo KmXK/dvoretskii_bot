@@ -9,8 +9,12 @@ from steward.data.models.feature_request import (
     FeatureRequestChange,
     FeatureRequestStatus,
 )
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from steward.data.repository import Repository
+from steward.helpers.webapp import get_webapp_deep_link
 from steward.metrics.base import MetricsEngine
+from steward.poker.room_manager import poker_ws_handler, _manager as poker_manager
 
 logger = logging.getLogger(__name__)
 
@@ -275,10 +279,199 @@ async def handle_profile_history(request: web.Request):
     return web.json_response(history)
 
 
-async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080):
+async def handle_poker_stats(request: web.Request):
+    metrics: MetricsEngine = request.app["metrics"]
+    user_id = request.match_info["user_id"]
+
+    try:
+        def pq(metric, **flt):
+            flt["user_id"] = user_id
+            lf = ", ".join(f'{k}="{v}"' for k, v in flt.items())
+            return f"sum({metric}{{{lf}}})"
+
+        hands_s = await metrics.query(pq("poker_hands_total"))
+        hands_won_s = await metrics.query(pq("poker_hands_total", result="win"))
+        hands_fold_s = await metrics.query(pq("poker_hands_total", result="fold"))
+        hands_lost_s = await metrics.query(pq("poker_hands_total", result="loss"))
+        games_s = await metrics.query(pq("poker_games_total"))
+        games_won_s = await metrics.query(pq("poker_games_won_total"))
+        chips_won_s = await metrics.query(pq("poker_chips_won_total"))
+        chips_lost_s = await metrics.query(pq("poker_chips_lost_total"))
+
+        combo_names = [
+            "High Card", "Pair", "Two Pair", "Three of a Kind",
+            "Straight", "Flush", "Full House", "Four of a Kind", "Straight Flush",
+        ]
+        combos = []
+        for cn in combo_names:
+            collected_s = await metrics.query(pq("poker_combinations_total", combination=cn))
+            won_s = await metrics.query(pq("poker_combinations_won_total", combination=cn))
+            collected = _extract_val(collected_s)
+            won = _extract_val(won_s)
+            if collected > 0:
+                combos.append({"name": cn, "collected": collected, "won": won})
+
+        combos.sort(key=lambda x: x["collected"], reverse=True)
+
+        return web.json_response({
+            "hands": _extract_val(hands_s),
+            "handsWon": _extract_val(hands_won_s),
+            "handsFolded": _extract_val(hands_fold_s),
+            "handsLost": _extract_val(hands_lost_s),
+            "games": _extract_val(games_s),
+            "gamesWon": _extract_val(games_won_s),
+            "chipsWon": _extract_val(chips_won_s),
+            "chipsLost": _extract_val(chips_lost_s),
+            "combos": combos,
+        })
+    except Exception:
+        return web.json_response({
+            "hands": 0, "handsWon": 0, "handsFolded": 0, "handsLost": 0,
+            "games": 0, "gamesWon": 0, "chipsWon": 0, "chipsLost": 0, "combos": [],
+        })
+
+
+async def handle_user_chats(request: web.Request):
+    repository: Repository = request.app["repository"]
+    user_id = int(request.match_info["user_id"])
+
+    user = next((u for u in repository.db.users if u.id == user_id), None)
+    if not user:
+        return web.json_response({"chats": []})
+
+    chat_ids = getattr(user, 'chat_ids', []) or []
+    chats_map = {c.id: c for c in repository.db.chats}
+    result = []
+    for cid in chat_ids:
+        chat = chats_map.get(cid)
+        if chat:
+            result.append({"id": chat.id, "name": chat.name})
+
+    return web.json_response({"chats": result})
+
+
+_invitation_messages: dict[str, dict[int, int]] = {}
+
+
+async def handle_poker_invite(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    chat_ids = body.get("chatIds", [])
+    room_name = str(body.get("roomName", "Poker Room"))
+    room_id = str(body.get("roomId", ""))
+    player_count = int(body.get("playerCount", 1))
+    max_players = int(body.get("maxPlayers", 8))
+    creator_name = str(body.get("creatorName", "Someone"))
+
+    if not chat_ids or not room_id:
+        return web.json_response({"error": "chatIds and roomId required"}, status=400)
+
+    app_link = get_webapp_deep_link(bot)
+
+    text = (
+        f"🃏 <b>Poker — {room_name}</b>\n\n"
+        f"👤 {creator_name} invites you to play!\n"
+        f"👥 Players: {player_count}/{max_players}"
+    )
+
+    reply_markup = None
+    if app_link:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎮 Join Game", url=app_link)]
+        ])
+
+    sent = {}
+    for cid in chat_ids:
+        try:
+            msg = await bot.send_message(chat_id=cid, text=text, parse_mode="HTML", reply_markup=reply_markup)
+            sent[cid] = msg.message_id
+        except Exception:
+            logger.warning(f"Failed to send poker invite to chat {cid}")
+
+    if room_id not in _invitation_messages:
+        _invitation_messages[room_id] = {}
+    _invitation_messages[room_id].update(sent)
+    return web.json_response({"sent": len(sent)})
+
+
+async def handle_poker_invite_update(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    room_id = str(body.get("roomId", ""))
+    room_name = str(body.get("roomName", "Poker Room"))
+    player_count = int(body.get("playerCount", 1))
+    max_players = int(body.get("maxPlayers", 8))
+
+    msgs = _invitation_messages.get(room_id, {})
+    if not msgs:
+        return web.json_response({"updated": 0})
+
+    app_link = get_webapp_deep_link(bot)
+
+    text = (
+        f"🃏 <b>Poker — {room_name}</b>\n\n"
+        f"👥 Players: {player_count}/{max_players}\n"
+        f"{'🟢 Seats available!' if player_count < max_players else '🔴 Room full'}"
+    )
+
+    reply_markup = None
+    if app_link:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎮 Join Game", url=app_link)]
+        ])
+
+    updated = 0
+    for cid, mid in list(msgs.items()):
+        try:
+            await bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="HTML", reply_markup=reply_markup)
+            updated += 1
+        except Exception:
+            pass
+
+    return web.json_response({"updated": updated})
+
+
+async def handle_poker_invite_delete(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    room_id = str(body.get("roomId", ""))
+
+    msgs = _invitation_messages.pop(room_id, {})
+    deleted = 0
+    for cid, mid in msgs.items():
+        try:
+            await bot.delete_message(chat_id=cid, message_id=mid)
+            deleted += 1
+        except Exception:
+            pass
+
+    return web.json_response({"deleted": deleted})
+
+
+async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None):
     app = web.Application()
     app["repository"] = repository
     app["metrics"] = metrics
+    app["bot"] = bot
+
+    if bot:
+        async def _on_room_cleanup(room_id):
+            msgs = _invitation_messages.pop(room_id, {})
+            for cid, mid in msgs.items():
+                try:
+                    await bot.delete_message(chat_id=cid, message_id=mid)
+                except Exception:
+                    pass
+        poker_manager._on_room_cleanup = _on_room_cleanup
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
@@ -288,6 +481,12 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_patch("/api/feature-requests/{id}", handle_feature_request_update)
     app.router.add_get("/api/profile/{user_id}", handle_profile)
     app.router.add_get("/api/profile/{user_id}/history", handle_profile_history)
+    app.router.add_get("/api/poker/stats/{user_id}", handle_poker_stats)
+    app.router.add_get("/api/user/{user_id}/chats", handle_user_chats)
+    app.router.add_post("/api/poker/invite", handle_poker_invite)
+    app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)
+    app.router.add_post("/api/poker/invite/delete", handle_poker_invite_delete)
+    app.router.add_get("/ws/poker", poker_ws_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
