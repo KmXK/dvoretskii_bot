@@ -24,6 +24,11 @@ export default defineConfig({
         target: 'http://bot:8080',
         changeOrigin: true,
       },
+      '/ws': {
+        target: 'http://bot:8080',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })

@@ -131,7 +131,7 @@ class Bot:
 
             api_port = int(environ.get("API_PORT", "8080"))
             asyncio.ensure_future(
-                start_api_server(self.repository, self.metrics, api_port),
+                start_api_server(self.repository, self.metrics, api_port, self.bot),
                 loop=asyncio.get_event_loop(),
             )
 
