@@ -106,6 +106,7 @@ from steward.handlers.todo_handler import (
 from steward.handlers.translate_handler import TranslateHandler
 from steward.handlers.voice_video_handler import VoiceVideoHandler
 from steward.handlers.watch_handler import WatchHandler
+from steward.handlers.video_stats_handler import VideoStatsHandler
 from steward.logging.configure import configure_logging
 from steward.metrics import MetricsEngine, NoopMetricsEngine, PrometheusMetricsEngine
 
@@ -190,6 +191,7 @@ def get_handlers(log_file: None | str):
             BillHelpHandler,
             GoogleDriveListHandler,
             StatsHandler,
+            VideoStatsHandler,
 
             RuleAnswerHandler,
         ],

@@ -269,13 +269,20 @@ class DownloadHandler(Handler):
                     )
 
                 with open(filepath, "rb") as file:
-                    await message.reply_video(
+                    sent_message = await message.reply_video(
                         InputFile(file, filename=f"{type_name} Video"),
                         supports_streaming=True,
                         width=int(width) if width is not None else None,
                         height=int(height) if height is not None else None,
                         reply_markup=reply_markup,
                     )
+                
+                # Сохранить связь для подсчета реакций
+                await self._register_video_reaction(
+                    message=message,
+                    bot_message=sent_message,
+                    video_type=type_name,
+                )
 
                 logger.info(f"video {type_name} downloaded successfully")
 
@@ -676,6 +683,34 @@ class DownloadHandler(Handler):
 
         except Exception as e:
             raise e
+
+    async def _register_video_reaction(
+        self,
+        message: Message,
+        bot_message: Message,
+        video_type: str,
+    ):
+        """
+        Регистрирует связь между сообщением пользователя (ссылка) 
+        и сообщением бота (видео) для подсчета реакций.
+        Хранит минимальную связь: bot_message_id -> (user_id автора, video_type)
+        """
+        user_id = message.from_user.id if message.from_user else 0
+        
+        # Ключ: "chat_id:message_id" для уникальности
+        key = f"{message.chat_id}:{bot_message.message_id}"
+        self.repository.db.video_message_authors[key] = (user_id, video_type)
+        
+        # Также сохраняем для сообщения со ссылкой
+        user_key = f"{message.chat_id}:{message.message_id}"
+        self.repository.db.video_message_authors[user_key] = (user_id, video_type)
+        
+        await self.repository.save()
+        
+        logger.info(
+            f"Registered video author mapping: user {user_id} posted {video_type} "
+            f"(msg {message.message_id} -> {bot_message.message_id})"
+        )
 
     @asynccontextmanager
     async def _download_file(self, url: str, use_proxy=False):
