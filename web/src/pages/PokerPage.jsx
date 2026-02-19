@@ -5,19 +5,19 @@ import { useTelegram } from '../context/TelegramContext'
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
 
 function PokerCard({ rank, suit, hidden = false, small = false }) {
-  const w = small ? 'w-9 h-13' : 'w-12 h-17'
+  const w = small ? 'w-10 h-14' : 'w-14 h-20'
   if (hidden) {
     return (
       <div className={`${w} rounded-lg bg-gradient-to-br from-green-700 to-green-900 border border-green-600 shadow-md flex items-center justify-center`}>
-        <span className="text-green-400 text-xs font-bold">♠</span>
+        <span className="text-green-400 text-sm font-bold">♠</span>
       </div>
     )
   }
   const isRed = suit === 'h' || suit === 'd'
   return (
     <div className={`${w} rounded-lg bg-white shadow-md flex flex-col items-center justify-center gap-0 ${isRed ? 'text-red-500' : 'text-zinc-900'}`}>
-      <span className={`${small ? 'text-sm' : 'text-base'} font-bold leading-none`}>{rank}</span>
-      <span className={`${small ? 'text-xs' : 'text-sm'} leading-none`}>{SUIT_SYMBOL[suit]}</span>
+      <span className={`${small ? 'text-base' : 'text-xl'} font-bold leading-none`}>{rank}</span>
+      <span className={`${small ? 'text-sm' : 'text-base'} leading-none`}>{SUIT_SYMBOL[suit]}</span>
     </div>
   )
 }
@@ -33,7 +33,6 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
 
   return (
     <motion.div
-      layout
       animate={isCurrent ? { boxShadow: '0 0 16px 2px rgba(250,204,21,0.35)' } : { boxShadow: '0 0 0 0 transparent' }}
       transition={{ duration: 0.4 }}
       className={`relative rounded-xl border-2 ${border} ${bg} p-2 min-w-[100px] flex flex-col items-center gap-1 transition-colors`}
@@ -681,7 +680,6 @@ function GameTable({ state, send, userId, onLeave }) {
         {opponents.map((p) => (
           <motion.div
             key={p.id}
-            layout
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
