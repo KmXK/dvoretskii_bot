@@ -9,6 +9,8 @@ from steward.poker.engine import PokerGame, PHASE_SHOWDOWN, PHASE_WAITING
 
 logger = logging.getLogger(__name__)
 
+_NEXT_HAND_DELAY = 30
+
 
 class Room:
     def __init__(self, room_id: str, name: str, creator_id: int,
@@ -61,16 +63,21 @@ class Room:
                 state["readyPlayers"] = list(self.ready_players)
                 await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
             except Exception:
-                pass
+                logger.exception("send_states error for uid=%s room=%s", uid, self.id)
 
     async def _schedule_next(self):
-        await asyncio.sleep(120)
+        await asyncio.sleep(_NEXT_HAND_DELAY)
         if not self.started:
             return
+        logger.info("room=%s auto-starting next hand after %ds", self.id, _NEXT_HAND_DELAY)
         await self._try_next_hand()
 
     async def _try_next_hand(self):
         if not self.started or len(self.connections) < 2:
+            logger.info(
+                "room=%s _try_next_hand skipped: started=%s connections=%d",
+                self.id, self.started, len(self.connections),
+            )
             return
 
         for p in self.game.players:
@@ -78,18 +85,28 @@ class Room:
                 p.sitting_out = False
 
         seated = [p for p in self.game.players if not p.sitting_out and p.chips > 0]
+        logger.info("room=%s _try_next_hand: seated=%d", self.id, len(seated))
+
         if len(seated) >= 2:
             self.ready_players.clear()
             ok = self.game.start_hand()
             if not ok:
+                logger.warning("room=%s start_hand() returned False despite seated=%d", self.id, len(seated))
                 self.game.phase = PHASE_SHOWDOWN
                 await self.send_states()
+                self.queue_next_hand()
                 return
+            logger.info(
+                "room=%s hand #%d started, phase=%s, players=%d",
+                self.id, self.game.hand_num, self.game.phase,
+                len([p for p in self.game.players if not p.folded and not p.sitting_out]),
+            )
             await self.send_states()
             if self.game.phase == PHASE_SHOWDOWN:
                 self.ready_players.clear()
                 self.queue_next_hand()
         else:
+            logger.info("room=%s game over, not enough players with chips", self.id)
             if self._metrics:
                 self.emit_game_over(self._metrics)
             self.started = False
@@ -125,6 +142,7 @@ class Room:
         })
 
         if self.game.phase != PHASE_SHOWDOWN:
+            logger.debug("room=%s ready from uid=%s ignored: phase=%s", self.id, user_id, self.game.phase)
             return
 
         eligible = set()
@@ -132,12 +150,20 @@ class Room:
             if p.user_id in self.connections and not p.sitting_out and p.chips > 0:
                 eligible.add(p.user_id)
 
+        logger.info(
+            "room=%s handle_ready uid=%s: eligible=%s ready=%s",
+            self.id, user_id, eligible, self.ready_players,
+        )
+
         if not eligible or eligible.issubset(self.ready_players):
             if self._next_hand_task and not self._next_hand_task.done():
                 self._next_hand_task.cancel()
 
             if metrics:
-                self._emit_hand_metrics(metrics)
+                try:
+                    self._emit_hand_metrics(metrics)
+                except Exception:
+                    logger.exception("room=%s _emit_hand_metrics failed", self.id)
 
             await self._try_next_hand()
 
@@ -157,24 +183,24 @@ class Room:
             labels = {"user_id": str(p.user_id), "user_name": p.name}
             i = next((j for j, pl in enumerate(self.game.players) if pl.user_id == p.user_id), -1)
 
-            metrics.inc("poker_hands_total", labels)
-
             if p.folded and i not in winners:
-                metrics.inc("poker_hands_total", {**labels, "result": "fold"})
-                if p.total_bet > 0:
-                    metrics.inc("poker_chips_lost_total", labels, p.total_bet)
+                result = "fold"
             elif i in winners:
-                metrics.inc("poker_hands_total", {**labels, "result": "win"})
+                result = "win"
+            else:
+                result = "loss"
+
+            metrics.inc("poker_hands_total", {**labels, "result": result})
+
+            if result == "win":
                 won = hands.get(i, {}).get("won", 0)
                 if won:
                     metrics.inc("poker_chips_won_total", labels, won)
                     net = won - p.total_bet
                     if net < 0:
                         metrics.inc("poker_chips_lost_total", labels, -net)
-            else:
-                metrics.inc("poker_hands_total", {**labels, "result": "loss"})
-                if p.total_bet > 0:
-                    metrics.inc("poker_chips_lost_total", labels, p.total_bet)
+            elif p.total_bet > 0:
+                metrics.inc("poker_chips_lost_total", labels, p.total_bet)
 
             if i in hands:
                 combo_name = hands[i].get("name", "")
@@ -247,6 +273,8 @@ async def _leave(user_id: int, room: Room, metrics=None):
     room.game.remove_player(user_id)
     _manager.player_rooms.pop(user_id, None)
 
+    logger.info("room=%s uid=%s left, connections=%d", room.id, user_id, len(room.connections))
+
     if room.connections:
         if room.creator_id == user_id:
             room.transfer_ownership()
@@ -254,8 +282,12 @@ async def _leave(user_id: int, room: Room, metrics=None):
         if room.started:
             active_with_chips = [p for p in room.game.players if not p.sitting_out and p.chips > 0]
             if len(active_with_chips) < 2:
+                logger.info("room=%s not enough players after leave, ending game", room.id)
                 if room.game.phase == PHASE_SHOWDOWN and metrics:
-                    room._emit_hand_metrics(metrics)
+                    try:
+                        room._emit_hand_metrics(metrics)
+                    except Exception:
+                        logger.exception("room=%s _emit_hand_metrics failed in _leave", room.id)
                 if metrics:
                     room.emit_game_over(metrics)
                 room.started = False
@@ -275,7 +307,10 @@ async def _leave(user_id: int, room: Room, metrics=None):
                         if room._next_hand_task and not room._next_hand_task.done():
                             room._next_hand_task.cancel()
                         if metrics:
-                            room._emit_hand_metrics(metrics)
+                            try:
+                                room._emit_hand_metrics(metrics)
+                            except Exception:
+                                logger.exception("room=%s _emit_hand_metrics failed in _leave showdown", room.id)
                         await room._try_next_hand()
                     else:
                         await room.send_states()
@@ -284,6 +319,7 @@ async def _leave(user_id: int, room: Room, metrics=None):
 
         await room.broadcast({"type": "room_updated", "room": room.to_dict()})
     else:
+        logger.info("room=%s no connections left, cleaning up", room.id)
         _manager.cleanup_room(room.id)
 
     await _manager.broadcast_rooms()
@@ -321,6 +357,7 @@ async def poker_ws_handler(request: web.Request):
                         if room:
                             current_room = room
                             room.connections[user_id] = ws
+                            logger.info("uid=%s reconnected to room=%s", user_id, rid)
                             await ws.send_str(json.dumps({"type": "reconnected", "room": room.to_dict()}, ensure_ascii=False))
                             if room.started:
                                 state = room.game.state_for(user_id)
@@ -353,6 +390,7 @@ async def poker_ws_handler(request: web.Request):
                     _manager.player_rooms[user_id] = room.id
                     _manager.lobby_connections.pop(user_id, None)
                     current_room = room
+                    logger.info("uid=%s created room=%s", user_id, room.id)
                     await ws.send_str(json.dumps({"type": "room_joined", "room": room.to_dict()}, ensure_ascii=False))
                     await _manager.broadcast_rooms()
 
@@ -389,6 +427,7 @@ async def poker_ws_handler(request: web.Request):
                     _manager.player_rooms[user_id] = room.id
                     _manager.lobby_connections.pop(user_id, None)
                     current_room = room
+                    logger.info("uid=%s joined room=%s", user_id, room.id)
                     await ws.send_str(json.dumps({"type": "room_joined", "room": room.to_dict()}, ensure_ascii=False))
                     await room.broadcast({"type": "room_updated", "room": room.to_dict()})
                     await _manager.broadcast_rooms()
@@ -438,6 +477,7 @@ async def poker_ws_handler(request: web.Request):
                         current_room.started = False
                         await ws.send_str(json.dumps({"type": "error", "message": "Cannot start game"}))
                         continue
+                    logger.info("room=%s game started by uid=%s, hand #%d", current_room.id, user_id, current_room.game.hand_num)
                     if metrics:
                         current_room.emit_game_start(metrics)
                     await current_room.send_states()
@@ -455,24 +495,35 @@ async def poker_ws_handler(request: web.Request):
                             await ws.send_str(json.dumps({"type": "error", "message": result}))
                             continue
 
+                        logger.info(
+                            "room=%s uid=%s action=%s amount=%s phase=%s",
+                            current_room.id, user_id, act, amount, current_room.game.phase,
+                        )
                         await current_room.send_states()
 
                         if current_room.game.phase == PHASE_SHOWDOWN:
                             current_room.ready_players.clear()
                             current_room.queue_next_hand()
                     except Exception:
-                        logger.exception("action error")
+                        logger.exception("room=%s action error uid=%s act=%s", current_room.id, user_id, data.get("action"))
                         await ws.send_str(json.dumps({"type": "error", "message": "Internal error"}))
 
                 elif t == "ready":
                     if not current_room or not current_room.started:
                         continue
                     if current_room.game.phase != PHASE_SHOWDOWN:
+                        # Клиент рассинхронизирован — отправляем актуальный стейт
+                        try:
+                            state = current_room.game.state_for(user_id)
+                            state["readyPlayers"] = list(current_room.ready_players)
+                            await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
+                        except Exception:
+                            logger.exception("room=%s state sync failed for uid=%s", current_room.id, user_id)
                         continue
                     try:
                         await current_room.handle_ready(user_id, metrics)
                     except Exception:
-                        logger.exception("handle_ready error")
+                        logger.exception("room=%s handle_ready error uid=%s", current_room.id, user_id)
 
                 elif t == "update_settings":
                     if not current_room or not user_id:
@@ -507,7 +558,7 @@ async def poker_ws_handler(request: web.Request):
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                 break
     except Exception:
-        logger.exception("poker ws error")
+        logger.exception("poker ws error uid=%s", user_id)
     finally:
         if user_id:
             _manager.lobby_connections.pop(user_id, None)
