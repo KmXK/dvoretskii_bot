@@ -4,8 +4,19 @@ from itertools import combinations
 
 SUITS = ["h", "d", "c", "s"]
 RANK_SYMBOLS = {
-    2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8",
-    9: "9", 10: "10", 11: "J", 12: "Q", 13: "K", 14: "A",
+    2: "2",
+    3: "3",
+    4: "4",
+    5: "5",
+    6: "6",
+    7: "7",
+    8: "8",
+    9: "9",
+    10: "10",
+    11: "J",
+    12: "Q",
+    13: "K",
+    14: "A",
 }
 HAND_NAMES = {
     0: "High Card",
@@ -161,7 +172,9 @@ class PokerGame:
         return True
 
     def remove_player(self, user_id):
-        idx = next((i for i, p in enumerate(self.players) if p.user_id == user_id), None)
+        idx = next(
+            (i for i, p in enumerate(self.players) if p.user_id == user_id), None
+        )
         if idx is None:
             return
         p = self.players[idx]
@@ -170,22 +183,31 @@ class PokerGame:
             p.sitting_out = True
             if self.current_idx == idx:
                 self._advance()
+            elif self.current_idx > idx:
+                self.current_idx -= 1
         else:
             self.players.pop(idx)
-            if self.dealer_idx >= len(self.players):
+            if self.dealer_idx > idx:
+                self.dealer_idx -= 1
+            elif self.dealer_idx >= len(self.players):
                 self.dealer_idx = max(0, len(self.players) - 1)
 
     def _active(self):
-        return [i for i, p in enumerate(self.players) if not p.folded and not p.sitting_out]
+        return [
+            i for i, p in enumerate(self.players) if not p.folded and not p.sitting_out
+        ]
 
     def _can_act(self):
         return [
-            i for i, p in enumerate(self.players)
+            i
+            for i, p in enumerate(self.players)
             if not p.folded and not p.all_in and not p.sitting_out and p.chips > 0
         ]
 
     def _seated_with_chips(self):
-        return [i for i, p in enumerate(self.players) if not p.sitting_out and p.chips > 0]
+        return [
+            i for i, p in enumerate(self.players) if not p.sitting_out and p.chips > 0
+        ]
 
     def _next(self, idx, predicate=None):
         n = len(self.players)
@@ -233,7 +255,9 @@ class PokerGame:
         if len(active) < 2:
             return False
 
-        not_sitting = lambda p: not p.folded and not p.sitting_out
+        def not_sitting(p):
+            return not p.folded and not p.sitting_out
+
         if self.hand_num == 1:
             self.dealer_idx = active[0]
         else:
@@ -253,7 +277,9 @@ class PokerGame:
         self._post_blind(bb_idx, self.big_blind)
         self.current_bet = self.big_blind
 
-        can_act_pred = lambda p: not p.folded and not p.all_in and not p.sitting_out and p.chips > 0
+        def can_act_pred(p):
+            return not p.folded and not p.all_in and not p.sitting_out and p.chips > 0
+
         self.current_idx = self._next(bb_idx, can_act_pred)
         if self.current_idx == -1:
             self.phase = PHASE_PREFLOP
@@ -264,7 +290,9 @@ class PokerGame:
         return True
 
     def action(self, user_id, act, amount=0):
-        idx = next((i for i, p in enumerate(self.players) if p.user_id == user_id), None)
+        idx = next(
+            (i for i, p in enumerate(self.players) if p.user_id == user_id), None
+        )
         if idx is None:
             return False, "Not in game"
         if idx != self.current_idx:
@@ -317,7 +345,12 @@ class PokerGame:
                 self.min_raise = max(self.min_raise, new_bet - self.current_bet)
                 self.current_bet = new_bet
                 for i, pl in enumerate(self.players):
-                    if i != idx and not pl.folded and not pl.all_in and not pl.sitting_out:
+                    if (
+                        i != idx
+                        and not pl.folded
+                        and not pl.all_in
+                        and not pl.sitting_out
+                    ):
                         pl.acted = False
 
             p.chips -= actual
@@ -341,7 +374,12 @@ class PokerGame:
                 self.current_bet = new_bet
                 if is_full_raise:
                     for i, pl in enumerate(self.players):
-                        if i != idx and not pl.folded and not pl.all_in and not pl.sitting_out:
+                        if (
+                            i != idx
+                            and not pl.folded
+                            and not pl.all_in
+                            and not pl.sitting_out
+                        ):
                             pl.acted = False
 
             p.chips -= all_in_amount
@@ -379,7 +417,16 @@ class PokerGame:
         if round_done or len(can_act) == 0:
             self._next_phase()
         else:
-            pred = lambda p: not p.folded and not p.all_in and not p.sitting_out and p.chips > 0 and (not p.acted or p.bet < self.current_bet)
+
+            def pred(p):
+                return (
+                    not p.folded
+                    and not p.all_in
+                    and not p.sitting_out
+                    and p.chips > 0
+                    and (not p.acted or p.bet < self.current_bet)
+                )
+
             ni = self._next(self.current_idx, pred)
             if ni == -1:
                 self._next_phase()
@@ -411,7 +458,9 @@ class PokerGame:
             self._next_phase()
             return
 
-        pred = lambda p: not p.folded and not p.all_in and not p.sitting_out and p.chips > 0
+        def pred(p):
+            return not p.folded and not p.all_in and not p.sitting_out and p.chips > 0
+
         ni = self._next(self.dealer_idx, pred)
         if ni == -1:
             self._next_phase()
@@ -515,7 +564,11 @@ class PokerGame:
         me = self.players[idx] if idx >= 0 else None
 
         actions = []
-        if me and idx == self.current_idx and self.phase not in (PHASE_WAITING, PHASE_SHOWDOWN):
+        if (
+            me
+            and idx == self.current_idx
+            and self.phase not in (PHASE_WAITING, PHASE_SHOWDOWN)
+        ):
             call_needed = max(0, self.current_bet - me.bet)
             actions.append("fold")
             if call_needed <= 0:
@@ -538,9 +591,13 @@ class PokerGame:
             "pot": self.pot,
             "currentBet": self.current_bet,
             "dealerIndex": self.dealer_idx,
-            "currentIndex": self.current_idx if self.phase not in (PHASE_WAITING, PHASE_SHOWDOWN) else -1,
+            "currentIndex": self.current_idx
+            if self.phase not in (PHASE_WAITING, PHASE_SHOWDOWN)
+            else -1,
             "myIndex": idx,
-            "myCards": [c.to_dict() for c in me.hole_cards] if me and me.hole_cards else [],
+            "myCards": [c.to_dict() for c in me.hole_cards]
+            if me and me.hole_cards
+            else [],
             "players": players_data,
             "minRaise": self.min_raise,
             "minRaiseTo": min_raise_to,

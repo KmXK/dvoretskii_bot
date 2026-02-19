@@ -80,8 +80,15 @@ class Room:
         seated = [p for p in self.game.players if not p.sitting_out and p.chips > 0]
         if len(seated) >= 2:
             self.ready_players.clear()
-            self.game.start_hand()
+            ok = self.game.start_hand()
+            if not ok:
+                self.game.phase = PHASE_SHOWDOWN
+                await self.send_states()
+                return
             await self.send_states()
+            if self.game.phase == PHASE_SHOWDOWN:
+                self.ready_players.clear()
+                self.queue_next_hand()
         else:
             if self._metrics:
                 self.emit_game_over(self._metrics)
@@ -116,6 +123,9 @@ class Room:
             "userId": user_id,
             "readyPlayers": list(self.ready_players),
         })
+
+        if self.game.phase != PHASE_SHOWDOWN:
+            return
 
         eligible = set()
         for p in self.game.players:
@@ -437,25 +447,32 @@ async def poker_ws_handler(request: web.Request):
                         await ws.send_str(json.dumps({"type": "error", "message": "No active game"}))
                         continue
 
-                    act = data.get("action")
-                    amount = int(data.get("amount", 0))
-                    ok, result = current_room.game.action(user_id, act, amount)
-                    if not ok:
-                        await ws.send_str(json.dumps({"type": "error", "message": result}))
-                        continue
+                    try:
+                        act = data.get("action")
+                        amount = int(data.get("amount", 0))
+                        ok, result = current_room.game.action(user_id, act, amount)
+                        if not ok:
+                            await ws.send_str(json.dumps({"type": "error", "message": result}))
+                            continue
 
-                    await current_room.send_states()
+                        await current_room.send_states()
 
-                    if current_room.game.phase == PHASE_SHOWDOWN:
-                        current_room.ready_players.clear()
-                        current_room.queue_next_hand()
+                        if current_room.game.phase == PHASE_SHOWDOWN:
+                            current_room.ready_players.clear()
+                            current_room.queue_next_hand()
+                    except Exception:
+                        logger.exception("action error")
+                        await ws.send_str(json.dumps({"type": "error", "message": "Internal error"}))
 
                 elif t == "ready":
                     if not current_room or not current_room.started:
                         continue
                     if current_room.game.phase != PHASE_SHOWDOWN:
                         continue
-                    await current_room.handle_ready(user_id, metrics)
+                    try:
+                        await current_room.handle_ready(user_id, metrics)
+                    except Exception:
+                        logger.exception("handle_ready error")
 
                 elif t == "update_settings":
                     if not current_room or not user_id:
