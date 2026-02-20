@@ -11,9 +11,15 @@ const INITIAL_BALANCE = 100
 const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5']
 const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5' }
 
+function secureRandom() {
+  const buf = new Uint32Array(1)
+  crypto.getRandomValues(buf)
+  return buf[0] / 0x100000000
+}
+
 function weighted(symbols, weights) {
   const total = weights.reduce((a, b) => a + b, 0)
-  let r = Math.random() * total
+  let r = secureRandom() * total
   for (let i = 0; i < symbols.length; i++) { r -= weights[i]; if (r <= 0) return symbols[i] }
   return symbols[symbols.length - 1]
 }
@@ -174,7 +180,7 @@ function CoinFlip({ balance, onBalanceChange, onBack, onGameResult, sound }) {
     setFlipping(true)
     sound('coinFlip')
 
-    const isHeads = Math.random() < 0.5
+    const isHeads = secureRandom() < 0.5
     const playerWon = (choice === 'heads') === isHeads
 
     setTimeout(() => {
@@ -377,10 +383,10 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
     setSpinning(true)
     sound('rouletteSpin')
 
-    const winNum = Math.floor(Math.random() * 37)
+    const winNum = Math.floor(secureRandom() * 37)
     const targetIdx = WHEEL_ORDER.indexOf(winNum)
     const targetAngle = 360 - (targetIdx * SECTOR_DEG + SECTOR_DEG / 2)
-    const spins = (5 + Math.floor(Math.random() * 3)) * 360
+    const spins = (5 + Math.floor(secureRandom() * 3)) * 360
     const currentMod = ((wheelRot % 360) + 360) % 360
     const delta = ((targetAngle - currentMod) + 360) % 360
     const newRot = wheelRot + spins + delta
@@ -495,13 +501,13 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
 const S5 = ['🍇', '🍊', '🍉', '🔔', '⭐', '💎', '🐵']
 const W5 = [32, 26, 20, 11, 6, 3, 2]
 const PAY5 = {
-  '🍇': [3, 10, 35],
-  '🍊': [5, 18, 55],
-  '🍉': [8, 25, 80],
-  '🔔': [12, 35, 120],
-  '⭐': [20, 55, 200],
-  '💎': [35, 100, 350],
-  '🐵': [15, 40, 170],
+  '🍇': [2, 6, 20],
+  '🍊': [3, 10, 35],
+  '🍉': [5, 15, 50],
+  '🔔': [8, 25, 80],
+  '⭐': [12, 40, 130],
+  '💎': [20, 65, 220],
+  '🐵': [10, 30, 100],
 }
 const SPIN5_COST = 10
 
@@ -880,7 +886,7 @@ function GameCard({ game, onClick, index }) {
 
 // ===== main =====
 export default function CasinoPage() {
-  const { userId, username, firstName } = useTelegram()
+  const { userId, username, firstName, initData } = useTelegram()
   const userName = username || firstName || 'guest'
   const navigate = useNavigate()
   const { sound, muted, toggleMute } = useCasinoSounds()
@@ -891,26 +897,32 @@ export default function CasinoPage() {
   const [timer, setTimer] = useState(null)
   const [bonusFlash, setBonusFlash] = useState(false)
   const [casinoStats, setCasinoStats] = useState(null)
+  const sessionTokenRef = useRef(null)
 
   const claimable = !lastBonusClaim || Date.now() / 1000 - lastBonusClaim >= 86400
 
   useEffect(() => {
     if (!userId) { setLoading(false); return }
-    fetch(`/api/casino/balance/${userId}`)
+    fetch('/api/casino/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ initData }),
+    })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d) {
           setBalance(d.monkeys)
           setLastBonusClaim(d.lastBonusClaim || 0)
+          if (d.token) sessionTokenRef.current = d.token
         }
       })
       .catch(() => { })
       .finally(() => setLoading(false))
-  }, [userId])
+  }, [userId, userName])
 
   const fetchStats = useCallback(() => {
     if (!userId) return
-    fetch(`/api/casino/stats/${userId}`)
+    fetch('/api/casino/stats', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setCasinoStats(d) })
       .catch(() => { })
@@ -939,18 +951,21 @@ export default function CasinoPage() {
   const handleGameResult = useCallback((gameId, bet, winAmount) => {
     fetch('/api/casino/event', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, userName, game: gameId, bet, win: winAmount }),
+      credentials: 'include',
+      body: JSON.stringify({ game: gameId, bet, win: winAmount, token: sessionTokenRef.current || '' }),
     })
-      .then(r => r.ok ? r.json() : null)
+      .then(r => {
+        if (!r.ok) return fetch('/api/casino/balance', { credentials: 'include' }).then(r2 => r2.ok ? r2.json() : null)
+        return r.json()
+      })
       .then(d => { if (d?.monkeys != null) setBalance(d.monkeys) })
       .catch(() => { })
-  }, [userId, userName])
+  }, [])
 
   const claimBonus = () => {
     if (!claimable) return
     fetch('/api/casino/bonus', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, userName }),
+      method: 'POST', credentials: 'include',
     })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
