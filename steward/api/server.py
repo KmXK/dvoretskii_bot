@@ -437,6 +437,133 @@ async def handle_poker_invite_update(request: web.Request):
     return web.json_response({"updated": updated})
 
 
+CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5"}
+CASINO_INITIAL_BALANCE = 100
+CASINO_DAILY_BONUS = 50
+CASINO_BONUS_COOLDOWN = 86400
+
+
+def _find_user(repository: Repository, uid: int):
+    return next((u for u in repository.db.users if u.id == uid), None)
+
+
+def _get_or_create_user(repository: Repository, uid: int, username: str = ""):
+    user = _find_user(repository, uid)
+    if user is None:
+        from steward.data.models.user import User
+        user = User(uid, username or None)
+        repository.db.users.append(user)
+    return user
+
+
+async def handle_casino_balance(request: web.Request):
+    repository: Repository = request.app["repository"]
+    uid = int(request.match_info["user_id"])
+    user = _find_user(repository, uid)
+    if not user:
+        return web.json_response({"monkeys": CASINO_INITIAL_BALANCE, "lastBonusClaim": 0})
+    return web.json_response({
+        "monkeys": user.monkeys,
+        "lastBonusClaim": user.casino_last_bonus,
+    })
+
+
+async def handle_casino_event(request: web.Request):
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    try:
+        body = await request.json()
+        user_id = str(body["userId"])
+        user_name = str(body.get("userName", ""))
+        game = str(body["game"])
+        bet = int(body.get("bet", 0))
+        win = int(body.get("win", 0))
+        if game not in CASINO_GAME_IDS:
+            return web.json_response({"error": "unknown game"}, status=400)
+
+        user = _get_or_create_user(repository, int(user_id), user_name)
+        delta = win - bet
+        user.monkeys = max(0, user.monkeys + delta)
+        await repository.save()
+
+        labels = {"user_id": user_id, "user_name": user_name, "game": game}
+        result = "win" if win > 0 else "loss"
+        metrics.inc("casino_games_total", {**labels, "result": result})
+        if bet > 0:
+            metrics.inc("casino_monkeys_bet_total", labels, bet)
+        if win > 0:
+            metrics.inc("casino_monkeys_won_total", labels, win)
+        return web.json_response({"ok": True, "monkeys": user.monkeys})
+    except Exception:
+        logger.exception("casino event error")
+        return web.json_response({"error": "bad request"}, status=400)
+
+
+async def handle_casino_bonus(request: web.Request):
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    try:
+        body = await request.json()
+        user_id = str(body["userId"])
+        user_name = str(body.get("userName", ""))
+
+        user = _get_or_create_user(repository, int(user_id), user_name)
+        import time as _time
+        now = _time.time()
+        if user.casino_last_bonus and now - user.casino_last_bonus < CASINO_BONUS_COOLDOWN:
+            return web.json_response({"error": "cooldown", "monkeys": user.monkeys}, status=429)
+
+        user.monkeys += CASINO_DAILY_BONUS
+        user.casino_last_bonus = now
+        await repository.save()
+
+        metrics.inc("casino_bonus_total", {"user_id": user_id, "user_name": user_name}, CASINO_DAILY_BONUS)
+        return web.json_response({"ok": True, "monkeys": user.monkeys, "lastBonusClaim": user.casino_last_bonus})
+    except Exception:
+        logger.exception("casino bonus error")
+        return web.json_response({"error": "bad request"}, status=400)
+
+
+async def handle_casino_stats(request: web.Request):
+    metrics: MetricsEngine = request.app["metrics"]
+    user_id = request.match_info["user_id"]
+
+    try:
+        def pq(metric, **flt):
+            flt["user_id"] = user_id
+            lf = ", ".join(f'{k}="{v}"' for k, v in flt.items())
+            return f"sum({metric}{{{lf}}})"
+
+        games_won_s = await metrics.query(pq("casino_games_total", result="win"))
+        games_lost_s = await metrics.query(pq("casino_games_total", result="loss"))
+        won_s = await metrics.query(pq("casino_monkeys_won_total"))
+        bet_s = await metrics.query(pq("casino_monkeys_bet_total"))
+        bonus_s = await metrics.query(pq("casino_bonus_total"))
+
+        per_game = []
+        for gid in sorted(CASINO_GAME_IDS):
+            gw = _extract_val(await metrics.query(pq("casino_games_total", game=gid, result="win")))
+            gl = _extract_val(await metrics.query(pq("casino_games_total", game=gid, result="loss")))
+            gmon = _extract_val(await metrics.query(pq("casino_monkeys_won_total", game=gid)))
+            gbet = _extract_val(await metrics.query(pq("casino_monkeys_bet_total", game=gid)))
+            if gw + gl > 0:
+                per_game.append({"game": gid, "gamesWon": gw, "gamesLost": gl, "won": gmon, "bet": gbet})
+
+        return web.json_response({
+            "gamesWon": _extract_val(games_won_s),
+            "gamesLost": _extract_val(games_lost_s),
+            "won": _extract_val(won_s),
+            "bet": _extract_val(bet_s),
+            "bonus": _extract_val(bonus_s),
+            "games": per_game,
+        })
+    except Exception:
+        logger.exception("casino stats error")
+        return web.json_response({
+            "gamesWon": 0, "gamesLost": 0, "won": 0, "bet": 0, "bonus": 0, "games": [],
+        })
+
+
 async def handle_poker_invite_delete(request: web.Request):
     bot = request.app.get("bot")
     if not bot:
@@ -482,6 +609,10 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/profile/{user_id}", handle_profile)
     app.router.add_get("/api/profile/{user_id}/history", handle_profile_history)
     app.router.add_get("/api/poker/stats/{user_id}", handle_poker_stats)
+    app.router.add_get("/api/casino/balance/{user_id}", handle_casino_balance)
+    app.router.add_post("/api/casino/event", handle_casino_event)
+    app.router.add_post("/api/casino/bonus", handle_casino_bonus)
+    app.router.add_get("/api/casino/stats/{user_id}", handle_casino_stats)
     app.router.add_get("/api/user/{user_id}/chats", handle_user_chats)
     app.router.add_post("/api/poker/invite", handle_poker_invite)
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)

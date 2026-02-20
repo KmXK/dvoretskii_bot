@@ -7,3 +7,5 @@ class User:
     id: int
     username: Optional[str] = None
     chat_ids: list[int] = field(default_factory=list)
+    monkeys: int = 100
+    casino_last_bonus: float = 0

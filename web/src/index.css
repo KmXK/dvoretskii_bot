@@ -37,3 +37,13 @@ body {
   background: var(--color-spotify-light-gray);
   border-radius: 4px;
 }
+
+@keyframes casino-shimmer {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes casino-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
