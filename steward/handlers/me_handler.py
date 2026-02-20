@@ -91,7 +91,10 @@ class MeHandler(Handler):
             else "нет"
         )
 
-        text = f"Профиль\n\nДостижения: {emojis}"
+        user = next((u for u in self.repository.db.users if u.id == user_id), None)
+        monkeys = user.monkeys if user else 0
+
+        text = f"Профиль\n\n🐵 Обезьянки: {monkeys}\nДостижения: {emojis}"
 
         keyboard = InlineKeyboardMarkup([
             [

@@ -234,6 +234,15 @@ function Lobby({ rooms, send, userId, pokerStats }) {
 
   return (
     <div className="max-w-md mx-auto">
+      <button
+        onClick={() => window.history.back()}
+        className="flex items-center gap-1.5 text-zinc-400 text-sm hover:text-white transition-colors mb-4"
+      >
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Назад
+      </button>
       <h1 className="text-2xl font-bold text-white mb-1">Poker</h1>
       <p className="text-zinc-400 text-sm mb-6">Texas Hold'em — create a room or join one</p>
 
