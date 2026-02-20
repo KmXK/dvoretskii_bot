@@ -493,15 +493,15 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
 
 // ===== slots 5x5 =====
 const S5 = ['🍇', '🍊', '🍉', '🔔', '⭐', '💎', '🐵']
-const W5 = [26, 22, 18, 14, 10, 5, 5]
+const W5 = [32, 26, 20, 11, 6, 3, 2]
 const PAY5 = {
-  '🍇': [5, 15, 50],
-  '🍊': [8, 25, 80],
-  '🍉': [12, 35, 120],
-  '🔔': [18, 50, 180],
-  '⭐': [30, 80, 300],
-  '💎': [50, 150, 500],
-  '🐵': [20, 60, 250],
+  '🍇': [3, 10, 35],
+  '🍊': [5, 18, 55],
+  '🍉': [8, 25, 80],
+  '🔔': [12, 35, 120],
+  '⭐': [20, 55, 200],
+  '💎': [35, 100, 350],
+  '🐵': [15, 40, 170],
 }
 const SPIN5_COST = 10
 
@@ -554,7 +554,7 @@ function findClusters(cols) {
           if (cols[nc][nr] === sym) { visited[nr][nc] = true; queue.push([nr, nc]) }
         }
       }
-      if (cells.length >= 5) clusters.push({ symbol: sym, size: cells.length, cells })
+      if (cells.length >= 6) clusters.push({ symbol: sym, size: cells.length, cells })
     }
   }
   return clusters
