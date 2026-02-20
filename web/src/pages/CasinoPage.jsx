@@ -495,18 +495,28 @@ function genGrid() {
     Array.from({ length: 5 }, () => weighted(S5, W5)))
 }
 
-function checkLine(coords, cellFn) {
+function checkLineRuns(coords, cellFn) {
   const symbols = coords.map(([r, c]) => cellFn(r, c))
-  let len = 1
-  let base = symbols[0] === '🐵' ? null : symbols[0]
-  for (let i = 1; i < symbols.length; i++) {
-    const s = symbols[i]
-    if (s === '🐵') { len++; continue }
-    if (base === null) { base = s; len++; continue }
-    if (s === base) len++; else break
+  const results = []
+  let i = 0
+  while (i < symbols.length) {
+    let base = symbols[i] === '🐵' ? null : symbols[i]
+    let len = 1
+    for (let j = i + 1; j < symbols.length; j++) {
+      const s = symbols[j]
+      if (s === '🐵') { len++; continue }
+      if (base === null) { base = s; len++; continue }
+      if (s === base) { len++; continue }
+      break
+    }
+    if (len >= 3 && base) {
+      results.push({ symbol: base, length: len, cells: coords.slice(i, i + len) })
+      i += len
+    } else {
+      i++
+    }
   }
-  if (len >= 3 && base) return { symbol: base, length: len, cells: coords.slice(0, len) }
-  return null
+  return results
 }
 
 function findClusters(cols) {
@@ -547,20 +557,21 @@ function check5x5AllWins(cols) {
   const lineWins = []
   const winCells = new Set()
 
-  const addWin = (label, result) => {
-    if (!result) return
-    lineWins.push({ ...result, label })
-    result.cells.forEach(([r, c]) => winCells.add(`${r},${c}`))
+  const addWins = (label, runs) => {
+    runs.forEach(result => {
+      lineWins.push({ ...result, label })
+      result.cells.forEach(([r, c]) => winCells.add(`${r},${c}`))
+    })
   }
 
   for (let r = 0; r < 5; r++)
-    addWin(`Ряд ${r + 1}`, checkLine([0, 1, 2, 3, 4].map(c => [r, c]), cell))
+    addWins(`Ряд ${r + 1}`, checkLineRuns([0, 1, 2, 3, 4].map(c => [r, c]), cell))
 
   for (let c = 0; c < 5; c++)
-    addWin(`Кол ${c + 1}`, checkLine([0, 1, 2, 3, 4].map(r => [r, c]), cell))
+    addWins(`Кол ${c + 1}`, checkLineRuns([0, 1, 2, 3, 4].map(r => [r, c]), cell))
 
-  addWin('Диаг ↘', checkLine([0, 1, 2, 3, 4].map(i => [i, i]), cell))
-  addWin('Диаг ↙', checkLine([0, 1, 2, 3, 4].map(i => [i, 4 - i]), cell))
+  addWins('Диаг ↘', checkLineRuns([0, 1, 2, 3, 4].map(i => [i, i]), cell))
+  addWins('Диаг ↙', checkLineRuns([0, 1, 2, 3, 4].map(i => [i, 4 - i]), cell))
 
   const clusters = findClusters(cols)
   clusters.forEach(cl => cl.cells.forEach(([r, c]) => winCells.add(`${r},${c}`)))
@@ -636,8 +647,8 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult }) {
               const highlight = winData.winCells.has(`${row},${col}`)
               return (
                 <motion.div key={i}
-                  animate={highlight ? { scale: [1, 1.1, 1] } : {}}
-                  transition={highlight ? { duration: 0.6, repeat: Infinity } : {}}
+                  animate={highlight ? { scale: [1, 1.1, 1] } : { scale: 1 }}
+                  transition={highlight ? { duration: 0.6, repeat: Infinity } : { duration: 0.15 }}
                   className={`flex items-center justify-center text-2xl rounded-lg
                     ${highlight ? 'bg-yellow-500/20 ring-1 ring-yellow-400/60' : 'bg-white/5'}
                     ${spinning && !highlight ? 'opacity-80' : ''}`}
