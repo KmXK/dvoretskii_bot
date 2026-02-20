@@ -3,6 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useTelegram } from '../context/TelegramContext'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
+const DIFFICULTY_OPTIONS = [
+  { value: 'easy', label: 'Easy', color: 'text-green-400' },
+  { value: 'medium', label: 'Medium', color: 'text-yellow-400' },
+  { value: 'hard', label: 'Hard', color: 'text-red-400' },
+]
 
 function PokerCard({ rank, suit, hidden = false, small = false }) {
   const w = small ? 'w-10 h-14' : 'w-14 h-20'
@@ -31,58 +36,54 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
   let bg = 'bg-zinc-800/80'
   if (player.folded) bg = 'bg-zinc-900/60'
 
+  let statusText = '\u00A0'
+  let statusClass = 'text-transparent'
+  if (player.allIn && !player.folded) {
+    statusText = 'All-in'
+    statusClass = 'font-bold text-red-400 uppercase'
+  } else if (player.folded) {
+    statusText = 'Fold'
+    statusClass = 'text-zinc-500'
+  } else if (player.bet > 0) {
+    statusText = `Bet: ${player.bet}`
+    statusClass = 'text-yellow-300'
+  }
+
+  const showCards = !isMe && !player.sittingOut && !player.folded && !showdown
+  const showShowdownCards = showdown && player.cards && player.cards.length > 0
+
   return (
-    <motion.div
-      animate={isCurrent ? { boxShadow: '0 0 16px 2px rgba(250,204,21,0.35)' } : { boxShadow: '0 0 0 0 transparent' }}
-      transition={{ duration: 0.4 }}
-      className={`relative rounded-xl border-2 ${border} ${bg} p-2 min-w-[100px] flex flex-col items-center gap-1 transition-colors`}
+    <div
+      style={isCurrent ? { boxShadow: '0 0 16px 2px rgba(250,204,21,0.35)' } : undefined}
+      className={`relative rounded-xl border-2 ${border} ${bg} p-2 w-[110px] h-[120px] flex flex-col items-center transition-colors transition-shadow duration-400`}
     >
       {isDealer && (
         <span className="absolute -top-2 -left-2 bg-yellow-400 text-black text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">D</span>
       )}
       {isCurrent && (
-        <motion.span
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5 shadow"
-        >
+        <span className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5 shadow">
           TURN
-        </motion.span>
+        </span>
       )}
-      <span className={`text-xs font-semibold truncate max-w-[90px] ${isMe ? 'text-green-400' : 'text-white'}`}>
+      <span className={`text-xs font-semibold truncate max-w-[90px] ${isMe ? 'text-green-400' : player.isBot ? 'text-blue-300' : 'text-white'}`}>
         {player.name}
       </span>
       <span className="text-[11px] text-zinc-400">{player.chips} chips</span>
+      <span className={`text-[10px] h-[14px] leading-[14px] ${statusClass}`}>{statusText}</span>
 
-      {player.allIn && !player.folded && (
-        <span className="text-[10px] font-bold text-red-400 uppercase">All-in</span>
-      )}
-      {player.folded && (
-        <span className="text-[10px] text-zinc-500">Fold</span>
-      )}
-      {player.bet > 0 && !player.folded && (
-        <span className="text-[10px] text-yellow-300">Bet: {player.bet}</span>
-      )}
+      <div className="flex gap-0.5 mt-auto h-[56px] items-end">
+        {showShowdownCards && player.cards.map((c, i) => <PokerCard key={i} rank={c.rank} suit={c.suit} small />)}
+        {showCards && <><PokerCard hidden small /><PokerCard hidden small /></>}
+      </div>
 
-      {showdown && player.cards && (
-        <div className="flex gap-0.5 mt-1">
-          {player.cards.map((c, i) => <PokerCard key={i} rank={c.rank} suit={c.suit} small />)}
-        </div>
-      )}
-      {!showdown && !player.folded && !player.sittingOut && !isMe && (
-        <div className="flex gap-0.5 mt-1">
-          <PokerCard hidden small />
-          <PokerCard hidden small />
-        </div>
-      )}
       <AnimatePresence>
         {actionBadge && (
           <motion.div
             key="action-badge"
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.2 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
             className="absolute inset-0 z-10 rounded-xl bg-black/70 backdrop-blur-sm flex items-center justify-center"
           >
             <span className={`text-sm font-bold ${actionColor(actionBadge.action)}`}>
@@ -91,7 +92,7 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   )
 }
 
@@ -220,10 +221,12 @@ function Lobby({ rooms, send, userId, pokerStats }) {
   const [sb, setSb] = useState(10)
   const [bb, setBb] = useState(20)
   const [sc, setSc] = useState(1000)
+  const [bc, setBc] = useState(0)
+  const [bd, setBd] = useState('medium')
   const [showSettings, setShowSettings] = useState(false)
 
   const create = () => {
-    send({ type: 'create_room', name: name.trim() || undefined, smallBlind: sb, bigBlind: bb, startChips: sc })
+    send({ type: 'create_room', name: name.trim() || undefined, smallBlind: sb, bigBlind: bb, startChips: sc, botCount: Number(bc) || 0, botDifficulty: bd })
     setName('')
   }
 
@@ -265,7 +268,7 @@ function Lobby({ rooms, send, userId, pokerStats }) {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="grid grid-cols-3 gap-2 mt-3">
+              <div className="grid grid-cols-2 gap-2 mt-3">
                 <div>
                   <label className="text-zinc-500 text-[10px] block mb-1">Small blind</label>
                   <input
@@ -297,6 +300,34 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                     step={100}
                   />
                 </div>
+                <div>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
+                  <input
+                    type="number"
+                    value={bc}
+                    onChange={e => setBc(e.target.value === '' ? '' : Math.min(7, Number(e.target.value)))}
+                    onBlur={() => setBc(prev => Math.max(0, Math.min(7, Number(prev) || 0)))}
+                    className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+                    min={0}
+                    max={7}
+                  />
+                </div>
+                {Number(bc) > 0 && (
+                  <div className="col-span-2">
+                    <label className="text-zinc-500 text-[10px] block mb-1">Bot difficulty</label>
+                    <div className="flex gap-1.5">
+                      {DIFFICULTY_OPTIONS.map(opt => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setBd(opt.value)}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${bd === opt.value ? 'bg-zinc-600 ' + opt.color : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -322,6 +353,7 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                 <span className="text-white text-sm font-medium">{room.name}</span>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} players</span>
+                  {room.botCount > 0 && <span className="text-blue-400 text-xs">🤖{room.botCount}</span>}
                   {room.started && <span className="text-yellow-400 text-xs">In game</span>}
                   <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}</span>
                 </div>
@@ -457,16 +489,20 @@ function WaitingRoom({ room, send, userId }) {
   const [sb, setSb] = useState(room.smallBlind || 10)
   const [bb, setBb] = useState(room.bigBlind || 20)
   const [sc, setSc] = useState(room.startChips || 1000)
+  const [bc, setBc] = useState(room.botCount || 0)
+  const [bd, setBd] = useState(room.botDifficulty || 'medium')
   const [showLeave, setShowLeave] = useState(false)
 
   useEffect(() => {
     setSb(room.smallBlind || 10)
     setBb(room.bigBlind || 20)
     setSc(room.startChips || 1000)
-  }, [room.smallBlind, room.bigBlind, room.startChips])
+    setBc(room.botCount || 0)
+    setBd(room.botDifficulty || 'medium')
+  }, [room.smallBlind, room.bigBlind, room.startChips, room.botCount, room.botDifficulty])
 
   const saveSettings = () => {
-    send({ type: 'update_settings', smallBlind: sb, bigBlind: bb, startChips: sc })
+    send({ type: 'update_settings', smallBlind: sb, bigBlind: bb, startChips: sc, botCount: Number(bc) || 0, botDifficulty: bd })
     setEditBlinds(false)
   }
 
@@ -493,10 +529,10 @@ function WaitingRoom({ room, send, userId }) {
         <div className="flex flex-col gap-2">
           {(room.players || []).map((p) => (
             <div key={p.id} className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
-              <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-bold">
-                {p.name[0]?.toUpperCase()}
+              <div className={`w-8 h-8 rounded-full ${p.isBot ? 'bg-blue-600' : 'bg-green-600'} flex items-center justify-center text-white text-sm font-bold`}>
+                {p.isBot ? '🤖' : p.name[0]?.toUpperCase()}
               </div>
-              <span className={`text-sm ${p.id === userId ? 'text-green-400 font-semibold' : 'text-white'}`}>
+              <span className={`text-sm ${p.id === userId ? 'text-green-400 font-semibold' : p.isBot ? 'text-blue-300' : 'text-white'}`}>
                 {p.name}
               </span>
               {p.id === room.creator_id && <span className="text-xs text-yellow-400 ml-auto">Owner</span>}
@@ -519,7 +555,7 @@ function WaitingRoom({ room, send, userId }) {
 
         {editBlinds && isCreator ? (
           <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-zinc-500 text-[10px] block mb-1">Small blind</label>
                 <input type="number" value={sb}
@@ -538,6 +574,29 @@ function WaitingRoom({ room, send, userId }) {
                   onChange={e => setSc(Math.max(bb * 10, Number(e.target.value)))}
                   className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={bb * 10} step={100} />
               </div>
+              <div>
+                <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
+                <input type="number" value={bc}
+                  onChange={e => setBc(e.target.value === '' ? '' : Math.min(7, Number(e.target.value)))}
+                  onBlur={() => setBc(prev => Math.max(0, Math.min(7, Number(prev) || 0)))}
+                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={0} max={7} />
+              </div>
+              {Number(bc) > 0 && (
+                <div className="col-span-2">
+                  <label className="text-zinc-500 text-[10px] block mb-1">Bot difficulty</label>
+                  <div className="flex gap-1.5">
+                    {DIFFICULTY_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setBd(opt.value)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${bd === opt.value ? 'bg-zinc-600 ' + opt.color : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={() => setEditBlinds(false)} className="flex-1 bg-zinc-700 text-white text-xs py-1.5 rounded-lg">Cancel</button>
@@ -548,7 +607,8 @@ function WaitingRoom({ room, send, userId }) {
           <>
             <p className="text-zinc-400 text-xs mb-1">Blinds: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
             <p className="text-zinc-400 text-xs mb-1">Starting chips: {room.startChips || 1000}</p>
-            <p className="text-zinc-400 text-xs">Min players: 2</p>
+            <p className="text-zinc-400 text-xs mb-1">Bots: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Medium'})` : ''}</p>
+            <p className="text-zinc-400 text-xs">Min players: 2 (including bots)</p>
           </>
         )}
       </div>
@@ -556,10 +616,10 @@ function WaitingRoom({ room, send, userId }) {
       {isCreator ? (
         <button
           onClick={() => send({ type: 'start_game' })}
-          disabled={room.playerCount < 2}
+          disabled={(room.playerCount || 0) < 2}
           className="w-full bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
         >
-          {room.playerCount < 2 ? 'Waiting for players...' : 'Start Game'}
+          {(room.playerCount || 0) < 2 ? 'Need at least 2 players (add bots or invite)...' : 'Start Game'}
         </button>
       ) : (
         <div className="text-center text-zinc-400 text-sm py-3">Waiting for owner to start...</div>
@@ -678,22 +738,16 @@ function GameTable({ state, send, userId, onLeave }) {
 
       <div className="flex flex-wrap gap-2 justify-center">
         {opponents.map((p) => (
-          <motion.div
+          <PlayerSeat
             key={p.id}
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-          >
-            <PlayerSeat
-              player={p}
-              isDealer={p.idx === dealerIndex}
-              isCurrent={p.idx === currentIndex}
-              isMe={false}
-              showdown={isShowdown}
-              index={p.idx}
-              actionBadge={visibleAction && visibleAction.player === p.idx ? visibleAction : null}
-            />
-          </motion.div>
+            player={p}
+            isDealer={p.idx === dealerIndex}
+            isCurrent={p.idx === currentIndex}
+            isMe={false}
+            showdown={isShowdown}
+            index={p.idx}
+            actionBadge={visibleAction && visibleAction.player === p.idx ? visibleAction : null}
+          />
         ))}
       </div>
 
@@ -737,10 +791,9 @@ function GameTable({ state, send, userId, onLeave }) {
       )}
 
       {myIndex >= 0 && (
-        <motion.div
-          animate={myIndex === currentIndex ? { boxShadow: '0 0 20px 3px rgba(250,204,21,0.3)' } : { boxShadow: '0 0 0 0 transparent' }}
-          transition={{ duration: 0.4 }}
-          className="bg-zinc-900/80 rounded-xl p-3"
+        <div
+          style={myIndex === currentIndex ? { boxShadow: '0 0 20px 3px rgba(250,204,21,0.3)' } : undefined}
+          className="bg-zinc-900/80 rounded-xl p-3 transition-shadow duration-400"
         >
           <div className="flex items-center justify-between mb-2">
             <PlayerSeat
@@ -857,7 +910,7 @@ function GameTable({ state, send, userId, onLeave }) {
           {players[myIndex].sittingOut && (
             <p className="text-zinc-500 text-xs text-center mt-2">Sitting out — you'll join next hand</p>
           )}
-        </motion.div>
+        </div>
       )}
 
     </div>
@@ -867,7 +920,7 @@ function GameTable({ state, send, userId, onLeave }) {
 function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imReady, onReady }) {
   if (!results) return null
 
-  const totalEligible = players.filter(p => !p.sittingOut && p.chips > 0).length
+  const totalEligible = players.filter(p => !p.sittingOut && p.chips > 0 && !p.isBot).length
 
   return (
     <motion.div

@@ -1,20 +1,25 @@
 import asyncio
 import json
 import uuid
+import random
 import logging
 
 from aiohttp import web
 
-from steward.poker.engine import PokerGame, PHASE_SHOWDOWN, PHASE_WAITING
+from steward.poker.engine import PokerGame, Player, PHASE_SHOWDOWN, PHASE_WAITING
+from steward.poker.bot_ai import decide, BOT_NAMES, DIFFICULTIES, DIFFICULTY_MEDIUM
 
 logger = logging.getLogger(__name__)
 
 _NEXT_HAND_DELAY = 30
+_BOT_ACTION_DELAY = (0.8, 2.0)
+_BOT_ID_BASE = -1_000_000
 
 
 class Room:
     def __init__(self, room_id: str, name: str, creator_id: int,
-                 small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000):
+                 small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
+                 bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM):
         self.id = room_id
         self.name = name
         self.creator_id = creator_id
@@ -22,31 +27,68 @@ class Room:
         self.game = PokerGame(small_blind, big_blind, start_chips)
         self.started = False
         self._next_hand_task: asyncio.Task | None = None
+        self._bot_task: asyncio.Task | None = None
         self.ready_players: set[int] = set()
         self.chip_bank: dict[int, int] = {}
         self.small_blind = small_blind
         self.big_blind = big_blind
         self.start_chips = start_chips
+        self.bot_count = bot_count
+        self.bot_difficulty = bot_difficulty
+        self._bot_counter = 0
         self._last_metrics_hand = 0
         self._metrics = None
 
+    def _human_count(self):
+        return len([p for p in self.game.players if not p.is_bot])
+
+    def _total_players(self):
+        return len(self.game.players)
+
     def to_dict(self):
+        human_players = [
+            {"id": p.user_id, "name": p.name}
+            for p in self.game.players
+            if not p.is_bot and p.user_id in self.connections
+        ]
+        bot_players = [
+            {"id": p.user_id, "name": p.name, "isBot": True}
+            for p in self.game.players
+            if p.is_bot
+        ]
         return {
             "id": self.id,
             "name": self.name,
             "creator_id": self.creator_id,
-            "playerCount": len(self.connections),
+            "playerCount": len(self.connections) + len(bot_players),
+            "humanCount": len(self.connections),
             "maxPlayers": 8,
             "started": self.started,
             "smallBlind": self.small_blind,
             "bigBlind": self.big_blind,
             "startChips": self.start_chips,
-            "players": [
-                {"id": p.user_id, "name": p.name}
-                for p in self.game.players
-                if p.user_id in self.connections
-            ],
+            "botCount": self.bot_count,
+            "botDifficulty": self.bot_difficulty,
+            "players": human_players + bot_players,
         }
+
+    def add_bots(self, count: int):
+        used_names = {p.name for p in self.game.players}
+        available = [n for n in BOT_NAMES if n not in used_names]
+        random.shuffle(available)
+
+        for i in range(count):
+            self._bot_counter += 1
+            bot_id = _BOT_ID_BASE - self._bot_counter
+            if available:
+                bot_name = available.pop()
+            else:
+                bot_name = f"Bot {self._bot_counter}"
+            p = Player(bot_id, f"🤖 {bot_name}", self.start_chips, is_bot=True)
+            self.game.players.append(p)
+
+    def remove_all_bots(self):
+        self.game.players = [p for p in self.game.players if not p.is_bot]
 
     async def broadcast(self, msg: dict):
         data = json.dumps(msg, ensure_ascii=False)
@@ -73,15 +115,18 @@ class Room:
         await self._try_next_hand()
 
     async def _try_next_hand(self):
-        if not self.started or len(self.connections) < 2:
+        humans_connected = len(self.connections)
+        if not self.started or humans_connected == 0:
             logger.info(
                 "room=%s _try_next_hand skipped: started=%s connections=%d",
-                self.id, self.started, len(self.connections),
+                self.id, self.started, humans_connected,
             )
             return
 
         for p in self.game.players:
             if p.user_id in self.connections:
+                p.sitting_out = False
+            if p.is_bot:
                 p.sitting_out = False
 
         seated = [p for p in self.game.players if not p.sitting_out and p.chips > 0]
@@ -104,13 +149,17 @@ class Room:
             await self.send_states()
             if self.game.phase == PHASE_SHOWDOWN:
                 self.ready_players.clear()
+                self._mark_bots_ready()
                 self.queue_next_hand()
+            else:
+                self._schedule_bot_if_needed()
         else:
             logger.info("room=%s game over, not enough players with chips", self.id)
             if self._metrics:
                 self.emit_game_over(self._metrics)
             self.started = False
             self.game.phase = PHASE_WAITING
+            self.remove_all_bots()
             self.game.players = [
                 p for p in self.game.players
                 if p.user_id in self.connections
@@ -125,6 +174,8 @@ class Room:
     def cancel_tasks(self):
         if self._next_hand_task and not self._next_hand_task.done():
             self._next_hand_task.cancel()
+        if self._bot_task and not self._bot_task.done():
+            self._bot_task.cancel()
 
     def transfer_ownership(self):
         for uid in self.connections:
@@ -132,6 +183,89 @@ class Room:
                 self.creator_id = uid
                 return uid
         return None
+
+    def _mark_bots_ready(self):
+        for p in self.game.players:
+            if p.is_bot and not p.sitting_out and p.chips > 0:
+                self.ready_players.add(p.user_id)
+
+    def _schedule_bot_if_needed(self):
+        if self.game.phase in (PHASE_WAITING, PHASE_SHOWDOWN):
+            return
+        idx = self.game.current_idx
+        if idx < 0 or idx >= len(self.game.players):
+            return
+        p = self.game.players[idx]
+        if not p.is_bot:
+            return
+        if self._bot_task and not self._bot_task.done():
+            self._bot_task.cancel()
+        self._bot_task = asyncio.create_task(self._bot_act(idx))
+
+    async def _bot_act(self, player_idx: int):
+        try:
+            delay = random.uniform(*_BOT_ACTION_DELAY)
+            await asyncio.sleep(delay)
+
+            if self.game.phase in (PHASE_WAITING, PHASE_SHOWDOWN):
+                return
+            if self.game.current_idx != player_idx:
+                return
+
+            p = self.game.players[player_idx]
+            if not p.is_bot:
+                return
+
+            act, amount = decide(self.game, player_idx, self.bot_difficulty)
+            ok, result = self.game.action(p.user_id, act, amount)
+
+            if not ok:
+                logger.warning(
+                    "room=%s bot uid=%s action=%s failed: %s, folding",
+                    self.id, p.user_id, act, result,
+                )
+                ok, result = self.game.action(p.user_id, "fold")
+                if not ok:
+                    ok, result = self.game.action(p.user_id, "check")
+
+            logger.info(
+                "room=%s bot uid=%s(%s) action=%s amount=%s phase=%s",
+                self.id, p.user_id, p.name, act, amount, self.game.phase,
+            )
+
+            await self.send_states()
+
+            if self.game.phase == PHASE_SHOWDOWN:
+                self.ready_players.clear()
+                self._mark_bots_ready()
+                self.queue_next_hand()
+                await self._check_all_ready()
+            else:
+                self._schedule_bot_if_needed()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("room=%s _bot_act error idx=%s", self.id, player_idx)
+
+    async def _check_all_ready(self):
+        if self.game.phase != PHASE_SHOWDOWN:
+            return
+        eligible = set()
+        for p in self.game.players:
+            if not p.sitting_out and p.chips > 0:
+                if p.is_bot or p.user_id in self.connections:
+                    eligible.add(p.user_id)
+        human_eligible = {uid for uid in eligible if uid >= 0}
+
+        if not human_eligible or human_eligible.issubset(self.ready_players):
+            if self._next_hand_task and not self._next_hand_task.done():
+                self._next_hand_task.cancel()
+            if self._metrics:
+                try:
+                    self._emit_hand_metrics(self._metrics)
+                except Exception:
+                    logger.exception("room=%s _emit_hand_metrics failed in _check_all_ready", self.id)
+            await self._try_next_hand()
 
     async def handle_ready(self, user_id: int, metrics=None):
         self.ready_players.add(user_id)
@@ -147,15 +281,17 @@ class Room:
 
         eligible = set()
         for p in self.game.players:
-            if p.user_id in self.connections and not p.sitting_out and p.chips > 0:
-                eligible.add(p.user_id)
+            if not p.sitting_out and p.chips > 0:
+                if p.is_bot or p.user_id in self.connections:
+                    eligible.add(p.user_id)
+        human_eligible = {uid for uid in eligible if uid >= 0}
 
         logger.info(
-            "room=%s handle_ready uid=%s: eligible=%s ready=%s",
-            self.id, user_id, eligible, self.ready_players,
+            "room=%s handle_ready uid=%s: human_eligible=%s ready=%s",
+            self.id, user_id, human_eligible, self.ready_players,
         )
 
-        if not eligible or eligible.issubset(self.ready_players):
+        if not human_eligible or human_eligible.issubset(self.ready_players):
             if self._next_hand_task and not self._next_hand_task.done():
                 self._next_hand_task.cancel()
 
@@ -178,7 +314,7 @@ class Room:
         hands = results.get("hands", {})
 
         for p in self.game.players:
-            if p.sitting_out:
+            if p.sitting_out or p.is_bot:
                 continue
             labels = {"user_id": str(p.user_id), "user_name": p.name}
             i = next((j for j, pl in enumerate(self.game.players) if pl.user_id == p.user_id), -1)
@@ -211,13 +347,13 @@ class Room:
 
     def emit_game_start(self, metrics):
         for p in self.game.players:
-            if not p.sitting_out:
+            if not p.sitting_out and not p.is_bot:
                 metrics.inc("poker_games_total", {"user_id": str(p.user_id), "user_name": p.name})
 
     def emit_game_over(self, metrics):
         best = None
         for p in self.game.players:
-            if not p.sitting_out and (best is None or p.chips > best.chips):
+            if not p.sitting_out and not p.is_bot and (best is None or p.chips > best.chips):
                 best = p
         if best and best.chips > 0:
             metrics.inc("poker_games_won_total", {"user_id": str(best.user_id), "user_name": best.name})
@@ -242,9 +378,10 @@ class RoomManager:
                 pass
 
     def create_room(self, name: str, user_id: int, user_name: str,
-                    small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000) -> Room:
+                    small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
+                    bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM) -> Room:
         room_id = uuid.uuid4().hex[:8]
-        room = Room(room_id, name, user_id, small_blind, big_blind, start_chips)
+        room = Room(room_id, name, user_id, small_blind, big_blind, start_chips, bot_count, bot_difficulty)
         self.rooms[room_id] = room
         return room
 
@@ -280,8 +417,13 @@ async def _leave(user_id: int, room: Room, metrics=None):
             room.transfer_ownership()
 
         if room.started:
-            active_with_chips = [p for p in room.game.players if not p.sitting_out and p.chips > 0]
-            if len(active_with_chips) < 2:
+            active_with_chips = [
+                p for p in room.game.players
+                if not p.sitting_out and p.chips > 0 and (p.is_bot or p.user_id in room.connections)
+            ]
+            humans_with_chips = [p for p in active_with_chips if not p.is_bot]
+
+            if len(active_with_chips) < 2 or len(humans_with_chips) == 0:
                 logger.info("room=%s not enough players after leave, ending game", room.id)
                 if room.game.phase == PHASE_SHOWDOWN and metrics:
                     try:
@@ -292,6 +434,7 @@ async def _leave(user_id: int, room: Room, metrics=None):
                     room.emit_game_over(metrics)
                 room.started = False
                 room.game.phase = PHASE_WAITING
+                room.remove_all_bots()
                 room.game.players = [
                     p for p in room.game.players
                     if p.user_id in room.connections
@@ -299,23 +442,14 @@ async def _leave(user_id: int, room: Room, metrics=None):
                 await room.broadcast({"type": "game_over"})
             else:
                 if room.game.phase == PHASE_SHOWDOWN:
-                    eligible = set()
-                    for p in room.game.players:
-                        if p.user_id in room.connections and not p.sitting_out and p.chips > 0:
-                            eligible.add(p.user_id)
-                    if eligible and eligible.issubset(room.ready_players):
-                        if room._next_hand_task and not room._next_hand_task.done():
-                            room._next_hand_task.cancel()
-                        if metrics:
-                            try:
-                                room._emit_hand_metrics(metrics)
-                            except Exception:
-                                logger.exception("room=%s _emit_hand_metrics failed in _leave showdown", room.id)
-                        await room._try_next_hand()
+                    await room._check_all_ready()
+                    if room.game.phase != PHASE_SHOWDOWN:
+                        pass
                     else:
                         await room.send_states()
                 else:
                     await room.send_states()
+                    room._schedule_bot_if_needed()
 
         await room.broadcast({"type": "room_updated", "room": room.to_dict()})
     else:
@@ -383,14 +517,20 @@ async def poker_ws_handler(request: web.Request):
                     sb = max(1, min(1000, int(data.get("smallBlind", 10))))
                     bb = max(sb * 2, min(2000, int(data.get("bigBlind", sb * 2))))
                     sc = max(bb * 10, min(100000, int(data.get("startChips", 1000))))
+                    bc = max(0, min(7, int(data.get("botCount", 0))))
+                    bd = str(data.get("botDifficulty", DIFFICULTY_MEDIUM))
+                    if bd not in DIFFICULTIES:
+                        bd = DIFFICULTY_MEDIUM
 
-                    room = _manager.create_room(name, user_id, user_name, sb, bb, sc)
+                    room = _manager.create_room(name, user_id, user_name, sb, bb, sc, bc, bd)
                     room.connections[user_id] = ws
                     room.game.add_player(user_id, user_name)
+                    if bc > 0:
+                        room.add_bots(bc)
                     _manager.player_rooms[user_id] = room.id
                     _manager.lobby_connections.pop(user_id, None)
                     current_room = room
-                    logger.info("uid=%s created room=%s", user_id, room.id)
+                    logger.info("uid=%s created room=%s with %d bots", user_id, room.id, bc)
                     await ws.send_str(json.dumps({"type": "room_joined", "room": room.to_dict()}, ensure_ascii=False))
                     await _manager.broadcast_rooms()
 
@@ -407,7 +547,7 @@ async def poker_ws_handler(request: web.Request):
                     if not room:
                         await ws.send_str(json.dumps({"type": "error", "message": "Room not found"}))
                         continue
-                    if len(room.connections) >= 8:
+                    if room._total_players() >= 8:
                         await ws.send_str(json.dumps({"type": "error", "message": "Room full"}))
                         continue
 
@@ -451,13 +591,15 @@ async def poker_ws_handler(request: web.Request):
                     if current_room.creator_id != user_id:
                         await ws.send_str(json.dumps({"type": "error", "message": "Only creator can start"}))
                         continue
-                    if len(current_room.connections) < 2:
-                        await ws.send_str(json.dumps({"type": "error", "message": "Need 2+ players"}))
+
+                    total = current_room._total_players()
+                    if total < 2:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Need 2+ players (including bots)"}))
                         continue
 
                     current_room.game.players = [
                         p for p in current_room.game.players
-                        if p.user_id in current_room.connections
+                        if p.user_id in current_room.connections or p.is_bot
                     ]
                     for p in current_room.game.players:
                         p.chips = current_room.start_chips
@@ -482,6 +624,13 @@ async def poker_ws_handler(request: web.Request):
                         current_room.emit_game_start(metrics)
                     await current_room.send_states()
 
+                    if current_room.game.phase == PHASE_SHOWDOWN:
+                        current_room.ready_players.clear()
+                        current_room._mark_bots_ready()
+                        current_room.queue_next_hand()
+                    else:
+                        current_room._schedule_bot_if_needed()
+
                 elif t == "action":
                     if not current_room or not current_room.started:
                         await ws.send_str(json.dumps({"type": "error", "message": "No active game"}))
@@ -503,7 +652,10 @@ async def poker_ws_handler(request: web.Request):
 
                         if current_room.game.phase == PHASE_SHOWDOWN:
                             current_room.ready_players.clear()
+                            current_room._mark_bots_ready()
                             current_room.queue_next_hand()
+                        else:
+                            current_room._schedule_bot_if_needed()
                     except Exception:
                         logger.exception("room=%s action error uid=%s act=%s", current_room.id, user_id, data.get("action"))
                         await ws.send_str(json.dumps({"type": "error", "message": "Internal error"}))
@@ -512,7 +664,6 @@ async def poker_ws_handler(request: web.Request):
                     if not current_room or not current_room.started:
                         continue
                     if current_room.game.phase != PHASE_SHOWDOWN:
-                        # Клиент рассинхронизирован — отправляем актуальный стейт
                         try:
                             state = current_room.game.state_for(user_id)
                             state["readyPlayers"] = list(current_room.ready_players)
@@ -538,6 +689,8 @@ async def poker_ws_handler(request: web.Request):
                     sb = data.get("smallBlind")
                     bb = data.get("bigBlind")
                     sc = data.get("startChips")
+                    bc = data.get("botCount")
+                    bd = data.get("botDifficulty")
 
                     if sb is not None:
                         current_room.small_blind = max(1, min(1000, int(sb)))
@@ -545,6 +698,17 @@ async def poker_ws_handler(request: web.Request):
                         current_room.big_blind = max(current_room.small_blind * 2, min(2000, int(bb)))
                     if sc is not None:
                         current_room.start_chips = max(current_room.big_blind * 10, min(100000, int(sc)))
+                    if bd is not None and str(bd) in DIFFICULTIES:
+                        current_room.bot_difficulty = str(bd)
+
+                    if bc is not None:
+                        new_bc = max(0, min(7, int(bc)))
+                        old_bc = current_room.bot_count
+                        current_room.bot_count = new_bc
+                        current_room.remove_all_bots()
+                        if new_bc > 0:
+                            max_bots = 8 - len(current_room.connections)
+                            current_room.add_bots(min(new_bc, max_bots))
 
                     current_room.game.small_blind = current_room.small_blind
                     current_room.game.big_blind = current_room.big_blind

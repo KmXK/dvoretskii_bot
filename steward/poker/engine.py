@@ -113,7 +113,7 @@ def best_hand(hole, community):
 
 
 class Player:
-    def __init__(self, user_id, name, chips=1000):
+    def __init__(self, user_id, name, chips=1000, is_bot=False):
         self.user_id = user_id
         self.name = name
         self.chips = chips
@@ -124,6 +124,7 @@ class Player:
         self.all_in = False
         self.acted = False
         self.sitting_out = False
+        self.is_bot = is_bot
 
     def reset_hand(self):
         self.hole_cards = []
@@ -555,6 +556,7 @@ class PokerGame:
                 "folded": p.folded,
                 "allIn": p.all_in,
                 "sittingOut": p.sitting_out,
+                "isBot": p.is_bot,
                 "cards": None,
             }
             if self.phase == PHASE_SHOWDOWN and not p.folded and p.hole_cards:
