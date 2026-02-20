@@ -6,6 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
+from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.metrics.base import ContextMetrics, MetricSample
@@ -22,6 +23,7 @@ class StatMetric:
     label: str
     metric_name: str
     filters: dict[str, str] = field(default_factory=dict)
+    is_db: bool = False
 
 
 def stat(label: str, metric_name: str, **filters) -> StatMetric:
@@ -32,6 +34,7 @@ STATS = [
     stat("💬 Топ по сообщениям", "bot_messages_total", action_type="chat"),
     stat("❤️ Топ по реакциям", "bot_messages_total", action_type="reaction"),
     stat("🎬 Топ по видосикам", "bot_downloads_total"),
+    StatMetric(label="🐵 Топ по обезьянкам", metric_name="", is_db=True),
 ]
 
 
@@ -140,6 +143,24 @@ def _format_section(items: list[MetricSample], label: str) -> str:
     return "\n".join(lines)
 
 
+def _monkey_leaderboard(repo: Repository, scope: StatsScope, chat_id: str, top_n: int) -> list[tuple[str, int]]:
+    users = repo.db.users
+    if scope == StatsScope.CHAT:
+        cid = int(chat_id)
+        users = [u for u in users if cid in u.chat_ids]
+    ranked = sorted(users, key=lambda u: u.monkeys, reverse=True)[:top_n]
+    return [(u.username or str(u.id), u.monkeys) for u in ranked if u.monkeys > 0]
+
+
+def _format_monkey_section(entries: list[tuple[str, int]], label: str) -> str:
+    if not entries:
+        return f"{label}:\nНет данных"
+    lines = [f"{label}:"]
+    for i, (name, val) in enumerate(entries, 1):
+        lines.append(f"{i}. `@{name}` — {val} 🐵")
+    return "\n".join(lines)
+
+
 def _scope_period_rows(
     scope: StatsScope, period: StatsPeriod, view: str, chat_id: str,
 ) -> list[list[InlineKeyboardButton]]:
@@ -167,7 +188,9 @@ class StatsHandler(Handler):
             return False
 
         chat_id = str(context.message.chat_id)
-        text, keyboard = await self._build_main(context.metrics, StatsScope.CHAT, StatsPeriod.DAY, 0, chat_id)
+        text, keyboard = await self._build_main(
+            context.metrics, context.repository, StatsScope.CHAT, StatsPeriod.DAY, 0, chat_id,
+        )
         await context.message.reply_markdown(text=text, reply_markup=keyboard)
         return True
 
@@ -189,9 +212,13 @@ class StatsHandler(Handler):
             return False
 
         if view.startswith("m"):
-            text, keyboard = await self._build_main(context.metrics, scope, period, int(view[1:]), chat_id)
+            text, keyboard = await self._build_main(
+                context.metrics, context.repository, scope, period, int(view[1:]), chat_id,
+            )
         elif view.startswith("d"):
-            text, keyboard = await self._build_detail(context.metrics, scope, period, int(view[1:]), chat_id)
+            text, keyboard = await self._build_detail(
+                context.metrics, context.repository, scope, period, int(view[1:]), chat_id,
+            )
         else:
             return False
 
@@ -204,15 +231,21 @@ class StatsHandler(Handler):
         return True
 
     async def _build_main(
-        self, metrics: ContextMetrics, scope: StatsScope, period: StatsPeriod, offset: int, chat_id: str,
+        self, metrics: ContextMetrics, repo: Repository,
+        scope: StatsScope, period: StatsPeriod, offset: int, chat_id: str,
     ) -> tuple[str, InlineKeyboardMarkup]:
         n = len(STATS)
         indices = [(offset + i) % n for i in range(min(WINDOW_SIZE, n))]
 
         sections = []
         for i in indices:
-            result = await metrics.query(_promql(STATS[i], scope, period, chat_id, top_n=MAIN_TOP_N))
-            sections.append(_format_section(result, STATS[i].label))
+            s = STATS[i]
+            if s.is_db:
+                entries = _monkey_leaderboard(repo, scope, chat_id, MAIN_TOP_N)
+                sections.append(_format_monkey_section(entries, s.label))
+            else:
+                result = await metrics.query(_promql(s, scope, period, chat_id, top_n=MAIN_TOP_N))
+                sections.append(_format_section(result, s.label))
 
         header = f"📊 {SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
         text = header + "\n\n" + "\n\n".join(sections)
@@ -236,33 +269,45 @@ class StatsHandler(Handler):
         return text, InlineKeyboardMarkup(rows)
 
     async def _build_detail(
-        self, metrics: ContextMetrics, scope: StatsScope, period: StatsPeriod, idx: int, chat_id: str,
+        self, metrics: ContextMetrics, repo: Repository,
+        scope: StatsScope, period: StatsPeriod, idx: int, chat_id: str,
     ) -> tuple[str, InlineKeyboardMarkup]:
         if idx < 0 or idx >= len(STATS):
             return "Метрика не найдена", InlineKeyboardMarkup([])
 
         m = STATS[idx]
 
-        current = await metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
-
-        prev_map: dict[str, float] | None = None
-        prev = _prev_period(period)
-        if prev:
-            prev_range, prev_offset = prev
-            prev_results = await metrics.query(
-                _promql(m, scope, period, chat_id, range_str=prev_range, offset=prev_offset),
-            )
-            prev_map = {s.labels.get("user_id", ""): s.value for s in prev_results}
-
-        header = f"{m.label}\n{SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
-
-        if not current:
-            text = f"{header}\n\nНет данных"
+        if m.is_db:
+            entries = _monkey_leaderboard(repo, scope, chat_id, DETAIL_TOP_N)
+            header = f"{m.label}\n{SCOPE_LABELS[scope]}"
+            if not entries:
+                text = f"{header}\n\nНет данных"
+            else:
+                lines = [header, ""]
+                for i, (name, val) in enumerate(entries, 1):
+                    lines.append(f"{i}. `@{name}` — {val} 🐵")
+                text = "\n".join(lines)
         else:
-            lines = [header, ""]
-            for i, item in enumerate(current, 1):
-                lines.append(_format_line(i, item, prev_map))
-            text = "\n".join(lines)
+            current = await metrics.query(_promql(m, scope, period, chat_id, top_n=DETAIL_TOP_N))
+
+            prev_map: dict[str, float] | None = None
+            prev = _prev_period(period)
+            if prev:
+                prev_range, prev_offset = prev
+                prev_results = await metrics.query(
+                    _promql(m, scope, period, chat_id, range_str=prev_range, offset=prev_offset),
+                )
+                prev_map = {s.labels.get("user_id", ""): s.value for s in prev_results}
+
+            header = f"{m.label}\n{SCOPE_LABELS[scope]} | {PERIOD_LABELS[period]}"
+
+            if not current:
+                text = f"{header}\n\nНет данных"
+            else:
+                lines = [header, ""]
+                for i, item in enumerate(current, 1):
+                    lines.append(_format_line(i, item, prev_map))
+                text = "\n".join(lines)
 
         rows = _scope_period_rows(scope, period, f"d{idx}", chat_id)
         rows.append([InlineKeyboardButton("← Назад", callback_data=_cb(scope, period, f"m{idx}", chat_id))])
