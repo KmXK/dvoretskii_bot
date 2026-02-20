@@ -294,4 +294,10 @@ class Repository:
                     user["monkeys"] = 100
             data["version"] = 9
 
+        if data.get("version") == 9:
+            for user in data.get("users", []):
+                if isinstance(user, dict) and user.get("id") == 685119817:
+                    user["monkeys"] = 100
+            data["version"] = 10
+
         return data
