@@ -8,7 +8,7 @@ _AVAILABLE = _GKEYS_PATH.is_file()
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 
@@ -374,6 +374,85 @@ def read_spreadsheet_values(spreadsheet_id: str) -> list[list[str]] | None:
     except Exception as e:
         logger.exception("read_spreadsheet_values: %s", e)
         return None
+
+
+def _sheets_service():
+    if not _AVAILABLE:
+        return None
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    creds = service_account.Credentials.from_service_account_file(
+        str(_GKEYS_PATH), scopes=SCOPES
+    )
+    return build("sheets", "v4", credentials=creds)
+
+
+def insert_rows_into_spreadsheet(
+    spreadsheet_id: str, rows: list[list[str]]
+) -> bool:
+    if not _AVAILABLE or not rows:
+        return False
+    try:
+        service = _sheets_service()
+
+        existing = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range="A:A")
+            .execute()
+        )
+        values = existing.get("values", [])
+        first_empty = len(values)
+        for i, row in enumerate(values):
+            if not row or not row[0].strip():
+                first_empty = i
+                break
+
+        meta = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets.properties.sheetId",
+        ).execute()
+        sheet_id = meta["sheets"][0]["properties"]["sheetId"]
+
+        count = len(rows)
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "insertDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": first_empty,
+                                "endIndex": first_empty + count,
+                            },
+                            "inheritFromBefore": True,
+                        }
+                    }
+                ]
+            },
+        ).execute()
+
+        cell_range = f"A{first_empty + 1}:B{first_empty + count}"
+        result = (
+            service.spreadsheets()
+            .values()
+            .update(
+                spreadsheetId=spreadsheet_id,
+                range=cell_range,
+                valueInputOption="USER_ENTERED",
+                body={"values": rows},
+            )
+            .execute()
+        )
+        logger.info("insert_rows_into_spreadsheet: inserted %d rows at %d, result: %s",
+                     count, first_empty, result)
+        return result.get("updatedRows", 0) > 0
+    except Exception as e:
+        logger.exception("insert_rows_into_spreadsheet: %s", e)
+        return False
 
 
 def list_files_in_folder(folder_id: str) -> list[tuple[str, str]]:
