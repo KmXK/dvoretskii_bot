@@ -437,10 +437,63 @@ async def handle_poker_invite_update(request: web.Request):
     return web.json_response({"updated": updated})
 
 
+import hashlib
+import hmac
+import json as _json
+import secrets
+import time as _time
+from os import environ
+from urllib.parse import parse_qsl
+
 CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5"}
 CASINO_INITIAL_BALANCE = 100
 CASINO_DAILY_BONUS = 50
 CASINO_BONUS_COOLDOWN = 86400
+CASINO_MAX_BET = {"slots": 10, "coinflip": 50, "roulette": 50, "slots5x5": 10}
+CASINO_MAX_WIN = {"slots": 1500, "coinflip": 95, "roulette": 1800, "slots5x5": 5000}
+CASINO_SESSION_TTL = 86400
+CASINO_SPIN_COOLDOWN = 1.5
+
+_casino_sessions: dict[str, dict] = {}
+_casino_last_spin: dict[str, float] = {}
+
+
+def _validate_telegram_init_data(init_data_raw: str) -> dict | None:
+    bot_token = environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not init_data_raw or not bot_token:
+        return None
+    try:
+        params = dict(parse_qsl(init_data_raw, keep_blank_values=True))
+        received_hash = params.pop("hash", None)
+        if not received_hash:
+            return None
+        data_check_string = "\n".join(
+            f"{k}={v}" for k, v in sorted(params.items())
+        )
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(computed_hash, received_hash):
+            return None
+        user_str = params.get("user")
+        if user_str:
+            return _json.loads(user_str)
+        return None
+    except Exception:
+        logger.exception("initData validation error")
+        return None
+
+
+def _casino_session_from_cookie(request: web.Request) -> dict | None:
+    sid = request.cookies.get("casino_sid")
+    if not sid:
+        return None
+    sess = _casino_sessions.get(sid)
+    if not sess:
+        return None
+    if _time.time() - sess["ts"] > CASINO_SESSION_TTL:
+        _casino_sessions.pop(sid, None)
+        return None
+    return sess
 
 
 def _find_user(repository: Repository, uid: int):
@@ -456,9 +509,54 @@ def _get_or_create_user(repository: Repository, uid: int, username: str = ""):
     return user
 
 
+async def handle_casino_session(request: web.Request):
+    try:
+        body = await request.json()
+        init_data_raw = str(body.get("initData", ""))
+
+        tg_user = _validate_telegram_init_data(init_data_raw)
+        if not tg_user:
+            return web.json_response({"error": "invalid initData"}, status=403)
+
+        user_id = str(tg_user["id"])
+        user_name = tg_user.get("username", "") or tg_user.get("first_name", "")
+
+        old_sid = request.cookies.get("casino_sid")
+        if old_sid:
+            _casino_sessions.pop(old_sid, None)
+
+        sid = secrets.token_urlsafe(48)
+        token = secrets.token_urlsafe(32)
+        _casino_sessions[sid] = {"user_id": user_id, "user_name": user_name, "token": token, "ts": _time.time()}
+
+        repository: Repository = request.app["repository"]
+        user = _find_user(repository, int(user_id))
+        data = {
+            "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
+            "lastBonusClaim": user.casino_last_bonus if user else 0,
+            "token": token,
+        }
+        resp = web.json_response(data)
+        resp.set_cookie(
+            "casino_sid", sid,
+            max_age=CASINO_SESSION_TTL,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            path="/api/casino",
+        )
+        return resp
+    except Exception:
+        logger.exception("casino session error")
+        return web.json_response({"error": "bad request"}, status=400)
+
+
 async def handle_casino_balance(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
     repository: Repository = request.app["repository"]
-    uid = int(request.match_info["user_id"])
+    uid = int(sess["user_id"])
     user = _find_user(repository, uid)
     if not user:
         return web.json_response({"monkeys": CASINO_INITIAL_BALANCE, "lastBonusClaim": 0})
@@ -469,21 +567,42 @@ async def handle_casino_balance(request: web.Request):
 
 
 async def handle_casino_event(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
     try:
         body = await request.json()
-        user_id = str(body["userId"])
-        user_name = str(body.get("userName", ""))
+        user_id = sess["user_id"]
+        user_name = sess["user_name"]
         game = str(body["game"])
         bet = int(body.get("bet", 0))
         win = int(body.get("win", 0))
+        token = str(body.get("token", ""))
+
         if game not in CASINO_GAME_IDS:
             return web.json_response({"error": "unknown game"}, status=400)
 
+        if token != sess.get("token", ""):
+            return web.json_response({"error": "invalid token"}, status=403)
+
+        now = _time.time()
+        last = _casino_last_spin.get(user_id, 0)
+        if now - last < CASINO_SPIN_COOLDOWN:
+            return web.json_response({"error": "too fast"}, status=429)
+
+        max_bet = CASINO_MAX_BET.get(game, 50)
+        max_win = CASINO_MAX_WIN.get(game, 100)
+        if bet < 0 or win < 0 or bet > max_bet or win > max_win:
+            return web.json_response({"error": "invalid bet/win"}, status=400)
+
         user = _get_or_create_user(repository, int(user_id), user_name)
+        if bet > user.monkeys:
+            return web.json_response({"error": "insufficient balance"}, status=400)
         delta = win - bet
         user.monkeys = max(0, user.monkeys + delta)
+        _casino_last_spin[user_id] = now
         await repository.save()
 
         labels = {"user_id": user_id, "user_name": user_name, "game": game}
@@ -500,15 +619,16 @@ async def handle_casino_event(request: web.Request):
 
 
 async def handle_casino_bonus(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
     try:
-        body = await request.json()
-        user_id = str(body["userId"])
-        user_name = str(body.get("userName", ""))
+        user_id = sess["user_id"]
+        user_name = sess["user_name"]
 
         user = _get_or_create_user(repository, int(user_id), user_name)
-        import time as _time
         now = _time.time()
         if user.casino_last_bonus and now - user.casino_last_bonus < CASINO_BONUS_COOLDOWN:
             return web.json_response({"error": "cooldown", "monkeys": user.monkeys}, status=429)
@@ -525,8 +645,11 @@ async def handle_casino_bonus(request: web.Request):
 
 
 async def handle_casino_stats(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
     metrics: MetricsEngine = request.app["metrics"]
-    user_id = request.match_info["user_id"]
+    user_id = sess["user_id"]
 
     try:
         def pq(metric, **flt):
@@ -609,10 +732,11 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/profile/{user_id}", handle_profile)
     app.router.add_get("/api/profile/{user_id}/history", handle_profile_history)
     app.router.add_get("/api/poker/stats/{user_id}", handle_poker_stats)
-    app.router.add_get("/api/casino/balance/{user_id}", handle_casino_balance)
+    app.router.add_post("/api/casino/session", handle_casino_session)
+    app.router.add_get("/api/casino/balance", handle_casino_balance)
     app.router.add_post("/api/casino/event", handle_casino_event)
     app.router.add_post("/api/casino/bonus", handle_casino_bonus)
-    app.router.add_get("/api/casino/stats/{user_id}", handle_casino_stats)
+    app.router.add_get("/api/casino/stats", handle_casino_stats)
     app.router.add_get("/api/user/{user_id}/chats", handle_user_chats)
     app.router.add_post("/api/poker/invite", handle_poker_invite)
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)

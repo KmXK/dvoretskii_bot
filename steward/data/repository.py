@@ -288,4 +288,10 @@ class Repository:
                         fr["notes"] = []
             data["version"] = 8
 
+        if data.get("version") == 8:
+            for user in data.get("users", []):
+                if isinstance(user, dict) and user.get("monkeys", 0) > 100000:
+                    user["monkeys"] = 100
+            data["version"] = 9
+
         return data
