@@ -1,17 +1,38 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 let _ctx = null
+let _warmed = false
+
 function getCtx() {
   if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)()
-  if (_ctx.state === 'suspended') _ctx.resume()
   return _ctx
 }
 
-function play(fn) {
-  try { fn(getCtx()) } catch {}
+function warmUp() {
+  if (_warmed) return
+  _warmed = true
+  const ctx = getCtx()
+  if (ctx.state === 'suspended') ctx.resume()
+  const buf = ctx.createBuffer(1, 1, ctx.sampleRate)
+  const src = ctx.createBufferSource()
+  src.buffer = buf
+  src.connect(ctx.destination)
+  src.start()
 }
 
-function makeReverb(ctx, decay = 1.5) {
+function play(fn) {
+  try {
+    const ctx = getCtx()
+    if (ctx.state === 'suspended') ctx.resume()
+    fn(ctx)
+  } catch {}
+}
+
+const _reverbCache = new Map()
+
+function getReverbBuf(ctx, decay) {
+  const key = decay
+  if (_reverbCache.has(key)) return _reverbCache.get(key)
   const rate = ctx.sampleRate
   const len = rate * decay
   const buf = ctx.createBuffer(2, len, rate)
@@ -21,20 +42,20 @@ function makeReverb(ctx, decay = 1.5) {
       d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5)
     }
   }
-  const conv = ctx.createConvolver()
-  conv.buffer = buf
-  return conv
+  _reverbCache.set(key, buf)
+  return buf
 }
 
 function out(ctx, reverb = false, reverbDecay = 1.2) {
   if (!reverb) return ctx.destination
-  const rev = makeReverb(ctx, reverbDecay)
+  const conv = ctx.createConvolver()
+  conv.buffer = getReverbBuf(ctx, reverbDecay)
   const dry = ctx.createGain()
   const wet = ctx.createGain()
   dry.gain.value = 0.7
   wet.gain.value = 0.35
   dry.connect(ctx.destination)
-  wet.connect(rev).connect(ctx.destination)
+  wet.connect(conv).connect(ctx.destination)
   const merge = ctx.createGain()
   merge.connect(dry)
   merge.connect(wet)
@@ -245,6 +266,12 @@ export default function useCasinoSounds() {
     try { return localStorage.getItem(MUTE_KEY) === '1' } catch { return false }
   })
   const mutedRef = useRef(muted)
+
+  useEffect(() => {
+    const handler = () => { warmUp(); window.removeEventListener('pointerdown', handler) }
+    window.addEventListener('pointerdown', handler, { once: true })
+    return () => window.removeEventListener('pointerdown', handler)
+  }, [])
 
   const toggleMute = useCallback(() => {
     setMuted(prev => {
