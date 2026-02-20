@@ -1,128 +1,160 @@
 import logging
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import ChatMigrated
 
-from steward.bot.context import ChatBotContext
-from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.step import Step
 
 logger = logging.getLogger(__name__)
 
+PREFIX = "broadcast_select|"
+DONE_CB = "broadcast_select|done"
+STOP_CB = "broadcast_select|stop"
 
-def _parse_chat_names(text):
-    names = []
-    i = 0
-    while i < len(text):
-        if text[i] == "(":
-            depth = 1
-            start = i + 1
-            i += 1
-            while i < len(text) and depth > 0:
-                if text[i] == "(":
-                    depth += 1
-                elif text[i] == ")":
-                    depth -= 1
-                i += 1
-            if depth == 0:
-                name = text[start : i - 1].strip()
-                if name:
-                    names.append(name)
-        else:
-            i += 1
-    return names
+
+def _get_user_group_chats(context):
+    user_id = context.update.effective_user.id
+    user = next((u for u in context.repository.db.users if u.id == user_id), None)
+    if not user:
+        return []
+
+    chat_ids = set(getattr(user, "chat_ids", []) or [])
+    seen = set()
+    result = []
+    for c in context.repository.db.chats:
+        if c.id < 0 and c.id in chat_ids and c.id not in seen:
+            seen.add(c.id)
+            result.append(c)
+    return result
+
+
+def _build_select_keyboard(chats, selected_ids):
+    rows = []
+    for chat in chats:
+        mark = "✅" if chat.id in selected_ids else "☐"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark} {chat.name}",
+                    callback_data=f"{PREFIX}{chat.id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("Начать трансляцию ➜", callback_data=DONE_CB)])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_stop_keyboard():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⏹ Завершить трансляцию", callback_data=STOP_CB)]]
+    )
 
 
 class BroadcastStep(Step):
     async def chat(self, context):
-        if not context.session_context.get("initialized"):
-            context.session_context["initialized"] = True
-
-            chat_names = context.session_context["chat_names"]
-            chats_db = context.repository.db.chats
-
-            target_chats = []
-            not_found = []
-
-            for name in chat_names:
-                found = next(
-                    (
-                        c
-                        for c in chats_db
-                        if c.name.lower() == name.strip().lower() and c.id < 0
-                    ),
-                    None,
-                )
-                if found:
-                    target_chats.append(found)
-                else:
-                    not_found.append(name)
-
-            if not target_chats:
-                await context.message.reply_text(
-                    "Не найдено ни одного подходящего группового чата"
-                )
-                return True
-
-            context.session_context["target_chats"] = [c.id for c in target_chats]
-
-            found_names = ", ".join(c.name for c in target_chats)
-            text = f"Трансляция начата в: {found_names}"
-            if not_found:
-                text += f"\nНе найдены: {', '.join(not_found)}"
-            text += "\n\n/broadcast stop — завершить"
-
-            await context.message.reply_text(text)
-            return False
-
-        if context.message.text and validate_command_msg(context.update, "broadcast"):
-            entity_len = context.update.effective_message.entities[0].length
-            args = context.message.text[entity_len:].strip()
-            if args.lower() == "stop":
-                await context.message.reply_text("Трансляция завершена")
-                return True
-
-        errors = []
-        target_chats = context.session_context["target_chats"]
-        for i, chat_id in enumerate(target_chats):
-            try:
-                await context.bot.copy_message(
-                    chat_id=chat_id,
-                    from_chat_id=context.message.chat.id,
-                    message_id=context.message.message_id,
-                )
-            except ChatMigrated as e:
-                new_id = e.new_chat_id
-                target_chats[i] = new_id
-                for c in context.repository.db.chats:
-                    if c.id == chat_id:
-                        c.id = new_id
-                        break
-                await context.repository.save()
+        if context.session_context.get("broadcasting"):
+            errors = []
+            target_chats = context.session_context["target_chats"]
+            for i, chat_id in enumerate(target_chats):
                 try:
                     await context.bot.copy_message(
-                        chat_id=new_id,
+                        chat_id=chat_id,
                         from_chat_id=context.message.chat.id,
                         message_id=context.message.message_id,
                     )
+                except ChatMigrated as e:
+                    new_id = e.new_chat_id
+                    target_chats[i] = new_id
+                    for c in context.repository.db.chats:
+                        if c.id == chat_id:
+                            c.id = new_id
+                            break
+                    await context.repository.save()
+                    try:
+                        await context.bot.copy_message(
+                            chat_id=new_id,
+                            from_chat_id=context.message.chat.id,
+                            message_id=context.message.message_id,
+                        )
+                    except Exception:
+                        logger.exception("Broadcast to migrated %s failed", new_id)
+                        errors.append(str(new_id))
                 except Exception:
-                    logger.exception("Broadcast to migrated %s failed", new_id)
-                    errors.append(str(new_id))
-            except Exception:
-                logger.exception("Broadcast to %s failed", chat_id)
-                chat = next(
-                    (c for c in context.repository.db.chats if c.id == chat_id),
-                    None,
+                    logger.exception("Broadcast to %s failed", chat_id)
+                    chat = next(
+                        (c for c in context.repository.db.chats if c.id == chat_id),
+                        None,
+                    )
+                    errors.append(chat.name if chat else str(chat_id))
+
+            if errors:
+                await context.message.reply_text(
+                    f"Ошибка отправки в: {', '.join(errors)}"
                 )
-                errors.append(chat.name if chat else str(chat_id))
 
-        if errors:
-            await context.message.reply_text(f"Ошибка отправки в: {', '.join(errors)}")
+            return False
 
+        chats = _get_user_group_chats(context)
+        if not chats:
+            await context.message.reply_text("У вас нет доступных групповых чатов")
+            return True
+
+        context.session_context["available_chats"] = chats
+        context.session_context["selected_ids"] = set()
+
+        await context.message.reply_text(
+            "Выберите чаты для трансляции:",
+            reply_markup=_build_select_keyboard(chats, set()),
+        )
         return False
 
     async def callback(self, context):
+        data = context.callback_query.data
+        if not data or not data.startswith(PREFIX):
+            return False
+
+        if data == STOP_CB:
+            await context.callback_query.edit_message_text("Трансляция завершена")
+            await context.callback_query.answer()
+            return True
+
+        if context.session_context.get("broadcasting"):
+            return False
+
+        if data == DONE_CB:
+            selected = context.session_context.get("selected_ids", set())
+            if not selected:
+                await context.callback_query.answer("Выберите хотя бы один чат")
+                return False
+
+            context.session_context["target_chats"] = list(selected)
+            context.session_context["broadcasting"] = True
+
+            chats = context.session_context["available_chats"]
+            names = ", ".join(c.name for c in chats if c.id in selected)
+
+            await context.callback_query.edit_message_text(
+                f"Трансляция начата в: {names}",
+                reply_markup=_build_stop_keyboard(),
+            )
+            await context.callback_query.answer()
+            return False
+
+        chat_id = int(data[len(PREFIX) :])
+        selected = context.session_context.get("selected_ids", set())
+        if chat_id in selected:
+            selected.discard(chat_id)
+        else:
+            selected.add(chat_id)
+        context.session_context["selected_ids"] = selected
+
+        chats = context.session_context["available_chats"]
+        await context.callback_query.edit_message_reply_markup(
+            reply_markup=_build_select_keyboard(chats, selected),
+        )
+        await context.callback_query.answer()
         return False
 
 
@@ -137,17 +169,6 @@ class BroadcastSessionHandler(SessionHandlerBase):
         if not validate_command_msg(update, "broadcast"):
             return False
 
-        entity_len = update.message.entities[0].length
-        args = update.message.text[entity_len:].strip()
-
-        if args.lower() == "stop":
-            return False
-
-        chat_names = _parse_chat_names(args)
-        if not chat_names:
-            return False
-
-        session_context["chat_names"] = chat_names
         return True
 
     async def on_session_finished(self, update, session_context):
@@ -158,21 +179,4 @@ class BroadcastSessionHandler(SessionHandlerBase):
             await update.effective_message.reply_text("Трансляция завершена")
 
     def help(self):
-        return "/broadcast (чат 1) (чат 2) — трансляция сообщений в чаты"
-
-
-USAGE_TEXT = "Использование: /broadcast (чат 1) (чат 2)\n/broadcast stop — завершить"
-
-
-class BroadcastUsageHandler(Handler):
-    only_for_admin = True
-
-    async def chat(self, context: ChatBotContext):
-        if not context.message or not context.message.text:
-            return False
-
-        if not validate_command_msg(context.update, "broadcast"):
-            return False
-
-        await context.message.reply_text(USAGE_TEXT)
-        return True
+        return "/broadcast — трансляция сообщений в выбранные чаты"

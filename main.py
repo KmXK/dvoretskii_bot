@@ -19,7 +19,7 @@ from steward.handlers.army_handler import (
     ArmyViewHandler,
 )
 from steward.handlers.ban_handler import BanCommandHandler, BanEnforcerHandler
-from steward.handlers.broadcast_handler import BroadcastSessionHandler, BroadcastUsageHandler
+from steward.handlers.broadcast_handler import BroadcastSessionHandler
 from steward.handlers.birthday_handler import (
     BirthdayRemoveHandler,
     BirthdayViewHandler,
@@ -173,7 +173,6 @@ def get_handlers(log_file: None | str):
             PashaHandler,
             PashaSessionHandler,
             BroadcastSessionHandler,
-            BroadcastUsageHandler,
             AIHandler,
             VoiceVideoHandler,
             MultiplyHandler,
