@@ -287,7 +287,7 @@ async def handle_poker_stats(request: web.Request):
         def pq(metric, **flt):
             flt["user_id"] = user_id
             lf = ", ".join(f'{k}="{v}"' for k, v in flt.items())
-            return f"sum({metric}{{{lf}}})"
+            return f"sum(increase({metric}{{{lf}}}[365d]))"
 
         hands_s = await metrics.query(pq("poker_hands_total"))
         hands_won_s = await metrics.query(pq("poker_hands_total", result="win"))
@@ -532,7 +532,7 @@ async def handle_casino_stats(request: web.Request):
         def pq(metric, **flt):
             flt["user_id"] = user_id
             lf = ", ".join(f'{k}="{v}"' for k, v in flt.items())
-            return f"sum({metric}{{{lf}}})"
+            return f"sum(increase({metric}{{{lf}}}[365d]))"
 
         games_won_s = await metrics.query(pq("casino_games_total", result="win"))
         games_lost_s = await metrics.query(pq("casino_games_total", result="loss"))
