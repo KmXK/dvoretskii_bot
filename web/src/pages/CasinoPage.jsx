@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTelegram } from '../context/TelegramContext'
+import useCasinoSounds from '../hooks/useCasinoSounds'
 
 const DAILY_BONUS = 50
 const INITIAL_BALANCE = 100
@@ -79,7 +80,7 @@ function SlotReel({ symbol, spinning, reelIndex }) {
   )
 }
 
-function SlotMachine({ balance, onBalanceChange, onBack, onGameResult }) {
+function SlotMachine({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   const [reels, setReels] = useState(['🍒', '💎', '🍒'])
   const [spinning, setSpinning] = useState(false)
   const [lastWin, setLastWin] = useState(null)
@@ -88,9 +89,11 @@ function SlotMachine({ balance, onBalanceChange, onBack, onGameResult }) {
     if (spinning || balance < SPIN_COST) return
     onBalanceChange(-SPIN_COST)
     setLastWin(null)
+    sound('spin')
     const results = [weighted(SYMBOLS, SYMBOL_WEIGHTS), weighted(SYMBOLS, SYMBOL_WEIGHTS), weighted(SYMBOLS, SYMBOL_WEIGHTS)]
     setReels(results)
     setSpinning(true)
+    for (let i = 0; i < 3; i++) setTimeout(() => sound('reelStop'), (1.6 + i * 0.4) * 1000)
     setTimeout(() => {
       setSpinning(false)
       let win = 0
@@ -99,7 +102,10 @@ function SlotMachine({ balance, onBalanceChange, onBack, onGameResult }) {
       if (win > 0) {
         onBalanceChange(win)
         setLastWin(win)
-        if (win >= 100) confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } })
+        if (win >= 100) { confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); sound('bigWin') }
+        else sound('win')
+      } else {
+        sound('lose')
       }
       onGameResult('slots', SPIN_COST, win)
     }, (1.6 + 2 * 0.4) * 1000 + 100)
@@ -153,7 +159,7 @@ function SlotMachine({ balance, onBalanceChange, onBack, onGameResult }) {
 }
 
 // ===== coin flip =====
-function CoinFlip({ balance, onBalanceChange, onBack, onGameResult }) {
+function CoinFlip({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   const [bet, setBet] = useState(10)
   const [flipping, setFlipping] = useState(false)
   const [result, setResult] = useState(null)
@@ -166,21 +172,25 @@ function CoinFlip({ balance, onBalanceChange, onBack, onGameResult }) {
     setWon(null)
     setResult(null)
     setFlipping(true)
+    sound('coinFlip')
 
     const isHeads = Math.random() < 0.5
     const playerWon = (choice === 'heads') === isHeads
 
     setTimeout(() => {
+      sound('coinLand')
       setResult(isHeads ? 'heads' : 'tails')
       setFlipping(false)
       if (playerWon) {
         const winAmount = Math.floor(b * 1.9)
         onBalanceChange(winAmount)
         setWon(winAmount)
-        if (winAmount >= 40) confetti({ particleCount: 80, spread: 50, origin: { y: 0.5 } })
+        if (winAmount >= 40) { confetti({ particleCount: 80, spread: 50, origin: { y: 0.5 } }); sound('bigWin') }
+        else sound('win')
         onGameResult('coinflip', b, winAmount)
       } else {
         setWon(0)
+        sound('lose')
         onGameResult('coinflip', b, 0)
       }
     }, 1400)
@@ -340,7 +350,7 @@ function calcRouletteWin(num, betChoice, bet) {
   return 0
 }
 
-function Roulette({ balance, onBalanceChange, onBack, onGameResult }) {
+function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   const [bet, setBet] = useState(10)
   const [spinning, setSpinning] = useState(false)
   const [betChoice, setBetChoice] = useState(null)
@@ -354,6 +364,7 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult }) {
   useEffect(() => () => clearTimeout(timerRef.current), [])
 
   const chooseBet = (type, value) => {
+    sound('tick')
     setBetChoice(prev => prev?.type === type && prev?.value === value ? null : { type, value })
   }
   const isSelected = (type, value) => betChoice?.type === type && betChoice?.value === value
@@ -364,6 +375,7 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult }) {
     setLastWin(null)
     setResult(null)
     setSpinning(true)
+    sound('rouletteSpin')
 
     const winNum = Math.floor(Math.random() * 37)
     const targetIdx = WHEEL_ORDER.indexOf(winNum)
@@ -376,15 +388,18 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult }) {
     setWheelRot(newRot)
 
     timerRef.current = setTimeout(() => {
+      sound('rouletteBall')
       setResult(winNum)
       setSpinning(false)
       const win = calcRouletteWin(winNum, betChoice, bet)
       if (win > 0) {
         onBalanceChange(win)
         setLastWin(win)
-        if (win >= 50) confetti({ particleCount: 100, spread: 60, origin: { y: 0.5 } })
+        if (win >= 50) { confetti({ particleCount: 100, spread: 60, origin: { y: 0.5 } }); sound('bigWin') }
+        else sound('win')
       } else {
         setLastWin(0)
+        sound('lose')
       }
       onGameResult('roulette', bet, win)
     }, 4700)
@@ -582,7 +597,7 @@ function check5x5AllWins(cols) {
   return { lineWins, clusters, winCells, totalPay }
 }
 
-function Slots5x5({ balance, onBalanceChange, onBack, onGameResult }) {
+function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   const [grid, setGrid] = useState(() => genGrid())
   const [spinning, setSpinning] = useState(false)
   const [winData, setWinData] = useState({ lineWins: [], clusters: [], winCells: new Set(), totalPay: 0 })
@@ -595,6 +610,7 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult }) {
     setLastWin(null)
     setWinData({ lineWins: [], clusters: [], winCells: new Set(), totalPay: 0 })
     setSpinning(true)
+    sound('spin')
 
     const finalGrid = genGrid()
     const locked = new Set()
@@ -607,6 +623,7 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult }) {
     for (let c = 0; c < 5; c++) {
       setTimeout(() => {
         locked.add(c)
+        sound('reelStop')
         setGrid(prev => { const cp = [...prev]; cp[c] = finalGrid[c]; return cp })
       }, 500 + c * 300)
     }
@@ -620,7 +637,10 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult }) {
       if (wd.totalPay > 0) {
         onBalanceChange(wd.totalPay)
         setLastWin(wd.totalPay)
-        if (wd.totalPay >= 50) confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
+        if (wd.totalPay >= 50) { confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } }); sound('bigWin') }
+        else sound('win')
+      } else {
+        sound('lose')
       }
       onGameResult('slots5x5', SPIN5_COST, wd.totalPay)
     }, 500 + 5 * 300 + 200)
@@ -863,6 +883,7 @@ export default function CasinoPage() {
   const { userId, username, firstName } = useTelegram()
   const userName = username || firstName || 'guest'
   const navigate = useNavigate()
+  const { sound, muted, toggleMute } = useCasinoSounds()
   const [view, setView] = useState('hub')
   const [balance, setBalance] = useState(INITIAL_BALANCE)
   const [lastBonusClaim, setLastBonusClaim] = useState(0)
@@ -940,6 +961,7 @@ export default function CasinoPage() {
       })
       .catch(() => { })
     setBonusFlash(true)
+    sound('bonus')
     confetti({ particleCount: 80, spread: 60, origin: { y: 0.45 } })
     setTimeout(() => setBonusFlash(false), 2000)
   }
@@ -957,7 +979,7 @@ export default function CasinoPage() {
     )
   }
 
-  const gameProps = { balance, onBalanceChange: changeBalance, onBack: () => setView('hub'), onGameResult: handleGameResult }
+  const gameProps = { balance, onBalanceChange: changeBalance, onBack: () => setView('hub'), onGameResult: handleGameResult, sound }
   const gameViews = {
     slots: <SlotMachine key="slots" {...gameProps} />,
     coinflip: <CoinFlip key="coinflip" {...gameProps} />,
@@ -969,11 +991,16 @@ export default function CasinoPage() {
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-20 flex flex-col items-center">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-sm mb-5">
-        <div className="rounded-xl px-4 py-2.5 flex items-center justify-center gap-2"
+        <div className="rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 relative"
           style={{ background: 'linear-gradient(135deg, #2d1b69 0%, #11998e 100%)' }}>
           <span className="text-white/60 text-xs">Баланс:</span>
           <motion.span key={balance} initial={{ scale: 1.15 }} animate={{ scale: 1 }}
             className="text-white text-xl font-bold">{balance} 🐵</motion.span>
+          <button onClick={toggleMute}
+            className="absolute right-3 text-white/50 hover:text-white transition-colors text-lg"
+            title={muted ? 'Включить звук' : 'Выключить звук'}>
+            {muted ? '🔇' : '🔊'}
+          </button>
         </div>
       </motion.div>
 
