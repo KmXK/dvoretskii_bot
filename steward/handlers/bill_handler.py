@@ -1,8 +1,11 @@
+import base64
 import logging
+import os
 import re
 from collections import defaultdict
 from typing import Callable
 
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
@@ -12,6 +15,7 @@ from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.google_drive import (
     find_file_in_folder,
     get_file_link,
+    insert_rows_into_spreadsheet,
     read_spreadsheet_values,
 )
 from steward.helpers.google_drive import (
@@ -25,11 +29,15 @@ from steward.helpers.tg_update_helpers import (
 )
 from steward.helpers.validation import check, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
+from steward.session.step import Step
 from steward.session.steps.question_step import QuestionStep
 
 logger = logging.getLogger(__name__)
 
 FINANCES_FOLDER_ID = "1_YgOgjiqOyMZ1_jVAND_7HG9GfE7MpHX"
+
+_BILL_OCR_KB = "bill_ocr"
+_BILL_OCR_NO_KB = "bill_ocr_no"
 
 _AMOUNT_RE = re.compile(r"[\d\s]+[,.]?\d*")
 
@@ -478,9 +486,25 @@ class BillAddHandler(SessionHandlerBase):
             report,
         ]
         msg = "\n".join(lines)
-        for chunk in split_long_message(msg):
+        ocr_keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📷 Добавить чек",
+                        callback_data=f"{_BILL_OCR_KB}|{file_id}",
+                    ),
+                    InlineKeyboardButton("Нет", callback_data=f"{_BILL_OCR_NO_KB}|"),
+                ]
+            ]
+        )
+        chunks = split_long_message(msg)
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
             parse_mode = "Markdown" if is_valid_markdown(chunk) else None
-            await get_message(update).chat.send_message(chunk, parse_mode=parse_mode)
+            markup = ocr_keyboard if is_last else None
+            await get_message(update).chat.send_message(
+                chunk, parse_mode=parse_mode, reply_markup=markup
+            )
 
     def help(self):
         return None
@@ -538,7 +562,9 @@ class BillReportHandler(Handler):
         all_bills = self.repository.db.bills
         all_tx = _load_all_transactions(all_bills)
         debts_this = debts_from_transactions(transactions)
-        debts_this = apply_payments(debts_this, self.repository.db.payments, clamp_zero=True)
+        debts_this = apply_payments(
+            debts_this, self.repository.db.payments, clamp_zero=True
+        )
         debts_this = _net_direct_debts(debts_this)
         debts_list_this = debts_to_list(debts_this)
         debts_all = debts_from_transactions(all_tx)
@@ -561,11 +587,29 @@ class BillReportHandler(Handler):
             debts_list_all=debts_list_all,
             closable_bill_ids_all=closable_all,
         )
-        for i, chunk in enumerate(split_long_message(report)):
+        ocr_keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📷 Добавить чек",
+                        callback_data=f"{_BILL_OCR_KB}|{bill.file_id}",
+                    ),
+                    InlineKeyboardButton("Нет", callback_data=f"{_BILL_OCR_NO_KB}|"),
+                ]
+            ]
+        )
+        chunks = split_long_message(report)
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            markup = ocr_keyboard if is_last else None
             if i == 0:
-                await context.message.reply_text(chunk, parse_mode="Markdown")
+                await context.message.reply_text(
+                    chunk, parse_mode="Markdown", reply_markup=markup
+                )
             else:
-                await context.message.chat.send_message(chunk, parse_mode="Markdown")
+                await context.message.chat.send_message(
+                    chunk, parse_mode="Markdown", reply_markup=markup
+                )
         return True
 
     def help(self):
@@ -999,6 +1043,167 @@ class BillCloseHandler(Handler):
         return "/bill close {id1} {id2} ... — закрыть счета"
 
 
+class CollectBillPhotoStep(Step):
+    def __init__(self):
+        self.is_waiting = False
+
+    async def chat(self, context):
+        if not self.is_waiting:
+            await context.message.reply_text("Отправьте фото чека")
+            self.is_waiting = True
+            return False
+
+        if not context.message.photo:
+            await context.message.reply_text("Отправьте фото (картинку)")
+            return False
+
+        api_key = os.environ.get("AI_VISION_SECRET")
+        folder_id = os.environ.get("YC_FOLDER_ID")
+        if not api_key or not folder_id:
+            await context.message.reply_text(
+                "Yandex OCR не настроен: задайте AI_VISION_SECRET и YC_FOLDER_ID"
+            )
+            self.is_waiting = False
+            return True
+
+        photo = context.message.photo[-1]
+        try:
+            from steward.handlers.newtext_handler import _read_photo_bytes, _yandex_ocr
+
+            data = await _read_photo_bytes(context, photo.file_id)
+            content_b64 = base64.standard_b64encode(data).decode("ascii")
+            mime = "JPEG"
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                mime = "PNG"
+            text = await _yandex_ocr(content_b64, mime, api_key, folder_id)
+        except httpx.HTTPStatusError as e:
+            logger.exception("Yandex OCR HTTP error: %s", e)
+            await context.message.reply_text(
+                f"Ошибка OCR API: {e.response.status_code}"
+            )
+            self.is_waiting = False
+            return True
+        except Exception as e:
+            logger.exception("Yandex OCR failed: %s", e)
+            await context.message.reply_text(f"Не удалось распознать текст: {e}")
+            self.is_waiting = False
+            return True
+
+        if not text:
+            await context.message.reply_text("Текст на картинке не найден")
+            self.is_waiting = False
+            return True
+
+        context.session_context["ocr_text"] = text
+        self.is_waiting = False
+        return True
+
+    async def callback(self, context):
+        if not self.is_waiting:
+            await context.callback_query.message.edit_reply_markup(reply_markup=None)
+            await context.callback_query.answer()
+            await context.callback_query.message.chat.send_message(
+                "Отправьте фото чека"
+            )
+            self.is_waiting = True
+        return False
+
+    def stop(self):
+        self.is_waiting = False
+
+
+def _parse_ai_bill_response(text: str) -> list[list[str]]:
+    rows = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|", 1)]
+        if len(parts) != 2:
+            continue
+        name = parts[0]
+        raw = parts[1].replace(",", ".").replace("\u00a0", "").replace(" ", "")
+        try:
+            val = float(raw)
+        except ValueError:
+            continue
+        amount_str = f"{val:.2f}".replace(".", ",")
+        rows.append([name, amount_str])
+    return rows
+
+
+class BillOcrHandler(SessionHandlerBase):
+    def __init__(self):
+        super().__init__([CollectBillPhotoStep()])
+
+    def try_activate_session(self, update, session_context):
+        if not update.callback_query or not update.callback_query.data:
+            return False
+        data = update.callback_query.data
+        if not data.startswith(f"{_BILL_OCR_KB}|"):
+            return False
+        file_id = data.split("|", 1)[1]
+        if not file_id:
+            return False
+        session_context["file_id"] = file_id
+        return True
+
+    async def callback(self, context):
+        if context.callback_query and context.callback_query.data:
+            data = context.callback_query.data
+            if data.startswith(f"{_BILL_OCR_NO_KB}|"):
+                await context.callback_query.message.edit_reply_markup(
+                    reply_markup=None
+                )
+                await context.callback_query.answer()
+                return True
+        return await super().callback(context)
+
+    async def on_session_finished(self, update, session_context):
+        ocr_text = session_context.get("ocr_text")
+        file_id = session_context.get("file_id")
+        msg = get_message(update)
+
+        if not ocr_text:
+            await msg.chat.send_message("Текст не распознан")
+            return
+
+        from steward.helpers.ai import BILL_OCR_PROMPT, make_yandex_ai_query
+
+        try:
+            ai_response = await make_yandex_ai_query(
+                get_message(update).chat.id,
+                [("user", ocr_text)],
+                BILL_OCR_PROMPT,
+            )
+        except Exception as e:
+            logger.exception("AI request failed: %s", e)
+            await msg.chat.send_message(f"Ошибка AI: {e}")
+            return
+
+        rows = _parse_ai_bill_response(ai_response)
+        if not rows:
+            await msg.chat.send_message(
+                f"Не удалось разобрать ответ AI:\n{ai_response}"
+            )
+            return
+
+        if not insert_rows_into_spreadsheet(file_id, rows):
+            await msg.chat.send_message("Не удалось записать данные в таблицу")
+            return
+
+        lines = [f"✅ Добавлено {len(rows)} строк в таблицу:"]
+        for r in rows:
+            lines.append(f"• {r[0]} — {r[1]}")
+        await msg.chat.send_message("\n".join(lines))
+
+    async def on_stop(self, update, session_context):
+        await get_message(update).chat.send_message("Отменено")
+
+    def help(self):
+        return None
+
+
 class BillHelpHandler(Handler):
     async def chat(self, context: ChatBotContext):
         if not validate_command_msg(context.update, "bill"):
@@ -1011,7 +1216,7 @@ class BillHelpHandler(Handler):
 
 /bill — общий отчет по всем счетам
 /bill all — список всех счетов
-/bill {id} — отчет по счету
+/bill {id} — отчет по счету (+ кнопка «Добавить чек» для OCR)
 /bill {id} debug — отчет по счету с выводом сырых данных из таблицы
 /bill add — добавить счет (имя = имя файла в папке «финансы»)
 /bill pay {кто} {кому} {сумма} — зарегистрировать перевод
