@@ -14,8 +14,8 @@ from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
 from .banned_user import BannedUser
-from .birthday import Birthday
 from .bill import Bill, DetailsInfo, Payment
+from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .feature_request import FeatureRequest
@@ -49,7 +49,7 @@ class Database:
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
 
-    version: int = 10
+    version: int = 11
 
 
 PARSE_CONFIG = Config(
@@ -58,13 +58,17 @@ PARSE_CONFIG = Config(
         set,
     ],
     type_hooks={
-        datetime: lambda s: datetime.fromisoformat(s)
-        if isinstance(s, str)
-        else datetime.fromtimestamp(s, tz=timezone.utc),
+        datetime: lambda s: (
+            datetime.fromisoformat(s)
+            if isinstance(s, str)
+            else datetime.fromtimestamp(s, tz=timezone.utc)
+        ),
         timedelta: lambda s: timedelta(seconds=s),
-        time: lambda s: time.fromisoformat(s)
-        if isinstance(s, str)
-        else time(hour=s // 3600, minute=(s % 3600) // 60, second=s % 60),
+        time: lambda s: (
+            time.fromisoformat(s)
+            if isinstance(s, str)
+            else time(hour=s // 3600, minute=(s % 3600) // 60, second=s % 60)
+        ),
     },
 )
 
