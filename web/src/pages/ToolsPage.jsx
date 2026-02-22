@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import BackButton from '../components/BackButton'
+import Dropdown from '../components/Dropdown'
 
 const TABS = [
   { id: 'exchange', label: '💱 Валюты', color: 'from-amber-500/20 to-amber-900/20' },
@@ -186,16 +187,16 @@ function TranslateTool() {
   return (
     <div className="space-y-4">
       <div className="bg-spotify-dark rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-spotify-text text-xs">Исходный язык</label>
-          <select
+        <div className="flex items-center justify-between mb-2 gap-3">
+          <label className="text-spotify-text text-xs shrink-0">Исходный язык</label>
+          <Dropdown
             value={fromLang}
-            onChange={e => setFromLang(e.target.value)}
-            className="bg-spotify-gray text-white text-xs rounded-lg px-2 py-1 outline-none"
-          >
-            <option value="">Авто</option>
-            {LANGS.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
-          </select>
+            onChange={v => setFromLang(v)}
+            placeholder="Авто"
+            options={[{ value: '', label: 'Авто' }, ...LANGS.map(l => ({ value: l.code, label: l.label }))]}
+            compact
+            className="w-36"
+          />
         </div>
         <textarea
           value={text}
