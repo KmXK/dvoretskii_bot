@@ -269,6 +269,16 @@ const sounds = {
       tone(ctx, 300 + i * 200, 0.15, 'sine', 0.025, i * 0.12, d)
   },
 
+  raceStart(ctx) {
+    const d = out(ctx, true, 1.0)
+    kick(ctx, 0, d)
+    kick(ctx, 0.05, d)
+    noise(ctx, 0.15, 0.12, 0, 5000, d)
+    tone(ctx, 880, 0.3, 'sine', 0.1, 0, d)
+    tone(ctx, 1760, 0.2, 'sine', 0.06, 0.05, d)
+    sweep(ctx, 400, 1200, 0.3, 'sawtooth', 0.05, 0.1, d)
+  },
+
   rocketCrash(ctx) {
     const d = out(ctx, true, 1.5)
     kick(ctx, 0, d)
