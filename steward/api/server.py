@@ -217,6 +217,17 @@ async def handle_profile(request: web.Request):
     period = request.query.get("period", "day")
 
     rewards_map = {r.id: r for r in repository.db.rewards}
+    users_map = {u.id: u for u in repository.db.users}
+
+    def _reward_holder_name(reward) -> str | None:
+        if not reward.dynamic_key:
+            return None
+        ur = next((x for x in repository.db.user_rewards if x.reward_id == reward.id), None)
+        if ur is None:
+            return None
+        holder = users_map.get(ur.user_id)
+        return f"@{holder.username}" if holder and holder.username else str(ur.user_id)
+
     user_rewards = [
         {
             "id": r.id,
@@ -224,6 +235,8 @@ async def handle_profile(request: web.Request):
             "emoji": r.emoji,
             "description": r.description,
             "custom_emoji_id": r.custom_emoji_id,
+            "dynamic_key": r.dynamic_key,
+            "holder": _reward_holder_name(r),
         }
         for ur in repository.db.user_rewards
         if ur.user_id == int(user_id)
