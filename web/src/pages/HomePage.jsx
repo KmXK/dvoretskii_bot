@@ -5,6 +5,10 @@ const cards = [
   { title: 'Todo', desc: 'Список задач', emoji: '📝', color: 'from-rose-500/20 to-rose-900/20', to: '/todo' },
   { title: 'Army', desc: 'Статус по армейке', emoji: '🎖️', color: 'from-emerald-500/20 to-emerald-900/20', to: '/army' },
   { title: 'Features', desc: 'Фича-реквесты', emoji: '💡', color: 'from-cyan-500/20 to-cyan-900/20', to: '/features' },
+  { title: 'Tools', desc: 'Валюты, перевод, время', emoji: '🧰', color: 'from-amber-500/20 to-amber-900/20', to: '/tools' },
+  { title: 'Reminders', desc: 'Напоминания', emoji: '🔔', color: 'from-blue-500/20 to-blue-900/20', to: '/reminders' },
+  { title: 'Birthdays', desc: 'Дни рождения', emoji: '🎂', color: 'from-pink-500/20 to-pink-900/20', to: '/birthdays' },
+  { title: 'Stats', desc: 'Статистика чатов', emoji: '📊', color: 'from-violet-500/20 to-violet-900/20', to: '/stats' },
 ]
 
 export default function HomePage() {
