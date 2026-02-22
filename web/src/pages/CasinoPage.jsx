@@ -8,8 +8,8 @@ import useCasinoSounds from '../hooks/useCasinoSounds'
 const DAILY_BONUS = 50
 const INITIAL_BALANCE = 100
 
-const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5']
-const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5' }
+const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5', 'rocket']
+const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5', rocket: '🚀 Ракетка' }
 
 function secureRandom() {
   const buf = new Uint32Array(1)
@@ -22,6 +22,55 @@ function weighted(symbols, weights) {
   let r = secureRandom() * total
   for (let i = 0; i < symbols.length; i++) { r -= weights[i]; if (r <= 0) return symbols[i] }
   return symbols[symbols.length - 1]
+}
+
+// ===== rocket crash helpers =====
+const ROCKET_BET_MS = 3000
+const ROCKET_FLY_MS = 9000
+const ROCKET_POST_MS = 3000
+const ROCKET_RATE = 0.0005
+const ROCKET_MAX = 100
+const ROCKET_SEED_TTL_MS = 14400000
+
+function cyrb53(str, seed = 0) {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507)
+  h1 ^= Math.imul(h2 ^ (h2 >>> 16), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507)
+  h2 ^= Math.imul(h1 ^ (h1 >>> 16), 3266489909)
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
+}
+
+function rocketCrashPoint(seed, round) {
+  const check = cyrb53(`${seed}:${round}:c`)
+  if (check % 25 === 0) return 1.00
+  const h = cyrb53(`${seed}:${round}`)
+  const u = h / (2 ** 53)
+  const cp = 1 / (1 - u)
+  return Math.min(ROCKET_MAX, Math.max(1.01, Math.floor(cp * 100) / 100))
+}
+
+function rocketCrashMs(cp) {
+  return cp <= 1.00 ? 0 : Math.min(Math.log(cp) / ROCKET_RATE, ROCKET_FLY_MS)
+}
+
+function rocketRoundDur(seed, n) {
+  return ROCKET_BET_MS + rocketCrashMs(rocketCrashPoint(seed, n)) + ROCKET_POST_MS
+}
+
+function rocketFindRound(seed, periodStart, now) {
+  let t = periodStart, n = 0
+  while (true) {
+    const dur = rocketRoundDur(seed, n)
+    if (t + dur > now) return { round: n, start: t, dur }
+    t += dur
+    n++
+  }
 }
 
 function GameBack({ onClick }) {
@@ -736,6 +785,413 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   )
 }
 
+// ===== rocket crash =====
+function RocketStars() {
+  const stars = useMemo(() =>
+    Array.from({ length: 40 }, (_, i) => ({
+      x: Math.random() * 100,
+      size: 1 + Math.random() * 1.5,
+      opacity: 0.15 + Math.random() * 0.45,
+      dur: 3 + Math.random() * 4,
+      delay: -Math.random() * 7,
+    })), [])
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {stars.map((s, i) => (
+        <div key={i} className="absolute rounded-full bg-white"
+          style={{
+            left: `${s.x}%`, width: s.size, height: s.size,
+            animation: `rocketStar ${s.dur}s linear infinite`,
+            animationDelay: `${s.delay}s`,
+          }} />
+      ))}
+      <style>{`@keyframes rocketStar { from { top: -2%; opacity: 0.5; } to { top: 102%; opacity: 0; } }`}</style>
+    </div>
+  )
+}
+
+function RocketGame({ balance, onBalanceChange, onBack, onGameResult, sound }) {
+  const [phase, setPhase] = useState('loading')
+  const [seed, setSeed] = useState(null)
+  const [serverOff, setServerOff] = useState(0)
+  const [bet, setBet] = useState(10)
+  const [mult, setMult] = useState(1.0)
+  const [cp, setCp] = useState(0)
+  const [history, setHistory] = useState([])
+  const [cashedOut, setCashedOut] = useState(false)
+  const [cashMult, setCashMult] = useState(0)
+  const [currentBet, setCurrentBet] = useState(0)
+  const [timeLeft, setTimeLeft] = useState(0)
+  const [flyMs, setFlyMs] = useState(0)
+
+  const betRef = useRef(0)
+  const cashedRef = useRef(false)
+  const pendingRef = useRef(null)
+  const sentRef = useRef(false)
+  const lastRoundRef = useRef(-1)
+  const crashSndRef = useRef(false)
+  const launchSndRef = useRef(false)
+  const animRef = useRef(null)
+  const gameResultRef = useRef(onGameResult)
+  gameResultRef.current = onGameResult
+  const roundInfoRef = useRef(null)
+  const periodStartRef = useRef(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const delay = new Promise(r => setTimeout(r, 1500))
+    Promise.all([
+      fetch('/api/casino/rocket/init', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null),
+      delay,
+    ]).then(([data]) => {
+      if (cancelled || !data) { if (!cancelled) setPhase('error'); return }
+      const off = data.serverTime - Date.now()
+      setSeed(data.seed)
+      setServerOff(off)
+      const ps = Math.floor(data.serverTime / ROCKET_SEED_TTL_MS) * ROCKET_SEED_TTL_MS
+      periodStartRef.current = ps
+      const info = rocketFindRound(data.seed, ps, data.serverTime)
+      roundInfoRef.current = info
+      const hist = []
+      for (let i = info.round - 1; i >= Math.max(0, info.round - 15); i--)
+        hist.push(rocketCrashPoint(data.seed, i))
+      setHistory(hist)
+    }).catch(() => { if (!cancelled) setPhase('error') })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!seed) return
+    const tick = () => {
+      const now = Date.now() + serverOff
+      let ri = roundInfoRef.current
+      if (!ri) {
+        ri = rocketFindRound(seed, periodStartRef.current, now)
+        roundInfoRef.current = ri
+      }
+      while (now >= ri.start + ri.dur) {
+        const next = ri.round + 1
+        const nextStart = ri.start + ri.dur
+        const nextDur = rocketRoundDur(seed, next)
+        ri = { round: next, start: nextStart, dur: nextDur }
+        roundInfoRef.current = ri
+      }
+
+      const round = ri.round
+      const elapsed = now - ri.start
+      const roundCp = rocketCrashPoint(seed, round)
+      const crashMs = rocketCrashMs(roundCp)
+
+      if (round !== lastRoundRef.current) {
+        if (pendingRef.current && !sentRef.current) {
+          sentRef.current = true
+          const p = pendingRef.current
+          gameResultRef.current(p.game, p.bet, p.win)
+          pendingRef.current = null
+        }
+        if (lastRoundRef.current >= 0) {
+          const prev = rocketCrashPoint(seed, lastRoundRef.current)
+          setHistory(h => [prev, ...h].slice(0, 15))
+        }
+        betRef.current = 0
+        cashedRef.current = false
+        crashSndRef.current = false
+        launchSndRef.current = false
+        sentRef.current = false
+        setCashedOut(false)
+        setCashMult(0)
+        setCurrentBet(0)
+        lastRoundRef.current = round
+      }
+
+      setCp(roundCp)
+
+      if (elapsed < ROCKET_BET_MS) {
+        setPhase('betting')
+        setMult(1.00)
+        setTimeLeft(Math.ceil((ROCKET_BET_MS - elapsed) / 1000))
+        setFlyMs(0)
+      } else {
+        const flyElapsed = elapsed - ROCKET_BET_MS
+        if (!launchSndRef.current) { launchSndRef.current = true; sound('rocketLaunch') }
+        if (flyElapsed >= crashMs) {
+          if (!crashSndRef.current) {
+            crashSndRef.current = true
+            sound('rocketCrash')
+            if (betRef.current > 0 && !cashedRef.current) {
+              pendingRef.current = { game: 'rocket', bet: betRef.current, win: 0 }
+              sound('lose')
+            }
+          }
+          setPhase('crashed')
+          setMult(roundCp)
+          setFlyMs(crashMs)
+          const postEnd = ROCKET_BET_MS + crashMs + ROCKET_POST_MS
+          setTimeLeft(Math.max(0, Math.ceil((postEnd - elapsed) / 1000)))
+        } else {
+          setPhase('flying')
+          setMult(Math.floor(Math.exp(ROCKET_RATE * flyElapsed) * 100) / 100)
+          setFlyMs(flyElapsed)
+        }
+      }
+      animRef.current = requestAnimationFrame(tick)
+    }
+    animRef.current = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      if (pendingRef.current && !sentRef.current) {
+        sentRef.current = true
+        const p = pendingRef.current
+        gameResultRef.current(p.game, p.bet, p.win)
+      }
+    }
+  }, [seed, serverOff, sound])
+
+  const placeBet = useCallback(() => {
+    if (phase !== 'betting' || betRef.current > 0 || balance < bet) return
+    onBalanceChange(-bet)
+    betRef.current = bet
+    setCurrentBet(bet)
+    sound('tick')
+  }, [phase, balance, bet, onBalanceChange, sound])
+
+  const cashout = useCallback(() => {
+    if (phase !== 'flying' || betRef.current <= 0 || cashedRef.current) return
+    const m = mult
+    const win = Math.floor(betRef.current * m)
+    cashedRef.current = true
+    setCashedOut(true)
+    setCashMult(m)
+    onBalanceChange(win)
+    pendingRef.current = { game: 'rocket', bet: betRef.current, win }
+    if (win >= 100) {
+      confetti({ particleCount: 120, spread: 60, origin: { y: 0.5 } })
+      sound('bigWin')
+    } else {
+      sound('win')
+    }
+  }, [phase, mult, onBalanceChange, sound])
+
+  useEffect(() => {
+    if (bet > balance && balance > 0) setBet(Math.min(balance, 10))
+  }, [balance])
+
+  if (phase === 'loading') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-sm mx-auto">
+        <GameBack onClick={onBack} />
+        <div className="rounded-2xl p-6 border border-white/5 flex flex-col items-center py-16 relative overflow-hidden"
+          style={{ background: 'linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)' }}>
+          <RocketStars />
+          <motion.div animate={{ y: [0, -15, 0], rotate: [0, 5, -5, 0] }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+            className="text-6xl mb-6 relative z-10">🚀</motion.div>
+          <p className="text-white/60 text-sm mb-4 relative z-10">Подключение к орбите...</p>
+          <div className="w-32 h-1 bg-white/10 rounded-full overflow-hidden relative z-10">
+            <motion.div className="h-full w-1/3 bg-gradient-to-r from-orange-500 to-red-500 rounded-full"
+              animate={{ x: ['-100%', '400%'] }}
+              transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }} />
+          </div>
+        </div>
+      </motion.div>
+    )
+  }
+
+  if (phase === 'error') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-sm mx-auto">
+        <GameBack onClick={onBack} />
+        <div className="rounded-2xl p-6 border border-white/5 text-center py-12"
+          style={{ background: 'linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)' }}>
+          <p className="text-4xl mb-4">💥</p>
+          <p className="text-white/60 text-sm">Ошибка подключения</p>
+          <button onClick={onBack} className="mt-4 text-orange-400 text-sm hover:text-orange-300">← Вернуться</button>
+        </div>
+      </motion.div>
+    )
+  }
+
+  const graphW = 280, graphH = 140
+  const gPad = { l: 28, r: 8, t: 8, b: 12 }
+  const gw = graphW - gPad.l - gPad.r, gh = graphH - gPad.t - gPad.b
+  const maxFly = ROCKET_FLY_MS
+  const dMs = phase === 'crashed'
+    ? Math.min(cp <= 1.0 ? 0 : Math.log(cp) / ROCKET_RATE, maxFly)
+    : Math.min(flyMs, maxFly)
+
+  let graphPts = ''
+  let lastPt = null
+  if (dMs > 10) {
+    const steps = Math.max(2, Math.min(150, Math.floor(dMs / 60)))
+    const pts = []
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * dMs
+      const m = Math.exp(ROCKET_RATE * t)
+      const x = gPad.l + (t / maxFly) * gw
+      const yN = Math.log(m) / Math.log(ROCKET_MAX + 1)
+      const y = graphH - gPad.b - yN * gh
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`)
+    }
+    graphPts = pts.join(' ')
+    const lp = pts[pts.length - 1].split(',')
+    lastPt = { x: parseFloat(lp[0]), y: parseFloat(lp[1]) }
+  }
+
+  const lineClr = phase === 'crashed' ? '#ef4444' : '#22c55e'
+  const gridMs = [2, 5, 10, 25, 50, 100]
+
+  return (
+    <motion.div initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -50 }} className="w-full max-w-sm mx-auto">
+      <GameBack onClick={onBack} />
+
+      {history.length > 0 && (
+        <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+          {history.map((h, i) => (
+            <span key={i} className={`shrink-0 px-2 py-0.5 rounded text-[11px] font-bold
+              ${h <= 1.5 ? 'bg-red-500/20 text-red-400' :
+                h <= 3 ? 'bg-orange-500/20 text-orange-400' :
+                  h <= 10 ? 'bg-yellow-500/20 text-yellow-300' :
+                    'bg-green-500/20 text-green-400'}`}>
+              {h.toFixed(2)}×
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-2xl p-4 border border-white/5 relative overflow-hidden"
+        style={{ background: 'linear-gradient(135deg, #0a0a1a 0%, #1a0a2e 50%, #0a0a1a 100%)' }}>
+        <RocketStars />
+
+        <h2 className="text-center text-white font-bold text-xl mb-1 relative z-10">🚀 Ракетка</h2>
+        <p className="text-center text-white/30 text-[10px] mb-2 relative z-10">макс ×{ROCKET_MAX}</p>
+
+        <div className="text-center mb-1 relative z-10" style={{ minHeight: 72 }}>
+          {phase === 'betting' ? (
+            <motion.div key="bet-phase" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <p className="text-white/40 text-xs mb-1">Запуск через</p>
+              <p className="text-white text-4xl font-black tabular-nums">{timeLeft}с</p>
+            </motion.div>
+          ) : (
+            <motion.div key={`fly-${Math.floor(mult)}`}>
+              <motion.p
+                className={`text-5xl font-black tabular-nums leading-none
+                  ${phase === 'crashed' ? 'text-red-500' : cashedOut ? 'text-yellow-400' : 'text-green-400'}`}
+                animate={phase === 'flying' && !cashedOut ? { scale: [1, 1.03, 1] } : {}}
+                transition={{ duration: 0.5, repeat: Infinity }}>
+                {mult.toFixed(2)}×
+              </motion.p>
+              {phase === 'crashed' && (
+                <motion.p initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                  className="text-red-400 text-sm font-bold mt-1">КРАШ</motion.p>
+              )}
+            </motion.div>
+          )}
+        </div>
+
+        <div className="mb-3 relative z-10 rounded-xl overflow-hidden"
+          style={{ background: 'rgba(0,0,0,0.3)' }}>
+          <svg viewBox={`0 0 ${graphW} ${graphH}`} className="w-full block" style={{ height: 140 }}>
+            {gridMs.map(m => {
+              const yN = Math.log(m) / Math.log(ROCKET_MAX + 1)
+              const y = graphH - gPad.b - yN * gh
+              if (y < gPad.t || y > graphH - gPad.b) return null
+              return (
+                <g key={m}>
+                  <line x1={gPad.l} y1={y} x2={graphW - gPad.r} y2={y}
+                    stroke="white" opacity="0.06" strokeDasharray="2,4" />
+                  <text x={gPad.l - 3} y={y + 3} fill="white" opacity="0.25"
+                    fontSize="7" textAnchor="end">{m}×</text>
+                </g>
+              )
+            })}
+            <line x1={gPad.l} y1={graphH - gPad.b} x2={graphW - gPad.r} y2={graphH - gPad.b}
+              stroke="white" opacity="0.08" />
+            {graphPts && (
+              <>
+                <polyline points={graphPts} fill="none" stroke={lineClr}
+                  strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                <polyline points={graphPts} fill="none" stroke={lineClr}
+                  strokeWidth="8" strokeLinecap="round" opacity="0.12" />
+              </>
+            )}
+            {phase === 'flying' && lastPt && (
+              <text x={lastPt.x} y={lastPt.y - 10} fontSize="14" textAnchor="middle">🚀</text>
+            )}
+            {phase === 'crashed' && lastPt && (
+              <text x={lastPt.x} y={lastPt.y - 10} fontSize="14" textAnchor="middle">💥</text>
+            )}
+            {phase === 'betting' && (
+              <text x={graphW / 2} y={graphH / 2 + 4} fill="white" opacity="0.15"
+                fontSize="11" textAnchor="middle" fontWeight="bold">ОЖИДАНИЕ ЗАПУСКА</text>
+            )}
+          </svg>
+        </div>
+
+        <AnimatePresence>
+          {cashedOut && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="text-center mb-3 relative z-10">
+              <p className="text-yellow-400 font-bold text-lg">
+                Забрал на {cashMult.toFixed(2)}× → +{Math.floor(currentBet * cashMult)} 🐵
+              </p>
+            </motion.div>
+          )}
+          {phase === 'crashed' && currentBet > 0 && !cashedOut && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="text-center mb-3 relative z-10">
+              <p className="text-red-400 font-bold text-sm">Не успел! −{currentBet} 🐵</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="relative z-10">
+          {phase === 'betting' && (
+            <>
+              <BetSelector bet={bet} setBet={setBet} balance={balance} />
+              <motion.button whileTap={{ scale: 0.95 }} onClick={placeBet}
+                disabled={currentBet > 0 || balance < bet}
+                className={`w-full py-3 rounded-full font-bold text-sm transition-colors
+                  ${currentBet > 0
+                    ? 'bg-green-600/30 text-green-300 cursor-default'
+                    : 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white'}
+                  disabled:opacity-40 disabled:cursor-not-allowed`}>
+                {currentBet > 0 ? `✅ Ставка ${currentBet} 🐵` :
+                  balance < bet ? 'Мало обезьянок' : `ПОСТАВИТЬ ${bet} 🐵`}
+              </motion.button>
+            </>
+          )}
+
+          {phase === 'flying' && (
+            <motion.button whileTap={{ scale: 0.95 }} onClick={cashout}
+              disabled={currentBet <= 0 || cashedOut}
+              className={`w-full py-3.5 rounded-full font-bold text-sm transition-colors
+                ${cashedOut
+                  ? 'bg-yellow-600/30 text-yellow-300 cursor-default'
+                  : currentBet > 0
+                    ? 'bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-400 hover:to-emerald-300 text-black shadow-lg shadow-green-500/30 animate-pulse'
+                    : 'bg-white/10 text-white/40 cursor-default'}`}>
+              {cashedOut ? `✅ Забрал ${cashMult.toFixed(2)}×` :
+                currentBet > 0 ? `ЗАБРАТЬ ${Math.floor(currentBet * mult)} 🐵` :
+                  'Ставка не сделана'}
+            </motion.button>
+          )}
+
+          {phase === 'crashed' && (
+            <div className="text-center py-2">
+              {currentBet === 0 && <BetSelector bet={bet} setBet={setBet} balance={balance} />}
+              <p className="text-white/30 text-xs">Следующий раунд через {timeLeft}с</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+    </motion.div>
+  )
+}
+
 // ===== stats block =====
 function CasinoStatCell({ value, label, color = 'text-white' }) {
   return (
@@ -844,6 +1300,10 @@ const GAMES = [
   {
     id: 'slots5x5', name: 'Слоты 5×5', emoji: '🎲', available: true,
     gradient: 'from-blue-700 via-indigo-500 to-violet-400', glow: 'shadow-blue-500/40', desc: '5 линий выплат'
+  },
+  {
+    id: 'rocket', name: 'Ракетка', emoji: '🚀', available: true,
+    gradient: 'from-orange-600 via-red-500 to-rose-600', glow: 'shadow-orange-500/40', desc: 'Забери до краша!'
   },
 ]
 
@@ -1000,6 +1460,7 @@ export default function CasinoPage() {
     coinflip: <CoinFlip key="coinflip" {...gameProps} />,
     roulette: <Roulette key="roulette" {...gameProps} />,
     slots5x5: <Slots5x5 key="slots5x5" {...gameProps} />,
+    rocket: <RocketGame key="rocket" {...gameProps} />,
   }
 
   return (
