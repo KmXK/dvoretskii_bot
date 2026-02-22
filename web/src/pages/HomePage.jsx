@@ -37,22 +37,6 @@ export default function HomePage() {
           </motion.div>
         ))}
       </div>
-
-      <div className="mt-6 bg-spotify-dark rounded-xl p-4">
-        <h2 className="text-white font-semibold mb-3">Recent Activity</h2>
-        {['Alex earned 🏆 MVP', 'New bill: Pizza 🍕', 'Reminder: Meeting at 15:00'].map((item, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.5 + i * 0.1 }}
-            className="flex items-center gap-3 py-2.5 border-b border-white/5 last:border-0"
-          >
-            <div className="w-2 h-2 rounded-full bg-spotify-green shrink-0" />
-            <span className="text-spotify-text text-sm">{item}</span>
-          </motion.div>
-        ))}
-      </div>
     </motion.div>
   )
 }
