@@ -1,7 +1,10 @@
+import html as html_module
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
 from steward.data.models.reward import Reward
+from steward.dynamic_rewards import get_dynamic_reward_holder, get_holder_display_name
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.emoji import (
@@ -15,13 +18,6 @@ from steward.helpers.pagination import (
     get_data_page,
     parse_pagination,
 )
-
-
-def format_rewards_page(ctx: PageFormatContext[Reward]) -> str:
-    return format_lined_list_html(
-        items=[(r.id, format_reward_html(r)) for r in ctx.data],
-        delimiter=". ",
-    )
 
 
 class MeHandler(Handler):
@@ -107,6 +103,20 @@ class MeHandler(Handler):
 
         return text, keyboard
 
+    def _format_rewards_page(self, ctx: PageFormatContext[Reward]) -> str:
+        items: list[tuple[int, str]] = []
+        for r in ctx.data:
+            text = format_reward_html(r)
+            if r.dynamic_key:
+                holder_id = get_dynamic_reward_holder(self.repository, r)
+                if holder_id is not None:
+                    name = get_holder_display_name(self.repository, holder_id)
+                    text += f" → <code>{html_module.escape(name)}</code>"
+                else:
+                    text += " → <i>нет владельца</i>"
+            items.append((r.id, text))
+        return format_lined_list_html(items=items, delimiter=". ")
+
     def _build_rewards(self, user_id: int, page: int):
         rewards_map = {r.id: r for r in self.repository.db.rewards}
         user_rewards = [
@@ -121,7 +131,7 @@ class MeHandler(Handler):
             page_size=10,
             list_header="Ваши достижения",
             unique_keyboard_name="me_rewards_list",
-            page_format_func=format_rewards_page,
+            page_format_func=self._format_rewards_page,
             always_show_pagination=True,
             metadata=str(user_id),
         )

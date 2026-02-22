@@ -1,5 +1,8 @@
+import html as html_module
+
 from steward.bot.context import ChatBotContext
 from steward.data.models.reward import Reward, UserReward
+from steward.dynamic_rewards import get_dynamic_reward_holder, get_holder_display_name
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.emoji import (
@@ -17,13 +20,6 @@ from steward.helpers.tg_update_helpers import get_message
 from steward.helpers.validation import validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.steps.question_step import QuestionStep
-
-
-def format_rewards_page(ctx: PageFormatContext[Reward]) -> str:
-    return format_lined_list_html(
-        items=[(r.id, format_reward_html(r)) for r in ctx.data],
-        delimiter=". ",
-    )
 
 
 class RewardListHandler(Handler):
@@ -49,12 +45,26 @@ class RewardListHandler(Handler):
             )
         return False
 
+    def _format_page(self, ctx: PageFormatContext[Reward]) -> str:
+        items: list[tuple[int, str]] = []
+        for r in ctx.data:
+            text = format_reward_html(r)
+            if r.dynamic_key:
+                holder_id = get_dynamic_reward_holder(self.repository, r)
+                if holder_id is not None:
+                    name = get_holder_display_name(self.repository, holder_id)
+                    text += f" → <code>{html_module.escape(name)}</code>"
+                else:
+                    text += " → <i>нет владельца</i>"
+            items.append((r.id, text))
+        return format_lined_list_html(items=items, delimiter=". ")
+
     def _get_paginator(self) -> Paginator:
         paginator = Paginator(
             unique_keyboard_name="rewards_list",
             list_header="Достижения",
             page_size=10,
-            page_format_func=format_rewards_page,
+            page_format_func=self._format_page,
             always_show_pagination=True,
             parse_mode="HTML",
         )
@@ -136,6 +146,10 @@ class RewardRemoveHandler(Handler):
             await context.message.reply_text("Достижение не найдено")
             return True
 
+        if reward.dynamic_key:
+            await context.message.reply_text("Динамическое достижение нельзя удалить")
+            return True
+
         self.repository.db.rewards.remove(reward)
         self.repository.db.user_rewards = [
             ur for ur in self.repository.db.user_rewards if ur.reward_id != reward_id
@@ -172,6 +186,10 @@ class RewardPresentHandler(Handler):
         )
         if reward is None:
             await context.message.reply_text("Достижение не найдено")
+            return True
+
+        if reward.dynamic_key:
+            await context.message.reply_text("Динамическое достижение нельзя вручить вручную")
             return True
 
         user_identifiers = parts[3:]
@@ -247,6 +265,10 @@ class RewardTakeHandler(Handler):
         )
         if reward is None:
             await context.message.reply_text("Достижение не найдено")
+            return True
+
+        if reward.dynamic_key:
+            await context.message.reply_text("Динамическое достижение нельзя изъять вручную")
             return True
 
         user_identifiers = parts[3:]

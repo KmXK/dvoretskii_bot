@@ -28,6 +28,7 @@ from steward.bot.context import (
 from steward.birthday_checker import BirthdayChecker
 from steward.api.server import start_api_server
 from steward.bot.delayed_action_handler import DelayedActionHandler
+from steward.dynamic_rewards import DynamicRewardChecker, ensure_dynamic_rewards_exist
 from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
@@ -99,6 +100,9 @@ class Bot:
             await self.repository.migrate()
             await self.hints_updater.start(application.bot)
 
+            if ensure_dynamic_rewards_exist(self.repository):
+                await self.repository.save()
+
             for handler in self.handlers:
                 if init_coro := handler.init():  # type: ignore
                     await init_coro
@@ -126,6 +130,12 @@ class Bot:
             self.birthday_checker = BirthdayChecker(self.repository, self.bot)
             asyncio.ensure_future(
                 self.birthday_checker.start(),
+                loop=asyncio.get_event_loop(),
+            )
+
+            self.dynamic_reward_checker = DynamicRewardChecker(self.repository, self.metrics)
+            asyncio.ensure_future(
+                self.dynamic_reward_checker.start(),
                 loop=asyncio.get_event_loop(),
             )
 

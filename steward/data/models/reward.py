@@ -9,6 +9,7 @@ class Reward:
     emoji: str
     description: str = ""
     custom_emoji_id: Optional[str] = None
+    dynamic_key: Optional[str] = None
 
 
 @dataclass
