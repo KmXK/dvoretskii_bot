@@ -177,22 +177,22 @@ function SlotMachine({ balance, onBalanceChange, onBack, onGameResult, sound }) 
         <div className="flex justify-center gap-3 mb-6">
           {reels.map((s, i) => <SlotReel key={i} symbol={s} spinning={spinning} reelIndex={i} />)}
         </div>
-        <AnimatePresence>
-          {lastWin !== null && (
-            <motion.p initial={{ opacity: 0, y: 10, scale: 0.8 }} animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0 }}
-              className={`text-center font-bold text-lg mb-4 ${lastWin >= 100 ? 'text-yellow-400' : 'text-spotify-green'}`}>
-              +{lastWin} 🐵
-            </motion.p>
-          )}
-        </AnimatePresence>
         <motion.button whileTap={{ scale: 0.95 }} onClick={spin}
           disabled={spinning || balance < SPIN_COST}
-          className="w-full py-3 rounded-full font-bold text-sm transition-colors
+          className="w-full py-3 rounded-full font-bold text-sm transition-colors mb-3
             bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-black
             disabled:opacity-40 disabled:cursor-not-allowed">
           {spinning ? 'Кручу...' : balance < SPIN_COST ? 'Мало обезьянок' : `КРУТИТЬ — ${SPIN_COST} 🐵`}
         </motion.button>
+        <AnimatePresence>
+          {lastWin !== null && (
+            <motion.p initial={{ opacity: 0, y: 10, scale: 0.8 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className={`text-center font-bold text-lg ${lastWin >= 100 ? 'text-yellow-400' : 'text-spotify-green'}`}>
+              +{lastWin} 🐵
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
       <div className="mt-4 rounded-xl p-4 border border-white/5" style={{ background: 'rgba(26,26,46,0.8)' }}>
         <h3 className="text-white font-semibold text-sm mb-3">Выплаты</h3>
@@ -279,16 +279,7 @@ function CoinFlip({ balance, onBalanceChange, onBack, onGameResult, sound }) {
           </motion.div>
         </div>
 
-        <AnimatePresence>
-          {won !== null && !flipping && (
-            <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className={`text-center font-bold text-lg mb-4 ${won > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {won > 0 ? `+${won} 🐵` : `Не повезло!`}
-            </motion.p>
-          )}
-        </AnimatePresence>
-
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 mb-3">
           <motion.button whileTap={{ scale: 0.95 }} onClick={() => flip('heads')}
             disabled={flipping || balance < 1}
             className="py-3 rounded-xl font-bold text-sm transition-colors
@@ -304,6 +295,14 @@ function CoinFlip({ balance, onBalanceChange, onBack, onGameResult, sound }) {
             🌙 Решка
           </motion.button>
         </div>
+        <AnimatePresence>
+          {won !== null && !flipping && (
+            <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className={`text-center font-bold text-lg ${won > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {won > 0 ? `+${won} 🐵` : `Не повезло!`}
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   )
@@ -476,6 +475,14 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
 
         <RouletteWheel rotation={wheelRot} spinning={spinning} />
 
+        <motion.button whileTap={{ scale: 0.95 }} onClick={spin}
+          disabled={spinning || balance < bet || !betChoice}
+          className="w-full py-3 rounded-full font-bold text-sm transition-colors mb-3
+            bg-gradient-to-r from-red-600 to-rose-500 hover:from-red-500 hover:to-rose-400 text-white
+            disabled:opacity-40 disabled:cursor-not-allowed">
+          {spinning ? 'Крутится...' : !betChoice ? 'Выбери ставку' : `КРУТИТЬ — ${bet} 🐵`}
+        </motion.button>
+
         <AnimatePresence>
           {result !== null && !spinning && (
             <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
@@ -533,14 +540,6 @@ function Roulette({ balance, onBalanceChange, onBack, onGameResult, sound }) {
             </motion.div>
           )}
         </AnimatePresence>
-
-        <motion.button whileTap={{ scale: 0.95 }} onClick={spin}
-          disabled={spinning || balance < bet || !betChoice}
-          className="w-full py-3 rounded-full font-bold text-sm transition-colors
-            bg-gradient-to-r from-red-600 to-rose-500 hover:from-red-500 hover:to-rose-400 text-white
-            disabled:opacity-40 disabled:cursor-not-allowed">
-          {spinning ? 'Крутится...' : !betChoice ? 'Выбери ставку' : `КРУТИТЬ — ${bet} 🐵`}
-        </motion.button>
       </div>
     </motion.div>
   )
@@ -735,10 +734,16 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
           </div>
         </div>
 
+        <motion.button whileTap={{ scale: 0.95 }} onClick={spin}
+          disabled={spinning || balance < SPIN5_COST}
+          className="w-full py-3 rounded-full font-bold text-sm transition-colors mb-3
+            bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white
+            disabled:opacity-40 disabled:cursor-not-allowed">
+          {spinning ? 'Кручу...' : balance < SPIN5_COST ? 'Мало обезьянок' : `КРУТИТЬ — ${SPIN5_COST} 🐵`}
+        </motion.button>
         <AnimatePresence>
           {lastWin !== null && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="mb-3">
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <p className="text-center font-bold text-lg text-yellow-400">+{lastWin} 🐵</p>
               {(winData.lineWins.length > 0 || winData.clusters.length > 0) && (
                 <div className="flex flex-wrap gap-1 justify-center mt-1">
@@ -757,14 +762,6 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
             </motion.div>
           )}
         </AnimatePresence>
-
-        <motion.button whileTap={{ scale: 0.95 }} onClick={spin}
-          disabled={spinning || balance < SPIN5_COST}
-          className="w-full py-3 rounded-full font-bold text-sm transition-colors
-            bg-gradient-to-r from-blue-600 to-indigo-500 hover:from-blue-500 hover:to-indigo-400 text-white
-            disabled:opacity-40 disabled:cursor-not-allowed">
-          {spinning ? 'Кручу...' : balance < SPIN5_COST ? 'Мало обезьянок' : `КРУТИТЬ — ${SPIN5_COST} 🐵`}
-        </motion.button>
       </div>
 
       <div className="mt-4 rounded-xl p-4 border border-white/5" style={{ background: 'rgba(10,22,40,0.8)' }}>
@@ -1130,22 +1127,24 @@ function RocketGame({ balance, onBalanceChange, onBack, onGameResult, sound }) {
           </svg>
         </div>
 
-        <AnimatePresence>
-          {cashedOut && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="text-center mb-3 relative z-10">
-              <p className="text-yellow-400 font-bold text-lg">
-                Забрал на {cashMult.toFixed(2)}× → +{Math.floor(currentBet * cashMult)} 🐵
-              </p>
-            </motion.div>
-          )}
-          {phase === 'crashed' && currentBet > 0 && !cashedOut && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="text-center mb-3 relative z-10">
-              <p className="text-red-400 font-bold text-sm">Не успел! −{currentBet} 🐵</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div style={{ minHeight: 36 }} className="relative z-10">
+          <AnimatePresence>
+            {cashedOut && (
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                className="text-center mb-3">
+                <p className="text-yellow-400 font-bold text-lg">
+                  Забрал на {cashMult.toFixed(2)}× → +{Math.floor(currentBet * cashMult)} 🐵
+                </p>
+              </motion.div>
+            )}
+            {phase === 'crashed' && currentBet > 0 && !cashedOut && (
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                className="text-center mb-3">
+                <p className="text-red-400 font-bold text-sm">Не успел! −{currentBet} 🐵</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         <div className="relative z-10">
           {phase === 'betting' && (
