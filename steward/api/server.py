@@ -445,12 +445,12 @@ import time as _time
 from os import environ
 from urllib.parse import parse_qsl
 
-CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5"}
+CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
 CASINO_INITIAL_BALANCE = 100
 CASINO_DAILY_BONUS = 50
 CASINO_BONUS_COOLDOWN = 86400
-CASINO_MAX_BET = {"slots": 10, "coinflip": 50, "roulette": 50, "slots5x5": 10}
-CASINO_MAX_WIN = {"slots": 1500, "coinflip": 95, "roulette": 1800, "slots5x5": 5000}
+CASINO_MAX_BET = {"slots": 10, "coinflip": 50, "roulette": 50, "slots5x5": 10, "rocket": 50}
+CASINO_MAX_WIN = {"slots": 1500, "coinflip": 95, "roulette": 1800, "slots5x5": 5000, "rocket": 5000}
 CASINO_SESSION_TTL = 86400
 CASINO_SPIN_COOLDOWN = 1.5
 
@@ -687,6 +687,29 @@ async def handle_casino_stats(request: web.Request):
         })
 
 
+ROCKET_SEED_TTL = 14400
+
+
+def _get_rocket_seed():
+    period = int(_time.time() / ROCKET_SEED_TTL)
+    bot_token = environ.get("TELEGRAM_BOT_TOKEN", "default")
+    return hashlib.sha256(f"rocket:{bot_token}:{period}".encode()).hexdigest()
+
+
+async def handle_rocket_init(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    repository: Repository = request.app["repository"]
+    uid = int(sess["user_id"])
+    user = _find_user(repository, uid)
+    return web.json_response({
+        "seed": _get_rocket_seed(),
+        "serverTime": _time.time() * 1000,
+        "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
+    })
+
+
 async def handle_poker_invite_delete(request: web.Request):
     bot = request.app.get("bot")
     if not bot:
@@ -737,6 +760,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/casino/event", handle_casino_event)
     app.router.add_post("/api/casino/bonus", handle_casino_bonus)
     app.router.add_get("/api/casino/stats", handle_casino_stats)
+    app.router.add_get("/api/casino/rocket/init", handle_rocket_init)
     app.router.add_get("/api/user/{user_id}/chats", handle_user_chats)
     app.router.add_post("/api/poker/invite", handle_poker_invite)
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)

@@ -257,6 +257,28 @@ const sounds = {
     tone(ctx, 1200, 0.04, 'sine', 0.06)
     tone(ctx, 1800, 0.02, 'sine', 0.03, 0.01)
   },
+
+  rocketLaunch(ctx) {
+    const d = out(ctx, true, 1.0)
+    sweep(ctx, 60, 250, 1.2, 'sawtooth', 0.07, 0, d)
+    sweep(ctx, 200, 1500, 0.6, 'sine', 0.05, 0, d)
+    noise(ctx, 0.8, 0.07, 0, 3000, d)
+    kick(ctx, 0, d)
+    kick(ctx, 0.12, d)
+    for (let i = 0; i < 5; i++)
+      tone(ctx, 300 + i * 200, 0.15, 'sine', 0.025, i * 0.12, d)
+  },
+
+  rocketCrash(ctx) {
+    const d = out(ctx, true, 1.5)
+    kick(ctx, 0, d)
+    kick(ctx, 0.08, d)
+    noise(ctx, 0.7, 0.14, 0, 2000, d)
+    sweep(ctx, 800, 80, 0.5, 'sawtooth', 0.1, 0, d)
+    sweep(ctx, 500, 60, 0.7, 'sine', 0.06, 0.08, d)
+    for (let i = 0; i < 8; i++)
+      tone(ctx, 80 + Math.random() * 400, 0.12, 'square', 0.025, i * 0.04, d)
+  },
 }
 
 const MUTE_KEY = 'casino_muted'
