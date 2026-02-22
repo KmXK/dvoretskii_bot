@@ -140,6 +140,14 @@ class BanCommandHandler(Handler):
     def help(self):
         return "/ban <user> <время> — бан пользователя (удаление сообщений)"
 
+    def prompt(self):
+        return (
+            "▶ /ban — бан пользователя\n"
+            "  Синтаксис: /ban <user> <время>\n"
+            "  Примеры:\n"
+            "  - «забань @user на 2 часа» → /ban @user 2h"
+        )
+
 
 class BanEnforcerHandler(Handler):
     async def chat(self, context: ChatBotContext):

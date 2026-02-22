@@ -13,6 +13,7 @@ from steward.handlers.admin_handler import (
     AdminViewHandler,
 )
 from steward.handlers.ai_handler import AIHandler
+from steward.handlers.ai_router_handler import AiRouterHandler
 from steward.handlers.army_handler import (
     ArmyAddHandler,
     ArmyRemoveHandler,
@@ -199,6 +200,7 @@ def get_handlers(log_file: None | str):
     if log_file is not None:
         handlers.append(LogsHandler(log_file))
 
+    handlers.append(AiRouterHandler(handlers))
     handlers.append(HelpHandler(handlers))
 
     return handlers

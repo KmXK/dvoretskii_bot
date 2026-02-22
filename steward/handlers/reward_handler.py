@@ -1,4 +1,7 @@
 import html as html_module
+import re
+
+from telegram import MessageEntity
 
 from steward.bot.context import ChatBotContext
 from steward.data.models.reward import Reward, UserReward
@@ -19,6 +22,7 @@ from steward.helpers.pagination import (
 from steward.helpers.tg_update_helpers import get_message
 from steward.helpers.validation import validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
+from steward.session.session_registry import get_session_key
 from steward.session.steps.question_step import QuestionStep
 
 
@@ -74,6 +78,21 @@ class RewardListHandler(Handler):
     def help(self):
         return "/rewards [add|remove <id>|<id> present/take <users>] — управлять достижениями"
 
+    def prompt(self):
+        return (
+            "▶ /rewards — управление достижениями\n"
+            "  Список: /rewards\n"
+            "  Добавить: /rewards add <название> <эмоджи> или /rewards add (начинает сессию)\n"
+            "  Удалить: /rewards remove <id>\n"
+            "  Вручить: /rewards <id> present <пользователи>\n"
+            "  Забрать: /rewards <id> take <пользователи>\n"
+            "  present и take — это ДВЕ ОТДЕЛЬНЫЕ команды, а НЕ одна.\n"
+            "  Примеры:\n"
+            "  - «покажи достижения» → /rewards\n"
+            "  - «удали достижение 5» → /rewards remove 5\n"
+            "  - «вручи достижение 3 пользователю @user» → /rewards 3 present @user"
+        )
+
 
 class RewardAddHandler(SessionHandlerBase):
     def __init__(self):
@@ -91,6 +110,55 @@ class RewardAddHandler(SessionHandlerBase):
                 ),
             ]
         )
+
+    async def chat(self, context):
+        key = get_session_key(context.update)
+        if key not in self.sessions and validate_command_msg(context.update, "rewards"):
+            parts = context.message.text.split(maxsplit=2)
+            if len(parts) >= 3 and parts[1] == "add":
+                emoji_data = self._parse_inline_emoji(context.message, parts[2])
+                if emoji_data:
+                    max_id = max(
+                        (r.id for r in self.repository.db.rewards), default=0
+                    )
+                    reward = Reward(
+                        id=max_id + 1,
+                        name=emoji_data["name"],
+                        emoji=emoji_data["emoji_text"],
+                        custom_emoji_id=emoji_data["custom_emoji_id"],
+                    )
+                    self.repository.db.rewards.append(reward)
+                    await self.repository.save()
+                    await context.message.reply_html(
+                        f"Достижение добавлено: {format_reward_html(reward)} (id: {reward.id})"
+                    )
+                    return True
+        return await super().chat(context)
+
+    @staticmethod
+    def _parse_inline_emoji(msg, text):
+        if msg.entities:
+            for entity in msg.entities:
+                if entity.type == MessageEntity.CUSTOM_EMOJI:
+                    emoji_text = msg.parse_entity(entity)
+                    name = text.replace(emoji_text, "", 1).strip()
+                    if name:
+                        return {
+                            "name": name,
+                            "emoji_text": emoji_text,
+                            "custom_emoji_id": entity.custom_emoji_id,
+                        }
+
+        words = text.rsplit(maxsplit=1)
+        if len(words) == 2:
+            name_part, emoji_part = words
+            if not re.search(r"[a-zA-Zа-яА-ЯёЁ0-9]", emoji_part) and name_part.strip():
+                return {
+                    "name": name_part.strip(),
+                    "emoji_text": emoji_part,
+                    "custom_emoji_id": None,
+                }
+        return None
 
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "rewards"):

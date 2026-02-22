@@ -29,6 +29,7 @@ from steward.helpers.tg_update_helpers import (
 )
 from steward.helpers.validation import check, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
+from steward.session.session_registry import get_session_key
 from steward.session.step import Step
 from steward.session.steps.question_step import QuestionStep
 
@@ -432,6 +433,18 @@ class BillAddHandler(SessionHandlerBase):
             ]
         )
 
+    async def chat(self, context):
+        key = get_session_key(context.update)
+        if key not in self.sessions and validate_command_msg(context.update, "bill"):
+            assert context.message.text
+            parts = context.message.text.split(maxsplit=2)
+            if len(parts) >= 3 and parts[1] == "add":
+                name = parts[2].strip()
+                if name:
+                    await self.on_session_finished(context.update, {"name": name})
+                    return True
+        return await super().chat(context)
+
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):
             return False
@@ -804,6 +817,30 @@ class BillMainReportHandler(Handler):
     def help(self):
         return "/bill — основной отчёт по всем должникам"
 
+    def prompt(self):
+        return (
+            "▶ /bill — управление счетами (расходы, долги, переводы)\n"
+            "  Основной отчёт по всем должникам: /bill\n"
+            "  Список всех счетов: /bill all\n"
+            "  Отчёт по конкретному счету: /bill <id> или /bill <имя_счёта>\n"
+            "  Отчёт с отладкой: /bill <id> debug\n"
+            "  Добавить новый счет: /bill add <имя> или /bill add (начинает сессию)\n"
+            "  Зарегистрировать перевод: /bill pay <кто> <кому> <сумма>\n"
+            "  Удалить последние N платежей: /bill pay force delete <N> (только админ)\n"
+            "  Закрыть счета: /bill close <id1> <id2> ...\n"
+            "  Добавить платёжные данные: /bill details add <пользователь> <описание> или /bill details add <пользователь> (начинает сессию)\n"
+            "  Изменить платёжные данные: /bill details edit <пользователь> <описание> или /bill details edit <пользователь> (начинает сессию)\n"
+            "  Помощь по /bill: /bill help\n"
+            "  Примеры:\n"
+            "  - «покажи общий отчёт по счетам» → /bill\n"
+            "  - «покажи все счета» → /bill all\n"
+            "  - «покажи счёт 3» → /bill 3\n"
+            "  - «зарегистрируй перевод Вася → Петя 500» → /bill pay Вася Петя 500\n"
+            "  - «закрой счёт 1 и 2» → /bill close 1 2\n"
+            "  - «помощь по биллу» → /bill help\n"
+            "  - «добавь счёт» → /bill add"
+        )
+
 
 class BillPayHandler(Handler):
     async def chat(self, context: ChatBotContext):
@@ -896,6 +933,42 @@ class BillDetailsAddHandler(SessionHandlerBase):
             ]
         )
 
+    async def chat(self, context):
+        key = get_session_key(context.update)
+        if key not in self.sessions and validate_command_msg(context.update, "bill"):
+            assert context.message.text
+            text = context.message.text
+            lines = text.split("\n", 1)
+            first_line_parts = lines[0].split(None, 3)
+
+            if (
+                len(first_line_parts) >= 4
+                and first_line_parts[1] == "details"
+                and first_line_parts[2] == "add"
+            ):
+                name = first_line_parts[3].strip()
+
+                if len(lines) == 2:
+                    description = lines[1].strip()
+                    if name and description:
+                        await self.on_session_finished(
+                            context.update,
+                            {"name": name, "description": description},
+                        )
+                        return True
+                else:
+                    parts_single = text.split(None, 4)
+                    if len(parts_single) >= 5:
+                        name_single = parts_single[3].strip()
+                        description = parts_single[4].strip()
+                        if name_single and description:
+                            await self.on_session_finished(
+                                context.update,
+                                {"name": name_single, "description": description},
+                            )
+                            return True
+        return await super().chat(context)
+
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):
             return False
@@ -949,6 +1022,55 @@ class BillDetailsEditHandler(SessionHandlerBase):
                 ),
             ]
         )
+
+    async def chat(self, context):
+        key = get_session_key(context.update)
+        if key not in self.sessions and validate_command_msg(context.update, "bill"):
+            assert context.message.text
+            text = context.message.text
+            lines = text.split("\n", 1)
+            first_line_parts = lines[0].split()
+
+            if (
+                len(first_line_parts) >= 4
+                and first_line_parts[1] == "details"
+                and first_line_parts[2] == "edit"
+            ):
+                description = lines[1].strip() if len(lines) == 2 else None
+
+                if not description and len(first_line_parts) >= 5:
+                    for i in range(4, len(first_line_parts)):
+                        candidate = " ".join(first_line_parts[3:i])
+                        info = next(
+                            (
+                                d
+                                for d in self.repository.db.details_infos
+                                if d.name == candidate
+                            ),
+                            None,
+                        )
+                        if info is not None:
+                            description = " ".join(first_line_parts[i:]).strip()
+                            if description:
+                                await self.on_session_finished(
+                                    context.update,
+                                    {"details_info": info, "description": description},
+                                )
+                                return True
+
+                if description and len(first_line_parts) >= 4:
+                    name = " ".join(first_line_parts[3:])
+                    info = next(
+                        (d for d in self.repository.db.details_infos if d.name == name),
+                        None,
+                    )
+                    if info is not None:
+                        await self.on_session_finished(
+                            context.update,
+                            {"details_info": info, "description": description},
+                        )
+                        return True
+        return await super().chat(context)
 
     def try_activate_session(self, update, session_context):
         if not validate_command_msg(update, "bill"):

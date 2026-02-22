@@ -247,3 +247,13 @@ class TarotHandler(Handler):
 
     def help(self):
         return "/tarot [вопрос] - гадание на трех картах таро"
+
+    def prompt(self):
+        return (
+            "▶ /tarot — гадание на таро\n"
+            "  Без вопроса: /tarot\n"
+            "  С вопросом: /tarot <вопрос>\n"
+            "  Примеры:\n"
+            "  - «погадай на картах таро» → /tarot\n"
+            "  - «таро что меня ждёт завтра» → /tarot что меня ждёт завтра"
+        )

@@ -71,3 +71,12 @@ class LinkHandler(Handler):
 
     def help(self) -> str | None:
         return "/link [<url>] [<short>] - создать короткую ссылку (или реплай на сообщение со ссылкой)"
+
+    def prompt(self) -> str | None:
+        return (
+            "▶ /link — создание коротких ссылок\n"
+            "  Синтаксис: /link <url> [<короткое_имя>]\n"
+            "  Примеры:\n"
+            "  - «сократи ссылку https://example.com» → /link https://example.com\n"
+            "  - «сократи https://example.com как ex» → /link https://example.com ex"
+        )

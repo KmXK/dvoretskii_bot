@@ -33,3 +33,7 @@ class Handler:
 
     def help(self) -> str | None:
         return None
+
+    def prompt(self) -> str | None:
+        """AI prompt for command routing — detailed instructions for the AI model."""
+        return None

@@ -116,3 +116,11 @@ class ReactHandler(Handler):
 
     def help(self):
         return "/react <N> — поставить реакцию на N последних сообщений"
+
+    def prompt(self):
+        return (
+            "▶ /react — поставить реакции\n"
+            "  Синтаксис: /react <N> (N — количество последних сообщений)\n"
+            "  Примеры:\n"
+            "  - «поставь реакцию на 5 последних сообщений» → /react 5"
+        )

@@ -35,3 +35,12 @@ class EveryoneHandler(Handler):
 
     def help(self):
         return "/everyone - призвать всех в чате"
+
+    def prompt(self):
+        return (
+            "▶ /everyone — призвать всех в чате\n"
+            "  Без аргументов: /everyone\n"
+            "  Примеры:\n"
+            "  - «позови всех» → /everyone\n"
+            "  - «призови всех в чат» → /everyone"
+        )

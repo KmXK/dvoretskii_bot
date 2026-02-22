@@ -316,3 +316,12 @@ class StatsHandler(Handler):
 
     def help(self):
         return "/stats — статистика чата"
+
+    def prompt(self):
+        return (
+            "▶ /stats — статистика чата\n"
+            "  Без аргументов: /stats\n"
+            "  Примеры:\n"
+            "  - «покажи статистику» → /stats\n"
+            "  - «статистика чата» → /stats"
+        )

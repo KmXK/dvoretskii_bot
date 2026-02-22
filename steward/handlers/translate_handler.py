@@ -103,3 +103,15 @@ class TranslateHandler(Handler):
 
     def help(self) -> str | None:
         return "/translate [<from_code_language>/]<to_code_language> <text> - перевод текста"
+
+    def prompt(self) -> str | None:
+        return (
+            "▶ /translate — перевод текста\n"
+            "  Синтаксис: /translate [<из_языка>/]<в_язык> <текст>\n"
+            "  Языки указываются ISO-кодами: en, ru, de, fr, es, zh, ja, ko, ar, tr и т.д.\n"
+            "  Слэш / здесь является частью синтаксиса для разделения языков (исключение из общего правила).\n"
+            "  Примеры:\n"
+            "  - «переведи на английский привет мир» → /translate en привет мир\n"
+            "  - «переведи с немецкого на русский Guten Tag» → /translate de/ru Guten Tag\n"
+            "  - «переведи на японский доброе утро» → /translate ja доброе утро"
+        )
