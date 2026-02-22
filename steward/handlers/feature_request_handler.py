@@ -311,6 +311,22 @@ class FeatureRequestViewHandler(Handler):
     def help(self):
         return "/fr [id|list|done|deny|reopen|inprogress|testing <ids>] | [<id> priority <1-5>] | [<id> note <text>] | [text] - управлять фича-реквестами"
 
+    def prompt(self):
+        return (
+            "▶ /fr — управление фича-реквестами\n"
+            "  Добавить: /fr <текст>\n"
+            "  Список: /fr list\n"
+            "  Просмотр: /fr <id>\n"
+            "  Сменить статус: /fr done <id>, /fr deny <id>, /fr reopen <id>, /fr inprogress <id>, /fr testing <id>\n"
+            "  Приоритет: /fr <id> priority <1-5>\n"
+            "  Примечание: /fr <id> note <текст>\n"
+            "  Примеры:\n"
+            "  - «добавь фичу тёмная тема» → /fr тёмная тема\n"
+            "  - «покажи фича-реквесты» → /fr list\n"
+            "  - «отметь фичу 7 выполненной» → /fr done 7\n"
+            "  - «установи приоритет 1 для фичи 3» → /fr 3 priority 1"
+        )
+
 
 class FeatureRequestEditHandler(Handler):
     async def chat(self, context):

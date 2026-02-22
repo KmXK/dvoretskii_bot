@@ -175,3 +175,14 @@ class TimezoneHandler(Handler):
             "/timezone +5 - время в UTC+5\n"
             "/timezone москва - время по городу"
         )
+
+    def prompt(self):
+        return (
+            "▶ /timezone — время в часовых поясах\n"
+            "  Текущее UTC: /timezone\n"
+            "  По смещению: /timezone +3, /timezone -5\n"
+            "  По городу: /timezone москва, /timezone лондон\n"
+            "  Примеры:\n"
+            "  - «сколько времени в Москве» → /timezone москва\n"
+            "  - «время UTC+5» → /timezone +5"
+        )

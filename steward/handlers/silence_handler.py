@@ -53,6 +53,16 @@ class SilenceCommandHandler(Handler):
     def help(self):
         return "/silence [<время>|off] - включить/выключить режим тишины"
 
+    def prompt(self):
+        return (
+            "▶ /silence — режим тишины\n"
+            "  Включить: /silence <время>\n"
+            "  Выключить: /silence off\n"
+            "  Примеры:\n"
+            "  - «включи тишину на 30 минут» → /silence 30m\n"
+            "  - «выключи режим тишины» → /silence off"
+        )
+
 
 class SilenceEnforcerHandler(Handler):
     async def chat(self, context: ChatBotContext):

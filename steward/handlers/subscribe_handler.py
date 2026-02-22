@@ -513,6 +513,14 @@ class SubscribeHandler(SessionHandlerBase):
     def help(self):
         return "/subscribe [add|remove <id>] - управлять подписками на каналы"
 
+    def prompt(self):
+        return (
+            "▶ /subscribe — управление подписками на каналы\n"
+            "  Список: /subscribe\n"
+            "  Добавить: /subscribe add (начинает сессию)\n"
+            "  Удалить: /subscribe remove <id>"
+        )
+
 
 def format_subscription_page(ctx: PageFormatContext[ChannelSubscription]) -> str:
     def format_subscription(sub: ChannelSubscription):

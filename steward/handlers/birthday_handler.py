@@ -110,3 +110,15 @@ class BirthdayViewHandler(Handler):
 
     def help(self):
         return "/birthday [<name> <DD.MM>|remove <name>] — дни рождения"
+
+    def prompt(self):
+        return (
+            "▶ /birthday — дни рождения\n"
+            "  Список: /birthday\n"
+            "  Добавить: /birthday <имя> <ДД.ММ>\n"
+            "  Удалить: /birthday remove <имя>\n"
+            "  Примеры:\n"
+            "  - «добавь день рождения Ваня 15.03» → /birthday Ваня 15.03\n"
+            "  - «удали день рождения Петя» → /birthday remove Петя\n"
+            "  - «покажи дни рождения» → /birthday"
+        )

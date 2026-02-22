@@ -40,3 +40,12 @@ class HelpHandler(Handler):
 
     def help(self):
         return "/help - показать список команд"
+
+    def prompt(self):
+        return (
+            "▶ /help — показать список команд\n"
+            "  Без аргументов: /help\n"
+            "  Примеры:\n"
+            "  - «какие команды есть» → /help\n"
+            "  - «помощь» → /help"
+        )

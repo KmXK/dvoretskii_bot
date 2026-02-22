@@ -71,3 +71,10 @@ class AdminViewHandler(Handler):
     def help(self):
         return "/admin [add <id>|remove <id>] - управлять админами"
 
+    def prompt(self):
+        return (
+            "▶ /admin — управление админами\n"
+            "  Список: /admin\n"
+            "  Добавить: /admin add <id>\n"
+            "  Удалить: /admin remove <id>"
+        )

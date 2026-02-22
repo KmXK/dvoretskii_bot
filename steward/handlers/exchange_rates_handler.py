@@ -102,3 +102,18 @@ class ExchangeRateHandler(Handler):
         return (
             "/exchange [[<amount> ]<from_currency>/]<to_currency> - конвертация валют"
         )
+
+    def prompt(self) -> str | None:
+        return (
+            "▶ /exchange — конвертация валют\n"
+            "  Синтаксис: /exchange [<сумма>] [<из_валюты>] <в_валюту>\n"
+            "  Параметры разделяются ПРОБЕЛАМИ (не слешами!).\n"
+            "  Валюты указываются кодами: USD, EUR, RUB, BYN, BTC и т.д.\n"
+            "  Если <из_валюты> не указана — по умолчанию BYN.\n"
+            "  Если <сумма> не указана — по умолчанию 1.\n"
+            "  Примеры:\n"
+            "  - «сколько 200 долларов в рублях» → /exchange 200 USD RUB\n"
+            "  - «курс евро» → /exchange EUR\n"
+            "  - «100 евро в долларах» → /exchange 100 EUR USD\n"
+            "  - «курс биткоина в долларах» → /exchange BTC USD"
+        )

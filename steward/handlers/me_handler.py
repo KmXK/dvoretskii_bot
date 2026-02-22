@@ -149,3 +149,12 @@ class MeHandler(Handler):
 
     def help(self):
         return "/me - профиль"
+
+    def prompt(self):
+        return (
+            "▶ /me — профиль пользователя\n"
+            "  Без аргументов: /me\n"
+            "  Примеры:\n"
+            "  - «покажи мой профиль» → /me\n"
+            "  - «мой профиль» → /me"
+        )

@@ -155,3 +155,11 @@ class ArmyViewHandler(Handler):
 
     def help(self):
         return "/army [add <name> <start_date> <end_date>|remove <name>] - управлять армейцами"
+
+    def prompt(self):
+        return (
+            "▶ /army — управление армейцами\n"
+            "  Список: /army\n"
+            "  Добавить: /army add <имя> <ДД.ММ.ГГГГ> <ДД.ММ.ГГГГ>\n"
+            "  Удалить: /army remove <имя>"
+        )

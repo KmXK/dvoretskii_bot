@@ -326,3 +326,12 @@ class RuleListViewHandler(Handler):
 
     def help(self):
         return "/rule [add|<id>|remove <id> [<id>...]] - управлять правилами"
+
+    def prompt(self):
+        return (
+            "▶ /rule — управление правилами\n"
+            "  Список: /rule\n"
+            "  Просмотр: /rule <id>\n"
+            "  Добавить: /rule add (начинает сессию)\n"
+            "  Удалить: /rule remove <id>"
+        )

@@ -58,3 +58,10 @@ class IdHandler(SessionHandlerBase):
 
     def help(self):
         return "/id <количество повторений> - получить айди пользователя"
+
+    def prompt(self):
+        return (
+            "▶ /id — получить айди пользователя\n"
+            "  Без аргументов: /id (бесконечный режим)\n"
+            "  С числом: /id <N> (повторить N раз)"
+        )

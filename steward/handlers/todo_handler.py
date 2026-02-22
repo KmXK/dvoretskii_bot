@@ -73,6 +73,20 @@ class TodoListHandler(Handler):
     def help(self):
         return "/todo [remove <id>|done <id>] | [text] — управлять событиями"
 
+    def prompt(self):
+        return (
+            "▶ /todo — управление событиями\n"
+            "  Добавить: /todo <текст>\n"
+            "  Отметить выполненным: /todo done <id>\n"
+            "  Удалить: /todo remove <id>\n"
+            "  Список: /todo\n"
+            "  Примеры:\n"
+            "  - «добавь в туду купить молоко» → /todo купить молоко\n"
+            "  - «отметь задачу 3 выполненной» → /todo done 3\n"
+            "  - «удали задачу 5» → /todo remove 5\n"
+            "  - «покажи список дел» → /todo"
+        )
+
 
 _TODO_SUBCOMMANDS = ("list", "done", "remove")
 
