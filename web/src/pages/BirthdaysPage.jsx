@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
+import Dropdown from '../components/Dropdown'
 import { useTelegram } from '../context/TelegramContext'
 
 const MONTHS = [
@@ -116,13 +117,11 @@ function CreateBirthdayDialog({ open, onOpenChange, chats, onCreated }) {
           <div className="space-y-3">
             <div>
               <label className="text-spotify-text text-xs mb-1 block">Чат</label>
-              <select
+              <Dropdown
                 value={chatId}
-                onChange={e => setChatId(e.target.value)}
-                className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none"
-              >
-                {chats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+                onChange={v => setChatId(v)}
+                options={chats.map(c => ({ value: c.id, label: c.name }))}
+              />
             </div>
 
             <div>
@@ -152,14 +151,12 @@ function CreateBirthdayDialog({ open, onOpenChange, chats, onCreated }) {
               </div>
               <div>
                 <label className="text-spotify-text text-xs mb-1 block">Месяц</label>
-                <select
+                <Dropdown
                   value={month}
-                  onChange={e => setMonth(e.target.value)}
-                  className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none"
-                >
-                  <option value="">Выберите</option>
-                  {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                </select>
+                  onChange={v => setMonth(v)}
+                  placeholder="Выберите"
+                  options={MONTHS.map((m, i) => ({ value: i + 1, label: m }))}
+                />
               </div>
             </div>
 
