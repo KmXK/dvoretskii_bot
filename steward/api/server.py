@@ -446,6 +446,7 @@ from os import environ
 from urllib.parse import parse_qsl
 
 CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
+_CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race"}
 CASINO_INITIAL_BALANCE = 100
 CASINO_DAILY_BONUS = 50
 CASINO_BONUS_COOLDOWN = 86400
@@ -664,7 +665,7 @@ async def handle_casino_stats(request: web.Request):
         bonus_s = await metrics.query(pq("casino_bonus_total"))
 
         per_game = []
-        for gid in sorted(CASINO_GAME_IDS):
+        for gid in sorted(_CASINO_STATS_GAME_IDS):
             gw = _extract_val(await metrics.query(pq("casino_games_total", game=gid, result="win")))
             gl = _extract_val(await metrics.query(pq("casino_games_total", game=gid, result="loss")))
             gmon = _extract_val(await metrics.query(pq("casino_monkeys_won_total", game=gid)))
@@ -706,6 +707,208 @@ async def handle_rocket_init(request: web.Request):
     return web.json_response({
         "seed": _get_rocket_seed(),
         "serverTime": _time.time() * 1000,
+        "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
+    })
+
+
+RACE_SEED_TTL = 14400
+RACE_CYCLE = 15
+RACE_BET_PHASE = 7
+RACE_RUN_PHASE = 5
+RACE_MAX_BET = 50
+
+RACE_MONKEYS = [
+    {"name": "Бананчик", "emoji": "🍌", "weight": 30, "mult": 2.8},
+    {"name": "Кокос", "emoji": "🥥", "weight": 25, "mult": 3.4},
+    {"name": "Шимпа", "emoji": "🐒", "weight": 20, "mult": 4.2},
+    {"name": "Горилла", "emoji": "🦍", "weight": 13, "mult": 6.5},
+    {"name": "Мандарин", "emoji": "🍊", "weight": 8, "mult": 10.0},
+    {"name": "Кинг-Конг", "emoji": "👑", "weight": 4, "mult": 20.0},
+]
+RACE_TOTAL_WEIGHT = sum(m["weight"] for m in RACE_MONKEYS)
+
+_race_bets: dict[tuple[int, int], list[dict]] = {}
+_race_settled: set[tuple[int, int]] = set()
+
+
+def _imul(a: int, b: int) -> int:
+    return ((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+
+
+def _cyrb53(s: str, seed: int = 0) -> int:
+    h1 = (0xDEADBEEF ^ seed) & 0xFFFFFFFF
+    h2 = (0x41C6CE57 ^ seed) & 0xFFFFFFFF
+    for ch in s:
+        c = ord(ch)
+        h1 = _imul(h1 ^ c, 2654435761)
+        h2 = _imul(h2 ^ c, 1597334677)
+    h1 = _imul(h1 ^ (h1 >> 16), 2246822507)
+    h1 = (h1 ^ _imul(h2 ^ (h2 >> 16), 3266489909)) & 0xFFFFFFFF
+    h2 = _imul(h2 ^ (h2 >> 16), 2246822507)
+    h2 = (h2 ^ _imul(h1 ^ (h1 >> 16), 3266489909)) & 0xFFFFFFFF
+    return (2097151 & h2) * 4294967296 + h1
+
+
+def _get_race_seed(period: int) -> str:
+    bot_token = environ.get("TELEGRAM_BOT_TOKEN", "default")
+    return hashlib.sha256(f"race:{bot_token}:{period}".encode()).hexdigest()
+
+
+def _race_info(now_s: float):
+    period = int(now_s / RACE_SEED_TTL)
+    period_start = period * RACE_SEED_TTL
+    seed = _get_race_seed(period)
+    elapsed = now_s - period_start
+    round_num = int(elapsed / RACE_CYCLE)
+    offset = elapsed - round_num * RACE_CYCLE
+    if offset < RACE_BET_PHASE:
+        phase = "betting"
+    elif offset < RACE_BET_PHASE + RACE_RUN_PHASE:
+        phase = "racing"
+    else:
+        phase = "result"
+    return period, seed, round_num, phase, offset
+
+
+def _race_winner(seed: str, round_num: int) -> int:
+    h = _cyrb53(f"{seed}:{round_num}:race")
+    r = h % RACE_TOTAL_WEIGHT
+    for i, m in enumerate(RACE_MONKEYS):
+        r -= m["weight"]
+        if r < 0:
+            return i
+    return 0
+
+
+def _settle_past_races(repository: Repository, metrics: MetricsEngine) -> bool:
+    now_s = _time.time()
+    cur_period, _, cur_round, _, _ = _race_info(now_s)
+    cur_key = (cur_period, cur_round)
+    changed = False
+    for key in list(_race_bets.keys()):
+        if key == cur_key or key in _race_settled:
+            continue
+        bet_period, bet_round = key
+        round_end = bet_period * RACE_SEED_TTL + (bet_round + 1) * RACE_CYCLE
+        if now_s < round_end:
+            continue
+        _race_settled.add(key)
+        bets = _race_bets.pop(key, [])
+        if not bets:
+            continue
+        bet_seed = _get_race_seed(bet_period)
+        winner_idx = _race_winner(bet_seed, bet_round)
+        mult = RACE_MONKEYS[winner_idx]["mult"]
+        for be in bets:
+            uid = int(be["user_id"])
+            user = _find_user(repository, uid)
+            if not user:
+                continue
+            labels = {"user_id": be["user_id"], "user_name": be["user_name"], "game": "race"}
+            metrics.inc("casino_monkeys_bet_total", labels, be["amount"])
+            if be["monkey_idx"] == winner_idx:
+                win = int(be["amount"] * mult)
+                user.monkeys += win
+                metrics.inc("casino_games_total", {**labels, "result": "win"})
+                metrics.inc("casino_monkeys_won_total", labels, win)
+            else:
+                metrics.inc("casino_games_total", {**labels, "result": "loss"})
+        changed = True
+    if len(_race_settled) > 300:
+        to_remove = sorted(_race_settled)[:len(_race_settled) - 100]
+        for r in to_remove:
+            _race_settled.discard(r)
+    return changed
+
+
+async def handle_race_init(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    uid = int(sess["user_id"])
+    if _settle_past_races(repository, metrics):
+        await repository.save()
+    user = _find_user(repository, uid)
+    now_s = _time.time()
+    _, seed, _, _, _ = _race_info(now_s)
+    return web.json_response({
+        "seed": seed,
+        "serverTime": now_s * 1000,
+        "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
+    })
+
+
+async def handle_race_bet(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    try:
+        body = await request.json()
+        user_id = sess["user_id"]
+        user_name = sess["user_name"]
+        monkey_idx = int(body.get("monkeyIdx", -1))
+        amount = int(body.get("amount", 0))
+        if monkey_idx < 0 or monkey_idx >= len(RACE_MONKEYS):
+            return web.json_response({"error": "invalid monkey"}, status=400)
+        if amount not in (5, 10, 25, 50):
+            return web.json_response({"error": "invalid amount"}, status=400)
+        now_s = _time.time()
+        period, _, round_num, phase, _ = _race_info(now_s)
+        if phase != "betting":
+            return web.json_response({"error": "betting closed"}, status=400)
+        _settle_past_races(repository, metrics)
+        key = (period, round_num)
+        round_bets = _race_bets.get(key, [])
+        if any(b["user_id"] == user_id for b in round_bets):
+            return web.json_response({"error": "already bet"}, status=400)
+        user = _get_or_create_user(repository, int(user_id), user_name)
+        if amount > user.monkeys:
+            return web.json_response({"error": "insufficient balance"}, status=400)
+        user.monkeys -= amount
+        bet_entry = {
+            "user_id": user_id,
+            "user_name": user_name,
+            "monkey_idx": monkey_idx,
+            "amount": amount,
+        }
+        if key not in _race_bets:
+            _race_bets[key] = []
+        _race_bets[key].append(bet_entry)
+        await repository.save()
+        return web.json_response({
+            "ok": True,
+            "monkeys": user.monkeys,
+            "bets": _race_bets.get(key, []),
+            "round": round_num,
+        })
+    except Exception:
+        logger.exception("race bet error")
+        return web.json_response({"error": "bad request"}, status=400)
+
+
+async def handle_race_bets(request: web.Request):
+    sess = _casino_session_from_cookie(request)
+    if not sess:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    uid = int(sess["user_id"])
+    if _settle_past_races(repository, metrics):
+        await repository.save()
+    now_s = _time.time()
+    period, _, round_num, phase, offset = _race_info(now_s)
+    key = (period, round_num)
+    bets = _race_bets.get(key, [])
+    user = _find_user(repository, uid)
+    return web.json_response({
+        "round": round_num,
+        "phase": phase,
+        "offset": offset * 1000,
+        "bets": bets,
         "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
     })
 
@@ -761,6 +964,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/casino/bonus", handle_casino_bonus)
     app.router.add_get("/api/casino/stats", handle_casino_stats)
     app.router.add_get("/api/casino/rocket/init", handle_rocket_init)
+    app.router.add_get("/api/casino/race/init", handle_race_init)
+    app.router.add_post("/api/casino/race/bet", handle_race_bet)
+    app.router.add_get("/api/casino/race/bets", handle_race_bets)
     app.router.add_get("/api/user/{user_id}/chats", handle_user_chats)
     app.router.add_post("/api/poker/invite", handle_poker_invite)
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)

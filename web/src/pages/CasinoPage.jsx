@@ -8,8 +8,8 @@ import useCasinoSounds from '../hooks/useCasinoSounds'
 const DAILY_BONUS = 50
 const INITIAL_BALANCE = 100
 
-const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5', 'rocket']
-const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5', rocket: '🚀 Ракетка' }
+const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5', 'rocket', 'race']
+const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5', rocket: '🚀 Ракетка', race: '🏁 Скачки' }
 
 function secureRandom() {
   const buf = new Uint32Array(1)
@@ -71,6 +71,39 @@ function rocketFindRound(seed, periodStart, now) {
     t += dur
     n++
   }
+}
+
+// ===== monkey race helpers =====
+const RACE_MONKEYS = [
+  { name: 'Бананчик', emoji: '🍌', mult: 2.8, color: '#eab308' },
+  { name: 'Кокос', emoji: '🥥', mult: 3.4, color: '#f59e0b' },
+  { name: 'Шимпа', emoji: '🐒', mult: 4.2, color: '#f97316' },
+  { name: 'Горилла', emoji: '🦍', mult: 6.5, color: '#ef4444' },
+  { name: 'Мандарин', emoji: '🍊', mult: 10, color: '#ec4899' },
+  { name: 'Кинг-Конг', emoji: '👑', mult: 20, color: '#a855f7' },
+]
+const RACE_WEIGHTS = [30, 25, 20, 13, 8, 4]
+const RACE_CYCLE_MS = 15000
+const RACE_BET_MS = 7000
+const RACE_RUN_MS = 5000
+const RACE_SEED_TTL_MS = 14400000
+
+function raceWinner(seed, round) {
+  const h = cyrb53(`${seed}:${round}:race`)
+  let r = h % 100
+  for (let i = 0; i < RACE_WEIGHTS.length; i++) {
+    r -= RACE_WEIGHTS[i]
+    if (r < 0) return i
+  }
+  return 0
+}
+
+function raceFinals(seed, round, winner) {
+  return RACE_MONKEYS.map((_, i) => {
+    if (i === winner) return 100
+    const h = cyrb53(`${seed}:${round}:pos:${i}`)
+    return 65 + (h % 30)
+  })
 }
 
 function GameBack({ onClick }) {
@@ -1191,6 +1224,486 @@ function RocketGame({ balance, onBalanceChange, onBack, onGameResult, sound }) {
   )
 }
 
+// ===== monkey race =====
+function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
+  const { userId } = useTelegram()
+  const [phase, setPhase] = useState('loading')
+  const [seed, setSeed] = useState(null)
+  const [serverOff, setServerOff] = useState(0)
+  const [bet, setBet] = useState(10)
+  const [selected, setSelected] = useState(-1)
+  const [positions, setPositions] = useState(() => Array(6).fill(0))
+  const [winner, setWinner] = useState(-1)
+  const [timeLeft, setTimeLeft] = useState(0)
+  const [bets, setBets] = useState([])
+  const [myBet, setMyBet] = useState(null)
+  const [lastResult, setLastResult] = useState(null)
+  const [history, setHistory] = useState([])
+
+  const animRef = useRef(null)
+  const lastRoundRef = useRef(-1)
+  const myBetRef = useRef(null)
+  const finalsRef = useRef(null)
+  const resultDoneRef = useRef(false)
+  const phaseRef = useRef('loading')
+  const lastPosRef = useRef(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const delay = new Promise(r => setTimeout(r, 1200))
+    Promise.all([
+      fetch('/api/casino/race/init', { credentials: 'include' }).then(r => r.ok ? r.json() : null),
+      delay,
+    ]).then(([data]) => {
+      if (cancelled || !data) { if (!cancelled) setPhase('error'); return }
+      setSeed(data.seed)
+      setServerOff(data.serverTime - Date.now())
+    }).catch(() => { if (!cancelled) setPhase('error') })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!seed) return
+    const tick = () => {
+      const now = Date.now() + serverOff
+      const ps = Math.floor(now / RACE_SEED_TTL_MS) * RACE_SEED_TTL_MS
+      const elapsed = now - ps
+      const rn = Math.floor(elapsed / RACE_CYCLE_MS)
+      const off = elapsed - rn * RACE_CYCLE_MS
+
+      if (rn !== lastRoundRef.current) {
+        if (lastRoundRef.current >= 0) {
+          const pw = raceWinner(seed, lastRoundRef.current)
+          setHistory(h => [pw, ...h].slice(0, 10))
+        }
+        lastRoundRef.current = rn
+        myBetRef.current = null
+        finalsRef.current = null
+        resultDoneRef.current = false
+        setMyBet(null)
+        setBets([])
+        setPositions(Array(6).fill(0))
+        setWinner(-1)
+        setLastResult(null)
+        setSelected(-1)
+      }
+
+      if (off < RACE_BET_MS) {
+        if (phaseRef.current !== 'betting') { phaseRef.current = 'betting'; setPhase('betting') }
+        setTimeLeft(Math.ceil((RACE_BET_MS - off) / 1000))
+      } else if (off < RACE_BET_MS + RACE_RUN_MS) {
+        if (phaseRef.current !== 'racing') {
+          phaseRef.current = 'racing'
+          setPhase('racing')
+          sound('raceStart')
+          const w = raceWinner(seed, rn)
+          setWinner(w)
+          finalsRef.current = raceFinals(seed, rn, w)
+          fetch('/api/casino/race/bets', { credentials: 'include' })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setBets(d.bets || []) })
+            .catch(() => { })
+        }
+        const raceOff = off - RACE_BET_MS
+        const t = raceOff / RACE_RUN_MS
+        const nowMs = Date.now()
+        if (finalsRef.current && nowMs - lastPosRef.current > 50) {
+          lastPosRef.current = nowMs
+          const e = 1 - Math.pow(1 - t, 4)
+          setPositions(finalsRef.current.map(f => Math.min(f, f * e)))
+        }
+      } else {
+        if (phaseRef.current !== 'result') {
+          phaseRef.current = 'result'
+          setPhase('result')
+          const w = raceWinner(seed, rn)
+          setWinner(w)
+          if (finalsRef.current) setPositions([...finalsRef.current])
+          else {
+            const f = raceFinals(seed, rn, w)
+            finalsRef.current = f
+            setPositions(f)
+          }
+          if (myBetRef.current && !resultDoneRef.current) {
+            resultDoneRef.current = true
+            if (myBetRef.current.monkey_idx === w) {
+              const winAmt = Math.floor(myBetRef.current.amount * RACE_MONKEYS[w].mult)
+              setLastResult({ won: true, amount: winAmt })
+              onBalanceChange(winAmt)
+              if (winAmt >= 100) { confetti({ particleCount: 80, spread: 60, origin: { y: 0.5 } }); sound('bigWin') }
+              else sound('win')
+            } else {
+              setLastResult({ won: false, amount: myBetRef.current.amount })
+              sound('lose')
+            }
+          }
+        }
+        setTimeLeft(Math.ceil((RACE_CYCLE_MS - off) / 1000))
+      }
+      animRef.current = requestAnimationFrame(tick)
+    }
+    animRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animRef.current)
+  }, [seed, serverOff, sound, onBalanceChange])
+
+  useEffect(() => {
+    if (phase !== 'betting') return
+    const fetchBets = () => {
+      fetch('/api/casino/race/bets', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setBets(d.bets || []) })
+        .catch(() => { })
+    }
+    fetchBets()
+    const iv = setInterval(fetchBets, 2500)
+    return () => clearInterval(iv)
+  }, [phase])
+
+  const placeBet = useCallback(() => {
+    if (phaseRef.current !== 'betting' || selected < 0 || balance < bet || myBetRef.current) return
+    onBalanceChange(-bet)
+    sound('tick')
+    fetch('/api/casino/race/bet', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+      body: JSON.stringify({ monkeyIdx: selected, amount: bet }),
+    })
+      .then(r => { if (!r.ok) { onBalanceChange(bet); return null } return r.json() })
+      .then(d => {
+        if (d?.ok) {
+          myBetRef.current = { monkey_idx: selected, amount: bet }
+          setMyBet({ monkey_idx: selected, amount: bet })
+          setBets(d.bets || [])
+        }
+      })
+      .catch(() => onBalanceChange(bet))
+  }, [selected, balance, bet, onBalanceChange, sound])
+
+  useEffect(() => { if (bet > balance && balance > 0) setBet(Math.min(balance, 10)) }, [balance])
+
+  if (phase === 'loading') return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-sm mx-auto">
+      <GameBack onClick={onBack} />
+      <div className="rounded-2xl p-6 border border-white/5 flex flex-col items-center py-12"
+        style={{ background: 'linear-gradient(180deg, #071a0e 0%, #0f2b18 50%, #12200d 100%)' }}>
+        <div className="flex gap-2 mb-4">
+          {['🌴', '🐒', '🌴'].map((e, i) => (
+            <motion.span key={i} className="text-4xl" animate={{ y: [0, -12, 0], rotate: i === 1 ? [0, 10, -10, 0] : [-5, 5, -5] }}
+              transition={{ duration: 1.2 + i * 0.2, repeat: Infinity, ease: 'easeInOut', delay: i * 0.15 }}>
+              {e}
+            </motion.span>
+          ))}
+        </div>
+        <p className="text-white/60 text-sm mb-1">Готовим джунгли...</p>
+        <p className="text-white/30 text-[10px] mb-4">🍌 обезьянки разминаются</p>
+        <div className="w-36 h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <motion.div className="h-full w-1/3 bg-gradient-to-r from-green-500 to-emerald-400 rounded-full"
+            animate={{ x: ['-100%', '400%'] }} transition={{ duration: 1, repeat: Infinity, ease: 'easeInOut' }} />
+        </div>
+      </div>
+    </motion.div>
+  )
+
+  if (phase === 'error') return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-sm mx-auto">
+      <GameBack onClick={onBack} />
+      <div className="rounded-2xl p-6 border border-white/5 text-center py-12"
+        style={{ background: 'linear-gradient(135deg, #0a1a0a 0%, #1a2e0a 50%, #0a1a0a 100%)' }}>
+        <p className="text-4xl mb-4">💥</p>
+        <p className="text-white/60 text-sm">Ошибка подключения</p>
+        <button onClick={onBack} className="mt-4 text-green-400 text-sm hover:text-green-300">← Вернуться</button>
+      </div>
+    </motion.div>
+  )
+
+  return (
+    <motion.div initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }}
+      className="w-full max-w-sm mx-auto">
+      <GameBack onClick={onBack} />
+
+      {history.length > 0 && (
+        <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+          {history.map((w, i) => (
+            <span key={i} className="shrink-0 px-2 py-0.5 rounded text-[11px] font-bold bg-white/10 text-white/70">
+              {RACE_MONKEYS[w].emoji}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-2xl p-4 border border-white/5"
+        style={{ background: 'linear-gradient(135deg, #0a1a0a 0%, #1a2e0a 50%, #0a1a0a 100%)' }}>
+        <h2 className="text-center text-white font-bold text-xl mb-1">🏁 Скачки обезьянок</h2>
+
+        <div className="text-center mb-3" style={{ minHeight: 48 }}>
+          <AnimatePresence mode="wait">
+            {phase === 'betting' && (
+              <motion.div key="bet-phase" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
+                <p className="text-white/40 text-xs">🌴 Ставки открыты — кто доберётся первым?</p>
+                <p className="text-white text-3xl font-black tabular-nums">{timeLeft}с</p>
+              </motion.div>
+            )}
+            {phase === 'racing' && (
+              <motion.div key="race-phase" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+                className="pt-1">
+                <motion.p className="text-green-400 text-xl font-black"
+                  animate={{ scale: [1, 1.06, 1], textShadow: ['0 0 8px rgba(74,222,128,0.3)', '0 0 16px rgba(74,222,128,0.6)', '0 0 8px rgba(74,222,128,0.3)'] }}
+                  transition={{ duration: 0.5, repeat: Infinity }}>
+                  🐒 ПРЫГАЮТ!
+                </motion.p>
+                <motion.div className="flex justify-center gap-1 mt-0.5"
+                  animate={{ opacity: [0.4, 0.8, 0.4] }} transition={{ duration: 0.6, repeat: Infinity }}>
+                  {['🌴', '🍌', '🌴', '🥥', '🌴'].map((e, i) => (
+                    <motion.span key={i} className="text-xs" animate={{ y: [0, -3, 0] }}
+                      transition={{ duration: 0.3, delay: i * 0.06, repeat: Infinity }}>
+                      {e}
+                    </motion.span>
+                  ))}
+                </motion.div>
+              </motion.div>
+            )}
+            {phase === 'result' && winner >= 0 && (
+              <motion.div key="result-phase" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }} transition={{ type: 'spring', damping: 12 }}>
+                <motion.p className="text-yellow-400 text-lg font-black"
+                  animate={{ textShadow: ['0 0 8px rgba(234,179,8,0.3)', '0 0 20px rgba(234,179,8,0.6)', '0 0 8px rgba(234,179,8,0.3)'] }}
+                  transition={{ duration: 1, repeat: Infinity }}>
+                  🏆 {RACE_MONKEYS[winner].emoji} {RACE_MONKEYS[winner].name} 🏆
+                </motion.p>
+                <p className="text-white/30 text-xs mt-0.5">Следующий забег через {timeLeft}с</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {phase === 'betting' && !myBet && (
+          <>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {RACE_MONKEYS.map((m, i) => (
+                <motion.button key={i} whileTap={{ scale: 0.93 }} onClick={() => setSelected(i)}
+                  className={`rounded-xl p-2 text-center transition-all border relative overflow-hidden
+                    ${selected === i ? 'border-green-400 shadow-lg shadow-green-500/20'
+                      : 'border-white/10 hover:border-white/20'}`}
+                  style={{
+                    background: selected === i
+                      ? `linear-gradient(135deg, ${m.color}15 0%, ${m.color}30 100%)`
+                      : 'rgba(255,255,255,0.03)'
+                  }}>
+                  {selected === i && (
+                    <motion.div className="absolute inset-0 pointer-events-none"
+                      style={{ background: `radial-gradient(circle at 50% 30%, ${m.color}20, transparent 70%)` }}
+                      animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.5, repeat: Infinity }} />
+                  )}
+                  <motion.div className="text-2xl relative"
+                    animate={selected === i ? { y: [0, -4, 0], rotate: [0, 5, -5, 0] } : {}}
+                    transition={{ duration: 0.8, repeat: selected === i ? Infinity : 0, ease: 'easeInOut' }}>
+                    {m.emoji}
+                  </motion.div>
+                  <div className="text-[10px] text-white/60 mt-0.5 relative">{m.name}</div>
+                  <div className="text-xs font-bold relative" style={{ color: m.color }}>×{m.mult}</div>
+                </motion.button>
+              ))}
+            </div>
+            <BetSelector bet={bet} setBet={setBet} balance={balance} />
+            <motion.button whileTap={{ scale: 0.95 }} onClick={placeBet}
+              disabled={selected < 0 || balance < bet}
+              className="w-full py-3 rounded-full font-bold text-sm transition-colors mb-3
+                bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 text-white
+                disabled:opacity-40 disabled:cursor-not-allowed">
+              {selected < 0 ? 'Выбери обезьянку ↑' :
+                balance < bet ? 'Мало обезьянок' :
+                  `ПОСТАВИТЬ на ${RACE_MONKEYS[selected].emoji} — ${bet} 🐵`}
+            </motion.button>
+          </>
+        )}
+
+        {myBet && phase === 'betting' && (
+          <div className="text-center mb-3 bg-green-500/10 rounded-xl p-2 border border-green-500/20">
+            <p className="text-green-400 text-sm font-bold">
+              ✅ {RACE_MONKEYS[myBet.monkey_idx].emoji} {RACE_MONKEYS[myBet.monkey_idx].name} — {myBet.amount} 🐵
+            </p>
+          </div>
+        )}
+
+        <div className="rounded-xl mb-3 overflow-hidden relative"
+          style={{ background: 'linear-gradient(180deg, #071a0e 0%, #0f2b18 30%, #1a3520 60%, #12200d 100%)' }}>
+
+          <div className="relative h-9 overflow-hidden">
+            <div className="flex justify-around px-1 pt-1">
+              {[0, 1, 2, 3, 4, 5, 6].map(i => (
+                <motion.span key={i} className="text-xl select-none" style={{ opacity: 0.3 + (i % 3) * 0.08 }}
+                  animate={phase === 'racing' ? { rotate: [-6, 6, -6], y: [0, -2, 0] } : {}}
+                  transition={{ duration: 2 + i * 0.3, repeat: Infinity, ease: 'easeInOut' }}>
+                  🌴
+                </motion.span>
+              ))}
+            </div>
+            <div className="absolute bottom-0 left-0 right-0 h-3 bg-gradient-to-b from-transparent to-[#0f2b18]" />
+          </div>
+
+          {phase === 'racing' && (
+            <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ zIndex: 30 }}>
+              {[0, 1, 2, 3, 4, 5, 6, 7].map(i => (
+                <motion.div key={i} className="absolute select-none"
+                  style={{ left: `${5 + i * 12}%`, top: -10, fontSize: 10 + (i % 3) * 2 }}
+                  animate={{ y: [0, 320], x: [0, i % 2 ? 25 : -25, i % 2 ? -8 : 8], rotate: [0, 180, 360], opacity: [0.7, 0.3, 0] }}
+                  transition={{ duration: 3 + i * 0.4, repeat: Infinity, delay: i * 0.55, ease: 'linear' }}>
+                  {['🍃', '🍂', '🍌', '🥥', '🍃', '🍂', '🍃', '🍂'][i]}
+                </motion.div>
+              ))}
+            </div>
+          )}
+
+          <div className="px-2 pb-1 relative" style={{ zIndex: 10 }}>
+            {RACE_MONKEYS.map((m, i) => {
+              const isMine = myBet?.monkey_idx === i
+              const isWin = phase === 'result' && winner === i
+              const pos = positions[i]
+              const monkeyPct = 6 + (pos / 100) * 80
+
+              return (
+                <div key={i} className={`relative ${i < 5 ? 'mb-0.5' : ''}`} style={{ height: 40 }}>
+                  <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                    <line x1="7%" y1="65%" x2="93%" y2="65%"
+                      stroke="#3d6a30" strokeWidth="2" strokeDasharray="6,3" opacity="0.4" />
+                    {[0, 20, 40, 60, 80, 100].map(p => {
+                      const cx = 7 + p * 0.86
+                      return <g key={p}>
+                        <line x1={`${cx}%`} y1="40%" x2={`${cx}%`} y2="75%" stroke="#2a5420" strokeWidth="1.5" opacity="0.35" />
+                        <text x={`${cx}%`} y="35%" textAnchor="middle" fontSize="10" opacity="0.3" className="select-none">🌿</text>
+                      </g>
+                    })}
+                    {isWin && (
+                      <circle cx={`${monkeyPct + 4}%`} cy="50%" r="18" fill="none" stroke="#eab308" strokeWidth="1.5" opacity="0.5">
+                        <animate attributeName="r" values="14;20;14" dur="1s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.6;0.2;0.6" dur="1s" repeatCount="indefinite" />
+                      </circle>
+                    )}
+                  </svg>
+
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5" style={{ zIndex: 5 }}>
+                    <span className="text-[9px] text-white/25 font-medium w-[3ch] text-right">{m.name.slice(0, 3)}</span>
+                  </div>
+
+                  <motion.div className="absolute" style={{ zIndex: 20 }}
+                    animate={phase === 'racing' ? {
+                      left: `${monkeyPct}%`,
+                      top: '15%',
+                      y: [0, -14, 0],
+                      rotate: [0, i % 2 ? 12 : -12, 0],
+                      scale: [1, 1.15, 1],
+                    } : {
+                      left: `${monkeyPct}%`,
+                      top: '15%',
+                      y: phase === 'betting' ? [0, -4, 0] : 0,
+                      rotate: 0,
+                      scale: isWin ? [1, 1.3, 1] : 1,
+                    }}
+                    transition={phase === 'racing' ? {
+                      left: { duration: 0.15, ease: 'linear' },
+                      y: { duration: 0.28 + i * 0.03, repeat: Infinity, ease: 'easeInOut' },
+                      rotate: { duration: 0.28 + i * 0.03, repeat: Infinity, ease: 'easeInOut' },
+                      scale: { duration: 0.28 + i * 0.03, repeat: Infinity, ease: 'easeInOut' },
+                    } : {
+                      left: { duration: 0.3 },
+                      y: phase === 'betting' ? { duration: 1.5 + i * 0.15, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.3 },
+                      scale: isWin ? { duration: 0.5, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.3 },
+                    }}>
+                    <span className="select-none" style={{
+                      fontSize: isMine ? 22 : 18,
+                      filter: isMine
+                        ? 'drop-shadow(0 0 6px rgba(74,222,128,0.7))'
+                        : isWin
+                          ? 'drop-shadow(0 0 8px rgba(234,179,8,0.8))'
+                          : 'drop-shadow(0 2px 2px rgba(0,0,0,0.5))',
+                    }}>{m.emoji}</span>
+                  </motion.div>
+
+                  {phase === 'racing' && pos > 5 && (
+                    <motion.div className="absolute pointer-events-none" style={{ zIndex: 15, left: `${monkeyPct - 3}%`, top: '40%' }}
+                      animate={{ opacity: [0.5, 0], x: [-4, -16], scale: [0.8, 0.3] }}
+                      transition={{ duration: 0.4, repeat: Infinity, ease: 'easeOut' }}>
+                      <span style={{ fontSize: 8 }}>💨</span>
+                    </motion.div>
+                  )}
+
+                  <motion.span className="absolute right-0 top-1/2 -translate-y-1/2 select-none" style={{ zIndex: 5 }}
+                    animate={isWin ? { scale: [1, 1.2, 1], rotate: [0, 10, -10, 0] } : {}}
+                    transition={{ duration: 0.6, repeat: isWin ? Infinity : 0 }}>
+                    <span style={{ fontSize: 14, opacity: isWin ? 1 : 0.35 }}>{isWin ? '🏆' : '🌴'}</span>
+                  </motion.span>
+
+                  {isMine && (
+                    <motion.div className="absolute inset-0 rounded-lg border pointer-events-none" style={{ zIndex: 1 }}
+                      animate={{ borderColor: ['rgba(74,222,128,0.15)', 'rgba(74,222,128,0.35)', 'rgba(74,222,128,0.15)'] }}
+                      transition={{ duration: 1.5, repeat: Infinity }} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="relative h-6">
+            <div className="absolute inset-0 bg-gradient-to-t from-amber-900/20 to-transparent" />
+            <div className="flex justify-between px-3 items-end h-full pb-1.5">
+              <span className="text-[8px] text-white/20 flex items-center gap-0.5">🌱 СТАРТ</span>
+              <span className="text-[8px] text-white/20 flex items-center gap-0.5">ФИНИШ 🏁</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ minHeight: 36 }}>
+          <AnimatePresence>
+            {lastResult && (
+              <motion.div initial={{ opacity: 0, scale: 0.5, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ type: 'spring', damping: 10 }}
+                className="text-center mb-2">
+                {lastResult.won ? (
+                  <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ duration: 0.8, repeat: 3 }}>
+                    <p className="text-yellow-400 font-black text-xl" style={{ textShadow: '0 0 12px rgba(234,179,8,0.4)' }}>
+                      🍌 +{lastResult.amount} 🐵 🍌
+                    </p>
+                  </motion.div>
+                ) : (
+                  <p className="text-red-400/80 font-bold text-sm">🍂 −{lastResult.amount} 🐵</p>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {bets.length > 0 && (
+          <div className="mb-2">
+            <p className="text-white/40 text-[10px] mb-1.5">Ставки игроков:</p>
+            <div className="flex flex-col gap-1">
+              {bets.map((b, i) => {
+                const mk = RACE_MONKEYS[b.monkey_idx]
+                const won = phase === 'result' && winner === b.monkey_idx
+                const isMe = String(b.user_id) === String(userId)
+                return (
+                  <div key={i} className={`flex items-center justify-between rounded-lg px-2.5 py-1
+                    ${won ? 'bg-green-500/10 border border-green-500/20' : 'bg-white/5'}
+                    ${isMe ? 'ring-1 ring-green-400/30' : ''}`}>
+                    <span className="text-white/70 text-xs truncate max-w-[100px]">
+                      {isMe ? '👤 Ты' : `🐵 ${b.user_name}`}
+                    </span>
+                    <span className="text-xs flex items-center gap-1">
+                      <span>{mk?.emoji}</span>
+                      <span className="text-yellow-400">{b.amount}🐵</span>
+                      {won && <span className="text-green-400 font-bold">+{Math.floor(b.amount * mk.mult)}</span>}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
 // ===== stats block =====
 function CasinoStatCell({ value, label, color = 'text-white' }) {
   return (
@@ -1303,6 +1816,10 @@ const GAMES = [
   {
     id: 'rocket', name: 'Ракетка', emoji: '🚀', available: true,
     gradient: 'from-orange-600 via-red-500 to-rose-600', glow: 'shadow-orange-500/40', desc: 'Забери до краша!'
+  },
+  {
+    id: 'race', name: 'Скачки', emoji: '🏁', available: true,
+    gradient: 'from-green-600 via-emerald-500 to-lime-400', glow: 'shadow-green-500/40', desc: 'Поставь на обезьянку!'
   },
 ]
 
@@ -1460,6 +1977,7 @@ export default function CasinoPage() {
     roulette: <Roulette key="roulette" {...gameProps} />,
     slots5x5: <Slots5x5 key="slots5x5" {...gameProps} />,
     rocket: <RocketGame key="rocket" {...gameProps} />,
+    race: <MonkeyRace key="race" {...gameProps} />,
   }
 
   return (
