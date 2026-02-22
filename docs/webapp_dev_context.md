@@ -109,6 +109,18 @@ delayed_actions, channel_subscriptions, feature_requests, ...
 - `GET /api/poker/stats/{user_id}` — покерная статистика
 - `GET /api/user/{user_id}/chats` — чаты пользователя
 - `POST /api/poker/invite`, `POST /api/poker/invite/update`, `POST /api/poker/invite/delete` — покерные приглашения
+- `GET /api/exchange?from=USD&to=BYN&amount=1` — конвертация валют (Coinbase / Binance)
+- `POST /api/translate` — перевод текста (Yandex Translate), body: `{text, to, from?}`
+- `GET /api/timezone?query=...` — текущее время по городу/смещению
+- `GET /api/timezone/cities` — список поддерживаемых городов
+- `GET /api/reminders/{user_id}` — список напоминаний (active + completed)
+- `POST /api/reminders` — создать напоминание, body: `{user_id, chat_id, time, text, repeat?, days?}`
+- `DELETE /api/reminders/{id}?user_id=...` — удалить напоминание
+- `PATCH /api/reminders/{id}` — изменить текст, body: `{user_id, text}`
+- `GET /api/birthdays?chat_id=...` — список дней рождения
+- `POST /api/birthdays` — добавить/обновить, body: `{chat_id, name, day, month}`
+- `DELETE /api/birthdays` — удалить, body: `{chat_id, name}`
+- `GET /api/chat-stats?chat_id=...&period=day&scope=chat&top=15` — статистика чата (лидерборды)
 
 **WebSocket:**
 - `GET /ws/poker` — WebSocket для покерных комнат в реальном времени
@@ -292,6 +304,10 @@ web/src/
     ├── FeaturesPage.jsx
     ├── ArmyPage.jsx
     ├── TodoPage.jsx
+    ├── ToolsPage.jsx      # Утилиты: конвертация валют, перевод текста, часовые пояса
+    ├── RemindersPage.jsx  # CRUD напоминаний (привязка к чату)
+    ├── BirthdaysPage.jsx  # CRUD дней рождения (привязка к чату)
+    ├── StatsPage.jsx      # Статистика чатов (лидерборды по метрикам)
     ├── ChartsPage.jsx
     ├── TablePage.jsx
     └── NotFoundPage.jsx

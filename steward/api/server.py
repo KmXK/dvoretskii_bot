@@ -455,8 +455,16 @@ import hmac
 import json as _json
 import secrets
 import time as _time
+import uuid
+import re
 from os import environ
 from urllib.parse import parse_qsl
+
+from aiohttp import ClientSession
+
+from steward.delayed_action.reminder import ReminderDelayedAction, ReminderGenerator, CompletedReminder
+from steward.data.models.birthday import Birthday
+from steward.handlers.timezone_handler import CITY_TIMEZONES, OFFSET_RE, _time_by_offset, _time_by_city
 
 CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
 _CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race"}
@@ -946,6 +954,452 @@ async def handle_poker_invite_delete(request: web.Request):
     return web.json_response({"deleted": deleted})
 
 
+async def handle_exchange(request: web.Request):
+    from_currency = request.query.get("from", "BYN").upper()
+    to_currency = request.query.get("to", "").upper()
+    try:
+        amount = float(request.query.get("amount", "1"))
+    except ValueError:
+        return web.json_response({"error": "invalid amount"}, status=400)
+
+    if not to_currency:
+        return web.json_response({"error": "to currency required"}, status=400)
+
+    if from_currency == to_currency:
+        return web.json_response({"result": amount, "from": from_currency, "to": to_currency})
+
+    apis = [
+        {
+            "url": "https://api.coinbase.com/v2/exchange-rates",
+            "params": {"currency": from_currency},
+            "extract": lambda j: float(j["data"]["rates"][to_currency]),
+        },
+        {
+            "url": "https://data-api.binance.vision/api/v3/avgPrice",
+            "params": {"symbol": f"{'USDT' if from_currency == 'USD' else from_currency}{'USDT' if to_currency == 'USD' else to_currency}"},
+            "extract": lambda j: float(j["price"]),
+        },
+    ]
+
+    async with ClientSession() as session:
+        for api in apis:
+            try:
+                async with session.get(api["url"], params=api["params"]) as resp:
+                    data = await resp.json()
+                    rate = api["extract"](data)
+                    return web.json_response({
+                        "result": round(rate * amount, 6),
+                        "rate": round(rate, 6),
+                        "from": from_currency,
+                        "to": to_currency,
+                        "amount": amount,
+                    })
+            except Exception:
+                continue
+
+    return web.json_response({"error": f"Конвертация {from_currency} → {to_currency} невозможна"}, status=404)
+
+
+async def handle_translate(request: web.Request):
+    body = await request.json()
+    text = str(body.get("text", "")).strip()
+    to_lang = str(body.get("to", "")).strip().lower()
+    from_lang = str(body.get("from", "")).strip().lower() or None
+
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+    if not to_lang:
+        return web.json_response({"error": "target language is required"}, status=400)
+
+    translate_key = environ.get("TRANSLATE_KEY_SECRET", "")
+    if not translate_key:
+        return web.json_response({"error": "translation service not configured"}, status=503)
+
+    async with ClientSession() as session:
+        async with session.post(
+            "https://translate.api.cloud.yandex.net/translate/v2/translate",
+            json={
+                "texts": [text],
+                "targetLanguageCode": to_lang,
+                "sourceLanguageCode": from_lang,
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Api-Key {translate_key}",
+            },
+        ) as resp:
+            data = await resp.json()
+            if "message" in data and "unsupported" in data.get("message", ""):
+                return web.json_response({"error": f"Язык «{to_lang}» не поддерживается"}, status=400)
+            try:
+                translated = data["translations"][0]["text"]
+                detected = data["translations"][0].get("detectedLanguageCode", from_lang)
+                return web.json_response({"text": translated, "detectedLanguage": detected})
+            except (KeyError, IndexError):
+                return web.json_response({"error": "translation failed"}, status=500)
+
+
+async def handle_timezone(request: web.Request):
+    query = request.query.get("query", "").strip()
+
+    if not query:
+        from datetime import timezone as tz_mod
+        now = datetime.datetime.now(tz_mod.utc)
+        return web.json_response({
+            "label": "UTC",
+            "time": now.strftime("%d.%m.%Y %H:%M:%S"),
+            "offset": "UTC+0",
+        })
+
+    if OFFSET_RE.fullmatch(query):
+        result = _time_by_offset(query)
+        if result is None:
+            return web.json_response({"error": "Некорректное смещение (от -12 до +14)"}, status=400)
+        return web.json_response(_parse_time_html(result))
+
+    result = _time_by_city(query)
+    if result is None:
+        return web.json_response({"error": f"Город «{query}» не найден"}, status=404)
+    return web.json_response(_parse_time_html(result))
+
+
+def _parse_time_html(html_str: str) -> dict:
+    label_match = re.search(r"<b>(.+?)</b>", html_str)
+    label = label_match.group(1) if label_match else ""
+    clean = re.sub(r"<[^>]+>", "", html_str).strip()
+    parts = clean.split("\n")
+    time_line = parts[-1].strip() if len(parts) > 1 else parts[0]
+    offset_match = re.search(r"\((UTC[^\)]+)\)", time_line)
+    offset = offset_match.group(1) if offset_match else ""
+    time_str = time_line.split("(")[0].strip() if "(" in time_line else time_line
+    return {"label": label, "time": time_str, "offset": offset}
+
+
+TIMEZONE_CITIES = list(CITY_TIMEZONES.keys())
+
+
+async def handle_timezone_cities(request: web.Request):
+    return web.json_response(TIMEZONE_CITIES)
+
+
+TZ_MINSK = datetime.timezone(timedelta(hours=3))
+
+
+def _serialize_reminder(r: ReminderDelayedAction, chats_map: dict) -> dict:
+    gen = r.generator
+    next_fire = gen.next_fire.astimezone(TZ_MINSK)
+    chat_name = chats_map.get(r.chat_id, {}).get("name", str(r.chat_id))
+    result = {
+        "id": r.id,
+        "chat_id": r.chat_id,
+        "chat_name": chat_name,
+        "user_id": r.user_id,
+        "text": r.text,
+        "next_fire": next_fire.isoformat(),
+        "next_fire_fmt": next_fire.strftime("%d.%m.%Y %H:%M"),
+        "created_at": r.created_at.isoformat(),
+    }
+    if gen.interval_seconds:
+        result["interval_seconds"] = gen.interval_seconds
+        result["repeat_remaining"] = gen.repeat_remaining
+    if gen.days:
+        result["days"] = gen.days
+    return result
+
+
+def _serialize_completed(r: CompletedReminder, chats_map: dict) -> dict:
+    chat_name = chats_map.get(r.chat_id, {}).get("name", str(r.chat_id))
+    completed = r.completed_at.astimezone(TZ_MINSK)
+    return {
+        "id": r.id,
+        "chat_id": r.chat_id,
+        "chat_name": chat_name,
+        "text": r.text,
+        "completed_at": completed.isoformat(),
+        "completed_at_fmt": completed.strftime("%d.%m.%Y %H:%M"),
+        "fired_count": r.fired_count,
+    }
+
+
+async def handle_reminders(request: web.Request):
+    repository: Repository = request.app["repository"]
+    user_id = int(request.match_info["user_id"])
+    chats_map = {c.id: {"name": c.name} for c in repository.db.chats}
+
+    active = sorted(
+        [a for a in repository.db.delayed_actions
+         if isinstance(a, ReminderDelayedAction) and a.user_id == user_id],
+        key=lambda r: r.generator.next_fire,
+    )
+    completed = sorted(
+        [r for r in repository.db.completed_reminders if r.user_id == user_id],
+        key=lambda r: r.completed_at,
+        reverse=True,
+    )[:50]
+
+    return web.json_response({
+        "active": [_serialize_reminder(r, chats_map) for r in active],
+        "completed": [_serialize_completed(r, chats_map) for r in completed],
+    })
+
+
+INTERVAL_RE = re.compile(r'^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$')
+
+
+async def handle_reminder_create(request: web.Request):
+    repository: Repository = request.app["repository"]
+    body = await request.json()
+
+    user_id = int(body.get("user_id", 0))
+    chat_id = int(body.get("chat_id", 0))
+    text = str(body.get("text", "")).strip()
+    time_str = str(body.get("time", "")).strip()
+    repeat = body.get("repeat")
+    days = body.get("days")
+
+    if not user_id or not chat_id:
+        return web.json_response({"error": "user_id and chat_id required"}, status=400)
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+    if not time_str:
+        return web.json_response({"error": "time is required"}, status=400)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    next_fire = None
+    interval_seconds = None
+
+    match = INTERVAL_RE.match(time_str)
+    if match and any(match.groups()):
+        d, h, m, s = (int(x or 0) for x in match.groups())
+        delta = timedelta(days=d, hours=h, minutes=m, seconds=s)
+        if delta.total_seconds() > 0:
+            next_fire = now + delta
+            interval_seconds = int(delta.total_seconds())
+
+    if not next_fire:
+        time_match = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+        if time_match:
+            h, m = int(time_match.group(1)), int(time_match.group(2))
+            tz = TZ_MINSK
+            local_now = datetime.datetime.now(tz)
+            dt = local_now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if dt <= local_now:
+                dt += timedelta(days=1)
+            next_fire = dt.astimezone(datetime.timezone.utc)
+            interval_seconds = 86400
+
+    if not next_fire:
+        dt_match = re.match(r'^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\s+(\d{1,2}):(\d{2})$', time_str)
+        if dt_match:
+            day, month, year, h, m = dt_match.groups()
+            tz = TZ_MINSK
+            year = int(year) if year else datetime.datetime.now(tz).year
+            if year < 100:
+                year += 2000
+            try:
+                dt = datetime.datetime(year, int(month), int(day), int(h), int(m), tzinfo=tz)
+                next_fire = dt.astimezone(datetime.timezone.utc)
+            except ValueError:
+                return web.json_response({"error": "invalid date"}, status=400)
+
+    if not next_fire:
+        return web.json_response({"error": "Не удалось распознать время. Примеры: 10m, 2h30m, 15:30, 25.12 10:00"}, status=400)
+
+    repeat_remaining = None
+    has_repeat = False
+    if repeat is not None:
+        has_repeat = True
+        if repeat != "*":
+            repeat_remaining = int(repeat)
+
+    if days and isinstance(days, list):
+        has_repeat = True
+
+    generator = ReminderGenerator(
+        next_fire=next_fire,
+        interval_seconds=interval_seconds if has_repeat else None,
+        repeat_remaining=repeat_remaining,
+        days=days if has_repeat else None,
+    )
+    generator.skip_to_allowed_day()
+
+    reminder = ReminderDelayedAction(
+        id=str(uuid.uuid4())[:8],
+        chat_id=chat_id,
+        user_id=user_id,
+        text=text,
+        created_at=now,
+        generator=generator,
+    )
+
+    repository.db.delayed_actions.append(reminder)
+    await repository.save()
+
+    chats_map = {c.id: {"name": c.name} for c in repository.db.chats}
+    return web.json_response(_serialize_reminder(reminder, chats_map), status=201)
+
+
+async def handle_reminder_delete(request: web.Request):
+    repository: Repository = request.app["repository"]
+    reminder_id = request.match_info["id"]
+    user_id = int(request.query.get("user_id", "0"))
+
+    reminder = next(
+        (a for a in repository.db.delayed_actions
+         if isinstance(a, ReminderDelayedAction) and a.id == reminder_id and a.user_id == user_id),
+        None,
+    )
+    if not reminder:
+        return web.json_response({"error": "not found"}, status=404)
+
+    repository.db.delayed_actions.remove(reminder)
+    await repository.save()
+    return web.json_response({"ok": True})
+
+
+async def handle_reminder_update(request: web.Request):
+    repository: Repository = request.app["repository"]
+    reminder_id = request.match_info["id"]
+    body = await request.json()
+    user_id = int(body.get("user_id", 0))
+    new_text = str(body.get("text", "")).strip()
+
+    if not new_text:
+        return web.json_response({"error": "text is required"}, status=400)
+
+    reminder = next(
+        (a for a in repository.db.delayed_actions
+         if isinstance(a, ReminderDelayedAction) and a.id == reminder_id and a.user_id == user_id),
+        None,
+    )
+    if not reminder:
+        return web.json_response({"error": "not found"}, status=404)
+
+    reminder.text = new_text
+    await repository.save()
+
+    chats_map = {c.id: {"name": c.name} for c in repository.db.chats}
+    return web.json_response(_serialize_reminder(reminder, chats_map))
+
+
+MONTHS_RU = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+
+async def handle_birthdays(request: web.Request):
+    repository: Repository = request.app["repository"]
+    chat_id = int(request.query.get("chat_id", "0"))
+    if chat_id:
+        items = [b for b in repository.db.birthdays if b.chat_id == chat_id]
+    else:
+        items = list(repository.db.birthdays)
+
+    items.sort(key=lambda b: (b.month, b.day))
+    return web.json_response([
+        {"name": b.name, "day": b.day, "month": b.month, "month_name": MONTHS_RU[b.month - 1], "chat_id": b.chat_id}
+        for b in items
+    ])
+
+
+async def handle_birthday_create(request: web.Request):
+    repository: Repository = request.app["repository"]
+    body = await request.json()
+
+    name = str(body.get("name", "")).strip()
+    day = int(body.get("day", 0))
+    month = int(body.get("month", 0))
+    chat_id = int(body.get("chat_id", 0))
+
+    if not name or not chat_id:
+        return web.json_response({"error": "name and chat_id required"}, status=400)
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return web.json_response({"error": "invalid date"}, status=400)
+
+    existing = next(
+        (b for b in repository.db.birthdays if b.name == name and b.chat_id == chat_id),
+        None,
+    )
+    if existing:
+        existing.day = day
+        existing.month = month
+    else:
+        repository.db.birthdays.append(Birthday(name, day, month, chat_id))
+
+    await repository.save()
+    return web.json_response({
+        "name": name, "day": day, "month": month,
+        "month_name": MONTHS_RU[month - 1], "chat_id": chat_id,
+    }, status=201)
+
+
+async def handle_birthday_delete(request: web.Request):
+    repository: Repository = request.app["repository"]
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    chat_id = int(body.get("chat_id", 0))
+
+    to_delete = next(
+        (b for b in repository.db.birthdays if b.name == name and b.chat_id == chat_id),
+        None,
+    )
+    if not to_delete:
+        return web.json_response({"error": "not found"}, status=404)
+
+    repository.db.birthdays.remove(to_delete)
+    await repository.save()
+    return web.json_response({"ok": True})
+
+
+async def handle_chat_stats(request: web.Request):
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+    chat_id = request.query.get("chat_id", "")
+    period = request.query.get("period", "day")
+    scope = request.query.get("scope", "chat")
+    top_n = int(request.query.get("top", "15"))
+
+    from steward.handlers.stats_handler import (
+        STATS, StatsScope, StatsPeriod,
+        _period_range as stats_period_range,
+        _promql, _monkey_leaderboard,
+        SCOPE_LABELS, PERIOD_LABELS,
+    )
+
+    try:
+        scope_enum = StatsScope(scope)
+    except ValueError:
+        scope_enum = StatsScope.CHAT
+    try:
+        period_enum = StatsPeriod(period)
+    except ValueError:
+        period_enum = StatsPeriod.DAY
+
+    sections = []
+    for stat in STATS:
+        if stat.is_db:
+            entries = _monkey_leaderboard(repository, scope_enum, chat_id, top_n)
+            items = [{"name": name, "value": val, "emoji": "🐵"} for name, val in entries]
+            sections.append({"label": stat.label, "items": items})
+        else:
+            try:
+                result = await metrics.query(_promql(stat, scope_enum, period_enum, chat_id, top_n=top_n))
+                items = [
+                    {"name": s.labels.get("user_name", s.labels.get("user_id", "?")), "value": int(s.value) if s.value == int(s.value) else round(s.value, 1)}
+                    for s in result
+                ]
+                sections.append({"label": stat.label, "items": items})
+            except Exception:
+                sections.append({"label": stat.label, "items": []})
+
+    return web.json_response({
+        "scope": SCOPE_LABELS.get(scope_enum, ""),
+        "period": PERIOD_LABELS.get(period_enum, ""),
+        "sections": sections,
+    })
+
+
 async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None):
     app = web.Application()
     app["repository"] = repository
@@ -961,6 +1415,18 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
                 except Exception:
                     pass
         poker_manager._on_room_cleanup = _on_room_cleanup
+    app.router.add_get("/api/exchange", handle_exchange)
+    app.router.add_post("/api/translate", handle_translate)
+    app.router.add_get("/api/timezone", handle_timezone)
+    app.router.add_get("/api/timezone/cities", handle_timezone_cities)
+    app.router.add_get("/api/reminders/{user_id}", handle_reminders)
+    app.router.add_post("/api/reminders", handle_reminder_create)
+    app.router.add_delete("/api/reminders/{id}", handle_reminder_delete)
+    app.router.add_patch("/api/reminders/{id}", handle_reminder_update)
+    app.router.add_get("/api/birthdays", handle_birthdays)
+    app.router.add_post("/api/birthdays", handle_birthday_create)
+    app.router.add_delete("/api/birthdays", handle_birthday_delete)
+    app.router.add_get("/api/chat-stats", handle_chat_stats)
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
