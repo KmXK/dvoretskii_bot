@@ -3,6 +3,7 @@ import json
 import uuid
 import random
 import logging
+import time
 
 from aiohttp import web
 
@@ -16,11 +17,14 @@ _BOT_ACTION_DELAY = (0.8, 2.0)
 _BOT_ID_BASE = -1_000_000
 _DISCONNECT_GRACE = 60
 
+_BLIND_MULTIPLIERS = [1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 50, 100]
+
 
 class Room:
     def __init__(self, room_id: str, name: str, creator_id: int,
                  small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
-                 bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM):
+                 bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM,
+                 blind_increase_enabled: bool = True, blind_increase_interval: int = 5):
         self.id = room_id
         self.name = name
         self.creator_id = creator_id
@@ -29,6 +33,7 @@ class Room:
         self.started = False
         self._next_hand_task: asyncio.Task | None = None
         self._bot_task: asyncio.Task | None = None
+        self._blind_task: asyncio.Task | None = None
         self.ready_players: set[int] = set()
         self.chip_bank: dict[int, int] = {}
         self.small_blind = small_blind
@@ -39,6 +44,12 @@ class Room:
         self._bot_counter = 0
         self._last_metrics_hand = 0
         self._metrics = None
+        self.base_small_blind = small_blind
+        self.base_big_blind = big_blind
+        self.blind_increase_enabled = blind_increase_enabled
+        self.blind_increase_interval = max(1, min(30, blind_increase_interval))
+        self.blind_level = 0
+        self._blind_start_time: float | None = None
 
     def _human_count(self):
         return len([p for p in self.game.players if not p.is_bot])
@@ -57,7 +68,7 @@ class Room:
             for p in self.game.players
             if p.is_bot
         ]
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
             "creator_id": self.creator_id,
@@ -71,7 +82,16 @@ class Room:
             "botCount": self.bot_count,
             "botDifficulty": self.bot_difficulty,
             "players": human_players + bot_players,
+            "blindIncreaseEnabled": self.blind_increase_enabled,
+            "blindIncreaseInterval": self.blind_increase_interval,
+            "blindLevel": self.blind_level,
         }
+        if self._blind_start_time is not None and self.blind_increase_enabled:
+            elapsed = time.time() - self._blind_start_time
+            interval_sec = self.blind_increase_interval * 60
+            next_in = max(0, interval_sec - (elapsed % interval_sec))
+            d["blindNextIncreaseIn"] = int(next_in)
+        return d
 
     def add_bots(self, count: int):
         used_names = {p.name for p in self.game.players}
@@ -99,11 +119,23 @@ class Room:
             except Exception:
                 pass
 
+    def _inject_blind_info(self, state: dict):
+        state["blindIncreaseEnabled"] = self.blind_increase_enabled
+        state["blindLevel"] = self.blind_level
+        state["blindIncreaseInterval"] = self.blind_increase_interval
+        if self._blind_start_time is not None and self.blind_increase_enabled:
+            elapsed = time.time() - self._blind_start_time
+            interval_sec = self.blind_increase_interval * 60
+            next_in = max(0, interval_sec - (elapsed % interval_sec))
+            state["blindNextIncreaseIn"] = int(next_in)
+        return state
+
     async def send_states(self):
         for uid, ws in list(self.connections.items()):
             try:
                 state = self.game.state_for(uid)
                 state["readyPlayers"] = list(self.ready_players)
+                self._inject_blind_info(state)
                 await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
             except Exception:
                 logger.exception("send_states error for uid=%s room=%s", uid, self.id)
@@ -160,6 +192,14 @@ class Room:
                 self.emit_game_over(self._metrics)
             self.started = False
             self.game.phase = PHASE_WAITING
+            if self._blind_task and not self._blind_task.done():
+                self._blind_task.cancel()
+            self._blind_start_time = None
+            self.blind_level = 0
+            self.small_blind = self.base_small_blind
+            self.big_blind = self.base_big_blind
+            self.game.small_blind = self.small_blind
+            self.game.big_blind = self.big_blind
             self.remove_all_bots()
             self.game.players = [
                 p for p in self.game.players
@@ -172,11 +212,58 @@ class Room:
             self._next_hand_task.cancel()
         self._next_hand_task = asyncio.create_task(self._schedule_next())
 
+    def _apply_blind_level(self, level: int):
+        if level >= len(_BLIND_MULTIPLIERS):
+            level = len(_BLIND_MULTIPLIERS) - 1
+        self.blind_level = level
+        mult = _BLIND_MULTIPLIERS[level]
+        self.small_blind = max(1, int(self.base_small_blind * mult))
+        self.big_blind = max(self.small_blind * 2, int(self.base_big_blind * mult))
+        self.game.small_blind = self.small_blind
+        self.game.big_blind = self.big_blind
+        logger.info(
+            "room=%s blind level %d: %d/%d",
+            self.id, level, self.small_blind, self.big_blind,
+        )
+
+    async def _blind_increase_loop(self):
+        try:
+            while self.started and self.blind_increase_enabled:
+                await asyncio.sleep(self.blind_increase_interval * 60)
+                if not self.started or not self.blind_increase_enabled:
+                    break
+                if self.blind_level + 1 >= len(_BLIND_MULTIPLIERS):
+                    break
+                self._apply_blind_level(self.blind_level + 1)
+                await self.broadcast({
+                    "type": "blinds_increased",
+                    "smallBlind": self.small_blind,
+                    "bigBlind": self.big_blind,
+                    "blindLevel": self.blind_level,
+                })
+                await self.send_states()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("room=%s _blind_increase_loop error", self.id)
+
+    def start_blind_timer(self):
+        if not self.blind_increase_enabled:
+            return
+        self._blind_start_time = time.time()
+        self.blind_level = 0
+        self._apply_blind_level(0)
+        if self._blind_task and not self._blind_task.done():
+            self._blind_task.cancel()
+        self._blind_task = asyncio.create_task(self._blind_increase_loop())
+
     def cancel_tasks(self):
         if self._next_hand_task and not self._next_hand_task.done():
             self._next_hand_task.cancel()
         if self._bot_task and not self._bot_task.done():
             self._bot_task.cancel()
+        if self._blind_task and not self._blind_task.done():
+            self._blind_task.cancel()
 
     def transfer_ownership(self):
         for uid in self.connections:
@@ -386,9 +473,11 @@ class RoomManager:
 
     def create_room(self, name: str, user_id: int, user_name: str,
                     small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
-                    bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM) -> Room:
+                    bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM,
+                    blind_increase_enabled: bool = True, blind_increase_interval: int = 5) -> Room:
         room_id = uuid.uuid4().hex[:8]
-        room = Room(room_id, name, user_id, small_blind, big_blind, start_chips, bot_count, bot_difficulty)
+        room = Room(room_id, name, user_id, small_blind, big_blind, start_chips,
+                    bot_count, bot_difficulty, blind_increase_enabled, blind_increase_interval)
         self.rooms[room_id] = room
         return room
 
@@ -441,6 +530,14 @@ async def _leave(user_id: int, room: Room, metrics=None):
                     room.emit_game_over(metrics)
                 room.started = False
                 room.game.phase = PHASE_WAITING
+                if room._blind_task and not room._blind_task.done():
+                    room._blind_task.cancel()
+                room._blind_start_time = None
+                room.blind_level = 0
+                room.small_blind = room.base_small_blind
+                room.big_blind = room.base_big_blind
+                room.game.small_blind = room.small_blind
+                room.game.big_blind = room.big_blind
                 room.remove_all_bots()
                 room.game.players = [
                     p for p in room.game.players
@@ -518,6 +615,7 @@ async def poker_ws_handler(request: web.Request):
                             if room.started:
                                 state = room.game.state_for(user_id)
                                 state["readyPlayers"] = list(room.ready_players)
+                                room._inject_blind_info(state)
                                 await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
                                 if room.game.phase == PHASE_SHOWDOWN:
                                     room.queue_next_hand()
@@ -545,8 +643,10 @@ async def poker_ws_handler(request: web.Request):
                     bd = str(data.get("botDifficulty", DIFFICULTY_MEDIUM))
                     if bd not in DIFFICULTIES:
                         bd = DIFFICULTY_MEDIUM
+                    bi_enabled = bool(data.get("blindIncreaseEnabled", True))
+                    bi_interval = max(1, min(30, int(data.get("blindIncreaseInterval", 5))))
 
-                    room = _manager.create_room(name, user_id, user_name, sb, bb, sc, bc, bd)
+                    room = _manager.create_room(name, user_id, user_name, sb, bb, sc, bc, bd, bi_enabled, bi_interval)
                     room.connections[user_id] = ws
                     room.game.add_player(user_id, user_name)
                     if bc > 0:
@@ -599,6 +699,7 @@ async def poker_ws_handler(request: web.Request):
                     if room.started:
                         state = room.game.state_for(user_id)
                         state["readyPlayers"] = list(room.ready_players)
+                        room._inject_blind_info(state)
                         await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
 
                 elif t == "leave_room":
@@ -639,6 +740,7 @@ async def poker_ws_handler(request: web.Request):
                     current_room.started = True
                     current_room.ready_players.clear()
                     current_room._metrics = metrics
+                    current_room.start_blind_timer()
                     ok = current_room.game.start_hand()
                     if not ok:
                         current_room.started = False
@@ -692,6 +794,7 @@ async def poker_ws_handler(request: web.Request):
                         try:
                             state = current_room.game.state_for(user_id)
                             state["readyPlayers"] = list(current_room.ready_players)
+                            current_room._inject_blind_info(state)
                             await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
                         except Exception:
                             logger.exception("room=%s state sync failed for uid=%s", current_room.id, user_id)
@@ -716,15 +819,23 @@ async def poker_ws_handler(request: web.Request):
                     sc = data.get("startChips")
                     bc = data.get("botCount")
                     bd = data.get("botDifficulty")
+                    bi_enabled = data.get("blindIncreaseEnabled")
+                    bi_interval = data.get("blindIncreaseInterval")
 
                     if sb is not None:
                         current_room.small_blind = max(1, min(1000, int(sb)))
+                        current_room.base_small_blind = current_room.small_blind
                     if bb is not None:
                         current_room.big_blind = max(current_room.small_blind * 2, min(2000, int(bb)))
+                        current_room.base_big_blind = current_room.big_blind
                     if sc is not None:
                         current_room.start_chips = max(current_room.big_blind * 10, min(100000, int(sc)))
                     if bd is not None and str(bd) in DIFFICULTIES:
                         current_room.bot_difficulty = str(bd)
+                    if bi_enabled is not None:
+                        current_room.blind_increase_enabled = bool(bi_enabled)
+                    if bi_interval is not None:
+                        current_room.blind_increase_interval = max(1, min(30, int(bi_interval)))
 
                     if bc is not None:
                         new_bc = max(0, min(7, int(bc)))
