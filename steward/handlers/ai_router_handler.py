@@ -54,9 +54,14 @@ class AiRouterHandler(Handler):
         user_request, matched = self._extract_request(
             context.message.text, context.bot.username
         )
+        if not matched and context.message.reply_to_message:
+            if self._is_bot_message(context.message.reply_to_message, context.bot):
+                user_request = context.message.text
+                matched = True
         if not matched or not user_request:
             return False
 
+        reply_text = ""
         reply_context = ""
         if context.message.reply_to_message:
             reply_msg = context.message.reply_to_message
@@ -67,9 +72,16 @@ class AiRouterHandler(Handler):
                 parts.append(f"Отправитель: {sender_info}")
 
             if reply_msg.text:
-                parts.append(f"Текст: {reply_msg.text}")
+                reply_text = reply_msg.text
+                parts.append(f"Текст: {self._restructure_debt_table(reply_text)}")
 
             reply_context = "\n".join(parts)
+
+        if reply_text and "Кто кому должен" in reply_text:
+            pay_commands = self._try_generate_pay_commands(user_request, reply_text)
+            if pay_commands is not None:
+                commands = pay_commands
+                return await self._present_commands(context, commands, user_request)
 
         commands_info, prompts_info = self._build_commands_info(
             context.message.from_user.id
@@ -111,17 +123,16 @@ class AiRouterHandler(Handler):
                 commands[-1] += "\n" + stripped
 
         if not commands:
-            self._patch_message(context.message, f"/ai {user_request}")
-            for handler in self._handlers:
-                if handler is self:
-                    continue
-                try:
-                    if hasattr(handler, "chat") and await handler.chat(context):
-                        return True
-                except Exception:
-                    continue
-            return False
+            return await self._fallback_to_ai(context, user_request)
 
+        return await self._present_commands(context, commands, user_request)
+
+    async def _present_commands(
+        self,
+        context: ChatBotContext,
+        commands: list[str],
+        user_request: str,
+    ) -> bool:
         user_id = context.message.from_user.id
         allowed = self._get_allowed_command_names(user_id)
         commands = [
@@ -248,6 +259,121 @@ class AiRouterHandler(Handler):
             return f"{name} (id: {user.id})"
 
         return ""
+
+    async def _fallback_to_ai(
+        self, context: ChatBotContext, user_request: str
+    ) -> bool:
+        self._patch_message(context.message, f"/ai {user_request}")
+        for handler in self._handlers:
+            if handler is self:
+                continue
+            try:
+                if hasattr(handler, "chat") and await handler.chat(context):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _is_bot_message(message, bot) -> bool:
+        if message.from_user and message.from_user.id == bot.id:
+            return True
+        origin = getattr(message, "forward_origin", None)
+        if origin and hasattr(origin, "sender_user") and origin.sender_user:
+            return origin.sender_user.id == bot.id
+        return False
+
+    @staticmethod
+    def _parse_debt_table(text: str) -> list[tuple[str, str, str]]:
+        debts: list[tuple[str, str, str]] = []
+        in_table = False
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if "Кто кому должен" in stripped:
+                in_table = True
+                continue
+            if in_table:
+                if "Должник" in stripped and "Кому" in stripped:
+                    continue
+                if stripped.startswith("-"):
+                    continue
+                if not stripped or stripped.startswith(
+                    ("📊", "💸", "💳", "🔗", "/")
+                ):
+                    in_table = False
+                    continue
+                parts = re.split(r"\s{2,}", stripped)
+                if len(parts) >= 3:
+                    debts.append((parts[0], parts[1], parts[2]))
+        return debts
+
+    @staticmethod
+    def _try_generate_pay_commands(
+        user_request: str, reply_text: str
+    ) -> list[str] | None:
+        request_lower = user_request.lower().strip()
+        pay_patterns = [
+            r"^(\S+)\s+(?:всем\s+)?(?:заплатил|оплатил|рассчитался|отдал)",
+            r"^(\S+)\s+(?:никому\s+)?(?:не\s+)?(?:больше\s+)?(?:не\s+)?должен",
+            r"^(\S+)\s+(?:закрыл|погасил)",
+        ]
+        person = None
+        for pattern in pay_patterns:
+            m = re.search(pattern, request_lower)
+            if m:
+                person = m.group(1)
+                break
+        if not person:
+            return None
+
+        debts = AiRouterHandler._parse_debt_table(reply_text)
+        if not debts:
+            return None
+
+        commands = []
+        for debtor, creditor, amount_str in debts:
+            if debtor.lower() == person:
+                clean = amount_str.strip().replace(",", ".").replace("\u00a0", "").replace(" ", "")
+                try:
+                    amount = float(clean)
+                    commands.append(f"/bill pay {debtor} {creditor} {amount:g}")
+                except ValueError:
+                    continue
+
+        return commands if commands else None
+
+    @staticmethod
+    def _restructure_debt_table(text: str) -> str:
+        if "Кто кому должен" not in text:
+            return text
+        lines = text.split("\n")
+        result = []
+        in_table = False
+        for line in lines:
+            stripped = line.strip()
+            if "Кто кому должен" in stripped:
+                in_table = True
+                result.append(line)
+                continue
+            if in_table:
+                if "Должник" in stripped and "Кому" in stripped:
+                    continue
+                if stripped.startswith("-"):
+                    continue
+                if not stripped or stripped.startswith(
+                    ("📊", "💸", "💳", "🔗", "/")
+                ):
+                    in_table = False
+                    result.append(line)
+                    continue
+                parts = re.split(r"\s{2,}", stripped)
+                if len(parts) >= 3:
+                    result.append(f"{parts[0]} должен {parts[1]}: {parts[2]}")
+                else:
+                    result.append(line)
+                continue
+            result.append(line)
+        return "\n".join(result)
 
     def _extract_request(self, text: str, bot_username: str | None) -> tuple[str, bool]:
         text_lower = text.lower()
