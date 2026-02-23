@@ -58,8 +58,18 @@ class AiRouterHandler(Handler):
             return False
 
         reply_context = ""
-        if context.message.reply_to_message and context.message.reply_to_message.text:
-            reply_context = context.message.reply_to_message.text
+        if context.message.reply_to_message:
+            reply_msg = context.message.reply_to_message
+            parts = []
+
+            sender_info = self._extract_sender_info(reply_msg)
+            if sender_info:
+                parts.append(f"Отправитель: {sender_info}")
+
+            if reply_msg.text:
+                parts.append(f"Текст: {reply_msg.text}")
+
+            reply_context = "\n".join(parts)
 
         commands_info, prompts_info = self._build_commands_info(
             context.message.from_user.id
@@ -212,6 +222,32 @@ class AiRouterHandler(Handler):
             return True
 
         return False
+
+    @staticmethod
+    def _extract_sender_info(message) -> str:
+        origin = getattr(message, "forward_origin", None)
+        if origin is not None:
+            if hasattr(origin, "sender_user") and origin.sender_user:
+                user = origin.sender_user
+                if user.username:
+                    return f"@{user.username} (id: {user.id})"
+                name = user.first_name or ""
+                if user.last_name:
+                    name += f" {user.last_name}"
+                return f"{name} (id: {user.id})"
+            if hasattr(origin, "sender_user_name"):
+                return origin.sender_user_name
+
+        if message.from_user:
+            user = message.from_user
+            if user.username:
+                return f"@{user.username} (id: {user.id})"
+            name = user.first_name or ""
+            if user.last_name:
+                name += f" {user.last_name}"
+            return f"{name} (id: {user.id})"
+
+        return ""
 
     def _extract_request(self, text: str, bot_username: str | None) -> tuple[str, bool]:
         text_lower = text.lower()
