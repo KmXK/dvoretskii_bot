@@ -124,6 +124,9 @@ delayed_actions, channel_subscriptions, feature_requests, ...
 
 **WebSocket:**
 - `GET /ws/poker` — WebSocket для покерных комнат в реальном времени
+  - При разрыве WS (сворачивание приложения и т.д.) игрок не удаляется из комнаты сразу — действует grace period 60 сек
+  - Во время grace period: auto-fold если ход игрока, пауза игры для bot-only комнат
+  - При реконнекте в пределах grace period: восстановление соединения, снятие sitting_out, возобновление игры
 
 **Казино (клиентская сторона):**
 - Баланс обезьянок и дневной бонус хранятся в `localStorage` (ключ: `casino_{userId}`)

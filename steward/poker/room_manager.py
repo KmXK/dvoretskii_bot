@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 _NEXT_HAND_DELAY = 30
 _BOT_ACTION_DELAY = (0.8, 2.0)
 _BOT_ID_BASE = -1_000_000
+_DISCONNECT_GRACE = 60
 
 
 class Room:
@@ -365,6 +366,12 @@ class RoomManager:
         self.player_rooms: dict[int, str] = {}
         self.lobby_connections: dict[int, web.WebSocketResponse] = {}
         self._on_room_cleanup: callable = None
+        self._disconnect_timers: dict[int, asyncio.Task] = {}
+
+    def cancel_disconnect_timer(self, user_id: int):
+        task = self._disconnect_timers.pop(user_id, None)
+        if task and not task.done():
+            task.cancel()
 
     def list_rooms(self):
         return [r.to_dict() for r in self.rooms.values()]
@@ -459,6 +466,17 @@ async def _leave(user_id: int, room: Room, metrics=None):
     await _manager.broadcast_rooms()
 
 
+async def _delayed_leave(user_id: int, room: Room, metrics=None):
+    try:
+        await asyncio.sleep(_DISCONNECT_GRACE)
+        _manager._disconnect_timers.pop(user_id, None)
+        if _manager.player_rooms.get(user_id) == room.id and user_id not in room.connections:
+            logger.info("uid=%s disconnect grace expired, leaving room=%s", user_id, room.id)
+            await _leave(user_id, room, metrics)
+    except asyncio.CancelledError:
+        pass
+
+
 async def poker_ws_handler(request: web.Request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -489,14 +507,20 @@ async def poker_ws_handler(request: web.Request):
                         rid = _manager.player_rooms[user_id]
                         room = _manager.get_room(rid)
                         if room:
+                            _manager.cancel_disconnect_timer(user_id)
                             current_room = room
                             room.connections[user_id] = ws
+                            player = next((p for p in room.game.players if p.user_id == user_id), None)
+                            if player:
+                                player.sitting_out = False
                             logger.info("uid=%s reconnected to room=%s", user_id, rid)
                             await ws.send_str(json.dumps({"type": "reconnected", "room": room.to_dict()}, ensure_ascii=False))
                             if room.started:
                                 state = room.game.state_for(user_id)
                                 state["readyPlayers"] = list(room.ready_players)
                                 await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
+                                if room.game.phase == PHASE_SHOWDOWN:
+                                    room.queue_next_hand()
                             continue
 
                     _manager.lobby_connections[user_id] = ws
@@ -579,6 +603,7 @@ async def poker_ws_handler(request: web.Request):
 
                 elif t == "leave_room":
                     if current_room and user_id:
+                        _manager.cancel_disconnect_timer(user_id)
                         await _leave(user_id, current_room, metrics)
                         current_room = None
                         _manager.lobby_connections[user_id] = ws
@@ -727,6 +752,42 @@ async def poker_ws_handler(request: web.Request):
         if user_id:
             _manager.lobby_connections.pop(user_id, None)
         if current_room and user_id:
-            await _leave(user_id, current_room, metrics)
+            current_room.connections.pop(user_id, None)
+
+            if current_room.started:
+                player = next((p for p in current_room.game.players if p.user_id == user_id), None)
+                if player:
+                    player.sitting_out = True
+
+                    idx = current_room.game.current_idx
+                    if (0 <= idx < len(current_room.game.players)
+                            and current_room.game.players[idx].user_id == user_id
+                            and current_room.game.phase not in (PHASE_WAITING, PHASE_SHOWDOWN)):
+                        try:
+                            current_room.game.action(user_id, "fold")
+                            await current_room.send_states()
+                            if current_room.game.phase == PHASE_SHOWDOWN:
+                                current_room.ready_players.clear()
+                                current_room._mark_bots_ready()
+                                current_room.ready_players.add(user_id)
+                                current_room.queue_next_hand()
+                            else:
+                                current_room._schedule_bot_if_needed()
+                        except Exception:
+                            logger.exception("room=%s auto-fold failed uid=%s", current_room.id, user_id)
+                    elif current_room.game.phase == PHASE_SHOWDOWN:
+                        current_room.ready_players.add(user_id)
+                        await current_room._check_all_ready()
+
+                try:
+                    await current_room.broadcast({"type": "room_updated", "room": current_room.to_dict()})
+                except Exception:
+                    pass
+
+            _manager.cancel_disconnect_timer(user_id)
+            _manager._disconnect_timers[user_id] = asyncio.create_task(
+                _delayed_leave(user_id, current_room, metrics)
+            )
+            logger.info("uid=%s disconnected from room=%s, grace=%ds", user_id, current_room.id, _DISCONNECT_GRACE)
 
     return ws
