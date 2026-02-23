@@ -98,6 +98,28 @@ def _eval5(cards):
     return (0, *ranks)
 
 
+def _hand_description(score):
+    rn = lambda r: RANK_SYMBOLS.get(r, str(r))
+    t = score[0]
+    if t == 8:
+        return f"Straight Flush, {rn(score[1])} high"
+    if t == 7:
+        return f"Four of a Kind, {rn(score[1])}s"
+    if t == 6:
+        return f"Full House, {rn(score[1])}s full of {rn(score[2])}s"
+    if t == 5:
+        return "Flush (" + ", ".join(rn(r) for r in score[1:]) + ")"
+    if t == 4:
+        return f"Straight, {rn(score[1])} high"
+    if t == 3:
+        return f"Three of a Kind, {rn(score[1])}s"
+    if t == 2:
+        return f"Two Pair, {rn(score[1])}s and {rn(score[2])}s, kicker {rn(score[3])}"
+    if t == 1:
+        return "Pair of " + rn(score[1]) + "s, kickers: " + ", ".join(rn(r) for r in score[2:])
+    return "High Card (" + ", ".join(rn(r) for r in score[1:]) + ")"
+
+
 def best_hand(hole, community):
     all_cards = hole + community
     if len(all_cards) < 5:
@@ -534,6 +556,7 @@ class PokerGame:
                 i: {
                     "score": evals[i][0][0],
                     "name": HAND_NAMES.get(evals[i][0][0], ""),
+                    "description": _hand_description(evals[i][0]),
                     "cards": [c.to_dict() for c in evals[i][1]],
                     "won": total_won.get(i, 0),
                 }

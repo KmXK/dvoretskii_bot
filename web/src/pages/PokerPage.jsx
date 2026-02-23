@@ -216,6 +216,14 @@ function PokerStatsBlock({ stats }) {
   )
 }
 
+const BLIND_INTERVAL_OPTIONS = [
+  { value: 2, label: '2 min' },
+  { value: 3, label: '3 min' },
+  { value: 5, label: '5 min' },
+  { value: 10, label: '10 min' },
+  { value: 15, label: '15 min' },
+]
+
 function Lobby({ rooms, send, userId, pokerStats }) {
   const [name, setName] = useState('')
   const [sb, setSb] = useState(10)
@@ -223,10 +231,17 @@ function Lobby({ rooms, send, userId, pokerStats }) {
   const [sc, setSc] = useState(1000)
   const [bc, setBc] = useState(0)
   const [bd, setBd] = useState('medium')
+  const [biEnabled, setBiEnabled] = useState(true)
+  const [biInterval, setBiInterval] = useState(5)
   const [showSettings, setShowSettings] = useState(false)
 
   const create = () => {
-    send({ type: 'create_room', name: name.trim() || undefined, smallBlind: sb, bigBlind: bb, startChips: sc, botCount: Number(bc) || 0, botDifficulty: bd })
+    send({
+      type: 'create_room', name: name.trim() || undefined,
+      smallBlind: sb, bigBlind: bb, startChips: sc,
+      botCount: Number(bc) || 0, botDifficulty: bd,
+      blindIncreaseEnabled: biEnabled, blindIncreaseInterval: biInterval,
+    })
     setName('')
   }
 
@@ -337,6 +352,33 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                     </div>
                   </div>
                 )}
+                <div className="col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={biEnabled}
+                      onChange={e => setBiEnabled(e.target.checked)}
+                      className="accent-green-500 w-4 h-4"
+                    />
+                    <span className="text-zinc-300 text-xs">Auto increase blinds</span>
+                  </label>
+                </div>
+                {biEnabled && (
+                  <div className="col-span-2">
+                    <label className="text-zinc-500 text-[10px] block mb-1">Increase every</label>
+                    <div className="flex gap-1.5">
+                      {BLIND_INTERVAL_OPTIONS.map(opt => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setBiInterval(opt.value)}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${biInterval === opt.value ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -364,7 +406,7 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                   <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} players</span>
                   {room.botCount > 0 && <span className="text-blue-400 text-xs">🤖{room.botCount}</span>}
                   {room.started && <span className="text-yellow-400 text-xs">In game</span>}
-                  <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}</span>
+                  <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}{room.blindIncreaseEnabled ? ' ↑' : ''}</span>
                 </div>
               </div>
               <button
@@ -500,6 +542,8 @@ function WaitingRoom({ room, send, userId }) {
   const [sc, setSc] = useState(room.startChips || 1000)
   const [bc, setBc] = useState(room.botCount || 0)
   const [bd, setBd] = useState(room.botDifficulty || 'medium')
+  const [biEnabled, setBiEnabled] = useState(room.blindIncreaseEnabled ?? true)
+  const [biInterval, setBiInterval] = useState(room.blindIncreaseInterval || 5)
   const [showLeave, setShowLeave] = useState(false)
 
   useEffect(() => {
@@ -508,10 +552,16 @@ function WaitingRoom({ room, send, userId }) {
     setSc(room.startChips || 1000)
     setBc(room.botCount || 0)
     setBd(room.botDifficulty || 'medium')
-  }, [room.smallBlind, room.bigBlind, room.startChips, room.botCount, room.botDifficulty])
+    setBiEnabled(room.blindIncreaseEnabled ?? true)
+    setBiInterval(room.blindIncreaseInterval || 5)
+  }, [room.smallBlind, room.bigBlind, room.startChips, room.botCount, room.botDifficulty, room.blindIncreaseEnabled, room.blindIncreaseInterval])
 
   const saveSettings = () => {
-    send({ type: 'update_settings', smallBlind: sb, bigBlind: bb, startChips: sc, botCount: Number(bc) || 0, botDifficulty: bd })
+    send({
+      type: 'update_settings', smallBlind: sb, bigBlind: bb, startChips: sc,
+      botCount: Number(bc) || 0, botDifficulty: bd,
+      blindIncreaseEnabled: biEnabled, blindIncreaseInterval: biInterval,
+    })
     setEditBlinds(false)
   }
 
@@ -606,6 +656,33 @@ function WaitingRoom({ room, send, userId }) {
                   </div>
                 </div>
               )}
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={biEnabled}
+                    onChange={e => setBiEnabled(e.target.checked)}
+                    className="accent-green-500 w-4 h-4"
+                  />
+                  <span className="text-zinc-300 text-xs">Auto increase blinds</span>
+                </label>
+              </div>
+              {biEnabled && (
+                <div className="col-span-2">
+                  <label className="text-zinc-500 text-[10px] block mb-1">Increase every</label>
+                  <div className="flex gap-1.5">
+                    {BLIND_INTERVAL_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setBiInterval(opt.value)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${biInterval === opt.value ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={() => setEditBlinds(false)} className="flex-1 bg-zinc-700 text-white text-xs py-1.5 rounded-lg">Cancel</button>
@@ -617,6 +694,11 @@ function WaitingRoom({ room, send, userId }) {
             <p className="text-zinc-400 text-xs mb-1">Blinds: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
             <p className="text-zinc-400 text-xs mb-1">Starting chips: {room.startChips || 1000}</p>
             <p className="text-zinc-400 text-xs mb-1">Bots: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Medium'})` : ''}</p>
+            {(room.blindIncreaseEnabled ?? true) ? (
+              <p className="text-zinc-400 text-xs mb-1">Blind increase: every {room.blindIncreaseInterval || 5} min</p>
+            ) : (
+              <p className="text-zinc-400 text-xs mb-1">Blind increase: off</p>
+            )}
             <p className="text-zinc-400 text-xs">Min players: 2 (including bots)</p>
           </>
         )}
@@ -677,7 +759,22 @@ function GameTable({ state, send, userId, onLeave }) {
 
   const { phase, community, pot, currentBet, dealerIndex, currentIndex, myIndex,
     myCards, players, actions, results, lastAction, handNum, callAmount, minRaiseTo,
-    readyPlayers, smallBlind, bigBlind } = state
+    readyPlayers, smallBlind, bigBlind, blindIncreaseEnabled, blindLevel,
+    blindIncreaseInterval, blindNextIncreaseIn } = state
+
+  const [blindCountdown, setBlindCountdown] = useState(blindNextIncreaseIn || 0)
+
+  useEffect(() => {
+    if (!blindIncreaseEnabled || blindNextIncreaseIn == null) {
+      setBlindCountdown(0)
+      return
+    }
+    setBlindCountdown(blindNextIncreaseIn)
+    const interval = setInterval(() => {
+      setBlindCountdown(prev => Math.max(0, prev - 1))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [blindNextIncreaseIn, blindIncreaseEnabled, handNum])
 
   const isShowdown = phase === 'showdown'
   const isMyTurn = actions && actions.length > 0
@@ -740,8 +837,16 @@ function GameTable({ state, send, userId, onLeave }) {
       </div>
 
       {smallBlind && (
-        <div className="text-zinc-500 text-[10px] text-center -mt-2">
-          Blinds {smallBlind}/{bigBlind}
+        <div className="text-zinc-500 text-[10px] text-center -mt-2 flex items-center justify-center gap-2">
+          <span>Blinds {smallBlind}/{bigBlind}</span>
+          {blindIncreaseEnabled && blindLevel > 0 && (
+            <span className="text-yellow-500/70">Lvl {blindLevel + 1}</span>
+          )}
+          {blindIncreaseEnabled && blindCountdown > 0 && (
+            <span className="text-zinc-600">
+              ↑ {Math.floor(blindCountdown / 60)}:{String(blindCountdown % 60).padStart(2, '0')}
+            </span>
+          )}
         </div>
       )}
 
@@ -927,9 +1032,50 @@ function GameTable({ state, send, userId, onLeave }) {
 }
 
 function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imReady, onReady }) {
+  const [showWhy, setShowWhy] = useState(false)
+
   if (!results) return null
 
   const totalEligible = players.filter(p => !p.sittingOut && p.chips > 0 && !p.isBot).length
+  const hands = results.hands || {}
+  const hasHands = Object.keys(hands).length > 0
+
+  const sorted = Object.entries(hands)
+    .map(([idx, hand]) => ({ idx: Number(idx), ...hand }))
+    .sort((a, b) => {
+      const aw = results.winners.includes(a.idx) ? 1 : 0
+      const bw = results.winners.includes(b.idx) ? 1 : 0
+      if (bw !== aw) return bw - aw
+      return b.score - a.score
+    })
+
+  const winnerNames = results.winners
+    .map(i => players[i]?.name)
+    .filter(Boolean)
+    .join(', ')
+
+  const winnerHands = results.winners
+    .map(i => hands[i])
+    .filter(Boolean)
+
+  const loserEntries = sorted.filter(e => !results.winners.includes(e.idx))
+
+  let summaryLines = []
+  if (winnerHands.length > 0 && loserEntries.length > 0) {
+    const wDesc = winnerHands[0].description || winnerHands[0].name
+    summaryLines.push(`${winnerNames} wins with ${wDesc}`)
+    for (const l of loserEntries) {
+      const lName = players[l.idx]?.name || '?'
+      const lDesc = l.description || l.name
+      if (winnerHands[0].score > l.score) {
+        summaryLines.push(`${winnerHands[0].name} (rank ${winnerHands[0].score}) beats ${l.name} (rank ${l.score}) of ${lName}`)
+      } else if (winnerHands[0].score === l.score) {
+        summaryLines.push(`${lName} also had ${l.name}, but lost on kickers`)
+      }
+    }
+  } else if (!hasHands && results.winners.length > 0) {
+    summaryLines.push(`${winnerNames} wins — all opponents folded`)
+  }
 
   return (
     <motion.div
@@ -941,7 +1087,7 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
         Results
       </h3>
       <div className="flex flex-col gap-1.5">
-        {Object.entries(results.hands || {}).map(([idx, hand]) => {
+        {Object.entries(hands).map(([idx, hand]) => {
           const i = Number(idx)
           const p = players[i]
           const isWinner = results.winners.includes(i)
@@ -957,12 +1103,70 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
             </div>
           )
         })}
-        {results.winners?.length > 0 && !Object.keys(results.hands || {}).length && (
+        {results.winners?.length > 0 && !hasHands && (
           <div className="text-center text-yellow-400 text-sm">
             🏆 {players[results.winners[0]]?.name} wins
           </div>
         )}
       </div>
+
+      {(hasHands || (!hasHands && results.winners.length > 0)) && (
+        <button
+          onClick={() => setShowWhy(v => !v)}
+          className="w-full mt-2 text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+        >
+          {showWhy ? 'Скрыть ▲' : 'Почему? ▼'}
+        </button>
+      )}
+
+      <AnimatePresence>
+        {showWhy && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 border-t border-zinc-800 pt-3 flex flex-col gap-3">
+              {sorted.map(entry => {
+                const p = players[entry.idx]
+                const isWinner = results.winners.includes(entry.idx)
+                return (
+                  <div key={entry.idx} className={`rounded-lg p-2.5 ${isWinner ? 'bg-yellow-500/5 border border-yellow-500/20' : 'bg-zinc-800/50'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className={`text-xs font-semibold ${isWinner ? 'text-yellow-400' : 'text-zinc-400'}`}>
+                        {isWinner ? '🏆 ' : '❌ '}{p?.name}
+                      </span>
+                      {entry.won > 0 && <span className="text-green-400 text-[11px] font-bold">+{entry.won}</span>}
+                    </div>
+                    <p className={`text-[11px] mb-1.5 ${isWinner ? 'text-yellow-300/80' : 'text-zinc-500'}`}>
+                      {entry.description || entry.name}
+                    </p>
+                    {entry.cards && entry.cards.length > 0 && (
+                      <div className="flex gap-0.5">
+                        {entry.cards.map((c, ci) => (
+                          <PokerCard key={ci} rank={c.rank} suit={c.suit} small />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {summaryLines.length > 0 && (
+                <div className="bg-zinc-800/60 rounded-lg p-2.5">
+                  {summaryLines.map((line, li) => (
+                    <p key={li} className={`text-[11px] ${li === 0 ? 'text-zinc-300 font-medium' : 'text-zinc-500'}`}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-3 flex flex-col items-center gap-2">
         {!imReady ? (
@@ -1088,6 +1292,16 @@ export default function PokerPage() {
           break
         case 'player_ready':
           setGameState(prev => prev ? { ...prev, readyPlayers: data.readyPlayers } : prev)
+          break
+        case 'blinds_increased':
+          setGameState(prev => prev ? {
+            ...prev,
+            smallBlind: data.smallBlind,
+            bigBlind: data.bigBlind,
+            blindLevel: data.blindLevel,
+          } : prev)
+          setError(`Blinds increased: ${data.smallBlind}/${data.bigBlind}`)
+          setTimeout(() => setError(null), 3000)
           break
         case 'reconnected':
           setRoom(data.room)
