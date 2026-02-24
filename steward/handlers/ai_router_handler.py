@@ -55,7 +55,10 @@ class AiRouterHandler(Handler):
             context.message.text, context.bot.username
         )
         if not matched and context.message.reply_to_message:
-            if self._is_bot_message(context.message.reply_to_message, context.bot):
+            reply_msg = context.message.reply_to_message
+            if self._is_bot_message(reply_msg, context.bot) and not self._is_video_message(
+                reply_msg
+            ):
                 user_request = context.message.text
                 matched = True
         if not matched or not user_request:
@@ -282,6 +285,14 @@ class AiRouterHandler(Handler):
         if origin and hasattr(origin, "sender_user") and origin.sender_user:
             return origin.sender_user.id == bot.id
         return False
+
+    @staticmethod
+    def _is_video_message(message) -> bool:
+        if getattr(message, "video", None) or getattr(message, "video_note", None):
+            return True
+        document = getattr(message, "document", None)
+        mime_type = (getattr(document, "mime_type", "") or "").lower()
+        return mime_type.startswith("video/")
 
     @staticmethod
     def _parse_debt_table(text: str) -> list[tuple[str, str, str]]:
