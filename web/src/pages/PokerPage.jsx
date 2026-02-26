@@ -224,7 +224,7 @@ const BLIND_INTERVAL_OPTIONS = [
   { value: 15, label: '15 min' },
 ]
 
-function Lobby({ rooms, send, userId, pokerStats }) {
+function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
   const [name, setName] = useState('')
   const [sb, setSb] = useState(10)
   const [bb, setBb] = useState(20)
@@ -233,6 +233,7 @@ function Lobby({ rooms, send, userId, pokerStats }) {
   const [bd, setBd] = useState('medium')
   const [biEnabled, setBiEnabled] = useState(true)
   const [biInterval, setBiInterval] = useState(5)
+  const [playForMonkeys, setPlayForMonkeys] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
   const create = () => {
@@ -241,6 +242,7 @@ function Lobby({ rooms, send, userId, pokerStats }) {
       smallBlind: sb, bigBlind: bb, startChips: sc,
       botCount: Number(bc) || 0, botDifficulty: bd,
       blindIncreaseEnabled: biEnabled, blindIncreaseInterval: biInterval,
+      playForMonkeys,
     })
     setName('')
   }
@@ -260,6 +262,9 @@ function Lobby({ rooms, send, userId, pokerStats }) {
       </button>
       <h1 className="text-2xl font-bold text-white mb-1">Poker</h1>
       <p className="text-zinc-400 text-sm mb-6">Texas Hold'em — create a room or join one</p>
+      {Number.isFinite(monkeyBalance) && (
+        <p className="text-zinc-400 text-xs mb-4">Balance: {monkeyBalance} 🐵</p>
+      )}
 
       {pokerStats && <PokerStatsBlock stats={pokerStats} />}
 
@@ -318,11 +323,20 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                   <input
                     type="number"
                     value={sc}
-                    onChange={e => setSc(Math.max(bb * 10, Number(e.target.value)))}
+                    onChange={e => {
+                      const minChips = Math.max(bb * 10, playForMonkeys ? 10 : 0)
+                      const raw = Math.max(minChips, Number(e.target.value))
+                      setSc(playForMonkeys ? Math.floor(raw / 10) * 10 : raw)
+                    }}
                     className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
                     min={bb * 10}
-                    step={100}
+                    step={playForMonkeys ? 10 : 100}
                   />
+                  {playForMonkeys && (
+                    <p className="text-zinc-600 text-[10px] mt-1">
+                      Buy-in: {Math.floor(sc / 10)} 🐵 ({sc} chips)
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
@@ -352,6 +366,33 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                     </div>
                   </div>
                 )}
+                <div className="col-span-2">
+                  <label className="text-zinc-500 text-[10px] block mb-1">Currency</label>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => setPlayForMonkeys(false)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        !playForMonkeys ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
+                      }`}
+                    >
+                      Chips only
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPlayForMonkeys(true)
+                        setSc(prev => Math.floor(Math.max(bb * 10, prev) / 10) * 10)
+                      }}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        playForMonkeys ? 'bg-zinc-600 text-yellow-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
+                      }`}
+                    >
+                      Monkeys → chips
+                    </button>
+                  </div>
+                  {playForMonkeys && (
+                    <p className="text-zinc-600 text-[10px] mt-1">Rate: 1 🐵 = 10 chips. Exchange on room entry.</p>
+                  )}
+                </div>
                 <div className="col-span-2">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -405,6 +446,11 @@ function Lobby({ rooms, send, userId, pokerStats }) {
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} players</span>
                   {room.botCount > 0 && <span className="text-blue-400 text-xs">🤖{room.botCount}</span>}
+                  {room.playForMonkeys && (
+                    <span className="text-yellow-400 text-xs">
+                      🐵{Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))}
+                    </span>
+                  )}
                   {room.started && <span className="text-yellow-400 text-xs">In game</span>}
                   <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}{room.blindIncreaseEnabled ? ' ↑' : ''}</span>
                 </div>
@@ -533,7 +579,7 @@ function InviteBlock({ room, userId }) {
   )
 }
 
-function WaitingRoom({ room, send, userId }) {
+function WaitingRoom({ room, send, userId, monkeyBalance }) {
   if (!room) return null
   const isCreator = room.creator_id === userId
   const [editBlinds, setEditBlinds] = useState(false)
@@ -544,6 +590,7 @@ function WaitingRoom({ room, send, userId }) {
   const [bd, setBd] = useState(room.botDifficulty || 'medium')
   const [biEnabled, setBiEnabled] = useState(room.blindIncreaseEnabled ?? true)
   const [biInterval, setBiInterval] = useState(room.blindIncreaseInterval || 5)
+  const [playForMonkeys, setPlayForMonkeys] = useState(room.playForMonkeys || false)
   const [showLeave, setShowLeave] = useState(false)
 
   useEffect(() => {
@@ -554,13 +601,15 @@ function WaitingRoom({ room, send, userId }) {
     setBd(room.botDifficulty || 'medium')
     setBiEnabled(room.blindIncreaseEnabled ?? true)
     setBiInterval(room.blindIncreaseInterval || 5)
-  }, [room.smallBlind, room.bigBlind, room.startChips, room.botCount, room.botDifficulty, room.blindIncreaseEnabled, room.blindIncreaseInterval])
+    setPlayForMonkeys(room.playForMonkeys || false)
+  }, [room.smallBlind, room.bigBlind, room.startChips, room.botCount, room.botDifficulty, room.blindIncreaseEnabled, room.blindIncreaseInterval, room.playForMonkeys])
 
   const saveSettings = () => {
     send({
       type: 'update_settings', smallBlind: sb, bigBlind: bb, startChips: sc,
       botCount: Number(bc) || 0, botDifficulty: bd,
       blindIncreaseEnabled: biEnabled, blindIncreaseInterval: biInterval,
+      playForMonkeys,
     })
     setEditBlinds(false)
   }
@@ -582,6 +631,9 @@ function WaitingRoom({ room, send, userId }) {
           Leave
         </button>
       </div>
+      {playForMonkeys && Number.isFinite(monkeyBalance) && (
+        <p className="text-zinc-400 text-xs mb-4">Balance: {monkeyBalance} 🐵</p>
+      )}
 
       <div className="bg-zinc-900 rounded-xl p-4 mb-4">
         <h2 className="text-white font-semibold text-sm mb-3">Players ({room.playerCount}/8)</h2>
@@ -630,8 +682,12 @@ function WaitingRoom({ room, send, userId }) {
               <div>
                 <label className="text-zinc-500 text-[10px] block mb-1">Start chips</label>
                 <input type="number" value={sc}
-                  onChange={e => setSc(Math.max(bb * 10, Number(e.target.value)))}
-                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={bb * 10} step={100} />
+                  onChange={e => {
+                    const minChips = Math.max(bb * 10, playForMonkeys ? 10 : 0)
+                    const raw = Math.max(minChips, Number(e.target.value))
+                    setSc(playForMonkeys ? Math.floor(raw / 10) * 10 : raw)
+                  }}
+                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={bb * 10} step={playForMonkeys ? 10 : 100} />
               </div>
               <div>
                 <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
@@ -656,6 +712,13 @@ function WaitingRoom({ room, send, userId }) {
                   </div>
                 </div>
               )}
+              <div className="col-span-2">
+                <label className="text-zinc-500 text-[10px] block mb-1">Currency</label>
+                <div className="bg-zinc-800 rounded-lg px-3 py-2 flex items-center justify-between">
+                  <span className="text-zinc-300 text-xs">{playForMonkeys ? 'Monkeys → chips' : 'Chips only'}</span>
+                  <span className="text-zinc-500 text-[10px]">Locked after room creation</span>
+                </div>
+              </div>
               <div className="col-span-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -693,6 +756,9 @@ function WaitingRoom({ room, send, userId }) {
           <>
             <p className="text-zinc-400 text-xs mb-1">Blinds: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
             <p className="text-zinc-400 text-xs mb-1">Starting chips: {room.startChips || 1000}</p>
+            <p className="text-zinc-400 text-xs mb-1">
+              Currency: {room.playForMonkeys ? `Monkeys (buy-in ${Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))} 🐵)` : 'Chips'}
+            </p>
             <p className="text-zinc-400 text-xs mb-1">Bots: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Medium'})` : ''}</p>
             {(room.blindIncreaseEnabled ?? true) ? (
               <p className="text-zinc-400 text-xs mb-1">Blind increase: every {room.blindIncreaseInterval || 5} min</p>
@@ -1238,6 +1304,7 @@ export default function PokerPage() {
   const [error, setError] = useState(null)
   const [connected, setConnected] = useState(false)
   const [pokerStats, setPokerStats] = useState(null)
+  const [monkeyBalance, setMonkeyBalance] = useState(null)
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
 
@@ -1280,6 +1347,9 @@ export default function PokerPage() {
           break
         case 'room_joined':
           setRoom(data.room)
+          if (data.monkeysBalance !== undefined && data.monkeysBalance !== null) {
+            setMonkeyBalance(data.monkeysBalance)
+          }
           setView('waiting')
           setError(null)
           break
@@ -1310,6 +1380,9 @@ export default function PokerPage() {
           break
         case 'left_room':
           setRoom(null)
+          if (data.monkeysBalance !== undefined && data.monkeysBalance !== null) {
+            setMonkeyBalance(data.monkeysBalance)
+          }
           setGameState(null)
           setView('lobby')
           send({ type: 'list_rooms' })
@@ -1376,8 +1449,12 @@ export default function PokerPage() {
         )}
       </AnimatePresence>
 
-      {connected && view === 'lobby' && <Lobby rooms={rooms} send={send} userId={effectiveId} pokerStats={pokerStats} />}
-      {connected && view === 'waiting' && <WaitingRoom room={room} send={send} userId={effectiveId} />}
+      {connected && view === 'lobby' && (
+        <Lobby rooms={rooms} send={send} userId={effectiveId} pokerStats={pokerStats} monkeyBalance={monkeyBalance} />
+      )}
+      {connected && view === 'waiting' && (
+        <WaitingRoom room={room} send={send} userId={effectiveId} monkeyBalance={monkeyBalance} />
+      )}
       {connected && view === 'game' && <GameTable state={gameState} send={send} userId={effectiveId} onLeave={handleLeave} />}
     </motion.div>
   )
