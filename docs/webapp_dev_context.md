@@ -124,6 +124,7 @@ delayed_actions, channel_subscriptions, feature_requests, ...
 
 **WebSocket:**
 - `GET /ws/poker` — WebSocket для покерных комнат в реальном времени
+  - Авторизация только через Telegram `initData` (HMAC валидация на сервере); `userId` из клиента не используется
   - При разрыве WS (сворачивание приложения и т.д.) игрок не удаляется из комнаты сразу — действует grace period 60 сек
   - Во время grace period: auto-fold если ход игрока, пауза игры для bot-only комнат
   - При реконнекте в пределах grace period: восстановление соединения, снятие sitting_out, возобновление игры
@@ -239,6 +240,7 @@ class Chat:
 - Функциональные компоненты + хуки (`useState`, `useEffect`, `useRef`)
 - Tailwind CSS для стилей (utility-first, никаких отдельных CSS-файлов для компонентов)
 - Компоненты в `web/src/components/`, страницы в `web/src/pages/`
+- Пользовательский интерфейс Web App по умолчанию на русском языке
 
 ## Стек UI-библиотек
 

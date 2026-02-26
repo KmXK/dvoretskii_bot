@@ -26,10 +26,10 @@ const lineData = [
 ]
 
 const pieData = [
-  { name: 'Text', value: 65 },
-  { name: 'Photo', value: 20 },
-  { name: 'Voice', value: 10 },
-  { name: 'Video', value: 5 },
+  { name: 'Текст', value: 65 },
+  { name: 'Фото', value: 20 },
+  { name: 'Голос', value: 10 },
+  { name: 'Видео', value: 5 },
 ]
 
 const PIE_COLORS = ['#1DB954', '#1ed760', '#169c46', '#b3b3b3']
@@ -52,10 +52,10 @@ export default function ChartsPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6"
     >
-      <h1 className="text-2xl font-bold text-white mb-6">Charts</h1>
+      <h1 className="text-2xl font-bold text-white mb-6">Графики</h1>
 
       <div className="bg-spotify-dark rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-4">Messages per day</h2>
+        <h2 className="text-white font-semibold text-sm mb-4">Сообщения по дням</h2>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={barData}>
             <XAxis dataKey="name" tick={{ fill: '#B3B3B3', fontSize: 12 }} axisLine={false} tickLine={false} />
@@ -67,7 +67,7 @@ export default function ChartsPage() {
       </div>
 
       <div className="bg-spotify-dark rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-4">Active users (month)</h2>
+        <h2 className="text-white font-semibold text-sm mb-4">Активные пользователи (месяц)</h2>
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={lineData}>
             <XAxis dataKey="day" tick={{ fill: '#B3B3B3', fontSize: 12 }} axisLine={false} tickLine={false} />
@@ -79,7 +79,7 @@ export default function ChartsPage() {
       </div>
 
       <div className="bg-spotify-dark rounded-xl p-4">
-        <h2 className="text-white font-semibold text-sm mb-4">Message types</h2>
+        <h2 className="text-white font-semibold text-sm mb-4">Типы сообщений</h2>
         <div className="flex items-center gap-4">
           <ResponsiveContainer width="50%" height={160}>
             <PieChart>

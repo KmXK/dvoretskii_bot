@@ -2,13 +2,13 @@ import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 
 const cards = [
-  { title: 'Todo', desc: 'Список задач', emoji: '📝', color: 'from-rose-500/20 to-rose-900/20', to: '/todo' },
-  { title: 'Army', desc: 'Статус по армейке', emoji: '🎖️', color: 'from-emerald-500/20 to-emerald-900/20', to: '/army' },
-  { title: 'Features', desc: 'Фича-реквесты', emoji: '💡', color: 'from-cyan-500/20 to-cyan-900/20', to: '/features' },
-  { title: 'Tools', desc: 'Валюты, перевод, время', emoji: '🧰', color: 'from-amber-500/20 to-amber-900/20', to: '/tools' },
-  { title: 'Reminders', desc: 'Напоминания', emoji: '🔔', color: 'from-blue-500/20 to-blue-900/20', to: '/reminders' },
-  { title: 'Birthdays', desc: 'Дни рождения', emoji: '🎂', color: 'from-pink-500/20 to-pink-900/20', to: '/birthdays' },
-  { title: 'Stats', desc: 'Статистика чатов', emoji: '📊', color: 'from-violet-500/20 to-violet-900/20', to: '/stats' },
+  { title: 'Задачи', desc: 'Список задач', emoji: '📝', color: 'from-rose-500/20 to-rose-900/20', to: '/todo' },
+  { title: 'Армейка', desc: 'Статус по армейке', emoji: '🎖️', color: 'from-emerald-500/20 to-emerald-900/20', to: '/army' },
+  { title: 'Фичи', desc: 'Фича-реквесты', emoji: '💡', color: 'from-cyan-500/20 to-cyan-900/20', to: '/features' },
+  { title: 'Инструменты', desc: 'Валюты, перевод, время', emoji: '🧰', color: 'from-amber-500/20 to-amber-900/20', to: '/tools' },
+  { title: 'Напоминания', desc: 'Напоминания', emoji: '🔔', color: 'from-blue-500/20 to-blue-900/20', to: '/reminders' },
+  { title: 'Дни рождения', desc: 'Дни рождения', emoji: '🎂', color: 'from-pink-500/20 to-pink-900/20', to: '/birthdays' },
+  { title: 'Статистика', desc: 'Статистика чатов', emoji: '📊', color: 'from-violet-500/20 to-violet-900/20', to: '/stats' },
 ]
 
 export default function HomePage() {
@@ -22,7 +22,7 @@ export default function HomePage() {
       className="px-4 pt-6"
     >
       <h1 className="text-2xl font-bold text-white mb-1">Dvoretskiy</h1>
-      <p className="text-spotify-text text-sm mb-6">Mini App</p>
+      <p className="text-spotify-text text-sm mb-6">Мини-приложение</p>
 
       <div className="grid grid-cols-2 gap-3">
         {cards.map((card, i) => (

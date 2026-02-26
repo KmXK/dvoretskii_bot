@@ -4,6 +4,10 @@ import uuid
 import random
 import logging
 import time
+import hashlib
+import hmac
+from os import environ
+from urllib.parse import parse_qsl
 
 from aiohttp import web
 
@@ -21,6 +25,29 @@ _DISCONNECT_GRACE = 60
 
 _BLIND_MULTIPLIERS = [1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 50, 100]
 MONKEY_CHIP_RATE = 10
+
+
+def _validate_telegram_init_data(init_data_raw: str) -> dict | None:
+    bot_token = environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not init_data_raw or not bot_token:
+        return None
+    try:
+        params = dict(parse_qsl(init_data_raw, keep_blank_values=True))
+        received_hash = params.pop("hash", None)
+        if not received_hash:
+            return None
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(computed_hash, received_hash):
+            return None
+        user_str = params.get("user")
+        if user_str:
+            return json.loads(user_str)
+        return None
+    except Exception:
+        logger.exception("poker initData validation error")
+        return None
 
 
 class Room:
@@ -662,10 +689,16 @@ async def poker_ws_handler(request: web.Request):
                 t = data.get("type")
 
                 if t == "auth":
-                    user_id = data.get("userId")
-                    user_name = str(data.get("name", "Player"))[:30]
+                    init_data_raw = str(data.get("initData", ""))
+                    tg_user = _validate_telegram_init_data(init_data_raw)
+                    if not tg_user or not tg_user.get("id"):
+                        await ws.send_str(json.dumps({"type": "error", "message": "Invalid Telegram auth"}))
+                        continue
+
+                    user_id = int(tg_user["id"])
+                    user_name = str(tg_user.get("username") or tg_user.get("first_name") or "Player")[:30]
                     if not user_id:
-                        await ws.send_str(json.dumps({"type": "error", "message": "userId required"}))
+                        await ws.send_str(json.dumps({"type": "error", "message": "Telegram user required"}))
                         continue
 
                     if user_id in _manager.player_rooms:

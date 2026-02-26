@@ -9,10 +9,10 @@ const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
 function formatInterval(sec) {
   if (!sec) return ''
-  if (sec >= 86400 && sec % 86400 === 0) return `${sec / 86400}d`
-  if (sec >= 3600 && sec % 3600 === 0) return `${sec / 3600}h`
-  if (sec >= 60 && sec % 60 === 0) return `${sec / 60}m`
-  return `${sec}s`
+  if (sec >= 86400 && sec % 86400 === 0) return `${sec / 86400}д`
+  if (sec >= 3600 && sec % 3600 === 0) return `${sec / 3600}ч`
+  if (sec >= 60 && sec % 60 === 0) return `${sec / 60}м`
+  return `${sec}с`
 }
 
 function ReminderCard({ reminder, onDelete, onEdit }) {

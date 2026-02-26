@@ -742,7 +742,7 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
       <div className="rounded-2xl p-4 border border-white/5"
         style={{ background: 'linear-gradient(135deg, #0a1628 0%, #162040 50%, #0a1628 100%)' }}>
         <h2 className="text-center text-white font-bold text-xl mb-1">🎲 Слоты 5×5</h2>
-        <p className="text-center text-white/40 text-xs mb-1">↔ ↕ ↗ ↘ кластеры · 🐵 = wild</p>
+        <p className="text-center text-white/40 text-xs mb-1">↔ ↕ ↗ ↘ кластеры · 🐵 = джокер</p>
         <p className="text-center text-white/40 text-xs mb-4">Ставка: {SPIN5_COST} 🐵</p>
 
         <div className="rounded-xl p-2 mb-4" style={{ background: 'rgba(0,0,0,0.3)' }}>
@@ -802,7 +802,7 @@ function Slots5x5({ balance, onBalanceChange, onBack, onGameResult, sound }) {
         <div className="flex flex-col gap-1">
           {S5.map(s => (
             <div key={s} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-1.5">
-              <span className="text-lg">{s} {s === '🐵' && <span className="text-[10px] text-yellow-400">wild</span>}</span>
+              <span className="text-lg">{s} {s === '🐵' && <span className="text-[10px] text-yellow-400">джокер</span>}</span>
               <span className="text-xs text-white/70">{PAY5[s].join(' / ')}</span>
             </div>
           ))}
@@ -1799,7 +1799,7 @@ const GAMES = [
   },
   {
     id: 'poker', name: 'Покер', emoji: '🃏', available: true,
-    gradient: 'from-emerald-600 via-green-500 to-teal-400', glow: 'shadow-green-500/40', desc: "Texas Hold'em", route: '/poker'
+    gradient: 'from-emerald-600 via-green-500 to-teal-400', glow: 'shadow-green-500/40', desc: "Техасский холдем", route: '/poker'
   },
   {
     id: 'coinflip', name: 'Монетка', emoji: '🪙', available: true,
@@ -1863,7 +1863,7 @@ function GameCard({ game, onClick, index }) {
 // ===== main =====
 export default function CasinoPage() {
   const { userId, username, firstName, initData } = useTelegram()
-  const userName = username || firstName || 'guest'
+  const userName = username || firstName || 'гость'
   const navigate = useNavigate()
   const { sound, muted, toggleMute } = useCasinoSounds()
   const [view, setView] = useState('hub')

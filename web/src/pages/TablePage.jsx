@@ -10,28 +10,28 @@ import {
 } from '@tanstack/react-table'
 
 const data = [
-  { id: 1, name: 'Alex', messages: 1420, rewards: 5, role: 'Admin' },
-  { id: 2, name: 'Maria', messages: 980, rewards: 3, role: 'Member' },
-  { id: 3, name: 'Ivan', messages: 2100, rewards: 8, role: 'Admin' },
-  { id: 4, name: 'Olga', messages: 560, rewards: 2, role: 'Member' },
-  { id: 5, name: 'Dmitry', messages: 1800, rewards: 6, role: 'Member' },
-  { id: 6, name: 'Anna', messages: 340, rewards: 1, role: 'Member' },
-  { id: 7, name: 'Pavel', messages: 3200, rewards: 12, role: 'Admin' },
-  { id: 8, name: 'Elena', messages: 750, rewards: 4, role: 'Member' },
+  { id: 1, name: 'Alex', messages: 1420, rewards: 5, role: 'Админ' },
+  { id: 2, name: 'Maria', messages: 980, rewards: 3, role: 'Участник' },
+  { id: 3, name: 'Ivan', messages: 2100, rewards: 8, role: 'Админ' },
+  { id: 4, name: 'Olga', messages: 560, rewards: 2, role: 'Участник' },
+  { id: 5, name: 'Dmitry', messages: 1800, rewards: 6, role: 'Участник' },
+  { id: 6, name: 'Anna', messages: 340, rewards: 1, role: 'Участник' },
+  { id: 7, name: 'Pavel', messages: 3200, rewards: 12, role: 'Админ' },
+  { id: 8, name: 'Elena', messages: 750, rewards: 4, role: 'Участник' },
 ]
 
 const columns = [
-  { accessorKey: 'name', header: 'Name' },
-  { accessorKey: 'messages', header: 'Messages' },
-  { accessorKey: 'rewards', header: 'Rewards' },
+  { accessorKey: 'name', header: 'Имя' },
+  { accessorKey: 'messages', header: 'Сообщения' },
+  { accessorKey: 'rewards', header: 'Награды' },
   {
     accessorKey: 'role',
-    header: 'Role',
+    header: 'Роль',
     cell: ({ getValue }) => {
       const role = getValue()
       return (
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-          role === 'Admin'
+          role === 'Админ'
             ? 'bg-spotify-green/20 text-spotify-green'
             : 'bg-white/10 text-spotify-text'
         }`}>
@@ -65,11 +65,11 @@ export default function TablePage() {
       className="px-4 pt-6"
     >
       <BackButton />
-      <h1 className="text-2xl font-bold text-white mb-6">Users</h1>
+      <h1 className="text-2xl font-bold text-white mb-6">Пользователи</h1>
 
       <input
         type="text"
-        placeholder="Search..."
+        placeholder="Поиск..."
         value={globalFilter}
         onChange={e => setGlobalFilter(e.target.value)}
         className="w-full bg-spotify-gray rounded-lg px-4 py-2.5 text-white text-sm
@@ -117,7 +117,7 @@ export default function TablePage() {
         </table>
 
         {table.getRowModel().rows.length === 0 && (
-          <div className="text-center py-8 text-spotify-text text-sm">Nothing found</div>
+          <div className="text-center py-8 text-spotify-text text-sm">Ничего не найдено</div>
         )}
       </div>
     </motion.div>

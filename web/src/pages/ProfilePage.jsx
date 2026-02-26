@@ -67,7 +67,7 @@ export default function ProfilePage() {
       .finally(() => setStatsLoading(false))
   }, [userId, period])
 
-  const displayName = [firstName, lastName].filter(Boolean).join(' ') || username || 'User'
+  const displayName = [firstName, lastName].filter(Boolean).join(' ') || username || 'Пользователь'
   const currentStats = stats ?? { messages: 0, reactions: 0, videos: 0 }
   const currentRewards = rewards ?? []
   const activeChartMeta = CHART_METRICS.find(m => m.key === activeChart)

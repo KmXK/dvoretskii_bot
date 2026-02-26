@@ -4,9 +4,9 @@ import { useTelegram } from '../context/TelegramContext'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
 const DIFFICULTY_OPTIONS = [
-  { value: 'easy', label: 'Easy', color: 'text-green-400' },
-  { value: 'medium', label: 'Medium', color: 'text-yellow-400' },
-  { value: 'hard', label: 'Hard', color: 'text-red-400' },
+  { value: 'easy', label: 'Легко', color: 'text-green-400' },
+  { value: 'medium', label: 'Средне', color: 'text-yellow-400' },
+  { value: 'hard', label: 'Сложно', color: 'text-red-400' },
 ]
 
 function PokerCard({ rank, suit, hidden = false, small = false }) {
@@ -39,13 +39,13 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
   let statusText = '\u00A0'
   let statusClass = 'text-transparent'
   if (player.allIn && !player.folded) {
-    statusText = 'All-in'
+    statusText = 'Олл-ин'
     statusClass = 'font-bold text-red-400 uppercase'
   } else if (player.folded) {
-    statusText = 'Fold'
+    statusText = 'Фолд'
     statusClass = 'text-zinc-500'
   } else if (player.bet > 0) {
-    statusText = `Bet: ${player.bet}`
+    statusText = `Ставка: ${player.bet}`
     statusClass = 'text-yellow-300'
   }
 
@@ -55,20 +55,20 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
   return (
     <div
       style={isCurrent ? { boxShadow: '0 0 16px 2px rgba(250,204,21,0.35)' } : undefined}
-      className={`relative rounded-xl border-2 ${border} ${bg} p-2 w-[110px] h-[120px] flex flex-col items-center transition-colors transition-shadow duration-400`}
+      className={`relative rounded-xl border-2 ${border} ${bg} p-2 w-[110px] h-[120px] flex flex-col items-center transition-shadow duration-400`}
     >
       {isDealer && (
         <span className="absolute -top-2 -left-2 bg-yellow-400 text-black text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">D</span>
       )}
       {isCurrent && (
         <span className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5 shadow">
-          TURN
+          ХОД
         </span>
       )}
       <span className={`text-xs font-semibold truncate max-w-[90px] ${isMe ? 'text-green-400' : player.isBot ? 'text-blue-300' : 'text-white'}`}>
         {player.name}
       </span>
-      <span className="text-[11px] text-zinc-400">{player.chips} chips</span>
+      <span className="text-[11px] text-zinc-400">{player.chips} фишек</span>
       <span className={`text-[10px] h-[14px] leading-[14px] ${statusClass}`}>{statusText}</span>
 
       <div className="flex gap-0.5 mt-auto h-[56px] items-end">
@@ -112,14 +112,14 @@ function LeaveConfirmDialog({ onConfirm, onCancel }) {
         className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 max-w-xs w-full"
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-white font-bold text-base mb-2">Leave Table?</h3>
-        <p className="text-zinc-400 text-sm mb-4">Your chips will be saved if you return to this room.</p>
+        <h3 className="text-white font-bold text-base mb-2">Покинуть стол?</h3>
+        <p className="text-zinc-400 text-sm mb-4">Ваши фишки сохранятся, если вы вернётесь в эту комнату.</p>
         <div className="flex gap-2">
           <button onClick={onCancel} className="flex-1 bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-            Stay
+            Остаться
           </button>
           <button onClick={onConfirm} className="flex-1 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-            Leave
+            Выйти
           </button>
         </div>
       </motion.div>
@@ -148,14 +148,14 @@ function PokerStatsBlock({ stats }) {
         onClick={() => setExpanded(!expanded)}
         className="flex items-center justify-between w-full text-left mb-3"
       >
-        <h2 className="text-white font-semibold text-sm">Your Stats</h2>
-        <span className="text-zinc-400 text-xs">{expanded ? 'Less ▲' : 'More ▼'}</span>
+        <h2 className="text-white font-semibold text-sm">Ваша статистика</h2>
+        <span className="text-zinc-400 text-xs">{expanded ? 'Меньше ▲' : 'Подробнее ▼'}</span>
       </button>
 
       <div className="grid grid-cols-3 gap-2">
-        <StatCell value={s.games || 0} label="Games" />
-        <StatCell value={s.gamesWon || 0} label="Games won" color="text-green-400" />
-        <StatCell value={s.hands || 0} label="Hands" />
+        <StatCell value={s.games || 0} label="Игр" />
+        <StatCell value={s.gamesWon || 0} label="Побед" color="text-green-400" />
+        <StatCell value={s.hands || 0} label="Раздач" />
       </div>
 
       <AnimatePresence>
@@ -167,21 +167,21 @@ function PokerStatsBlock({ stats }) {
             className="overflow-hidden"
           >
             <div className="grid grid-cols-3 gap-2 mt-2">
-              <StatCell value={s.handsWon || 0} label="Hands won" color="text-green-400" />
-              <StatCell value={s.handsLost || 0} label="Hands lost" color="text-red-400" />
-              <StatCell value={s.handsFolded || 0} label="Folded" color="text-zinc-400" />
+              <StatCell value={s.handsWon || 0} label="Выиграно" color="text-green-400" />
+              <StatCell value={s.handsLost || 0} label="Проиграно" color="text-red-400" />
+              <StatCell value={s.handsFolded || 0} label="Фолды" color="text-zinc-400" />
             </div>
 
             <div className="grid grid-cols-3 gap-2 mt-2">
-              <StatCell value={s.chipsWon || 0} label="Chips won" color="text-green-400" />
-              <StatCell value={s.chipsLost || 0} label="Chips lost" color="text-red-400" />
-              <StatCell value={netChips} label="Net chips" color={netChips >= 0 ? 'text-green-400' : 'text-red-400'} />
+              <StatCell value={s.chipsWon || 0} label="Выиграно фишек" color="text-green-400" />
+              <StatCell value={s.chipsLost || 0} label="Проиграно фишек" color="text-red-400" />
+              <StatCell value={netChips} label="Итог" color={netChips >= 0 ? 'text-green-400' : 'text-red-400'} />
             </div>
 
             {s.hands > 0 && (
               <div className="mt-3 bg-zinc-800 rounded-lg p-2.5">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-zinc-400 text-[11px]">Win rate</span>
+                  <span className="text-zinc-400 text-[11px]">Винрейт</span>
                   <span className="text-white text-xs font-bold">{winRate}%</span>
                 </div>
                 <div className="w-full bg-zinc-700 rounded-full h-1.5">
@@ -195,14 +195,14 @@ function PokerStatsBlock({ stats }) {
 
             {s.combos && s.combos.length > 0 && (
               <div className="mt-3">
-                <h3 className="text-zinc-400 text-[11px] mb-2">Combinations</h3>
+                <h3 className="text-zinc-400 text-[11px] mb-2">Комбинации</h3>
                 <div className="flex flex-col gap-1">
                   {s.combos.map((c, i) => (
                     <div key={i} className="flex items-center justify-between bg-zinc-800 rounded-lg px-2.5 py-1.5">
                       <span className="text-zinc-300 text-xs">{c.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-500 text-[10px]">collected {c.collected}</span>
-                        <span className="text-green-400 text-[10px] font-semibold">won {c.won}</span>
+                        <span className="text-zinc-500 text-[10px]">собрано {c.collected}</span>
+                        <span className="text-green-400 text-[10px] font-semibold">выиграно {c.won}</span>
                       </div>
                     </div>
                   ))}
@@ -217,11 +217,11 @@ function PokerStatsBlock({ stats }) {
 }
 
 const BLIND_INTERVAL_OPTIONS = [
-  { value: 2, label: '2 min' },
-  { value: 3, label: '3 min' },
-  { value: 5, label: '5 min' },
-  { value: 10, label: '10 min' },
-  { value: 15, label: '15 min' },
+  { value: 2, label: '2 мин' },
+  { value: 3, label: '3 мин' },
+  { value: 5, label: '5 мин' },
+  { value: 10, label: '10 мин' },
+  { value: 15, label: '15 мин' },
 ]
 
 function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
@@ -260,34 +260,34 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
         </svg>
         Назад
       </button>
-      <h1 className="text-2xl font-bold text-white mb-1">Poker</h1>
-      <p className="text-zinc-400 text-sm mb-6">Texas Hold'em — create a room or join one</p>
+      <h1 className="text-2xl font-bold text-white mb-1">Покер</h1>
+      <p className="text-zinc-400 text-sm mb-6">Техасский холдем — создайте комнату или присоединитесь</p>
       {Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-4">Balance: {monkeyBalance} 🐵</p>
+        <p className="text-zinc-400 text-xs mb-4">Баланс: {monkeyBalance} 🐵</p>
       )}
 
       {pokerStats && <PokerStatsBlock stats={pokerStats} />}
 
       <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-3">Create Room</h2>
+        <h2 className="text-white font-semibold text-sm mb-3">Создать комнату</h2>
         <div className="flex gap-2 mb-2">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="Room name"
+            placeholder="Название комнаты"
             className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:ring-1 focus:ring-green-500"
             maxLength={40}
             onKeyDown={e => e.key === 'Enter' && create()}
           />
           <button onClick={create} className="bg-green-600 hover:bg-green-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-            Create
+            Создать
           </button>
         </div>
         <button
           onClick={() => setShowSettings(!showSettings)}
           className="text-zinc-400 hover:text-white text-xs transition-colors"
         >
-          {showSettings ? 'Hide settings ▲' : 'Settings ▼'}
+          {showSettings ? 'Скрыть настройки ▲' : 'Настройки ▼'}
         </button>
         <AnimatePresence>
           {showSettings && (
@@ -299,7 +299,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
             >
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Small blind</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Малый блайнд</label>
                   <input
                     type="number"
                     value={sb}
@@ -309,7 +309,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Big blind</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Большой блайнд</label>
                   <input
                     type="number"
                     value={bb}
@@ -319,7 +319,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Start chips</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Стартовые фишки</label>
                   <input
                     type="number"
                     value={sc}
@@ -334,12 +334,12 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                   />
                   {playForMonkeys && (
                     <p className="text-zinc-600 text-[10px] mt-1">
-                      Buy-in: {Math.floor(sc / 10)} 🐵 ({sc} chips)
+                      Бай-ин: {Math.floor(sc / 10)} 🐵 ({sc} фишек)
                     </p>
                   )}
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Боты</label>
                   <input
                     type="number"
                     value={bc}
@@ -352,7 +352,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                 </div>
                 {Number(bc) > 0 && (
                   <div className="col-span-2">
-                    <label className="text-zinc-500 text-[10px] block mb-1">Bot difficulty</label>
+                    <label className="text-zinc-500 text-[10px] block mb-1">Сложность ботов</label>
                     <div className="flex gap-1.5">
                       {DIFFICULTY_OPTIONS.map(opt => (
                         <button
@@ -367,7 +367,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                   </div>
                 )}
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Currency</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Валюта</label>
                   <div className="flex gap-1.5">
                     <button
                       onClick={() => setPlayForMonkeys(false)}
@@ -375,7 +375,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                         !playForMonkeys ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
                       }`}
                     >
-                      Chips only
+                      Только фишки
                     </button>
                     <button
                       onClick={() => {
@@ -386,11 +386,11 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                         playForMonkeys ? 'bg-zinc-600 text-yellow-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
                       }`}
                     >
-                      Monkeys → chips
+                      Обезьянки → фишки
                     </button>
                   </div>
                   {playForMonkeys && (
-                    <p className="text-zinc-600 text-[10px] mt-1">Rate: 1 🐵 = 10 chips. Exchange on room entry.</p>
+                    <p className="text-zinc-600 text-[10px] mt-1">Курс: 1 🐵 = 10 фишек. Обмен при входе в комнату.</p>
                   )}
                 </div>
                 <div className="col-span-2">
@@ -401,12 +401,12 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                       onChange={e => setBiEnabled(e.target.checked)}
                       className="accent-green-500 w-4 h-4"
                     />
-                    <span className="text-zinc-300 text-xs">Auto increase blinds</span>
+                    <span className="text-zinc-300 text-xs">Автоувеличение блайндов</span>
                   </label>
                 </div>
                 {biEnabled && (
                   <div className="col-span-2">
-                    <label className="text-zinc-500 text-[10px] block mb-1">Increase every</label>
+                    <label className="text-zinc-500 text-[10px] block mb-1">Повышать каждые</label>
                     <div className="flex gap-1.5">
                       {BLIND_INTERVAL_OPTIONS.map(opt => (
                         <button
@@ -428,14 +428,14 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
 
       <div className="bg-zinc-900 rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-white font-semibold text-sm">Rooms</h2>
+          <h2 className="text-white font-semibold text-sm">Комнаты</h2>
           <button onClick={refresh} className="text-zinc-400 hover:text-white text-xs transition-colors">
-            Refresh
+            Обновить
           </button>
         </div>
 
         {rooms.length === 0 && (
-          <p className="text-zinc-500 text-sm text-center py-4">No rooms available</p>
+          <p className="text-zinc-500 text-sm text-center py-4">Нет доступных комнат</p>
         )}
 
         <div className="flex flex-col gap-2">
@@ -444,14 +444,14 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
               <div>
                 <span className="text-white text-sm font-medium">{room.name}</span>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} players</span>
+                  <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} игроков</span>
                   {room.botCount > 0 && <span className="text-blue-400 text-xs">🤖{room.botCount}</span>}
                   {room.playForMonkeys && (
                     <span className="text-yellow-400 text-xs">
                       🐵{Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))}
                     </span>
                   )}
-                  {room.started && <span className="text-yellow-400 text-xs">In game</span>}
+                  {room.started && <span className="text-yellow-400 text-xs">В игре</span>}
                   <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}{room.blindIncreaseEnabled ? ' ↑' : ''}</span>
                 </div>
               </div>
@@ -460,7 +460,7 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                 disabled={room.playerCount >= room.maxPlayers}
                 className="bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
               >
-                {room.started ? 'Spectate' : 'Join'}
+                {room.started ? 'Наблюдать' : 'Войти'}
               </button>
             </div>
           ))}
@@ -512,7 +512,7 @@ function InviteBlock({ room, userId }) {
           roomId: room.id,
           playerCount: room.playerCount,
           maxPlayers: room.maxPlayers,
-          creatorName: room.players?.[0]?.name || 'Someone',
+          creatorName: room.players?.[0]?.name || 'Кто-то',
         })
       })
       setSent(true)
@@ -537,7 +537,7 @@ function InviteBlock({ room, userId }) {
         className="flex items-center justify-between w-full text-left"
       >
         <span className="text-white font-semibold text-sm">
-          {sent ? '✓ Invitations sent' : 'Invite to chats'}
+          {sent ? '✓ Приглашения отправлены' : 'Пригласить в чаты'}
         </span>
         <span className="text-zinc-400 text-xs">{expanded ? '▲' : '▼'}</span>
       </button>
@@ -569,7 +569,7 @@ function InviteBlock({ room, userId }) {
                 disabled={selected.size === 0 || sending}
                 className="w-full mt-3 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
               >
-                {sending ? 'Sending...' : `Send to ${selected.size} chat${selected.size !== 1 ? 's' : ''}`}
+                {sending ? 'Отправка...' : `Отправить в ${selected.size} ${selected.size === 1 ? 'чат' : selected.size < 5 ? 'чата' : 'чатов'}`}
               </button>
             )}
           </motion.div>
@@ -628,15 +628,15 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold text-white">{room.name}</h1>
         <button onClick={() => setShowLeave(true)} className="text-red-400 hover:text-red-300 text-sm transition-colors">
-          Leave
+          Выйти
         </button>
       </div>
       {playForMonkeys && Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-4">Balance: {monkeyBalance} 🐵</p>
+        <p className="text-zinc-400 text-xs mb-4">Баланс: {monkeyBalance} 🐵</p>
       )}
 
       <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-3">Players ({room.playerCount}/8)</h2>
+        <h2 className="text-white font-semibold text-sm mb-3">Игроки ({room.playerCount}/8)</h2>
         <div className="flex flex-col gap-2">
           {(room.players || []).map((p) => (
             <div key={p.id} className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
@@ -646,7 +646,7 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
               <span className={`text-sm ${p.id === userId ? 'text-green-400 font-semibold' : p.isBot ? 'text-blue-300' : 'text-white'}`}>
                 {p.name}
               </span>
-              {p.id === room.creator_id && <span className="text-xs text-yellow-400 ml-auto">Owner</span>}
+              {p.id === room.creator_id && <span className="text-xs text-yellow-400 ml-auto">Создатель</span>}
             </div>
           ))}
         </div>
@@ -656,10 +656,10 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
 
       <div className="bg-zinc-900 rounded-xl p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-zinc-400 text-xs font-medium">Settings</span>
+          <span className="text-zinc-400 text-xs font-medium">Настройки</span>
           {isCreator && !editBlinds && (
             <button onClick={() => setEditBlinds(true)} className="text-green-400 text-xs hover:text-green-300 transition-colors">
-              Edit
+              Изменить
             </button>
           )}
         </div>
@@ -668,19 +668,19 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
           <div className="flex flex-col gap-2">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Small blind</label>
+                <label className="text-zinc-500 text-[10px] block mb-1">Малый блайнд</label>
                 <input type="number" value={sb}
                   onChange={e => { const v = Math.max(1, Number(e.target.value)); setSb(v); if (bb < v * 2) setBb(v * 2) }}
                   className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={1} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Big blind</label>
+                <label className="text-zinc-500 text-[10px] block mb-1">Большой блайнд</label>
                 <input type="number" value={bb}
                   onChange={e => setBb(Math.max(sb * 2, Number(e.target.value)))}
                   className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={sb * 2} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Start chips</label>
+                <label className="text-zinc-500 text-[10px] block mb-1">Стартовые фишки</label>
                 <input type="number" value={sc}
                   onChange={e => {
                     const minChips = Math.max(bb * 10, playForMonkeys ? 10 : 0)
@@ -690,7 +690,7 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
                   className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={bb * 10} step={playForMonkeys ? 10 : 100} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Bots</label>
+                <label className="text-zinc-500 text-[10px] block mb-1">Боты</label>
                 <input type="number" value={bc}
                   onChange={e => setBc(e.target.value === '' ? '' : Math.min(7, Number(e.target.value)))}
                   onBlur={() => setBc(prev => Math.max(0, Math.min(7, Number(prev) || 0)))}
@@ -698,7 +698,7 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
               </div>
               {Number(bc) > 0 && (
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Bot difficulty</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Сложность ботов</label>
                   <div className="flex gap-1.5">
                     {DIFFICULTY_OPTIONS.map(opt => (
                       <button
@@ -713,10 +713,10 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
                 </div>
               )}
               <div className="col-span-2">
-                <label className="text-zinc-500 text-[10px] block mb-1">Currency</label>
+                <label className="text-zinc-500 text-[10px] block mb-1">Валюта</label>
                 <div className="bg-zinc-800 rounded-lg px-3 py-2 flex items-center justify-between">
-                  <span className="text-zinc-300 text-xs">{playForMonkeys ? 'Monkeys → chips' : 'Chips only'}</span>
-                  <span className="text-zinc-500 text-[10px]">Locked after room creation</span>
+                  <span className="text-zinc-300 text-xs">{playForMonkeys ? 'Обезьянки → фишки' : 'Только фишки'}</span>
+                  <span className="text-zinc-500 text-[10px]">Блокируется после создания комнаты</span>
                 </div>
               </div>
               <div className="col-span-2">
@@ -727,12 +727,12 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
                     onChange={e => setBiEnabled(e.target.checked)}
                     className="accent-green-500 w-4 h-4"
                   />
-                  <span className="text-zinc-300 text-xs">Auto increase blinds</span>
+                  <span className="text-zinc-300 text-xs">Автоувеличение блайндов</span>
                 </label>
               </div>
               {biEnabled && (
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Increase every</label>
+                  <label className="text-zinc-500 text-[10px] block mb-1">Повышать каждые</label>
                   <div className="flex gap-1.5">
                     {BLIND_INTERVAL_OPTIONS.map(opt => (
                       <button
@@ -748,24 +748,24 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
               )}
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setEditBlinds(false)} className="flex-1 bg-zinc-700 text-white text-xs py-1.5 rounded-lg">Cancel</button>
-              <button onClick={saveSettings} className="flex-1 bg-green-600 text-white text-xs py-1.5 rounded-lg">Save</button>
+              <button onClick={() => setEditBlinds(false)} className="flex-1 bg-zinc-700 text-white text-xs py-1.5 rounded-lg">Отмена</button>
+              <button onClick={saveSettings} className="flex-1 bg-green-600 text-white text-xs py-1.5 rounded-lg">Сохранить</button>
             </div>
           </div>
         ) : (
           <>
-            <p className="text-zinc-400 text-xs mb-1">Blinds: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
-            <p className="text-zinc-400 text-xs mb-1">Starting chips: {room.startChips || 1000}</p>
+            <p className="text-zinc-400 text-xs mb-1">Блайнды: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
+            <p className="text-zinc-400 text-xs mb-1">Стартовые фишки: {room.startChips || 1000}</p>
             <p className="text-zinc-400 text-xs mb-1">
-              Currency: {room.playForMonkeys ? `Monkeys (buy-in ${Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))} 🐵)` : 'Chips'}
+              Валюта: {room.playForMonkeys ? `Обезьянки (бай-ин ${Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))} 🐵)` : 'Фишки'}
             </p>
-            <p className="text-zinc-400 text-xs mb-1">Bots: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Medium'})` : ''}</p>
+            <p className="text-zinc-400 text-xs mb-1">Боты: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Средне'})` : ''}</p>
             {(room.blindIncreaseEnabled ?? true) ? (
-              <p className="text-zinc-400 text-xs mb-1">Blind increase: every {room.blindIncreaseInterval || 5} min</p>
+              <p className="text-zinc-400 text-xs mb-1">Повышение блайндов: каждые {room.blindIncreaseInterval || 5} мин</p>
             ) : (
-              <p className="text-zinc-400 text-xs mb-1">Blind increase: off</p>
+              <p className="text-zinc-400 text-xs mb-1">Повышение блайндов: выключено</p>
             )}
-            <p className="text-zinc-400 text-xs">Min players: 2 (including bots)</p>
+            <p className="text-zinc-400 text-xs">Мин. игроков: 2 (включая ботов)</p>
           </>
         )}
       </div>
@@ -776,10 +776,10 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
           disabled={(room.playerCount || 0) < 2}
           className="w-full bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
         >
-          {(room.playerCount || 0) < 2 ? 'Need at least 2 players (add bots or invite)...' : 'Start Game'}
+          {(room.playerCount || 0) < 2 ? 'Нужно минимум 2 игрока (добавьте ботов или пригласите)...' : 'Начать игру'}
         </button>
       ) : (
-        <div className="text-center text-zinc-400 text-sm py-3">Waiting for owner to start...</div>
+        <div className="text-center text-zinc-400 text-sm py-3">Ждём, пока создатель начнёт игру...</div>
       )}
     </div>
   )
@@ -893,20 +893,20 @@ function GameTable({ state, send, userId, onLeave }) {
       </AnimatePresence>
 
       <div className="flex items-center justify-between">
-        <h2 className="text-white font-bold text-lg">Hand #{handNum}</h2>
+        <h2 className="text-white font-bold text-lg">Раздача #{handNum}</h2>
         <div className="flex items-center gap-3">
           <span className="text-zinc-400 text-xs uppercase">{phaseLabel(phase)}</span>
           <button onClick={() => setShowLeave(true)} className="text-red-400 hover:text-red-300 text-xs transition-colors">
-            Leave
+            Выйти
           </button>
         </div>
       </div>
 
       {smallBlind && (
         <div className="text-zinc-500 text-[10px] text-center -mt-2 flex items-center justify-center gap-2">
-          <span>Blinds {smallBlind}/{bigBlind}</span>
+          <span>Бლაინды {smallBlind}/{bigBlind}</span>
           {blindIncreaseEnabled && blindLevel > 0 && (
-            <span className="text-yellow-500/70">Lvl {blindLevel + 1}</span>
+            <span className="text-yellow-500/70">Ур. {blindLevel + 1}</span>
           )}
           {blindIncreaseEnabled && blindCountdown > 0 && (
             <span className="text-zinc-600">
@@ -934,7 +934,7 @@ function GameTable({ state, send, userId, onLeave }) {
       <div className="bg-zinc-900/80 rounded-xl p-4 flex flex-col items-center gap-3">
         <AnimatePresence mode="popLayout">
           <div className="flex gap-1.5 justify-center min-h-[68px] items-center">
-            {community.length === 0 && <span className="text-zinc-600 text-sm">Waiting for cards...</span>}
+            {community.length === 0 && <span className="text-zinc-600 text-sm">Ожидание карт...</span>}
             {community.map((c, i) => (
               <motion.div
                 key={`card-${i}`}
@@ -953,8 +953,8 @@ function GameTable({ state, send, userId, onLeave }) {
           </div>
         </AnimatePresence>
         <div className="flex items-center gap-3">
-          <span className="text-yellow-400 font-bold text-lg">Pot: {pot}</span>
-          {currentBet > 0 && <span className="text-zinc-400 text-xs">Current bet: {currentBet}</span>}
+          <span className="text-yellow-400 font-bold text-lg">Банк: {pot}</span>
+          {currentBet > 0 && <span className="text-zinc-400 text-xs">Текущая ставка: {currentBet}</span>}
         </div>
       </div>
 
@@ -1013,17 +1013,17 @@ function GameTable({ state, send, userId, onLeave }) {
               <div className="flex gap-2">
                 {actions.includes('fold') && (
                   <button onClick={() => doAction('fold')} className="flex-1 bg-red-600/80 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-                    Fold
+                    Фолд
                   </button>
                 )}
                 {actions.includes('check') && (
                   <button onClick={() => doAction('check')} className="flex-1 bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-                    Check
+                    Чек
                   </button>
                 )}
                 {actions.includes('call') && !callIsAllIn && (
                   <button onClick={() => doAction('call')} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-                    Call {callAmount}
+                    Колл {callAmount}
                   </button>
                 )}
               </div>
@@ -1054,26 +1054,26 @@ function GameTable({ state, send, userId, onLeave }) {
                       onClick={() => doAction('raise', raiseAmount)}
                       className="bg-green-600 hover:bg-green-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap"
                     >
-                      Raise
+                      Рейз
                     </button>
                   </div>
                   <div className="flex gap-1.5 justify-center">
                     {[minRaiseTo, Math.floor(pot / 2 + (me?.bet || 0)), pot + (me?.bet || 0)].filter((v, i, a) => v <= maxRaise && a.indexOf(v) === i && v >= minRaiseTo).map(v => (
                       <button key={v} onClick={() => handleRaiseSlider(v)}
                         className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded transition-colors">
-                        {v === minRaiseTo ? 'Min' : v >= maxRaise ? 'Max' : v}
+                        {v === minRaiseTo ? 'Мин' : v >= maxRaise ? 'Макс' : v}
                       </button>
                     ))}
                     <button onClick={() => handleRaiseSlider(maxRaise)}
                       className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded transition-colors">
-                      Max
+                      Макс
                     </button>
                   </div>
                 </div>
               )}
               {actions.includes('all_in') && (
                 <button onClick={() => doAction('all_in')} className="bg-red-700 hover:bg-red-600 text-white text-sm font-bold py-2.5 rounded-lg transition-colors">
-                  All-in ({myChips}{callIsAllIn ? ' — call' : ''})
+                  Олл-ин ({myChips}{callIsAllIn ? ' — колл' : ''})
                 </button>
               )}
               </div>
@@ -1082,13 +1082,13 @@ function GameTable({ state, send, userId, onLeave }) {
           </AnimatePresence>
 
           {!isMyTurn && phase !== 'showdown' && phase !== 'waiting' && !players[myIndex].folded && !players[myIndex].sittingOut && (
-            <p className="text-zinc-500 text-xs text-center mt-2">Waiting for opponent...</p>
+            <p className="text-zinc-500 text-xs text-center mt-2">Ожидание соперника...</p>
           )}
           {players[myIndex].folded && phase !== 'showdown' && (
-            <p className="text-zinc-500 text-xs text-center mt-2">You folded</p>
+            <p className="text-zinc-500 text-xs text-center mt-2">Вы сбросили карты</p>
           )}
           {players[myIndex].sittingOut && (
-            <p className="text-zinc-500 text-xs text-center mt-2">Sitting out — you'll join next hand</p>
+            <p className="text-zinc-500 text-xs text-center mt-2">Вы вне раздачи — подключитесь к следующей</p>
           )}
         </div>
       )}
@@ -1129,18 +1129,18 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
   let summaryLines = []
   if (winnerHands.length > 0 && loserEntries.length > 0) {
     const wDesc = winnerHands[0].description || winnerHands[0].name
-    summaryLines.push(`${winnerNames} wins with ${wDesc}`)
+    summaryLines.push(`${winnerNames} выигрывает с комбинацией: ${wDesc}`)
     for (const l of loserEntries) {
       const lName = players[l.idx]?.name || '?'
       const lDesc = l.description || l.name
       if (winnerHands[0].score > l.score) {
-        summaryLines.push(`${winnerHands[0].name} (rank ${winnerHands[0].score}) beats ${l.name} (rank ${l.score}) of ${lName}`)
+        summaryLines.push(`${winnerHands[0].name} (ранг ${winnerHands[0].score}) сильнее ${l.name} (ранг ${l.score}) у ${lName}`)
       } else if (winnerHands[0].score === l.score) {
-        summaryLines.push(`${lName} also had ${l.name}, but lost on kickers`)
+        summaryLines.push(`${lName} тоже собрал ${l.name}, но проиграл по кикерам`)
       }
     }
   } else if (!hasHands && results.winners.length > 0) {
-    summaryLines.push(`${winnerNames} wins — all opponents folded`)
+    summaryLines.push(`${winnerNames} выигрывает — все соперники сбросили карты`)
   }
 
   return (
@@ -1150,7 +1150,7 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
       className="bg-zinc-900 border border-yellow-500/30 rounded-xl p-4"
     >
       <h3 className="text-yellow-400 font-bold text-sm mb-2 text-center">
-        Results
+        Результаты
       </h3>
       <div className="flex flex-col gap-1.5">
         {Object.entries(hands).map(([idx, hand]) => {
@@ -1171,7 +1171,7 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
         })}
         {results.winners?.length > 0 && !hasHands && (
           <div className="text-center text-yellow-400 text-sm">
-            🏆 {players[results.winners[0]]?.name} wins
+            🏆 {players[results.winners[0]]?.name} победил
           </div>
         )}
       </div>
@@ -1240,13 +1240,13 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
             onClick={onReady}
             className="w-full bg-green-600 hover:bg-green-500 text-white text-sm font-bold py-2.5 rounded-lg transition-colors"
           >
-            Continue
+            Продолжить
           </button>
         ) : (
-          <span className="text-green-400 text-xs font-semibold">✓ Ready</span>
+          <span className="text-green-400 text-xs font-semibold">✓ Готово</span>
         )}
         <span className="text-zinc-600 text-[11px]">
-          {readyPlayers.length}/{Math.max(totalEligible, 1)} players ready
+          {readyPlayers.length}/{Math.max(totalEligible, 1)} игроков готовы
         </span>
       </div>
     </motion.div>
@@ -1255,19 +1255,19 @@ function ShowdownResults({ results, players, myIndex, userId, readyPlayers, imRe
 
 function phaseLabel(phase) {
   const map = {
-    waiting: 'Waiting',
-    preflop: 'Pre-flop',
+    waiting: 'Ожидание',
+    preflop: 'Префлоп',
     flop: 'Flop',
-    turn: 'Turn',
-    river: 'River',
-    showdown: 'Showdown',
+    turn: 'Тёрн',
+    river: 'Ривер',
+    showdown: 'Вскрытие',
   }
   return map[phase] || phase
 }
 
 function actionLabel(la) {
   if (!la) return ''
-  const map = { fold: 'Fold', check: 'Check', call: 'Call', raise: 'Raise', all_in: 'All-in' }
+  const map = { fold: 'Фолд', check: 'Чек', call: 'Колл', raise: 'Рейз', all_in: 'Олл-ин' }
   const label = map[la.action] || la.action
   if (la.amount) return `${label} ${la.amount}`
   return label
@@ -1296,7 +1296,7 @@ function actionColor(action) {
 }
 
 export default function PokerPage() {
-  const { userId, firstName, username } = useTelegram()
+  const { userId, initData } = useTelegram()
   const [view, setView] = useState('lobby')
   const [rooms, setRooms] = useState([])
   const [room, setRoom] = useState(null)
@@ -1309,7 +1309,6 @@ export default function PokerPage() {
   const reconnectTimer = useRef(null)
 
   const effectiveId = userId || Math.floor(Math.random() * 900000) + 100000
-  const effectiveName = firstName || username || 'Guest'
 
   const send = useCallback((msg) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1333,7 +1332,7 @@ export default function PokerPage() {
 
     ws.onopen = () => {
       setConnected(true)
-      ws.send(JSON.stringify({ type: 'auth', userId: effectiveId, name: effectiveName }))
+      ws.send(JSON.stringify({ type: 'auth', initData }))
       ws.send(JSON.stringify({ type: 'list_rooms' }))
     }
 
@@ -1370,7 +1369,7 @@ export default function PokerPage() {
             bigBlind: data.bigBlind,
             blindLevel: data.blindLevel,
           } : prev)
-          setError(`Blinds increased: ${data.smallBlind}/${data.bigBlind}`)
+          setError(`Блайнды повышены: ${data.smallBlind}/${data.bigBlind}`)
           setTimeout(() => setError(null), 3000)
           break
         case 'reconnected':
@@ -1404,7 +1403,7 @@ export default function PokerPage() {
     }
 
     ws.onerror = () => ws.close()
-  }, [effectiveId, effectiveName])
+  }, [effectiveId, initData])
 
   useEffect(() => {
     connect()
@@ -1433,7 +1432,7 @@ export default function PokerPage() {
       className="px-4 pt-6 pb-20"
     >
       {!connected && (
-        <div className="text-center text-zinc-500 text-sm py-8">Connecting...</div>
+        <div className="text-center text-zinc-500 text-sm py-8">Подключение...</div>
       )}
 
       <AnimatePresence>
