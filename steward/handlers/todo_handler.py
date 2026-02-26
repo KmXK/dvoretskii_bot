@@ -17,8 +17,6 @@ from steward.helpers.tg_update_helpers import get_message
 from steward.helpers.validation import check, try_get, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.session_registry import get_session_key
-from steward.session.step import Step
-from steward.session.steps.jump_step import JumpStep
 from steward.session.steps.question_step import QuestionStep
 
 
@@ -156,68 +154,9 @@ class TodoRemoveHandler(Handler):
         return None
 
 
-class MarkDoneStep(Step):
-    def __init__(self):
-        self.is_waiting = False
-
-    async def chat(self, context):
-        if not self.is_waiting:
-            todo_id = context.session_context["todo_id"]
-            chat_id = context.session_context["chat_id"]
-            todo = next(
-                t
-                for t in context.repository.db.todo_items
-                if t.id == todo_id and t.chat_id == chat_id and not t.is_done
-            )
-            todo.is_done = True
-            await context.repository.save()
-
-            await context.message.reply_text(
-                f"Событие \"{todo.text}\" завершено!\n\nХотите добавить достижение?",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "Да", callback_data="todo_done_reward|yes"
-                        ),
-                        InlineKeyboardButton(
-                            "Нет", callback_data="todo_done_reward|no"
-                        ),
-                    ]
-                ]),
-            )
-            self.is_waiting = True
-            return False
-        return False
-
-    async def callback(self, context):
-        if not self.is_waiting:
-            return False
-        data = context.callback_query.data
-        if data == "todo_done_reward|yes":
-            context.session_context["add_reward"] = True
-            await context.callback_query.message.edit_reply_markup(reply_markup=None)
-            self.is_waiting = False
-            return True
-        elif data == "todo_done_reward|no":
-            context.session_context["add_reward"] = False
-            await context.callback_query.message.edit_reply_markup(reply_markup=None)
-            self.is_waiting = False
-            return True
-        return False
-
-    def stop(self):
-        self.is_waiting = False
-
-
 class TodoDoneHandler(SessionHandlerBase):
     def __init__(self):
         super().__init__([
-            MarkDoneStep(),
-            JumpStep(
-                "skip_reward",
-                4,
-                lambda c: not c.get("add_reward", True),
-            ),
             QuestionStep(
                 "reward_name",
                 "Название достижения",
@@ -242,62 +181,124 @@ class TodoDoneHandler(SessionHandlerBase):
         ])
 
     async def chat(self, context):
-        key = get_session_key(context.update)
-        if key not in self.sessions:
-            if validate_command_msg(context.update, "todo"):
-                parts = context.message.text.split()
-                if len(parts) >= 3 and parts[1] == "done":
-                    try:
-                        todo_id = int(parts[2])
-                    except ValueError:
-                        await context.message.reply_text(
-                            "ID события должен быть числом"
-                        )
-                        return True
+        if get_session_key(context.update) in self.sessions:
+            return await super().chat(context)
 
-                    chat_id = context.message.chat.id
-                    todo = next(
-                        (
-                            t
-                            for t in self.repository.db.todo_items
-                            if t.id == todo_id and t.chat_id == chat_id
-                        ),
-                        None,
-                    )
-                    if todo is None:
-                        await context.message.reply_text("Событие не найдено")
-                        return True
-                    if todo.is_done:
-                        await context.message.reply_text("Событие уже завершено")
-                        return True
-
-        return await super().chat(context)
-
-    def try_activate_session(self, update, session_context):
-        if not validate_command_msg(update, "todo"):
+        if not validate_command_msg(context.update, "todo"):
             return False
-        parts = update.message.text.split()
-        if len(parts) != 3 or parts[1] != "done":
+
+        parts = context.message.text.split()
+        if len(parts) < 3 or parts[1] != "done":
             return False
+
         try:
             todo_id = int(parts[2])
         except ValueError:
-            return False
+            await context.message.reply_text(
+                "ID события должен быть числом"
+            )
+            return True
 
-        chat_id = update.message.chat.id
+        chat_id = context.message.chat.id
         todo = next(
             (
                 t
                 for t in self.repository.db.todo_items
-                if t.id == todo_id and t.chat_id == chat_id and not t.is_done
+                if t.id == todo_id and t.chat_id == chat_id
             ),
             None,
         )
         if todo is None:
+            await context.message.reply_text("Событие не найдено")
+            return True
+        if todo.is_done:
+            await context.message.reply_text("Событие уже завершено")
+            return True
+
+        todo.is_done = True
+        await self.repository.save()
+
+        await context.message.reply_text(
+            f"Событие \"{todo.text}\" завершено!\n\nХотите добавить достижение?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "Да",
+                        callback_data=f"todo_done_reward|yes|{todo_id}|{context.message.from_user.id}",
+                    ),
+                    InlineKeyboardButton(
+                        "Нет",
+                        callback_data=f"todo_done_reward|no|{todo_id}|{context.message.from_user.id}",
+                    ),
+                ]
+            ]),
+        )
+        return True
+
+    async def callback(self, context):
+        data = context.callback_query.data if context.callback_query else None
+        if data is None:
             return False
+
+        if data.startswith("todo_done_reward|no"):
+            parts = data.split("|")
+            if len(parts) >= 4 and context.callback_query.from_user:
+                try:
+                    initiator_id = int(parts[3])
+                except ValueError:
+                    return False
+                if context.callback_query.from_user.id != initiator_id:
+                    return False
+            try:
+                await context.callback_query.message.delete()
+            except Exception:
+                await context.callback_query.message.edit_reply_markup(reply_markup=None)
+            return True
+
+        if data.startswith("todo_done_reward|yes"):
+            try:
+                await context.callback_query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return await super().callback(context)
+
+        key = get_session_key(context.update)
+        if key in self.sessions:
+            return await super().callback(context)
+        return False
+
+    def try_activate_session(self, update, session_context):
+        if not update.callback_query or not update.callback_query.data:
+            return False
+
+        parts = update.callback_query.data.split("|")
+        if len(parts) < 2 or parts[0] != "todo_done_reward" or parts[1] != "yes":
+            return False
+
+        if update.callback_query.message is None:
+            return False
+
+        if len(parts) >= 4:
+            if update.callback_query.from_user is None:
+                return False
+            try:
+                initiator_id = int(parts[3])
+            except ValueError:
+                return False
+            if update.callback_query.from_user.id != initiator_id:
+                return False
+
+        chat_id = update.callback_query.message.chat.id
+        todo_id: int | None = None
+        if len(parts) >= 3:
+            try:
+                todo_id = int(parts[2])
+            except ValueError:
+                return False
 
         session_context["todo_id"] = todo_id
         session_context["chat_id"] = chat_id
+        session_context["add_reward"] = True
         return True
 
     async def on_session_finished(self, update, session_context):

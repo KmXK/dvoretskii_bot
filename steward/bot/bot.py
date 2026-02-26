@@ -36,7 +36,11 @@ from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
 from steward.helpers.webapp import get_webapp_inline_button
 from steward.metrics import ContextMetrics, MetricsEngine
-from steward.session.session_registry import try_get_session_handler
+from steward.session.session_registry import (
+    cleanup_stale_sessions,
+    deactivate_session,
+    try_get_session_handler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ class Bot:
         self.metrics = metrics
 
         self.hints_updater = InlineHintsUpdater(repository, handlers)
+        self.session_ttl_seconds = int(environ.get("SESSION_TTL_SECONDS", "14400"))
 
         self.bot: ExtBot[None] = None  # type: ignore
         self.delayed_action_handler: DelayedActionHandler
@@ -227,18 +232,24 @@ class Bot:
         func: Callable[[], Awaitable[Any]] | None,
     ):
         update = context.update
+        user_id: int | None = None
+
+        stale_count = cleanup_stale_sessions(self.session_ttl_seconds)
+        if stale_count > 0:
+            logger.info("Cleaned %s stale session(s)", stale_count)
 
         try:
             user = get_from_user(update)
             chat = update.effective_chat
             chat_id = str(chat.id) if chat else "unknown"
             chat_name = (chat.title or chat.username or chat.first_name or chat_id) if chat else "unknown"
-            user_id = str(user.id)
-            user_name = user.username or user.first_name or user_id
+            user_id = user.id if user else None
+            user_id_str = str(user_id) if user_id is not None else "unknown"
+            user_name = (user.username or user.first_name or user_id_str) if user else "unknown"
             context.metrics = ContextMetrics(self.metrics, {
                 "chat_id": chat_id,
                 "chat_name": chat_name,
-                "user_id": user_id,
+                "user_id": user_id_str,
                 "user_name": user_name,
             })
             context.metrics.inc("bot_messages_total", {"action_type": action})
@@ -246,20 +257,25 @@ class Bot:
             context.metrics = ContextMetrics(self.metrics, {})
 
         try:
-            session_handler = try_get_session_handler(update)
+            session_handler = try_get_session_handler(update) if user_id is not None else None
             if session_handler is not None:
-                if await getattr(session_handler, action)(context):
+                if not self._validate_admin(session_handler, user_id):
+                    deactivate_session(update)
+                    logger.warning("Dropped session for non-admin user %s", user_id)
+                elif hasattr(session_handler, action) and await getattr(session_handler, action)(context):
                     if func is not None:
                         await func()
                     return
         except UnsupportedUpdateType:
             pass
+        except BaseException as e:
+            logger.exception(e)
 
         for handler in self.handlers:
             logging.debug(f"Try handler {handler}")
             try:
                 if (
-                    self._validate_admin(handler, get_from_user(update).id)
+                    self._validate_admin(handler, user_id)
                     and hasattr(handler, action)
                     and await getattr(handler, action)(context)
                 ):
@@ -283,5 +299,7 @@ class Bot:
             except BaseException as e:
                 logging.exception(e)
 
-    def _validate_admin(self, handler: Handler, user_id: int):
-        return not handler.only_for_admin or self.repository.is_admin(user_id)
+    def _validate_admin(self, handler: Handler, user_id: int | None):
+        if not handler.only_for_admin:
+            return True
+        return user_id is not None and self.repository.is_admin(user_id)

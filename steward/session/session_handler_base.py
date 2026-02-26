@@ -17,6 +17,7 @@ from steward.session.context import (
 from steward.session.session_registry import (
     activate_session,
     deactivate_session,
+    deactivate_session_by_key,
     get_session_key,
 )
 from steward.session.step import Step
@@ -134,3 +135,11 @@ class SessionHandlerBase(Handler):
 
         for step in session.steps:
             step.stop()
+
+    def expire_session_by_key(self, key: tuple[int, int]):
+        session = self.sessions.pop(key, None)
+        if session is None:
+            return
+        for step in session.steps:
+            step.stop()
+        deactivate_session_by_key(key)
