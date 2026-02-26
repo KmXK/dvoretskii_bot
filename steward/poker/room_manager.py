@@ -9,6 +9,8 @@ from aiohttp import web
 
 from steward.poker.engine import PokerGame, Player, PHASE_SHOWDOWN, PHASE_WAITING
 from steward.poker.bot_ai import decide, BOT_NAMES, DIFFICULTIES, DIFFICULTY_MEDIUM
+from steward.data.repository import Repository
+from steward.data.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +20,15 @@ _BOT_ID_BASE = -1_000_000
 _DISCONNECT_GRACE = 60
 
 _BLIND_MULTIPLIERS = [1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 50, 100]
+MONKEY_CHIP_RATE = 10
 
 
 class Room:
     def __init__(self, room_id: str, name: str, creator_id: int,
                  small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
                  bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM,
-                 blind_increase_enabled: bool = True, blind_increase_interval: int = 5):
+                 blind_increase_enabled: bool = True, blind_increase_interval: int = 5,
+                 play_for_monkeys: bool = False):
         self.id = room_id
         self.name = name
         self.creator_id = creator_id
@@ -50,6 +54,7 @@ class Room:
         self.blind_increase_interval = max(1, min(30, blind_increase_interval))
         self.blind_level = 0
         self._blind_start_time: float | None = None
+        self.play_for_monkeys = play_for_monkeys
 
     def _human_count(self):
         return len([p for p in self.game.players if not p.is_bot])
@@ -85,6 +90,8 @@ class Room:
             "blindIncreaseEnabled": self.blind_increase_enabled,
             "blindIncreaseInterval": self.blind_increase_interval,
             "blindLevel": self.blind_level,
+            "playForMonkeys": self.play_for_monkeys,
+            "monkeyChipRate": MONKEY_CHIP_RATE,
         }
         if self._blind_start_time is not None and self.blind_increase_enabled:
             elapsed = time.time() - self._blind_start_time
@@ -474,10 +481,12 @@ class RoomManager:
     def create_room(self, name: str, user_id: int, user_name: str,
                     small_blind: int = 10, big_blind: int = 20, start_chips: int = 1000,
                     bot_count: int = 0, bot_difficulty: str = DIFFICULTY_MEDIUM,
-                    blind_increase_enabled: bool = True, blind_increase_interval: int = 5) -> Room:
+                    blind_increase_enabled: bool = True, blind_increase_interval: int = 5,
+                    play_for_monkeys: bool = False) -> Room:
         room_id = uuid.uuid4().hex[:8]
         room = Room(room_id, name, user_id, small_blind, big_blind, start_chips,
-                    bot_count, bot_difficulty, blind_increase_enabled, blind_increase_interval)
+                    bot_count, bot_difficulty, blind_increase_enabled, blind_increase_interval,
+                    play_for_monkeys)
         self.rooms[room_id] = room
         return room
 
@@ -496,10 +505,64 @@ class RoomManager:
 _manager = RoomManager()
 
 
-async def _leave(user_id: int, room: Room, metrics=None):
+def _find_user(repository: Repository, user_id: int) -> User | None:
+    return next((u for u in repository.db.users if u.id == user_id), None)
+
+
+def _get_or_create_user(repository: Repository, user_id: int, username: str = "") -> User:
+    user = _find_user(repository, user_id)
+    if user is None:
+        user = User(user_id, username or None)
+        repository.db.users.append(user)
+    return user
+
+
+def _normalize_start_chips(start_chips: int, big_blind: int, play_for_monkeys: bool) -> int:
+    min_chips = max(big_blind * 10, 10)
+    sc = max(min_chips, min(100000, int(start_chips)))
+    if play_for_monkeys:
+        min_monkey_chips = ((min_chips + MONKEY_CHIP_RATE - 1) // MONKEY_CHIP_RATE) * MONKEY_CHIP_RATE
+        sc = max(sc, min_monkey_chips)
+        sc = (sc // MONKEY_CHIP_RATE) * MONKEY_CHIP_RATE
+        if sc < min_monkey_chips:
+            sc = min_monkey_chips
+    return sc
+
+
+def _charge_buy_in_monkeys(repository: Repository, user_id: int, user_name: str, chips: int) -> tuple[bool, int]:
+    if chips <= 0:
+        return False, 0
+    buy_in_monkeys = chips // MONKEY_CHIP_RATE
+    if buy_in_monkeys <= 0:
+        return False, 0
+    user = _get_or_create_user(repository, user_id, user_name)
+    if user.monkeys < buy_in_monkeys:
+        return False, buy_in_monkeys
+    user.monkeys -= buy_in_monkeys
+    return True, user.monkeys
+
+
+def _cash_out_monkeys(repository: Repository, user_id: int, chips: int) -> int | None:
+    if chips <= 0:
+        return None
+    monkeys = chips // MONKEY_CHIP_RATE
+    if monkeys <= 0:
+        return None
+    user = _find_user(repository, user_id)
+    if user is None:
+        return None
+    user.monkeys += monkeys
+    return user.monkeys
+
+
+async def _leave(user_id: int, room: Room, metrics=None, repository: Repository | None = None):
     player = next((p for p in room.game.players if p.user_id == user_id), None)
+    monkeys_balance: int | None = None
     if player:
-        room.chip_bank[user_id] = player.chips
+        if room.play_for_monkeys and repository is not None:
+            monkeys_balance = _cash_out_monkeys(repository, user_id, player.chips)
+        else:
+            room.chip_bank[user_id] = player.chips
 
     room.connections.pop(user_id, None)
     room.ready_players.discard(user_id)
@@ -560,16 +623,20 @@ async def _leave(user_id: int, room: Room, metrics=None):
         logger.info("room=%s no connections left, cleaning up", room.id)
         _manager.cleanup_room(room.id)
 
+    if room.play_for_monkeys and repository is not None:
+        await repository.save()
+
     await _manager.broadcast_rooms()
+    return monkeys_balance
 
 
-async def _delayed_leave(user_id: int, room: Room, metrics=None):
+async def _delayed_leave(user_id: int, room: Room, metrics=None, repository: Repository | None = None):
     try:
         await asyncio.sleep(_DISCONNECT_GRACE)
         _manager._disconnect_timers.pop(user_id, None)
         if _manager.player_rooms.get(user_id) == room.id and user_id not in room.connections:
             logger.info("uid=%s disconnect grace expired, leaving room=%s", user_id, room.id)
-            await _leave(user_id, room, metrics)
+            await _leave(user_id, room, metrics, repository)
     except asyncio.CancelledError:
         pass
 
@@ -579,6 +646,7 @@ async def poker_ws_handler(request: web.Request):
     await ws.prepare(request)
 
     metrics = request.app.get("metrics")
+    repository: Repository = request.app["repository"]
     user_id: int | None = None
     user_name: str = "Player"
     current_room: Room | None = None
@@ -645,8 +713,25 @@ async def poker_ws_handler(request: web.Request):
                         bd = DIFFICULTY_MEDIUM
                     bi_enabled = bool(data.get("blindIncreaseEnabled", True))
                     bi_interval = max(1, min(30, int(data.get("blindIncreaseInterval", 5))))
+                    play_for_monkeys = bool(data.get("playForMonkeys", False))
+                    sc = _normalize_start_chips(sc, bb, play_for_monkeys)
 
-                    room = _manager.create_room(name, user_id, user_name, sb, bb, sc, bc, bd, bi_enabled, bi_interval)
+                    monkeys_balance = None
+                    if play_for_monkeys:
+                        ok_buy_in, payload = _charge_buy_in_monkeys(repository, user_id, user_name, sc)
+                        if not ok_buy_in:
+                            need = payload
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": f"Need {need} monkeys to enter this room",
+                            }))
+                            continue
+                        monkeys_balance = payload
+                        await repository.save()
+
+                    room = _manager.create_room(
+                        name, user_id, user_name, sb, bb, sc, bc, bd, bi_enabled, bi_interval, play_for_monkeys
+                    )
                     room.connections[user_id] = ws
                     room.game.add_player(user_id, user_name)
                     if bc > 0:
@@ -655,7 +740,11 @@ async def poker_ws_handler(request: web.Request):
                     _manager.lobby_connections.pop(user_id, None)
                     current_room = room
                     logger.info("uid=%s created room=%s with %d bots", user_id, room.id, bc)
-                    await ws.send_str(json.dumps({"type": "room_joined", "room": room.to_dict()}, ensure_ascii=False))
+                    await ws.send_str(json.dumps({
+                        "type": "room_joined",
+                        "room": room.to_dict(),
+                        "monkeysBalance": monkeys_balance,
+                    }, ensure_ascii=False))
                     await _manager.broadcast_rooms()
 
                 elif t == "join_room":
@@ -676,8 +765,23 @@ async def poker_ws_handler(request: web.Request):
                         continue
 
                     room.connections[user_id] = ws
-                    saved_chips = room.chip_bank.pop(user_id, None)
-                    chips = saved_chips if saved_chips is not None else room.start_chips
+                    monkeys_balance = None
+                    if room.play_for_monkeys:
+                        chips = room.start_chips
+                        ok_buy_in, payload = _charge_buy_in_monkeys(repository, user_id, user_name, chips)
+                        if not ok_buy_in:
+                            need = payload
+                            room.connections.pop(user_id, None)
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": f"Need {need} monkeys to enter this room",
+                            }))
+                            continue
+                        monkeys_balance = payload
+                        await repository.save()
+                    else:
+                        saved_chips = room.chip_bank.pop(user_id, None)
+                        chips = saved_chips if saved_chips is not None else room.start_chips
 
                     if room.started:
                         room.game.add_player(user_id, user_name, chips)
@@ -692,7 +796,11 @@ async def poker_ws_handler(request: web.Request):
                     _manager.lobby_connections.pop(user_id, None)
                     current_room = room
                     logger.info("uid=%s joined room=%s", user_id, room.id)
-                    await ws.send_str(json.dumps({"type": "room_joined", "room": room.to_dict()}, ensure_ascii=False))
+                    await ws.send_str(json.dumps({
+                        "type": "room_joined",
+                        "room": room.to_dict(),
+                        "monkeysBalance": monkeys_balance,
+                    }, ensure_ascii=False))
                     await room.broadcast({"type": "room_updated", "room": room.to_dict()})
                     await _manager.broadcast_rooms()
 
@@ -705,10 +813,10 @@ async def poker_ws_handler(request: web.Request):
                 elif t == "leave_room":
                     if current_room and user_id:
                         _manager.cancel_disconnect_timer(user_id)
-                        await _leave(user_id, current_room, metrics)
+                        monkeys_balance = await _leave(user_id, current_room, metrics, repository)
                         current_room = None
                         _manager.lobby_connections[user_id] = ws
-                        await ws.send_str(json.dumps({"type": "left_room"}))
+                        await ws.send_str(json.dumps({"type": "left_room", "monkeysBalance": monkeys_balance}))
 
                 elif t == "start_game":
                     if not current_room:
@@ -821,6 +929,7 @@ async def poker_ws_handler(request: web.Request):
                     bd = data.get("botDifficulty")
                     bi_enabled = data.get("blindIncreaseEnabled")
                     bi_interval = data.get("blindIncreaseInterval")
+                    play_for_monkeys = data.get("playForMonkeys")
 
                     if sb is not None:
                         current_room.small_blind = max(1, min(1000, int(sb)))
@@ -828,8 +937,16 @@ async def poker_ws_handler(request: web.Request):
                     if bb is not None:
                         current_room.big_blind = max(current_room.small_blind * 2, min(2000, int(bb)))
                         current_room.base_big_blind = current_room.big_blind
+                    if play_for_monkeys is not None and bool(play_for_monkeys) != current_room.play_for_monkeys:
+                        await ws.send_str(json.dumps({
+                            "type": "error",
+                            "message": "Currency mode cannot be changed after room creation",
+                        }))
+                        continue
                     if sc is not None:
-                        current_room.start_chips = max(current_room.big_blind * 10, min(100000, int(sc)))
+                        current_room.start_chips = _normalize_start_chips(
+                            int(sc), current_room.big_blind, current_room.play_for_monkeys
+                        )
                     if bd is not None and str(bd) in DIFFICULTIES:
                         current_room.bot_difficulty = str(bd)
                     if bi_enabled is not None:
@@ -839,7 +956,6 @@ async def poker_ws_handler(request: web.Request):
 
                     if bc is not None:
                         new_bc = max(0, min(7, int(bc)))
-                        old_bc = current_room.bot_count
                         current_room.bot_count = new_bc
                         current_room.remove_all_bots()
                         if new_bc > 0:
@@ -897,7 +1013,7 @@ async def poker_ws_handler(request: web.Request):
 
             _manager.cancel_disconnect_timer(user_id)
             _manager._disconnect_timers[user_id] = asyncio.create_task(
-                _delayed_leave(user_id, current_room, metrics)
+                _delayed_leave(user_id, current_room, metrics, repository)
             )
             logger.info("uid=%s disconnected from room=%s, grace=%ds", user_id, current_room.id, _DISCONNECT_GRACE)
 
