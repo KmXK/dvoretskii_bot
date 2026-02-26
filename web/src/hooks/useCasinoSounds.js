@@ -289,6 +289,27 @@ const sounds = {
     for (let i = 0; i < 8; i++)
       tone(ctx, 80 + Math.random() * 400, 0.12, 'square', 0.025, i * 0.04, d)
   },
+
+  cardFlip(ctx) {
+    const d = out(ctx, true, 0.5)
+    sweep(ctx, 600, 1800, 0.08, 'triangle', 0.05, 0, d)
+    tone(ctx, 2200, 0.05, 'sine', 0.04, 0.02, d)
+    tone(ctx, 900, 0.06, 'square', 0.03, 0.04, d)
+  },
+
+  blackjack(ctx) {
+    const d = out(ctx, true, 1.8)
+    kick(ctx, 0, d)
+    const fanfare = [523, 659, 784, 1047]
+    fanfare.forEach((f, i) => {
+      tone(ctx, f, 0.35, 'triangle', 0.12, i * 0.11, d)
+      tone(ctx, f * 2, 0.22, 'sine', 0.05, i * 0.11 + 0.04, d)
+    })
+    chord(ctx, [523, 784, 1047, 1319], 0.8, 0.15, 0.42, 'sine', d)
+    for (let i = 0; i < 8; i++) {
+      tone(ctx, 2400 + Math.random() * 2200, 0.05, 'sine', 0.025, 0.35 + i * 0.07, d)
+    }
+  },
 }
 
 const MUTE_KEY = 'casino_muted'
