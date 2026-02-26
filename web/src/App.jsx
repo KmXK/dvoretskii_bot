@@ -6,6 +6,7 @@ import ArmyPage from './pages/ArmyPage'
 import BirthdaysPage from './pages/BirthdaysPage'
 import CasinoPage from './pages/CasinoPage'
 import PokerPage from './pages/PokerPage'
+import BlackjackPage from './pages/BlackjackPage'
 import FeaturesPage from './pages/FeaturesPage'
 import HomePage from './pages/HomePage'
 import ProfilePage from './pages/ProfilePage'
@@ -24,6 +25,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/poker" element={<PokerPage />} />
+              <Route path="/blackjack" element={<BlackjackPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/casino" element={<CasinoPage />} />
               <Route path="/features" element={<FeaturesPage />} />

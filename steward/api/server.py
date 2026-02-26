@@ -15,6 +15,7 @@ from steward.data.repository import Repository
 from steward.helpers.webapp import get_webapp_deep_link
 from steward.metrics.base import MetricsEngine
 from steward.poker.room_manager import poker_ws_handler, _manager as poker_manager
+from steward.blackjack.room_manager import blackjack_ws_handler
 
 logger = logging.getLogger(__name__)
 
@@ -1451,6 +1452,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)
     app.router.add_post("/api/poker/invite/delete", handle_poker_invite_delete)
     app.router.add_get("/ws/poker", poker_ws_handler)
+    app.router.add_get("/ws/blackjack", blackjack_ws_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
