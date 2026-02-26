@@ -1,9 +1,9 @@
 import { NavLink } from 'react-router-dom'
 
 const links = [
-  { to: '/', label: 'Home' },
-  { to: '/profile', label: 'Profile' },
-  { to: '/casino', label: 'Casino' },
+  { to: '/', label: 'Главная' },
+  { to: '/profile', label: 'Профиль' },
+  { to: '/casino', label: 'Казино' },
 ]
 
 export default function NavBar() {

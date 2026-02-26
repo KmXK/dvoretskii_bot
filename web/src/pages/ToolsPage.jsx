@@ -13,20 +13,20 @@ const POPULAR_CURRENCIES = ['USD', 'EUR', 'BYN', 'RUB', 'UAH', 'PLN', 'GBP', 'CN
 
 const LANGS = [
   { code: 'ru', label: 'Русский' },
-  { code: 'en', label: 'English' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-  { code: 'it', label: 'Italiano' },
-  { code: 'pl', label: 'Polski' },
+  { code: 'en', label: 'Английский' },
+  { code: 'de', label: 'Немецкий' },
+  { code: 'fr', label: 'Французский' },
+  { code: 'es', label: 'Испанский' },
+  { code: 'it', label: 'Итальянский' },
+  { code: 'pl', label: 'Польский' },
   { code: 'uk', label: 'Українська' },
   { code: 'be', label: 'Беларуская' },
   { code: 'zh', label: '中文' },
   { code: 'ja', label: '日本語' },
   { code: 'ko', label: '한국어' },
   { code: 'ar', label: 'العربية' },
-  { code: 'pt', label: 'Português' },
-  { code: 'tr', label: 'Türkçe' },
+  { code: 'pt', label: 'Португальский' },
+  { code: 'tr', label: 'Турецкий' },
 ]
 
 function ExchangeTool() {
@@ -353,7 +353,7 @@ function TimezoneTool() {
             onChange={e => setQuery(e.target.value)}
             className="flex-1 bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
               focus:ring-1 focus:ring-spotify-green/50"
-            placeholder="москва, +3, tokyo..."
+            placeholder="москва, +3, токио..."
           />
           <button
             type="submit"
