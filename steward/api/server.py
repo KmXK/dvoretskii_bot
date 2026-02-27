@@ -245,10 +245,22 @@ async def handle_profile(request: web.Request):
     ]
 
     stats = await _query_stats(metrics, user_id, _period_range(period))
+    profile_user = users_map.get(int(user_id))
+    stand = None
+    if (
+        profile_user is not None
+        and profile_user.stand_name
+        and profile_user.stand_description
+    ):
+        stand = {
+            "name": profile_user.stand_name,
+            "description": profile_user.stand_description,
+        }
 
     return web.json_response({
         "rewards": user_rewards,
         "stats": stats,
+        "stand": stand,
     })
 
 

@@ -92,6 +92,7 @@ from steward.handlers.silence_handler import (
     SilenceEnforcerHandler,
 )
 from steward.handlers.stats_handler import StatsHandler
+from steward.handlers.stands_handler import StandsHandler
 from steward.handlers.subscribe_handler import (
     SubscribeHandler,
     SubscribeRemoveHandler,
@@ -144,6 +145,7 @@ def get_handlers(log_file: None | str):
             FeatureRequestEditHandler,
             FeatureRequestViewHandler,
             MeHandler,
+            StandsHandler,
             RewardListHandler,
             RewardAddHandler,
             RewardRemoveHandler,

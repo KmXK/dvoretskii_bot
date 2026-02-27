@@ -38,6 +38,7 @@ function CustomTooltip({ active, payload, label }) {
 export default function ProfilePage() {
   const { userId, firstName, lastName, username, photoUrl } = useTelegram()
   const [rewards, setRewards] = useState(null)
+  const [stand, setStand] = useState(null)
   const [stats, setStats] = useState(null)
   const [history, setHistory] = useState(null)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -48,7 +49,11 @@ export default function ProfilePage() {
     if (!userId) return
     fetch(`/api/profile/${userId}?period=day`)
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setRewards(data.rewards) })
+      .then(data => {
+        if (!data) return
+        setRewards(data.rewards)
+        setStand(data.stand ?? null)
+      })
       .catch(() => {})
   }, [userId])
 
@@ -60,7 +65,10 @@ export default function ProfilePage() {
       fetch(`/api/profile/${userId}/history?period=${period}`).then(r => r.ok ? r.json() : null),
     ])
       .then(([profileData, historyData]) => {
-        if (profileData) setStats(profileData.stats)
+        if (profileData) {
+          setStats(profileData.stats)
+          setStand(profileData.stand ?? null)
+        }
         if (historyData) setHistory(historyData)
       })
       .catch(e => console.error('Profile fetch error:', e))
@@ -107,6 +115,19 @@ export default function ProfilePage() {
           {username && <p className="text-spotify-text text-sm">@{username}</p>}
         </div>
       </div>
+
+      {stand && (
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08 }}
+          className="bg-spotify-dark rounded-xl p-4 mb-5"
+        >
+          <h2 className="text-white font-semibold text-sm mb-2">Пользователь</h2>
+          <p className="text-white text-sm font-medium">{stand.name}</p>
+          <p className="text-spotify-text text-sm mt-1">{stand.description}</p>
+        </motion.div>
+      )}
 
       {/* Rewards */}
       <motion.div
