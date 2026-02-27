@@ -34,8 +34,10 @@ VIDEO_VARIANTS = [
 @dataclasses.dataclass
 class _PendingVoiceRequest:
     file_id: str
-    user_id: int
-    username: str | None
+    requester_user_id: int
+    speaker_user_id: int | None
+    speaker_username: str | None
+    speaker_fallback_name: str | None
     video_clicked: bool = False
     transcribe_clicked: bool = False
 
@@ -128,10 +130,26 @@ class VoiceVideoHandler(Handler):
             return False
 
         request_id = uuid.uuid4().hex
+        speaker_user_id = from_user.id
+        speaker_username = from_user.username
+        speaker_fallback_name = None
+        origin = getattr(context.message, "forward_origin", None)
+        if origin is not None:
+            if hasattr(origin, "sender_user") and origin.sender_user:
+                speaker_user = origin.sender_user
+                speaker_user_id = speaker_user.id
+                speaker_username = speaker_user.username
+            elif hasattr(origin, "sender_user_name") and origin.sender_user_name:
+                speaker_user_id = None
+                speaker_username = None
+                speaker_fallback_name = origin.sender_user_name
+
         self._pending[request_id] = _PendingVoiceRequest(
             file_id=context.message.voice.file_id,
-            user_id=from_user.id,
-            username=from_user.username,
+            requester_user_id=from_user.id,
+            speaker_user_id=speaker_user_id,
+            speaker_username=speaker_username,
+            speaker_fallback_name=speaker_fallback_name,
         )
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
@@ -190,7 +208,11 @@ class VoiceVideoHandler(Handler):
         try:
             audio_path = await self._resolve_audio_path(context, pending.file_id)
             if action == "video":
-                await self._create_video_reply(context, audio_path, pending.user_id)
+                await self._create_video_reply(
+                    context,
+                    audio_path,
+                    pending.requester_user_id,
+                )
             elif action == "transcribe":
                 await self._create_transcription_reply(context, audio_path, pending)
             if pending.video_clicked and pending.transcribe_clicked:
@@ -281,7 +303,11 @@ class VoiceVideoHandler(Handler):
     async def _create_transcription_reply(
         self, context, audio_path: Path, pending: _PendingVoiceRequest
     ):
-        speaker_name = self._build_speaker_name(pending.user_id, pending.username)
+        speaker_name = self._build_speaker_name(
+            pending.speaker_user_id,
+            pending.speaker_username,
+            pending.speaker_fallback_name,
+        )
         transcription = await self._transcribe_voice(audio_path, speaker_name)
         if not transcription:
             await context.callback_query.message.reply_text(
@@ -371,8 +397,17 @@ class VoiceVideoHandler(Handler):
                 out,
             )
 
-    def _build_speaker_name(self, user_id: int, fallback_username: str | None) -> str:
-        user = next((u for u in self.repository.db.users if u.id == user_id), None)
+    def _build_speaker_name(
+        self,
+        user_id: int | None,
+        fallback_username: str | None,
+        fallback_name: str | None,
+    ) -> str:
+        user = (
+            next((u for u in self.repository.db.users if u.id == user_id), None)
+            if user_id is not None
+            else None
+        )
         username = (user.username if user else None) or fallback_username
         if user and user.stand_name:
             stand_name = user.stand_name.strip()
@@ -380,7 +415,11 @@ class VoiceVideoHandler(Handler):
                 return f"{stand_name} (@{username})" if username else stand_name
         if username:
             return f"@{username}"
-        return f"user_{user_id}"
+        if fallback_name:
+            return fallback_name
+        if user_id is not None:
+            return f"user_{user_id}"
+        return "unknown"
 
     async def _transcribe_voice(
         self, audio_path: Path, speaker_name: str | None = None
