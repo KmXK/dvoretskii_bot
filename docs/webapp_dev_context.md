@@ -105,7 +105,7 @@ delayed_actions, channel_subscriptions, feature_requests, ...
 - `GET /api/army` — список армейских таймеров
 - `GET /api/todos`, `PATCH /api/todos/{id}` — todo-лист
 - `GET /api/feature-requests`, `POST /api/feature-requests`, `PATCH /api/feature-requests/{id}` — фича-реквесты
-- `GET /api/profile/{user_id}`, `GET /api/profile/{user_id}/history` — профиль и статистика
+- `GET /api/profile/{user_id}`, `GET /api/profile/{user_id}/history` — профиль, статистика и пользователь в профиле
 - `GET /api/poker/stats/{user_id}` — покерная статистика
 - `GET /api/user/{user_id}/chats` — чаты пользователя
 - `POST /api/poker/invite`, `POST /api/poker/invite/update`, `POST /api/poker/invite/delete` — покерные приглашения
@@ -121,6 +121,10 @@ delayed_actions, channel_subscriptions, feature_requests, ...
 - `POST /api/birthdays` — добавить/обновить, body: `{chat_id, name, day, month}`
 - `DELETE /api/birthdays` — удалить, body: `{chat_id, name}`
 - `GET /api/chat-stats?chat_id=...&period=day&scope=chat&top=15` — статистика чата (лидерборды)
+
+`GET /api/profile/{user_id}` дополнительно возвращает поле `stand`:
+- `null`, если пользователь не задан
+- `{ name, description }`, если пользователь привязан к владельцу
 
 **WebSocket:**
 - `GET /ws/poker` — WebSocket для покерных комнат в реальном времени
@@ -184,6 +188,8 @@ Caddy маршрутизация:
 class User:
     id: int
     username: str
+    stand_name: str | None
+    stand_description: str | None
 
 @dataclass
 class Reward:

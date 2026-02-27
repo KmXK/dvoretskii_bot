@@ -89,8 +89,13 @@ class MeHandler(Handler):
 
         user = next((u for u in self.repository.db.users if u.id == user_id), None)
         monkeys = user.monkeys if user else 0
+        stand = "нет"
+        if user and user.stand_name and user.stand_description:
+            stand_name = html_module.escape(user.stand_name)
+            stand_description = html_module.escape(user.stand_description)
+            stand = f"{stand_name}: {stand_description}"
 
-        text = f"Профиль\n\n🐵 Обезьянки: {monkeys}\nДостижения: {emojis}"
+        text = f"Профиль\n\n🐵 Обезьянки: {monkeys}\nПользователь: {stand}\nДостижения: {emojis}"
 
         keyboard = InlineKeyboardMarkup([
             [
