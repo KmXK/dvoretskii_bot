@@ -31,6 +31,7 @@ from elevenlabs.types import SpeechToTextChunkResponseModel
 from steward.handlers.handler import Handler
 from steward.helpers import morphy
 from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.transcription import build_named_speakers_text
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -468,20 +469,14 @@ class DownloadHandler(Handler):
                 )
 
                 logging.info(audio)
+                words = cast(SpeechToTextChunkResponseModel, audio).words or []
+                text = build_named_speakers_text(words)
+                if not text:
+                    text = (getattr(audio, "text", "") or "").strip()
+                if not text:
+                    text = "Не удалось распознать речь"
 
-                text = []
-                cur_speaker = None
-
-                for part in cast(SpeechToTextChunkResponseModel, audio).words:
-                    assert part.speaker_id is not None
-
-                    if cur_speaker != part.speaker_id:
-                        cur_speaker = part.speaker_id
-                        text.append(f"{re.sub('([^0-9]+)', 'S', cur_speaker)}: ")
-
-                    text[-1] += part.text
-
-            text = "<blockquote expandable>" + "\n".join(text) + "</blockquote>"
+            text = "<blockquote expandable>" + text + "</blockquote>"
             if len(text) > 1024:
                 new_message = await message.reply_html(
                     text,

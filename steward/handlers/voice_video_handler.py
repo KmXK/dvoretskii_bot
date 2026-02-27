@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -8,14 +9,18 @@ from typing import cast
 import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.types import SpeechToTextChunkResponseModel
+from pyrate_limiter import BucketFullException
 from telegram import InputFile
 
 from steward.handlers.handler import Handler
+from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.transcription import build_named_speakers_text
 
 logger = logging.getLogger(__name__)
 
 VIDEO_PATH = Path("data/videos/stupid_video.mp4")
 BG_AUDIO_PATH = Path("data/audio/lofi.mp3")
+VOICE_DAILY_LIMIT_SECONDS = 10 * 60
 
 VIDEO_VARIANTS = [
     (1600.0, Path("data/videos/stupid_video_240p.mp4")),
@@ -85,6 +90,20 @@ class VoiceVideoHandler(Handler):
             needed = audio_dur + 1.0
             if needed >= video_dur:
                 await context.message.reply_text("Голосовое длиннее доступного видео, не могу ответить :(")
+                return True
+
+            try:
+                check_limit(
+                    "voice_video_daily_seconds",
+                    VOICE_DAILY_LIMIT_SECONDS,
+                    24 * Duration.HOUR,
+                    name=str(context.message.from_user.id),
+                    weight=max(1, math.ceil(audio_dur)),
+                )
+            except BucketFullException:
+                await context.message.reply_text(
+                    "Лимит на голосовые исчерпан: 10 минут в сутки на пользователя."
+                )
                 return True
 
             video_path = _pick_video(audio_dur)
@@ -187,15 +206,9 @@ class VoiceVideoHandler(Handler):
 
                 words = cast(SpeechToTextChunkResponseModel, result).words or []
                 if words:
-                    lines: list[str] = []
-                    current_speaker: str | None = None
-                    for part in words:
-                        speaker = part.speaker_id or "speaker_1"
-                        if speaker != current_speaker:
-                            current_speaker = speaker
-                            lines.append(f"{speaker}: ")
-                        lines[-1] += part.text
-                    return "\n".join(lines).strip()
+                    text_with_names = build_named_speakers_text(words)
+                    if text_with_names:
+                        return text_with_names
 
                 text = getattr(result, "text", None)
                 if isinstance(text, str):
