@@ -29,7 +29,7 @@ def _join_chunks(chunks: list[str]) -> str:
     return " ".join(parts).strip()
 
 
-def build_named_speakers_text(words: list[Any]) -> str:
+def build_named_speakers_text(words: list[Any], primary_speaker_name: str | None = None) -> str:
     speaker_aliases: dict[str, str] = {}
     lines: list[str] = []
     current_speaker: str | None = None
@@ -43,11 +43,14 @@ def build_named_speakers_text(words: list[Any]) -> str:
 
         speaker_id = str(getattr(part, "speaker_id", "") or "speaker_1")
         if speaker_id not in speaker_aliases:
-            base_name = OLD_RUSSIAN_NAMES[next_alias_idx % len(OLD_RUSSIAN_NAMES)]
-            round_idx = next_alias_idx // len(OLD_RUSSIAN_NAMES)
-            speaker_aliases[speaker_id] = (
-                base_name if round_idx == 0 else f"{base_name} {round_idx + 1}"
-            )
+            if primary_speaker_name and not speaker_aliases:
+                speaker_aliases[speaker_id] = primary_speaker_name
+            else:
+                base_name = OLD_RUSSIAN_NAMES[next_alias_idx % len(OLD_RUSSIAN_NAMES)]
+                round_idx = next_alias_idx // len(OLD_RUSSIAN_NAMES)
+                speaker_aliases[speaker_id] = (
+                    base_name if round_idx == 0 else f"{base_name} {round_idx + 1}"
+                )
             next_alias_idx += 1
 
         speaker_name = speaker_aliases[speaker_id]
