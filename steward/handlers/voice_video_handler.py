@@ -3,7 +3,11 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+from typing import cast
 
+import httpx
+from elevenlabs.client import ElevenLabs
+from elevenlabs.types import SpeechToTextChunkResponseModel
 from telegram import InputFile
 
 from steward.handlers.handler import Handler
@@ -102,6 +106,12 @@ class VoiceVideoHandler(Handler):
             finally:
                 os.unlink(out_path)
 
+            transcription = await self._transcribe_voice(audio_path)
+            if transcription:
+                if len(transcription) > 3900:
+                    transcription = transcription[:3900] + "..."
+                await context.message.reply_text(f"Расшифровка:\n{transcription}")
+
             return True
         except Exception as e:
             logger.exception("Error processing voice message: %s", e)
@@ -141,3 +151,57 @@ class VoiceVideoHandler(Handler):
                 "-map", "0:v", "-map", "1:a",
                 "-t", str(dur), "-c:v", "copy", "-c:a", "aac", out,
             )
+
+    async def _transcribe_voice(self, audio_path: Path) -> str | None:
+        stt_key = os.environ.get("EVELEN_LABS_STT")
+        if not stt_key:
+            logger.warning("Voice transcription skipped: EVELEN_LABS_STT is not set")
+            return None
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="voice_stt_") as tmp_dir:
+                prepared_audio = Path(tmp_dir) / "voice.mp3"
+                await _run_ffmpeg(
+                    "-i", str(audio_path),
+                    "-ac", "1",
+                    "-ar", "44100",
+                    str(prepared_audio),
+                )
+
+                with open(prepared_audio, "rb") as audio_file:
+                    client = ElevenLabs(
+                        api_key=stt_key,
+                        httpx_client=httpx.Client(
+                            timeout=240,
+                            proxy=os.environ.get("DOWNLOAD_PROXY"),
+                        ),
+                    )
+                    result = await asyncio.to_thread(
+                        lambda: client.speech_to_text.convert(
+                            file=audio_file.read(),
+                            model_id="scribe_v1",
+                            tag_audio_events=True,
+                            diarize=True,
+                        )
+                    )
+
+                words = cast(SpeechToTextChunkResponseModel, result).words or []
+                if words:
+                    lines: list[str] = []
+                    current_speaker: str | None = None
+                    for part in words:
+                        speaker = part.speaker_id or "speaker_1"
+                        if speaker != current_speaker:
+                            current_speaker = speaker
+                            lines.append(f"{speaker}: ")
+                        lines[-1] += part.text
+                    return "\n".join(lines).strip()
+
+                text = getattr(result, "text", None)
+                if isinstance(text, str):
+                    clean_text = text.strip()
+                    return clean_text if clean_text else None
+        except Exception as e:
+            logger.exception("Voice transcription failed: %s", e)
+
+        return None
