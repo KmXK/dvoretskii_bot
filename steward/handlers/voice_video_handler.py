@@ -36,6 +36,8 @@ class _PendingVoiceRequest:
     file_id: str
     user_id: int
     username: str | None
+    video_clicked: bool = False
+    transcribe_clicked: bool = False
 
 
 def _pick_video(audio_dur: float) -> Path:
@@ -86,6 +88,38 @@ class VoiceVideoHandler(Handler):
     def __init__(self):
         self._pending: dict[str, _PendingVoiceRequest] = {}
 
+    def _build_actions_keyboard(
+        self, request_id: str, pending: _PendingVoiceRequest
+    ) -> InlineKeyboardMarkup | None:
+        row: list[InlineKeyboardButton] = []
+        if not pending.video_clicked:
+            row.append(
+                InlineKeyboardButton(
+                    "Видео",
+                    callback_data=f"{self.CALLBACK_PREFIX}|video|{request_id}",
+                )
+            )
+        if not pending.transcribe_clicked:
+            row.append(
+                InlineKeyboardButton(
+                    "Расшифровка",
+                    callback_data=f"{self.CALLBACK_PREFIX}|transcribe|{request_id}",
+                )
+            )
+        if not row:
+            return None
+        return InlineKeyboardMarkup(
+            [
+                row,
+                [
+                    InlineKeyboardButton(
+                        "Ничего",
+                        callback_data=f"{self.CALLBACK_PREFIX}|nothing|{request_id}",
+                    )
+                ],
+            ]
+        )
+
     async def chat(self, context):
         if not context.message.voice:
             return False
@@ -102,20 +136,7 @@ class VoiceVideoHandler(Handler):
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
 
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "Видео",
-                        callback_data=f"{self.CALLBACK_PREFIX}|video|{request_id}",
-                    ),
-                    InlineKeyboardButton(
-                        "Расшифровка",
-                        callback_data=f"{self.CALLBACK_PREFIX}|transcribe|{request_id}",
-                    ),
-                ]
-            ]
-        )
+        keyboard = self._build_actions_keyboard(request_id, self._pending[request_id])
         await context.message.reply_text(
             "Выбери действие для голосового сообщения:",
             reply_markup=keyboard,
@@ -133,24 +154,47 @@ class VoiceVideoHandler(Handler):
 
         action = parts[1]
         request_id = parts[2]
-        pending = self._pending.pop(request_id, None)
+        pending = self._pending.get(request_id)
         if pending is None:
             await context.callback_query.answer("Запрос устарел")
-            await context.callback_query.message.edit_reply_markup(reply_markup=None)
+            return True
+
+        if action == "nothing":
+            self._pending.pop(request_id, None)
+            await context.callback_query.answer()
+            try:
+                await context.callback_query.message.delete()
+            except Exception:
+                await context.callback_query.message.edit_reply_markup(reply_markup=None)
+            return True
+
+        if action == "video":
+            if pending.video_clicked:
+                await context.callback_query.answer("Кнопка уже нажата")
+                return True
+            pending.video_clicked = True
+        elif action == "transcribe":
+            if pending.transcribe_clicked:
+                await context.callback_query.answer("Кнопка уже нажата")
+                return True
+            pending.transcribe_clicked = True
+        else:
+            await context.callback_query.answer("Неизвестное действие")
             return True
 
         await context.callback_query.answer()
-        await context.callback_query.message.edit_reply_markup(reply_markup=None)
+        await context.callback_query.message.edit_reply_markup(
+            reply_markup=self._build_actions_keyboard(request_id, pending)
+        )
 
         try:
             audio_path = await self._resolve_audio_path(context, pending.file_id)
             if action == "video":
                 await self._create_video_reply(context, audio_path, pending.user_id)
-                return True
-            if action == "transcribe":
+            elif action == "transcribe":
                 await self._create_transcription_reply(context, audio_path, pending)
-                return True
-            await context.callback_query.message.reply_text("Неизвестное действие")
+            if pending.video_clicked and pending.transcribe_clicked:
+                self._pending.pop(request_id, None)
             return True
         except Exception as e:
             logger.exception("Error processing voice callback: %s", e)
