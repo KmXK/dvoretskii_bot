@@ -14,6 +14,7 @@ from elevenlabs.types import SpeechToTextChunkResponseModel
 from pyrate_limiter import BucketFullException
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 
+from steward.bot.context import ChatBotContext
 from steward.handlers.handler import Handler
 from steward.helpers.limiter import Duration, check_limit
 from steward.helpers.transcription import build_named_speakers_text
@@ -40,6 +41,7 @@ class _PendingVoiceRequest:
     speaker_fallback_name: str | None
     video_clicked: bool = False
     transcribe_clicked: bool = False
+    request_clicked: bool = False
 
 
 def _pick_video(audio_dur: float) -> Path:
@@ -106,6 +108,13 @@ class VoiceVideoHandler(Handler):
                 InlineKeyboardButton(
                     "Расшифровка",
                     callback_data=f"{self.CALLBACK_PREFIX}|transcribe|{request_id}",
+                )
+            )
+        if not pending.request_clicked:
+            row.append(
+                InlineKeyboardButton(
+                    "Запрос",
+                    callback_data=f"{self.CALLBACK_PREFIX}|request|{request_id}",
                 )
             )
         if not row:
@@ -196,6 +205,11 @@ class VoiceVideoHandler(Handler):
                 await context.callback_query.answer("Кнопка уже нажата")
                 return True
             pending.transcribe_clicked = True
+        elif action == "request":
+            if pending.request_clicked:
+                await context.callback_query.answer("Кнопка уже нажата")
+                return True
+            pending.request_clicked = True
         else:
             await context.callback_query.answer("Неизвестное действие")
             return True
@@ -215,7 +229,13 @@ class VoiceVideoHandler(Handler):
                 )
             elif action == "transcribe":
                 await self._create_transcription_reply(context, audio_path, pending)
-            if pending.video_clicked and pending.transcribe_clicked:
+            elif action == "request":
+                await self._create_router_request(context, audio_path)
+            if (
+                pending.video_clicked
+                and pending.transcribe_clicked
+                and pending.request_clicked
+            ):
                 self._pending.pop(request_id, None)
             return True
         except Exception as e:
@@ -224,6 +244,61 @@ class VoiceVideoHandler(Handler):
                 "Ошибка при обработке голосового сообщения"
             )
             return True
+
+    async def _create_router_request(self, context, audio_path: Path):
+        transcription = await self._transcribe_voice(
+            audio_path,
+            speaker_name=None,
+            with_speaker_labels=False,
+        )
+        if not transcription:
+            await context.callback_query.message.reply_text(
+                "Не удалось распознать голос для запроса"
+            )
+            return
+
+        request_text = f"дворецкий, {transcription.strip()}"
+        router_message = _RouterMessageProxy(
+            context.callback_query.message,
+            context.callback_query.from_user,
+            request_text,
+        )
+        chat_context = ChatBotContext(
+            context.repository,
+            context.bot,
+            context.client,
+            context.update,
+            context.tg_context,
+            context.metrics,
+            router_message,
+        )
+        all_handlers = getattr(self, "_all_handlers", [])
+        for handler in all_handlers:
+            if handler.__class__.__name__ != "AiRouterHandler":
+                continue
+            handled = await handler.chat(chat_context)
+            if not handled:
+                await context.callback_query.message.reply_text(
+                    "Не удалось обработать запрос из голосового"
+                )
+            return
+        await context.callback_query.message.reply_text(
+            "Роутер команд недоступен"
+        )
+
+    def _patch_text_as_butler_request(self, message):
+        raw_text = (message.text or "").strip()
+        if not raw_text:
+            return
+        if raw_text.lower().startswith("дворецкий") or raw_text.lower().startswith("уважаемый"):
+            return
+        patched_text = f"дворецкий, {raw_text}"
+        was_frozen = getattr(message, "_frozen", False)
+        if was_frozen:
+            object.__setattr__(message, "_frozen", False)
+        message.text = patched_text
+        if was_frozen:
+            object.__setattr__(message, "_frozen", True)
 
     async def _resolve_audio_path(self, context, file_id: str) -> Path:
         tg_file = await context.bot.get_file(file_id)
@@ -422,7 +497,10 @@ class VoiceVideoHandler(Handler):
         return "unknown"
 
     async def _transcribe_voice(
-        self, audio_path: Path, speaker_name: str | None = None
+        self,
+        audio_path: Path,
+        speaker_name: str | None = None,
+        with_speaker_labels: bool = True,
     ) -> str | None:
         stt_key = os.environ.get("EVELEN_LABS_STT")
         if not stt_key:
@@ -460,7 +538,7 @@ class VoiceVideoHandler(Handler):
                     )
 
                 words = cast(SpeechToTextChunkResponseModel, result).words or []
-                if words:
+                if with_speaker_labels and words:
                     text_with_names = build_named_speakers_text(
                         words, primary_speaker_name=speaker_name
                     )
@@ -475,3 +553,16 @@ class VoiceVideoHandler(Handler):
             logger.exception("Voice transcription failed: %s", e)
 
         return None
+
+
+class _RouterMessageProxy:
+    def __init__(self, base_message, from_user, text: str):
+        self._base_message = base_message
+        self.from_user = from_user
+        self.text = text
+        self.entities = ()
+        self.reply_to_message = None
+        self.chat = base_message.chat
+
+    def __getattr__(self, name):
+        return getattr(self._base_message, name)
