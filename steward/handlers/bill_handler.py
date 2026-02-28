@@ -1,16 +1,23 @@
+import asyncio
 import base64
 import logging
 import os
 import re
+import tempfile
 from collections import defaultdict
+from pathlib import Path
 from typing import Callable
+from typing import cast
 
 import httpx
+from elevenlabs.client import ElevenLabs
+from elevenlabs.types import SpeechToTextChunkResponseModel
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.bot.context import CallbackBotContext, ChatBotContext
 from steward.data.models.bill import Bill, DetailsInfo, Payment, Transaction
 from steward.handlers.handler import Handler
+from steward.helpers.ai import BILL_OCR_PROMPT, make_yandex_ai_query
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.google_drive import (
     find_file_in_folder,
@@ -27,6 +34,7 @@ from steward.helpers.tg_update_helpers import (
     is_valid_markdown,
     split_long_message,
 )
+from steward.helpers.transcription import build_named_speakers_text
 from steward.helpers.validation import check, validate_message_text
 from steward.session.session_handler_base import SessionHandlerBase
 from steward.session.session_registry import get_session_key
@@ -39,6 +47,7 @@ FINANCES_FOLDER_ID = "1_YgOgjiqOyMZ1_jVAND_7HG9GfE7MpHX"
 
 _BILL_OCR_KB = "bill_ocr"
 _BILL_OCR_NO_KB = "bill_ocr_no"
+_BILL_OCR_STOP_KB = "bill_ocr_stop"
 
 _AMOUNT_RE = re.compile(r"[\d\s]+[,.]?\d*")
 
@@ -328,6 +337,33 @@ def _load_all_transactions(bills: list[Bill]) -> list[Transaction]:
     return all_tx
 
 
+def _build_bill_context_start_keyboard(file_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🧾 Добавить контекст",
+                    callback_data=f"{_BILL_OCR_KB}|{file_id}",
+                ),
+                InlineKeyboardButton("Нет", callback_data=f"{_BILL_OCR_NO_KB}|"),
+            ]
+        ]
+    )
+
+
+def _build_bill_context_stop_keyboard(file_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⏹ Стоп",
+                    callback_data=f"{_BILL_OCR_STOP_KB}|{file_id}",
+                )
+            ]
+        ]
+    )
+
+
 def _format_debug_rows(rows: list[list[str]], bill_name: str) -> str:
     lines = [f"🔍 DEBUG [{bill_name}] — строки из таблицы:"]
     if not rows:
@@ -499,17 +535,7 @@ class BillAddHandler(SessionHandlerBase):
             report,
         ]
         msg = "\n".join(lines)
-        ocr_keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "📷 Добавить чек",
-                        callback_data=f"{_BILL_OCR_KB}|{file_id}",
-                    ),
-                    InlineKeyboardButton("Нет", callback_data=f"{_BILL_OCR_NO_KB}|"),
-                ]
-            ]
-        )
+        ocr_keyboard = _build_bill_context_start_keyboard(file_id)
         chunks = split_long_message(msg)
         for i, chunk in enumerate(chunks):
             is_last = i == len(chunks) - 1
@@ -534,6 +560,7 @@ class BillReportHandler(Handler):
         if parts[1].lower() in (
             "add",
             "all",
+            "edit",
             "pay",
             "details",
             "help",
@@ -542,6 +569,8 @@ class BillReportHandler(Handler):
             "debug",
             "force",
         ):
+            return False
+        if len(parts) >= 3 and parts[-1].lower() == "edit":
             return False
         if not google_drive_available():
             await context.message.reply_text("Google Drive недоступен")
@@ -600,17 +629,7 @@ class BillReportHandler(Handler):
             debts_list_all=debts_list_all,
             closable_bill_ids_all=closable_all,
         )
-        ocr_keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "📷 Добавить чек",
-                        callback_data=f"{_BILL_OCR_KB}|{bill.file_id}",
-                    ),
-                    InlineKeyboardButton("Нет", callback_data=f"{_BILL_OCR_NO_KB}|"),
-                ]
-            ]
-        )
+        ocr_keyboard = _build_bill_context_start_keyboard(bill.file_id)
         chunks = split_long_message(report)
         for i, chunk in enumerate(chunks):
             is_last = i == len(chunks) - 1
@@ -823,6 +842,7 @@ class BillMainReportHandler(Handler):
             "  Основной отчёт по всем должникам: /bill\n"
             "  Список всех счетов: /bill all\n"
             "  Отчёт по конкретному счету: /bill <id> или /bill <имя_счёта>\n"
+            "  Добавить контекст в счёт: /bill <id> edit\n"
             "  Отчёт с отладкой: /bill <id> debug\n"
             "  Добавить новый счет: /bill add <имя> или /bill add (начинает сессию)\n"
             "  Зарегистрировать перевод: /bill pay <кто> <кому> <сумма>\n"
@@ -835,6 +855,7 @@ class BillMainReportHandler(Handler):
             "  - «покажи общий отчёт по счетам» → /bill\n"
             "  - «покажи все счета» → /bill all\n"
             "  - «покажи счёт 3» → /bill 3\n"
+            "  - «добавь контекст в счёт 3» → /bill 3 edit\n"
             "  - «зарегистрируй перевод Вася → Петя 500» → /bill pay Вася Петя 500\n"
             "  - «закрой счёт 1 и 2» → /bill close 1 2\n"
             "  - «помощь по биллу» → /bill help\n"
@@ -1191,70 +1212,189 @@ class BillCloseHandler(Handler):
         return "/bill close {id1} {id2} ... — закрыть счета"
 
 
-class CollectBillPhotoStep(Step):
+async def _run_ffmpeg(*args: str):
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-y",
+        *args,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise Exception(f"ffmpeg failed: {stderr.decode(errors='replace')}")
+
+
+async def _read_voice_bytes(context, file_id: str) -> bytes:
+    tg_file = await context.bot.get_file(file_id)
+    return bytes(await tg_file.download_as_bytearray())
+
+
+async def _transcribe_voice_bytes(data: bytes) -> str | None:
+    stt_key = os.environ.get("EVELEN_LABS_STT")
+    if not stt_key:
+        return None
+    with tempfile.TemporaryDirectory(prefix="bill_voice_stt_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        source_audio = tmp_path / "voice.ogg"
+        prepared_audio = tmp_path / "voice.mp3"
+        source_audio.write_bytes(data)
+        await _run_ffmpeg(
+            "-i",
+            str(source_audio),
+            "-ac",
+            "1",
+            "-ar",
+            "44100",
+            str(prepared_audio),
+        )
+        with open(prepared_audio, "rb") as audio_file:
+            client = ElevenLabs(
+                api_key=stt_key,
+                httpx_client=httpx.Client(
+                    timeout=240,
+                    proxy=os.environ.get("DOWNLOAD_PROXY"),
+                ),
+            )
+            result = await asyncio.to_thread(
+                lambda: client.speech_to_text.convert(
+                    file=audio_file.read(),
+                    model_id="scribe_v1",
+                    tag_audio_events=True,
+                    diarize=True,
+                )
+            )
+        words = cast(SpeechToTextChunkResponseModel, result).words or []
+        text_with_names = build_named_speakers_text(words)
+        if text_with_names:
+            return text_with_names
+        text = getattr(result, "text", None)
+        if isinstance(text, str):
+            stripped = text.strip()
+            if stripped:
+                return stripped
+    return None
+
+
+class CollectBillContextStep(Step):
     def __init__(self):
         self.is_waiting = False
 
     async def chat(self, context):
         if not self.is_waiting:
-            await context.message.reply_text("Отправьте фото чека")
+            context.session_context.setdefault("bill_context_parts", [])
+            file_id = context.session_context.get("file_id", "")
+            await context.message.reply_text(
+                "Отправляйте контекст для счёта:\n"
+                "• фото — распознаю текст с картинки\n"
+                "• голосовые — расшифрую в текст\n\n"
+                "Когда закончите, нажмите кнопку «Стоп».",
+                reply_markup=_build_bill_context_stop_keyboard(file_id),
+            )
             self.is_waiting = True
             return False
 
-        if not context.message.photo:
-            await context.message.reply_text("Отправьте фото (картинку)")
+        text_parts: list[str] = context.session_context.setdefault("bill_context_parts", [])
+
+        if context.message.photo:
+            api_key = os.environ.get("AI_VISION_SECRET")
+            folder_id = os.environ.get("YC_FOLDER_ID")
+            if not api_key or not folder_id:
+                await context.message.reply_text(
+                    "Yandex OCR не настроен: задайте AI_VISION_SECRET и YC_FOLDER_ID"
+                )
+                return False
+
+            photo = context.message.photo[-1]
+            try:
+                from steward.handlers.newtext_handler import _read_photo_bytes, _yandex_ocr
+
+                data = await _read_photo_bytes(context, photo.file_id)
+                content_b64 = base64.standard_b64encode(data).decode("ascii")
+                mime = "JPEG"
+                if data[:8] == b"\x89PNG\r\n\x1a\n":
+                    mime = "PNG"
+                text = await _yandex_ocr(content_b64, mime, api_key, folder_id)
+            except httpx.HTTPStatusError as e:
+                logger.exception("Yandex OCR HTTP error: %s", e)
+                await context.message.reply_text(
+                    f"Ошибка OCR API: {e.response.status_code}"
+                )
+                return False
+            except Exception as e:
+                logger.exception("Yandex OCR failed: %s", e)
+                await context.message.reply_text(f"Не удалось распознать фото: {e}")
+                return False
+
+            if not text:
+                await context.message.reply_text("Текст на картинке не найден")
+                return False
+
+            text_parts.append(f"[Фото]\n{text}")
+            await context.message.reply_text("✅ Фото добавлено в контекст")
             return False
 
-        api_key = os.environ.get("AI_VISION_SECRET")
-        folder_id = os.environ.get("YC_FOLDER_ID")
-        if not api_key or not folder_id:
-            await context.message.reply_text(
-                "Yandex OCR не настроен: задайте AI_VISION_SECRET и YC_FOLDER_ID"
-            )
-            self.is_waiting = False
-            return True
+        if context.message.voice:
+            try:
+                voice_bytes = await _read_voice_bytes(context, context.message.voice.file_id)
+                voice_text = await _transcribe_voice_bytes(voice_bytes)
+            except Exception as e:
+                logger.exception("Voice transcription failed: %s", e)
+                await context.message.reply_text(f"Не удалось обработать голосовое: {e}")
+                return False
 
-        photo = context.message.photo[-1]
-        try:
-            from steward.handlers.newtext_handler import _read_photo_bytes, _yandex_ocr
+            if not voice_text:
+                await context.message.reply_text(
+                    "Не удалось расшифровать голосовое. Проверьте EVELEN_LABS_STT."
+                )
+                return False
 
-            data = await _read_photo_bytes(context, photo.file_id)
-            content_b64 = base64.standard_b64encode(data).decode("ascii")
-            mime = "JPEG"
-            if data[:8] == b"\x89PNG\r\n\x1a\n":
-                mime = "PNG"
-            text = await _yandex_ocr(content_b64, mime, api_key, folder_id)
-        except httpx.HTTPStatusError as e:
-            logger.exception("Yandex OCR HTTP error: %s", e)
-            await context.message.reply_text(
-                f"Ошибка OCR API: {e.response.status_code}"
-            )
-            self.is_waiting = False
-            return True
-        except Exception as e:
-            logger.exception("Yandex OCR failed: %s", e)
-            await context.message.reply_text(f"Не удалось распознать текст: {e}")
-            self.is_waiting = False
-            return True
+            text_parts.append(f"[Голосовое]\n{voice_text}")
+            await context.message.reply_text("✅ Голосовое добавлено в контекст")
+            return False
 
-        if not text:
-            await context.message.reply_text("Текст на картинке не найден")
-            self.is_waiting = False
-            return True
+        if context.message.text and context.message.text.strip() and not context.message.text.startswith("/"):
+            text_parts.append(f"[Текст]\n{context.message.text.strip()}")
+            await context.message.reply_text("✅ Текст добавлен в контекст")
+            return False
 
-        context.session_context["ocr_text"] = text
-        self.is_waiting = False
-        return True
+        await context.message.reply_text(
+            "Поддерживаются фото, голосовые и текст. "
+            "Когда закончите — нажмите кнопку «Стоп»."
+        )
+        return False
 
     async def callback(self, context):
         if not self.is_waiting:
             await context.callback_query.message.edit_reply_markup(reply_markup=None)
             await context.callback_query.answer()
+            context.session_context.setdefault("bill_context_parts", [])
+            file_id = context.session_context.get("file_id", "")
             await context.callback_query.message.chat.send_message(
-                "Отправьте фото чека"
+                "Отправляйте контекст для счёта:\n"
+                "• фото — распознаю текст с картинки\n"
+                "• голосовые — расшифрую в текст\n\n"
+                "Когда закончите, нажмите кнопку «Стоп».",
+                reply_markup=_build_bill_context_stop_keyboard(file_id),
             )
             self.is_waiting = True
-        return False
+            return False
+
+        data = context.callback_query.data or ""
+        if not data.startswith(f"{_BILL_OCR_STOP_KB}|"):
+            return False
+        target_file_id = data.split("|", 1)[1]
+        current_file_id = context.session_context.get("file_id", "")
+        if target_file_id and current_file_id and target_file_id != current_file_id:
+            await context.callback_query.answer("Эта кнопка не для текущей сессии")
+            return True
+        await context.callback_query.answer()
+        try:
+            await context.callback_query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("Could not clear stop keyboard", exc_info=True)
+        self.is_waiting = False
+        return True
 
     def stop(self):
         self.is_waiting = False
@@ -1282,11 +1422,57 @@ def _parse_ai_bill_response(text: str) -> list[list[str]]:
 
 class BillOcrHandler(SessionHandlerBase):
     def __init__(self):
-        super().__init__([CollectBillPhotoStep()])
+        super().__init__([CollectBillContextStep()])
+
+    def _find_bill_by_identifier(self, identifier: str) -> Bill | None:
+        try:
+            bill_id = int(identifier)
+            return next((b for b in self.repository.db.bills if b.id == bill_id), None)
+        except ValueError:
+            return next(
+                (
+                    b
+                    for b in self.repository.db.bills
+                    if b.name.lower() == identifier.lower()
+                ),
+                None,
+            )
+
+    async def chat(self, context):
+        key = get_session_key(context.update)
+        if key not in self.sessions and validate_command_msg(context.update, "bill"):
+            assert context.message.text
+            parts = context.message.text.split()
+            if len(parts) >= 3 and parts[-1].lower() == "edit":
+                if not google_drive_available():
+                    await context.message.reply_text("Google Drive недоступен")
+                    return True
+                identifier = " ".join(parts[1:-1]).strip()
+                if not identifier:
+                    await context.message.reply_text("Использование: /bill {id} edit")
+                    return True
+                bill = self._find_bill_by_identifier(identifier)
+                if bill is None:
+                    await context.message.reply_text(f"Счет '{identifier}' не найден")
+                    return True
+        return await super().chat(context)
 
     def try_activate_session(self, update, session_context):
         if not update.callback_query or not update.callback_query.data:
-            return False
+            if not validate_command_msg(update, "bill"):
+                return False
+            assert update.message and update.message.text
+            parts = update.message.text.split()
+            if len(parts) < 3 or parts[-1].lower() != "edit":
+                return False
+            identifier = " ".join(parts[1:-1]).strip()
+            if not identifier:
+                return False
+            bill = self._find_bill_by_identifier(identifier)
+            if bill is None:
+                return False
+            session_context["file_id"] = bill.file_id
+            return True
         data = update.callback_query.data
         if not data.startswith(f"{_BILL_OCR_KB}|"):
             return False
@@ -1308,15 +1494,22 @@ class BillOcrHandler(SessionHandlerBase):
         return await super().callback(context)
 
     async def on_session_finished(self, update, session_context):
-        ocr_text = session_context.get("ocr_text")
+        text_parts: list[str] = session_context.get("bill_context_parts", [])
+        ocr_text = "\n\n".join(text_parts).strip()
         file_id = session_context.get("file_id")
         msg = get_message(update)
 
         if not ocr_text:
-            await msg.chat.send_message("Текст не распознан")
+            await msg.chat.send_message("Контекст пуст. Нечего добавлять в счёт.")
             return
-
-        from steward.helpers.ai import BILL_OCR_PROMPT, make_yandex_ai_query
+        if len(ocr_text) > 15000:
+            ocr_text = ocr_text[:15000]
+            await msg.chat.send_message(
+                "Контекст был слишком длинным, отправил в нейронку первые 15000 символов."
+            )
+        if not file_id:
+            await msg.chat.send_message("Не найден файл счёта")
+            return
 
         try:
             ai_response = await make_yandex_ai_query(
@@ -1340,13 +1533,13 @@ class BillOcrHandler(SessionHandlerBase):
             await msg.chat.send_message("Не удалось записать данные в таблицу")
             return
 
-        lines = [f"✅ Добавлено {len(rows)} строк в таблицу:"]
+        lines = [f"✅ Добавлено {len(rows)} строк в счёт:"]
         for r in rows:
             lines.append(f"• {r[0]} — {r[1]}")
         await msg.chat.send_message("\n".join(lines))
 
     async def on_stop(self, update, session_context):
-        await get_message(update).chat.send_message("Отменено")
+        await get_message(update).chat.send_message("Сбор контекста отменён")
 
     def help(self):
         return None
@@ -1364,7 +1557,8 @@ class BillHelpHandler(Handler):
 
 /bill — общий отчет по всем счетам
 /bill all — список всех счетов
-/bill {id} — отчет по счету (+ кнопка «Добавить чек» для OCR)
+/bill {id} — отчет по счету (+ кнопка «Добавить контекст»)
+/bill {id} edit — собрать контекст и добавить в счёт (не перезаписывает)
 /bill {id} debug — отчет по счету с выводом сырых данных из таблицы
 /bill add — добавить счет (имя = имя файла в папке «финансы»)
 /bill pay {кто} {кому} {сумма} — зарегистрировать перевод
