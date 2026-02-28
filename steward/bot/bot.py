@@ -65,6 +65,7 @@ class Bot:
         for handler in handlers:
             handler.repository = repository
             handler.bot = self.bot
+            handler._all_handlers = handlers
 
     def start(
         self,
