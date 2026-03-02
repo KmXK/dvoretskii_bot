@@ -8,6 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 from typing import cast
+from urllib.parse import urlparse
 
 import httpx
 from elevenlabs.client import ElevenLabs
@@ -1288,7 +1289,25 @@ async def _run_ffmpeg(*args: str):
 
 async def _read_voice_bytes(context, file_id: str) -> bytes:
     tg_file = await context.bot.get_file(file_id)
-    return bytes(await tg_file.download_as_bytearray())
+    try:
+        return bytes(await tg_file.download_as_bytearray())
+    except Exception:
+        file_path = tg_file.file_path
+        if not file_path:
+            raise
+        if file_path.startswith("http://") or file_path.startswith("https://"):
+            parsed = urlparse(file_path)
+            path = parsed.path
+            if path.startswith("/file/bot"):
+                rel = path[len("/file/bot") :]
+                first_slash = rel.find("/")
+                file_path = rel[first_slash + 1 :] if first_slash > 0 else rel.lstrip("/")
+            else:
+                file_path = path.lstrip("/")
+        local_path = Path(f"/data/{context.bot.token}/{file_path}")
+        if not local_path.exists():
+            raise
+        return local_path.read_bytes()
 
 
 async def _transcribe_voice_bytes(data: bytes) -> str | None:
@@ -1317,14 +1336,26 @@ async def _transcribe_voice_bytes(data: bytes) -> str | None:
                     proxy=os.environ.get("DOWNLOAD_PROXY"),
                 ),
             )
-            result = await asyncio.to_thread(
-                lambda: client.speech_to_text.convert(
-                    file=audio_file.read(),
-                    model_id="scribe_v1",
-                    tag_audio_events=True,
-                    diarize=True,
+            payload = audio_file.read()
+            try:
+                result = await asyncio.to_thread(
+                    lambda: client.speech_to_text.convert(
+                        file=payload,
+                        model_id="scribe_v1",
+                        tag_audio_events=True,
+                        diarize=True,
+                    )
                 )
-            )
+            except Exception as e:
+                if "not found" not in str(e).lower():
+                    raise
+                result = await asyncio.to_thread(
+                    lambda: client.speech_to_text.convert(
+                        file=payload,
+                        tag_audio_events=True,
+                        diarize=True,
+                    )
+                )
         words = cast(SpeechToTextChunkResponseModel, result).words or []
         text_with_names = build_named_speakers_text(words)
         if text_with_names:
