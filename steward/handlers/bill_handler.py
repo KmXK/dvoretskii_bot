@@ -359,21 +359,65 @@ def _parse_people_places(rows: list[list[str]]) -> dict[str, str]:
     return result
 
 
-def _build_people_places_prompt_block(people_places: dict[str, str]) -> str:
+def _parse_known_places(rows: list[list[str]]) -> list[str]:
+    places: list[str] = []
+    seen: set[str] = set()
+    places_only_mode = False
+    for row in rows:
+        if not row:
+            continue
+        col1 = (row[0] if len(row) > 0 else "").strip()
+        col2 = (row[1] if len(row) > 1 else "").strip()
+        col1_norm = _normalize_name(col1)
+        if col1_norm == "места":
+            places_only_mode = True
+            continue
+        if col1_norm in {"персонаж", "действующее лицо"}:
+            continue
+        candidate = ""
+        if places_only_mode and col1:
+            candidate = col1
+        elif col2:
+            candidate = col2
+        if not candidate:
+            continue
+        key = _normalize_name(candidate)
+        if key and key not in seen:
+            seen.add(key)
+            places.append(candidate)
+    return places
+
+
+def _build_people_places_prompt_block(
+    people_places: dict[str, str], known_places: list[str]
+) -> str:
+    lines: list[str] = []
+    lines.append("известные действующие лица:")
     if not people_places:
-        return "персонаж | места\n(пока пусто)"
-    lines = ["персонаж | места"]
-    for person, place in sorted(people_places.items(), key=lambda x: _normalize_name(x[0])):
-        lines.append(f"{person} | {place}")
+        lines.append("(пока пусто)")
+    else:
+        for person, place in sorted(
+            people_places.items(), key=lambda x: _normalize_name(x[0])
+        ):
+            lines.append(f"- {person}" + (f" | {place}" if place else ""))
+    lines.append("")
+    lines.append("известные места:")
+    if not known_places:
+        lines.append("(пока пусто)")
+    else:
+        for place in known_places:
+            lines.append(f"- {place}")
     return "\n".join(lines)
 
 
-def _build_bill_ai_input(context_text: str, people_places: dict[str, str]) -> str:
+def _build_bill_ai_input(
+    context_text: str, people_places: dict[str, str], known_places: list[str]
+) -> str:
     return (
         "КОНТЕКСТ ДЛЯ РАЗБОРА:\n"
         f"{context_text}\n\n"
-        "ТЕКУЩАЯ ТАБЛИЦА ЛИСТА 'данные':\n"
-        f"{_build_people_places_prompt_block(people_places)}"
+        "СПРАВОЧНИК ИЗ ЛИСТА 'Данные':\n"
+        f"{_build_people_places_prompt_block(people_places, known_places)}"
     )
 
 
@@ -1359,15 +1403,23 @@ async def _transcribe_voice_bytes(data: bytes) -> str | None:
                         diarize=True,
                     )
                 )
-        words = cast(SpeechToTextChunkResponseModel, result).words or []
-        text_with_names = build_named_speakers_text(words)
-        if text_with_names:
-            return text_with_names
         text = getattr(result, "text", None)
         if isinstance(text, str):
             stripped = text.strip()
             if stripped:
                 return stripped
+        words = cast(SpeechToTextChunkResponseModel, result).words or []
+        text_with_names = build_named_speakers_text(words)
+        if text_with_names:
+            cleaned_lines: list[str] = []
+            for line in text_with_names.splitlines():
+                if ":" in line:
+                    cleaned_lines.append(line.split(":", 1)[1].strip())
+                else:
+                    cleaned_lines.append(line.strip())
+            cleaned = "\n".join(x for x in cleaned_lines if x).strip()
+            if cleaned:
+                return cleaned
     return None
 
 
@@ -1552,6 +1604,19 @@ def _parse_ai_bill_response(text: str) -> tuple[list[list[str]], list[list[str]]
 def _build_new_people_rows(
     existing_people_places: dict[str, str], ai_data_rows: list[list[str]]
 ) -> list[list[str]]:
+    synthetic_aliases = {
+        "ратибор",
+        "ротибор",
+        "ярополк",
+        "добрыня",
+        "мстислав",
+        "святозар",
+        "велимир",
+        "борислав",
+        "мирослав",
+        "всеволод",
+        "ростислав",
+    }
     existing_names = {_normalize_name(name) for name in existing_people_places}
     seen_new: set[str] = set()
     out: list[list[str]] = []
@@ -1560,6 +1625,8 @@ def _build_new_people_rows(
         place = (row[1] if len(row) > 1 else "").strip()
         norm = _normalize_name(person)
         if not norm or norm in existing_names or norm in seen_new:
+            continue
+        if any(norm.startswith(alias) for alias in synthetic_aliases):
             continue
         out.append([person, place])
         seen_new.add(norm)
@@ -1659,7 +1726,8 @@ class BillOcrHandler(SessionHandlerBase):
 
         people_places_rows = _read_bill_people_places_rows(file_id)
         people_places = _parse_people_places(people_places_rows)
-        ai_input = _build_bill_ai_input(ocr_text, people_places)
+        known_places = _parse_known_places(people_places_rows)
+        ai_input = _build_bill_ai_input(ocr_text, people_places, known_places)
 
         try:
             ai_response = await make_yandex_ai_query(
