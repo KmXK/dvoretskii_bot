@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 
 FINANCES_FOLDER_ID = "1_YgOgjiqOyMZ1_jVAND_7HG9GfE7MpHX"
 BILL_MAIN_SHEET_NAME = "Общее"
-BILL_DATA_SHEET_NAME = "данные"
+BILL_DATA_SHEET_NAME = "Данные"
+BILL_DATA_SHEET_NAME_FALLBACK = "данные"
 BILL_TEMPLATE_FILE_NAME = "Копия Шаблон"
 
 _BILL_OCR_KB = "bill_ocr"
@@ -334,6 +335,8 @@ def _read_bill_raw_rows(file_id: str) -> list[list[str]]:
 
 def _read_bill_people_places_rows(file_id: str) -> list[list[str]]:
     rows = read_spreadsheet_values_from_sheet(file_id, BILL_DATA_SHEET_NAME)
+    if rows is None:
+        rows = read_spreadsheet_values_from_sheet(file_id, BILL_DATA_SHEET_NAME_FALLBACK)
     return rows or []
 
 
@@ -1683,7 +1686,11 @@ class BillOcrHandler(SessionHandlerBase):
         new_people_rows = _build_new_people_rows(people_places, ai_data_rows)
         data_inserted = 0
         if new_people_rows:
-            if insert_rows_into_sheet(file_id, new_people_rows, BILL_DATA_SHEET_NAME):
+            if insert_rows_into_sheet(file_id, new_people_rows, BILL_DATA_SHEET_NAME) or insert_rows_into_sheet(
+                file_id,
+                new_people_rows,
+                BILL_DATA_SHEET_NAME_FALLBACK,
+            ):
                 data_inserted = len(new_people_rows)
             else:
                 await msg.chat.send_message(
