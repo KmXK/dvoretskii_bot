@@ -20,10 +20,13 @@ from steward.handlers.handler import Handler
 from steward.helpers.ai import BILL_OCR_PROMPT, make_yandex_ai_query
 from steward.helpers.command_validation import validate_command_msg
 from steward.helpers.google_drive import (
+    find_files_in_folder_by_name,
     find_file_in_folder,
     get_file_link,
-    insert_rows_into_spreadsheet,
+    insert_rows_into_sheet,
     read_spreadsheet_values,
+    read_spreadsheet_values_from_sheet,
+    rename_file,
 )
 from steward.helpers.google_drive import (
     is_available as google_drive_available,
@@ -44,6 +47,9 @@ from steward.session.steps.question_step import QuestionStep
 logger = logging.getLogger(__name__)
 
 FINANCES_FOLDER_ID = "1_YgOgjiqOyMZ1_jVAND_7HG9GfE7MpHX"
+BILL_MAIN_SHEET_NAME = "Общее"
+BILL_DATA_SHEET_NAME = "данные"
+BILL_TEMPLATE_FILE_NAME = "Копия Шаблон"
 
 _BILL_OCR_KB = "bill_ocr"
 _BILL_OCR_NO_KB = "bill_ocr_no"
@@ -319,8 +325,52 @@ def _get_bills_folder_id() -> str:
 
 
 def _read_bill_raw_rows(file_id: str) -> list[list[str]]:
-    rows = read_spreadsheet_values(file_id)
+    rows = read_spreadsheet_values_from_sheet(file_id, BILL_MAIN_SHEET_NAME)
+    if rows is None:
+        rows = read_spreadsheet_values(file_id)
     return rows or []
+
+
+def _read_bill_people_places_rows(file_id: str) -> list[list[str]]:
+    rows = read_spreadsheet_values_from_sheet(file_id, BILL_DATA_SHEET_NAME)
+    return rows or []
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip()).lower()
+
+
+def _parse_people_places(rows: list[list[str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for row in rows:
+        if not row:
+            continue
+        person = (row[0] if len(row) > 0 else "").strip()
+        place = (row[1] if len(row) > 1 else "").strip()
+        if not person:
+            continue
+        if _normalize_name(person) in {"персонаж", "действующее лицо"}:
+            continue
+        result[person] = place
+    return result
+
+
+def _build_people_places_prompt_block(people_places: dict[str, str]) -> str:
+    if not people_places:
+        return "персонаж | места\n(пока пусто)"
+    lines = ["персонаж | места"]
+    for person, place in sorted(people_places.items(), key=lambda x: _normalize_name(x[0])):
+        lines.append(f"{person} | {place}")
+    return "\n".join(lines)
+
+
+def _build_bill_ai_input(context_text: str, people_places: dict[str, str]) -> str:
+    return (
+        "КОНТЕКСТ ДЛЯ РАЗБОРА:\n"
+        f"{context_text}\n\n"
+        "ТЕКУЩАЯ ТАБЛИЦА ЛИСТА 'данные':\n"
+        f"{_build_people_places_prompt_block(people_places)}"
+    )
 
 
 def _load_bill_transactions(file_id: str) -> list[Transaction]:
@@ -498,10 +548,20 @@ class BillAddHandler(SessionHandlerBase):
         folder_id = _get_bills_folder_id()
         file_id = find_file_in_folder(folder_id, name)
         if not file_id:
-            await get_message(update).chat.send_message(
-                f"Файл '{name}' не найден в папке «финансы». Создайте его на Google Диске и попробуйте снова."
-            )
-            return
+            templates = find_files_in_folder_by_name(folder_id, BILL_TEMPLATE_FILE_NAME)
+            if not templates:
+                await get_message(update).chat.send_message(
+                    f"Файл '{name}' не найден, и шаблон '{BILL_TEMPLATE_FILE_NAME}' отсутствует в папке «финансы»."
+                )
+                return
+            template_file_id = templates[0]
+            renamed_file_id, error = rename_file(template_file_id, name)
+            if not renamed_file_id:
+                await get_message(update).chat.send_message(
+                    f"Не удалось переименовать шаблон в '{name}': {error or 'неизвестная ошибка'}"
+                )
+                return
+            file_id = renamed_file_id
         existing = next(
             (b for b in self.repository.db.bills if b.name.lower() == name.lower()),
             None,
@@ -845,6 +905,7 @@ class BillMainReportHandler(Handler):
             "  Добавить контекст в счёт: /bill <id> edit\n"
             "  Отчёт с отладкой: /bill <id> debug\n"
             "  Добавить новый счет: /bill add <имя> или /bill add (начинает сессию)\n"
+            "  Если счёт не найден, будет переименован найденный шаблон 'Копия Шаблон' в папке финансов\n"
             "  Зарегистрировать перевод: /bill pay <кто> <кому> <сумма>\n"
             "  Удалить последние N платежей: /bill pay force delete <N> (только админ)\n"
             "  Закрыть счета: /bill close <id1> <id2> ...\n"
@@ -1400,24 +1461,75 @@ class CollectBillContextStep(Step):
         self.is_waiting = False
 
 
-def _parse_ai_bill_response(text: str) -> list[list[str]]:
-    rows = []
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if not line or "|" not in line:
+def _parse_ai_bill_response(text: str) -> tuple[list[list[str]], list[list[str]]]:
+    main_rows: list[list[str]] = []
+    data_rows: list[list[str]] = []
+    section: str | None = None
+
+    for raw_line in text.strip().splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        parts = [p.strip() for p in line.split("|", 1)]
-        if len(parts) != 2:
+
+        normalized = line.strip("[]").strip().lower().rstrip(":")
+        if normalized == "общее":
+            section = "main"
             continue
-        name = parts[0]
-        raw = parts[1].replace(",", ".").replace("\u00a0", "").replace(" ", "")
-        try:
-            val = float(raw)
-        except ValueError:
+        if normalized == "данные":
+            section = "data"
             continue
-        amount_str = f"{val:.2f}".replace(".", ",")
-        rows.append([name, amount_str])
-    return rows
+
+        if "|" not in line or section is None:
+            continue
+
+        parts = [p.strip() for p in line.split("|")]
+        if section == "main":
+            if len(parts) < 5:
+                continue
+            if _normalize_name(parts[0]) == "наименование":
+                continue
+            name = parts[0]
+            amount_raw = parts[1]
+            payers = parts[2]
+            factual_payer = parts[3]
+            source = parts[4]
+            if not name or not payers or not factual_payer:
+                continue
+            try:
+                amount = _parse_amount(amount_raw)
+            except ValueError:
+                continue
+            amount_str = f"{amount:.2f}".replace(".", ",")
+            main_rows.append([name, amount_str, payers, factual_payer, source])
+            continue
+
+        if section == "data":
+            if len(parts) < 2:
+                continue
+            person = parts[0]
+            place = parts[1]
+            if not person or _normalize_name(person) == "персонаж":
+                continue
+            data_rows.append([person, place])
+
+    return main_rows, data_rows
+
+
+def _build_new_people_rows(
+    existing_people_places: dict[str, str], ai_data_rows: list[list[str]]
+) -> list[list[str]]:
+    existing_names = {_normalize_name(name) for name in existing_people_places}
+    seen_new: set[str] = set()
+    out: list[list[str]] = []
+    for row in ai_data_rows:
+        person = (row[0] if len(row) > 0 else "").strip()
+        place = (row[1] if len(row) > 1 else "").strip()
+        norm = _normalize_name(person)
+        if not norm or norm in existing_names or norm in seen_new:
+            continue
+        out.append([person, place])
+        seen_new.add(norm)
+    return out
 
 
 class BillOcrHandler(SessionHandlerBase):
@@ -1511,10 +1623,14 @@ class BillOcrHandler(SessionHandlerBase):
             await msg.chat.send_message("Не найден файл счёта")
             return
 
+        people_places_rows = _read_bill_people_places_rows(file_id)
+        people_places = _parse_people_places(people_places_rows)
+        ai_input = _build_bill_ai_input(ocr_text, people_places)
+
         try:
             ai_response = await make_yandex_ai_query(
                 get_message(update).chat.id,
-                [("user", ocr_text)],
+                [("user", ai_input)],
                 BILL_OCR_PROMPT,
             )
         except Exception as e:
@@ -1522,20 +1638,33 @@ class BillOcrHandler(SessionHandlerBase):
             await msg.chat.send_message(f"Ошибка AI: {e}")
             return
 
-        rows = _parse_ai_bill_response(ai_response)
+        rows, ai_data_rows = _parse_ai_bill_response(ai_response)
         if not rows:
             await msg.chat.send_message(
                 f"Не удалось разобрать ответ AI:\n{ai_response}"
             )
             return
 
-        if not insert_rows_into_spreadsheet(file_id, rows):
+        if not insert_rows_into_sheet(file_id, rows, BILL_MAIN_SHEET_NAME):
             await msg.chat.send_message("Не удалось записать данные в таблицу")
             return
+
+        new_people_rows = _build_new_people_rows(people_places, ai_data_rows)
+        data_inserted = 0
+        if new_people_rows:
+            if insert_rows_into_sheet(file_id, new_people_rows, BILL_DATA_SHEET_NAME):
+                data_inserted = len(new_people_rows)
+            else:
+                await msg.chat.send_message(
+                    "⚠️ Расходы добавлены, но не удалось обновить лист 'данные'."
+                )
 
         lines = [f"✅ Добавлено {len(rows)} строк в счёт:"]
         for r in rows:
             lines.append(f"• {r[0]} — {r[1]}")
+        if data_inserted > 0:
+            lines.append("")
+            lines.append(f"🧩 Добавлено {data_inserted} новых участников в лист 'данные'")
         await msg.chat.send_message("\n".join(lines))
 
     async def on_stop(self, update, session_context):
@@ -1560,7 +1689,7 @@ class BillHelpHandler(Handler):
 /bill {id} — отчет по счету (+ кнопка «Добавить контекст»)
 /bill {id} edit — собрать контекст и добавить в счёт (не перезаписывает)
 /bill {id} debug — отчет по счету с выводом сырых данных из таблицы
-/bill add — добавить счет (имя = имя файла в папке «финансы»)
+/bill add — добавить счет (если файла нет, переименовывается найденный «Копия Шаблон»)
 /bill pay {кто} {кому} {сумма} — зарегистрировать перевод
 /bill pay force delete {count} — удалить последние N платежей (админ)
 /bill close {id1} {id2} ... — закрыть счета
