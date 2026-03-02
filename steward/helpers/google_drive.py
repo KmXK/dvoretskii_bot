@@ -104,6 +104,58 @@ def find_file_in_folder(folder_id: str, file_name: str) -> str | None:
         return None
 
 
+def find_files_in_folder_by_name(folder_id: str, file_name: str) -> list[str]:
+    if not _AVAILABLE:
+        return []
+    try:
+        service = _drive_service()
+        results = (
+            service.files()
+            .list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id, name)",
+                pageSize=1000,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+        files = results.get("files", [])
+        file_name_lower = file_name.lower()
+        return [
+            file["id"]
+            for file in files
+            if file.get("name", "").lower() == file_name_lower and file.get("id")
+        ]
+    except Exception as e:
+        logger.exception("find_files_in_folder_by_name: %s", e)
+        return []
+
+
+def rename_file(file_id: str, new_name: str) -> tuple[str | None, str | None]:
+    if not _AVAILABLE:
+        return None, "Google Drive недоступен"
+    try:
+        service = _drive_service()
+        updated = (
+            service.files()
+            .update(
+                fileId=file_id,
+                body={"name": new_name},
+                fields="id,name",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        updated_file_id = updated.get("id")
+        if not updated_file_id:
+            return None, "Не удалось получить ID переименованного файла"
+        return updated_file_id, None
+    except Exception as e:
+        logger.exception("rename_file: %s", e)
+        return None, f"Ошибка при переименовании файла: {e}"
+
+
 def create_file(
     file_name: str, parent_folder_id: str | None = None, mime_type: str = "application/vnd.google-apps.spreadsheet"
 ) -> tuple[str | None, str | None]:
@@ -376,6 +428,41 @@ def read_spreadsheet_values(spreadsheet_id: str) -> list[list[str]] | None:
         return None
 
 
+def _sheet_range(sheet_name: str, cell_range: str) -> str:
+    escaped = sheet_name.replace("'", "''")
+    return f"'{escaped}'!{cell_range}"
+
+
+def read_spreadsheet_values_from_sheet(
+    spreadsheet_id: str,
+    sheet_name: str,
+    cell_range: str = "A:Z",
+) -> list[list[str]] | None:
+    if not _AVAILABLE:
+        return None
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+
+        creds = service_account.Credentials.from_service_account_file(
+            str(_GKEYS_PATH), scopes=SCOPES
+        )
+        service = build("sheets", "v4", credentials=creds)
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=_sheet_range(sheet_name, cell_range),
+            )
+            .execute()
+        )
+        return result.get("values", [])
+    except Exception as e:
+        logger.exception("read_spreadsheet_values_from_sheet: %s", e)
+        return None
+
+
 def _sheets_service():
     if not _AVAILABLE:
         return None
@@ -386,6 +473,26 @@ def _sheets_service():
         str(_GKEYS_PATH), scopes=SCOPES
     )
     return build("sheets", "v4", credentials=creds)
+
+
+def _column_letter_to_index(column: str) -> int:
+    idx = 0
+    for ch in column.upper():
+        if not ("A" <= ch <= "Z"):
+            raise ValueError(f"Invalid column: {column}")
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return idx - 1
+
+
+def _index_to_column_letter(index: int) -> str:
+    if index < 0:
+        raise ValueError(f"Invalid column index: {index}")
+    out = []
+    value = index + 1
+    while value > 0:
+        value, rem = divmod(value - 1, 26)
+        out.append(chr(ord("A") + rem))
+    return "".join(reversed(out))
 
 
 def insert_rows_into_spreadsheet(
@@ -452,6 +559,92 @@ def insert_rows_into_spreadsheet(
         return result.get("updatedRows", 0) > 0
     except Exception as e:
         logger.exception("insert_rows_into_spreadsheet: %s", e)
+        return False
+
+
+def insert_rows_into_sheet(
+    spreadsheet_id: str,
+    rows: list[list[str]],
+    sheet_name: str,
+    start_column: str = "A",
+) -> bool:
+    if not _AVAILABLE or not rows:
+        return False
+    try:
+        service = _sheets_service()
+
+        existing = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=_sheet_range(sheet_name, f"{start_column}:{start_column}"),
+            )
+            .execute()
+        )
+        values = existing.get("values", [])
+        first_empty = len(values)
+        for i, row in enumerate(values):
+            if not row or not row[0].strip():
+                first_empty = i
+                break
+
+        meta = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets.properties(sheetId,title)",
+        ).execute()
+        sheet_id = None
+        for sheet in meta.get("sheets", []):
+            props = sheet.get("properties", {})
+            if props.get("title") == sheet_name:
+                sheet_id = props.get("sheetId")
+                break
+        if sheet_id is None:
+            logger.error("insert_rows_into_sheet: sheet '%s' not found", sheet_name)
+            return False
+
+        count = len(rows)
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "requests": [
+                    {
+                        "insertDimension": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "ROWS",
+                                "startIndex": first_empty,
+                                "endIndex": first_empty + count,
+                            },
+                            "inheritFromBefore": True,
+                        }
+                    }
+                ]
+            },
+        ).execute()
+
+        width = max(len(row) for row in rows)
+        normalized_rows = [row + [""] * (width - len(row)) for row in rows]
+        start_col_idx = _column_letter_to_index(start_column)
+        end_col = _index_to_column_letter(start_col_idx + width - 1)
+        cell_range = _sheet_range(
+            sheet_name,
+            f"{start_column}{first_empty + 1}:{end_col}{first_empty + count}",
+        )
+        result = (
+            service.spreadsheets()
+            .values()
+            .update(
+                spreadsheetId=spreadsheet_id,
+                range=cell_range,
+                valueInputOption="USER_ENTERED",
+                body={"values": normalized_rows},
+            )
+            .execute()
+        )
+        return result.get("updatedRows", 0) > 0
+    except Exception as e:
+        logger.exception("insert_rows_into_sheet: %s", e)
         return False
 
 
