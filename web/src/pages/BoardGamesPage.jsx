@@ -263,6 +263,18 @@ export default function BoardGamesPage() {
     return state.bets.find(b => String(b.userId) === String(userId)) || null
   }, [state?.bets, userId])
 
+  const boardStats = useMemo(() => {
+    const bg = stats?.boardgames || {}
+    return {
+      matches: bg.matches || 0,
+      wins: bg.wins || 0,
+      chessMatches: bg.chessMatches || 0,
+      chessWins: bg.chessWins || 0,
+      checkersMatches: bg.checkersMatches || 0,
+      checkersWins: bg.checkersWins || 0,
+    }
+  }, [stats?.boardgames])
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-20">
       {!connected && <p className="text-zinc-500 text-sm text-center py-6">Подключение...</p>}
@@ -281,12 +293,24 @@ export default function BoardGamesPage() {
           <h3 className="text-white text-sm font-semibold mb-2">Статистика и достижения</h3>
           <div className="grid grid-cols-2 gap-2 mb-2">
             <div className="bg-zinc-800 rounded-lg p-2 text-center">
-              <div className="text-green-400 font-bold text-lg">{stats.boardgames.matches || 0}</div>
+              <div className="text-green-400 font-bold text-lg">{boardStats.matches}</div>
               <div className="text-zinc-500 text-[10px]">Партий</div>
             </div>
             <div className="bg-zinc-800 rounded-lg p-2 text-center">
-              <div className="text-yellow-400 font-bold text-lg">{stats.boardgames.wins || 0}</div>
+              <div className="text-yellow-400 font-bold text-lg">{boardStats.wins}</div>
               <div className="text-zinc-500 text-[10px]">Побед</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div className="bg-zinc-800 rounded-lg p-2">
+              <p className="text-zinc-300 text-[10px] mb-1">Шахматы</p>
+              <p className="text-white text-xs">Матчи: <span className="font-semibold">{boardStats.chessMatches}</span></p>
+              <p className="text-white text-xs">Победы: <span className="font-semibold text-yellow-300">{boardStats.chessWins}</span></p>
+            </div>
+            <div className="bg-zinc-800 rounded-lg p-2">
+              <p className="text-zinc-300 text-[10px] mb-1">Шашки</p>
+              <p className="text-white text-xs">Матчи: <span className="font-semibold">{boardStats.checkersMatches}</span></p>
+              <p className="text-white text-xs">Победы: <span className="font-semibold text-yellow-300">{boardStats.checkersWins}</span></p>
             </div>
           </div>
           {(stats.achievements || []).length > 0 ? (
