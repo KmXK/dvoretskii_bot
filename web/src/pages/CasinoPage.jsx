@@ -8,8 +8,17 @@ import useCasinoSounds from '../hooks/useCasinoSounds'
 const DAILY_BONUS = 50
 const INITIAL_BALANCE = 100
 
-const GAME_IDS = ['slots', 'coinflip', 'roulette', 'slots5x5', 'rocket', 'race', 'blackjack']
-const GAME_LABELS = { slots: '🎰 Бандит', coinflip: '🪙 Монетка', roulette: '🎡 Рулетка', slots5x5: '🎲 Слоты 5×5', rocket: '🚀 Ракетка', race: '🏁 Скачки', blackjack: '🃏 Блэкджек' }
+const GAME_LABELS = {
+  slots: '🎰 Бандит',
+  coinflip: '🪙 Монетка',
+  roulette: '🎡 Рулетка',
+  slots5x5: '🎲 Слоты 5×5',
+  rocket: '🚀 Ракетка',
+  race: '🏁 Скачки',
+  blackjack: '🃏 Блэкджек',
+  chess: '♟️ Шахматы',
+  checkers: '⚫ Шашки',
+}
 
 function secureRandom() {
   const buf = new Uint32Array(1)
@@ -1804,6 +1813,10 @@ const GAMES = [
   {
     id: 'blackjack', name: 'Блэкджек', emoji: '🃏', available: true,
     gradient: 'from-sky-700 via-blue-600 to-indigo-500', glow: 'shadow-blue-500/40', desc: 'Дилер, боты и люди', route: '/blackjack'
+  },
+  {
+    id: 'boardgames', name: 'Шахматы и шашки', emoji: '♟️', available: true,
+    gradient: 'from-slate-700 via-zinc-600 to-emerald-500', glow: 'shadow-emerald-500/40', desc: 'Матчи, зрители и ставки', route: '/boardgames'
   },
   {
     id: 'coinflip', name: 'Монетка', emoji: '🪙', available: true,
