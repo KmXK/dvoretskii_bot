@@ -19,6 +19,7 @@ ROUTER_PROMPT = get_prompt("router")
 TRIGGERS = ["дворецкий", "уважаемый"]
 CB_PREFIX = "ai_route|"
 MAX_PENDING = 100
+EXCLUDED_ROUTER_COMMANDS = {"pasha"}
 
 
 @dataclass
@@ -417,7 +418,9 @@ class AiRouterHandler(Handler):
                 continue
             h = handler.help()
             if h:
-                helps.append(h)
+                command_name = h.split()[0].lstrip("/").split("@")[0].lower()
+                if command_name not in EXCLUDED_ROUTER_COMMANDS:
+                    helps.append(h)
             p = handler.prompt()
             if p:
                 prompts.append(p)

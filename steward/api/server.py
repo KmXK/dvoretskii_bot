@@ -16,6 +16,7 @@ from steward.helpers.webapp import get_webapp_deep_link
 from steward.metrics.base import MetricsEngine
 from steward.poker.room_manager import poker_ws_handler, _manager as poker_manager
 from steward.blackjack.room_manager import blackjack_ws_handler
+from steward.boardgames.room_manager import boardgames_ws_handler
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,23 @@ def _extract_val(samples) -> int:
     return int(samples[0].value) if samples and samples[0].value else 0
 
 
+def _casino_achievements(total_games: int, total_wins: int, chess_games: int, checkers_games: int) -> list[dict]:
+    achievements = []
+    if total_games >= 5:
+        achievements.append({"id": "first_steps", "title": "Первые шаги", "description": "Сыграть 5 матчей"})
+    if total_games >= 25:
+        achievements.append({"id": "veteran", "title": "Ветеран", "description": "Сыграть 25 матчей"})
+    if total_wins >= 10:
+        achievements.append({"id": "winner10", "title": "Победитель", "description": "Одержать 10 побед"})
+    if total_wins >= 50:
+        achievements.append({"id": "winner50", "title": "Легенда", "description": "Одержать 50 побед"})
+    if chess_games >= 10:
+        achievements.append({"id": "chess_master", "title": "Шахматист", "description": "Сыграть 10 партий в шахматы"})
+    if checkers_games >= 10:
+        achievements.append({"id": "checkers_master", "title": "Шашист", "description": "Сыграть 10 партий в шашки"})
+    return achievements
+
+
 async def _query_stats(metrics: MetricsEngine, user_id: str, range_str: str) -> dict:
     msgs, reacts, vids = (
         await metrics.query(_user_promql("bot_messages_total", user_id, range_str, action_type="chat")),
@@ -377,6 +395,7 @@ async def handle_user_chats(request: web.Request):
 
 
 _invitation_messages: dict[str, dict[int, int]] = {}
+_boardgame_invitation_messages: dict[str, dict[int, int]] = {}
 
 
 async def handle_poker_invite(request: web.Request):
@@ -480,7 +499,7 @@ from steward.data.models.birthday import Birthday
 from steward.handlers.timezone_handler import CITY_TIMEZONES, OFFSET_RE, _time_by_offset, _time_by_city
 
 CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
-_CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race"}
+_CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race", "chess", "checkers"}
 CASINO_INITIAL_BALANCE = 100
 CASINO_DAILY_BONUS = 50
 CASINO_BONUS_COOLDOWN = 86400
@@ -707,18 +726,49 @@ async def handle_casino_stats(request: web.Request):
             if gw + gl > 0:
                 per_game.append({"game": gid, "gamesWon": gw, "gamesLost": gl, "won": gmon, "bet": gbet})
 
+        chess_games = next((g for g in per_game if g["game"] == "chess"), None)
+        checkers_games = next((g for g in per_game if g["game"] == "checkers"), None)
+        chess_total = (chess_games["gamesWon"] + chess_games["gamesLost"]) if chess_games else 0
+        checkers_total = (checkers_games["gamesWon"] + checkers_games["gamesLost"]) if checkers_games else 0
+        total_wins = _extract_val(games_won_s)
+        total_losses = _extract_val(games_lost_s)
+        total_games = total_wins + total_losses
+
         return web.json_response({
-            "gamesWon": _extract_val(games_won_s),
-            "gamesLost": _extract_val(games_lost_s),
+            "gamesWon": total_wins,
+            "gamesLost": total_losses,
             "won": _extract_val(won_s),
             "bet": _extract_val(bet_s),
             "bonus": _extract_val(bonus_s),
             "games": per_game,
+            "boardgames": {
+                "matches": chess_total + checkers_total,
+                "wins": (chess_games["gamesWon"] if chess_games else 0) + (checkers_games["gamesWon"] if checkers_games else 0),
+                "chessMatches": chess_total,
+                "chessWins": chess_games["gamesWon"] if chess_games else 0,
+                "checkersMatches": checkers_total,
+                "checkersWins": checkers_games["gamesWon"] if checkers_games else 0,
+            },
+            "achievements": _casino_achievements(
+                total_games,
+                total_wins,
+                chess_total,
+                checkers_total,
+            ),
         })
     except Exception:
         logger.exception("casino stats error")
         return web.json_response({
             "gamesWon": 0, "gamesLost": 0, "won": 0, "bet": 0, "bonus": 0, "games": [],
+            "boardgames": {
+                "matches": 0,
+                "wins": 0,
+                "chessMatches": 0,
+                "chessWins": 0,
+                "checkersMatches": 0,
+                "checkersWins": 0,
+            },
+            "achievements": [],
         })
 
 
@@ -956,6 +1006,115 @@ async def handle_poker_invite_delete(request: web.Request):
     room_id = str(body.get("roomId", ""))
 
     msgs = _invitation_messages.pop(room_id, {})
+    deleted = 0
+    for cid, mid in msgs.items():
+        try:
+            await bot.delete_message(chat_id=cid, message_id=mid)
+            deleted += 1
+        except Exception:
+            pass
+
+    return web.json_response({"deleted": deleted})
+
+
+async def handle_boardgame_invite(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    chat_ids = body.get("chatIds", [])
+    room_name = str(body.get("roomName", "Board Room"))
+    room_id = str(body.get("roomId", ""))
+    game_type = str(body.get("gameType", "chess"))
+    player_count = int(body.get("playerCount", 1))
+    spectator_count = int(body.get("spectatorCount", 0))
+    creator_name = str(body.get("creatorName", "Someone"))
+
+    if not chat_ids or not room_id:
+        return web.json_response({"error": "chatIds and roomId required"}, status=400)
+
+    app_link = get_webapp_deep_link(bot)
+    game_label = "Шахматы" if game_type == "chess" else "Шашки"
+
+    text = (
+        f"♟️ <b>{game_label} — {room_name}</b>\n\n"
+        f"👤 {creator_name} приглашает в матч\n"
+        f"👥 Игроков: {player_count} · 👀 Зрителей: {spectator_count}"
+    )
+
+    reply_markup = None
+    if app_link:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎮 Войти в матч", url=app_link)]
+        ])
+
+    sent = {}
+    for cid in chat_ids:
+        try:
+            msg = await bot.send_message(chat_id=cid, text=text, parse_mode="HTML", reply_markup=reply_markup)
+            sent[cid] = msg.message_id
+        except Exception:
+            logger.warning("Failed to send boardgame invite to chat %s", cid)
+
+    if room_id not in _boardgame_invitation_messages:
+        _boardgame_invitation_messages[room_id] = {}
+    _boardgame_invitation_messages[room_id].update(sent)
+    return web.json_response({"sent": len(sent)})
+
+
+async def handle_boardgame_invite_update(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    room_id = str(body.get("roomId", ""))
+    room_name = str(body.get("roomName", "Board Room"))
+    game_type = str(body.get("gameType", "chess"))
+    player_count = int(body.get("playerCount", 1))
+    spectator_count = int(body.get("spectatorCount", 0))
+
+    msgs = _boardgame_invitation_messages.get(room_id, {})
+    if not msgs:
+        return web.json_response({"updated": 0})
+
+    app_link = get_webapp_deep_link(bot)
+    game_label = "Шахматы" if game_type == "chess" else "Шашки"
+
+    text = (
+        f"♟️ <b>{game_label} — {room_name}</b>\n\n"
+        f"👥 Игроков: {player_count}\n"
+        f"👀 Зрителей: {spectator_count}\n"
+        f"{'🟢 Есть места' if player_count < 2 else '🔴 Идёт матч'}"
+    )
+
+    reply_markup = None
+    if app_link:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎮 Войти в матч", url=app_link)]
+        ])
+
+    updated = 0
+    for cid, mid in list(msgs.items()):
+        try:
+            await bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="HTML", reply_markup=reply_markup)
+            updated += 1
+        except Exception:
+            pass
+
+    return web.json_response({"updated": updated})
+
+
+async def handle_boardgame_invite_delete(request: web.Request):
+    bot = request.app.get("bot")
+    if not bot:
+        return web.json_response({"error": "Bot not available"}, status=503)
+
+    body = await request.json()
+    room_id = str(body.get("roomId", ""))
+
+    msgs = _boardgame_invitation_messages.pop(room_id, {})
     deleted = 0
     for cid, mid in msgs.items():
         try:
@@ -1463,8 +1622,12 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/poker/invite", handle_poker_invite)
     app.router.add_post("/api/poker/invite/update", handle_poker_invite_update)
     app.router.add_post("/api/poker/invite/delete", handle_poker_invite_delete)
+    app.router.add_post("/api/boardgames/invite", handle_boardgame_invite)
+    app.router.add_post("/api/boardgames/invite/update", handle_boardgame_invite_update)
+    app.router.add_post("/api/boardgames/invite/delete", handle_boardgame_invite_delete)
     app.router.add_get("/ws/poker", poker_ws_handler)
     app.router.add_get("/ws/blackjack", blackjack_ws_handler)
+    app.router.add_get("/ws/boardgames", boardgames_ws_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
