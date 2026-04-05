@@ -1,4 +1,4 @@
-.PHONY: dev dev-metrics prod down logs logs-dev
+.PHONY: dev dev-metrics prod down logs logs-dev test
 
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
@@ -17,4 +17,7 @@ logs:
 
 logs-dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile metrics logs -f
+
+test:
+	docker compose -f docker-compose.test.yml --profile test run --rm test
 

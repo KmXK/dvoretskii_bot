@@ -1,0 +1,19 @@
+# Запуск тестов: make test
+# Без Telegram API, без туннеля, без метрик.
+
+services:
+  test:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements-test.txt
+    command: ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
+    volumes:
+      - ./db.json:/app/db.json
+      - ./data:/app/data:ro
+    environment:
+      - TELEGRAM_BOT_TOKEN=1234567890:AAFabcdefghijklmnopqrstuvwxyz12345
+      - TELEGRAM_API_ID=12345
+      - TELEGRAM_API_HASH=abcdef1234567890abcdef1234567890
+    profiles:
+      - test
