@@ -3,7 +3,7 @@ from steward.handlers.handler import Handler
 from steward.helpers.webapp import get_webapp_keyboard
 
 
-@CommandHandler("app", only_admin=True)
+@CommandHandler("app")
 class MiniAppHandler(Handler):
     async def chat(self, context):
         keyboard = get_webapp_keyboard(
