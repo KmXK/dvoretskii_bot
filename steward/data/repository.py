@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import logging
@@ -53,7 +54,7 @@ class JsonFileStorage(Storage):
             return self.cache
 
         if not await aiofiles.os.path.exists(self.path):
-            async with aiofiles.open(self.path, "r") as f:
+            async with aiofiles.open(self.path, "w") as f:
                 await f.close()
 
         self.written = False
@@ -90,6 +91,7 @@ class JsonFileStorage(Storage):
 class Repository:
     def __init__(self, storage: Storage):
         self._storage = storage
+        self._save_lock = asyncio.Lock()
         self._save_callbacks: set[Callable[[], None | Awaitable[Any]]] = set()
 
         # Add abstraction on database to prevent cyclic dependencies and remove this kostil
@@ -107,9 +109,10 @@ class Repository:
         await self.save()
 
     async def save(self):
-        from steward.data.models.db import serialize_to_dict
+        async with self._save_lock:
+            from steward.data.models.db import serialize_to_dict
 
-        await self._storage.write_dict(serialize_to_dict(self.db))
+            await self._storage.write_dict(serialize_to_dict(self.db))
         for callback in self._save_callbacks:
             try:
                 result = callback()

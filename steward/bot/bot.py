@@ -64,7 +64,6 @@ class Bot:
 
         for handler in handlers:
             handler.repository = repository
-            handler.bot = self.bot
             handler._all_handlers = handlers
 
     def start(
@@ -97,6 +96,9 @@ class Bot:
         application = applicationBuilder.concurrent_updates(True).build()
         self.bot = application.bot
 
+        for handler in self.handlers:
+            handler.bot = self.bot
+
         application.add_handler(MessageHandler(filters.ALL, self._chat, block=False))
         application.add_handler(MessageReactionHandler(self._chat, block=False))
         application.add_handler(CallbackQueryHandler(self._callback, block=False))
@@ -128,28 +130,16 @@ class Bot:
                 self.bot,
                 self.client,
             )
-            asyncio.ensure_future(
-                self.delayed_action_handler.start(),
-                loop=asyncio.get_event_loop(),
-            )
+            asyncio.ensure_future(self.delayed_action_handler.start())
 
             self.birthday_checker = BirthdayChecker(self.repository, self.bot)
-            asyncio.ensure_future(
-                self.birthday_checker.start(),
-                loop=asyncio.get_event_loop(),
-            )
+            asyncio.ensure_future(self.birthday_checker.start())
 
             self.dynamic_reward_checker = DynamicRewardChecker(self.repository, self.metrics)
-            asyncio.ensure_future(
-                self.dynamic_reward_checker.start(),
-                loop=asyncio.get_event_loop(),
-            )
+            asyncio.ensure_future(self.dynamic_reward_checker.start())
 
             api_port = int(environ.get("API_PORT", "8080"))
-            asyncio.ensure_future(
-                start_api_server(self.repository, self.metrics, api_port, self.bot),
-                loop=asyncio.get_event_loop(),
-            )
+            asyncio.ensure_future(start_api_server(self.repository, self.metrics, api_port, self.bot))
 
             application.run_polling(
                 allowed_updates=Update.ALL_TYPES,
