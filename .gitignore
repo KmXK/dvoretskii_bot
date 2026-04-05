@@ -189,3 +189,5 @@ bin/
 web/key.pem
 web/cert.pem
 nginx/ssl/
+
+CLAUDE.md
