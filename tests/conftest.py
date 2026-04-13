@@ -224,6 +224,7 @@ def make_text_context(
     text: str,
     repo: Repository | None = None,
     user_id: int = DEFAULT_USER_ID,
+    metrics=None,
 ) -> ChatBotContext:
     """Create a context for a plain non-command text message (used in multi-step flows)."""
     update = make_text_update(text, user_id=user_id)
@@ -233,7 +234,7 @@ def make_text_context(
         client=MagicMock(),
         update=update,
         tg_context=MagicMock(),
-        metrics=MagicMock(),
+        metrics=metrics or MagicMock(),
         message=update.message,
     )
 

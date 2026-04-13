@@ -309,4 +309,9 @@ class Repository:
                     user["monkeys"] = 100
             data["version"] = 11
 
+        if data.get("version") == 11:
+            if "curse_words" not in data or not isinstance(data["curse_words"], list):
+                data["curse_words"] = []
+            data["version"] = 12
+
         return data

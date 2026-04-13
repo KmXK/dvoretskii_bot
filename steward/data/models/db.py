@@ -31,6 +31,7 @@ class Database:
     ai_messages: dict[str, AiMessage] = field(default_factory=dict)
     army: list[Army] = field(default_factory=list)
     chats: list[Chat] = field(default_factory=list)
+    curse_words: set[str] = field(default_factory=set)
     silenced_chats: dict[int, datetime] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
@@ -49,7 +50,7 @@ class Database:
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
 
-    version: int = 11
+    version: int = 12
 
 
 PARSE_CONFIG = Config(

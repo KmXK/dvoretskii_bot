@@ -21,6 +21,12 @@ from steward.handlers.army_handler import (
 )
 from steward.handlers.ban_handler import BanCommandHandler, BanEnforcerHandler
 from steward.handlers.broadcast_handler import BroadcastSessionHandler
+from steward.handlers.curse_handler import (
+    CurseWordListAddHandler,
+    CurseWordListRemoveHandler,
+    CurseWordListViewHandler,
+)
+from steward.handlers.curse_metric_handler import CurseMetricHandler
 from steward.handlers.birthday_handler import (
     BirthdayRemoveHandler,
     BirthdayViewHandler,
@@ -122,6 +128,7 @@ def get_handlers(log_file: None | str):
         [
             MiniAppHandler,
             ChatCollectHandler,
+            CurseMetricHandler,
             SilenceCommandHandler,
             SilenceEnforcerHandler,
             BanCommandHandler,
@@ -155,6 +162,9 @@ def get_handlers(log_file: None | str):
             TodoRemoveHandler,
             TodoListHandler,
             TodoAddHandler,
+            CurseWordListViewHandler,
+            CurseWordListAddHandler,
+            CurseWordListRemoveHandler,
             IdHandler,
             PrettyTimeHandler,
             MessageInfoHandler,
