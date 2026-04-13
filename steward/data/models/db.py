@@ -18,6 +18,7 @@ from .bill import Bill, DetailsInfo, Payment
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
+from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
 from .reward import Reward, UserReward
 from .rule import Rule
@@ -31,6 +32,8 @@ class Database:
     ai_messages: dict[str, AiMessage] = field(default_factory=dict)
     army: list[Army] = field(default_factory=list)
     chats: list[Chat] = field(default_factory=list)
+    curse_participants: list[CurseParticipant] = field(default_factory=list)
+    curse_punishments: list[CursePunishment] = field(default_factory=list)
     curse_words: set[str] = field(default_factory=set)
     silenced_chats: dict[int, datetime] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)

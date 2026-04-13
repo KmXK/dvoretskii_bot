@@ -129,6 +129,7 @@ class Bot:
                 self.repository,
                 self.bot,
                 self.client,
+                self.metrics,
             )
             asyncio.ensure_future(self.delayed_action_handler.start())
 

@@ -9,6 +9,7 @@ from telethon import TelegramClient
 from steward.data.repository import Repository
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
+from steward.metrics.base import MetricsEngine
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +19,21 @@ default_actions: list[DelayedAction] = []
 
 class DelayedActionHandler:
     def __init__(
-        self, repository: Repository, bot: ExtBot[None], client: TelegramClient
+        self,
+        repository: Repository,
+        bot: ExtBot[None],
+        client: TelegramClient,
+        metrics: MetricsEngine,
     ):
         self._repository = repository
         self._bot = bot
         self._client = client
+        self._metrics = metrics
         self._update_future: asyncio.Future[None] = asyncio.Future()
         self._repository.subscribe_on_save(lambda: self._update_future.set_result(None))
 
     async def start(self):
-        context = DelayedActionContext(self._repository, self._bot, self._client)
+        context = DelayedActionContext(self._repository, self._bot, self._client, self._metrics)
 
         while True:
             logger.info("Checking delayed actions...")

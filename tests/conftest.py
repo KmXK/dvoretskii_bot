@@ -121,12 +121,18 @@ async def make_bot(mock_request: MockRequest | None = None):
 # Context factories
 # ---------------------------------------------------------------------------
 
-def _make_message_mock(text: str, is_command: bool, user_id: int, bot_username: str = "testbot") -> MagicMock:
+def _make_message_mock(
+    text: str,
+    is_command: bool,
+    user_id: int,
+    bot_username: str = "testbot",
+    chat_id: int = CHAT_ID,
+) -> MagicMock:
     message = MagicMock()
     message.text = text
     message.chat.type = "group"
-    message.chat.id = CHAT_ID
-    message.chat_id = CHAT_ID
+    message.chat.id = chat_id
+    message.chat_id = chat_id
     message.from_user.id = user_id
     message.from_user.username = "testuser"
     message.from_user.name = "testuser"
@@ -156,16 +162,28 @@ def _make_message_mock(text: str, is_command: bool, user_id: int, bot_username: 
     return message
 
 
-def make_update(command: str, args: str = "", bot_username: str = "testbot", user_id: int = DEFAULT_USER_ID) -> MagicMock:
+def make_update(
+    command: str,
+    args: str = "",
+    bot_username: str = "testbot",
+    user_id: int = DEFAULT_USER_ID,
+    chat_id: int = CHAT_ID,
+) -> MagicMock:
     """Create a mock Update for a bot command."""
     cmd_text = f"/{command}"
     full_text = cmd_text + (f" {args}" if args else "")
-    message = _make_message_mock(full_text, is_command=True, user_id=user_id, bot_username=bot_username)
+    message = _make_message_mock(
+        full_text,
+        is_command=True,
+        user_id=user_id,
+        bot_username=bot_username,
+        chat_id=chat_id,
+    )
 
     update = MagicMock(spec=Update)
     update.effective_message = message
     update.effective_chat = MagicMock()
-    update.effective_chat.id = CHAT_ID
+    update.effective_chat.id = chat_id
     update.effective_user = MagicMock()
     update.effective_user.id = user_id
     update.message = message
@@ -175,14 +193,14 @@ def make_update(command: str, args: str = "", bot_username: str = "testbot", use
     return update
 
 
-def make_text_update(text: str, user_id: int = DEFAULT_USER_ID) -> MagicMock:
+def make_text_update(text: str, user_id: int = DEFAULT_USER_ID, chat_id: int = CHAT_ID) -> MagicMock:
     """Create a mock Update for a plain (non-command) text message."""
-    message = _make_message_mock(text, is_command=False, user_id=user_id)
+    message = _make_message_mock(text, is_command=False, user_id=user_id, chat_id=chat_id)
 
     update = MagicMock(spec=Update)
     update.effective_message = message
     update.effective_chat = MagicMock()
-    update.effective_chat.id = CHAT_ID
+    update.effective_chat.id = chat_id
     update.effective_user = MagicMock()
     update.effective_user.id = user_id
     update.message = message
@@ -207,8 +225,9 @@ def make_context(
     bot=None,
     user_id: int = DEFAULT_USER_ID,
     metrics=None,
+    chat_id: int = CHAT_ID,
 ) -> ChatBotContext:
-    update = make_update(command, args, user_id=user_id)
+    update = make_update(command, args, user_id=user_id, chat_id=chat_id)
     return ChatBotContext(
         repository=repo or make_repository(),
         bot=bot or MagicMock(),
@@ -225,9 +244,10 @@ def make_text_context(
     repo: Repository | None = None,
     user_id: int = DEFAULT_USER_ID,
     metrics=None,
+    chat_id: int = CHAT_ID,
 ) -> ChatBotContext:
     """Create a context for a plain non-command text message (used in multi-step flows)."""
-    update = make_text_update(text, user_id=user_id)
+    update = make_text_update(text, user_id=user_id, chat_id=chat_id)
     return ChatBotContext(
         repository=repo or make_repository(),
         bot=MagicMock(),
@@ -245,6 +265,7 @@ async def invoke(
     repo: Repository,
     user_id: int = DEFAULT_USER_ID,
     metrics=None,
+    chat_id: int = CHAT_ID,
 ) -> tuple[str, bool]:
     """Invoke handler.chat() with the given command text and return (reply, handled)."""
     stripped = text.lstrip("/")
@@ -256,7 +277,7 @@ async def invoke(
     handler.repository = repo
     handler.bot = MagicMock()
 
-    ctx = make_context(command, args=args, repo=repo, user_id=user_id, metrics=metrics)
+    ctx = make_context(command, args=args, repo=repo, user_id=user_id, metrics=metrics, chat_id=chat_id)
     result = await handler.chat(ctx)
 
     for method_name in ("reply_text", "reply_html", "reply_markdown", "reply_markdown_v2"):
