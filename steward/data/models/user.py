@@ -11,3 +11,4 @@ class User:
     casino_last_bonus: float = 0
     stand_name: Optional[str] = None
     stand_description: Optional[str] = None
+    stand_aliases: list[str] = field(default_factory=list)

@@ -38,6 +38,7 @@ from steward.handlers.bill_handler import (
     BillPayHandler,
     BillReportHandler,
 )
+from steward.handlers.bills import BillsHandler
 from steward.handlers.chat_collect_handler import ChatCollectHandler
 from steward.handlers.db_handler import DbHandler
 from steward.handlers.download_handler import DownloadHandler
@@ -177,6 +178,7 @@ def get_handlers(log_file: None | str):
             PashaSessionHandler,
             BroadcastSessionHandler,
             AIHandler,
+            BillsHandler,
             VoiceVideoHandler,
             MultiplyHandler,
             WatchHandler,

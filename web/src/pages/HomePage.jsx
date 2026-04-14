@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 
 const cards = [
+  { title: 'Счета', desc: 'Совместные расходы', emoji: '💸', color: 'from-green-500/20 to-green-900/20', to: '/bills' },
   { title: 'Задачи', desc: 'Список задач', emoji: '📝', color: 'from-rose-500/20 to-rose-900/20', to: '/todo' },
   { title: 'Армейка', desc: 'Статус по армейке', emoji: '🎖️', color: 'from-emerald-500/20 to-emerald-900/20', to: '/army' },
   { title: 'Фичи', desc: 'Фича-реквесты', emoji: '💡', color: 'from-cyan-500/20 to-cyan-900/20', to: '/features' },

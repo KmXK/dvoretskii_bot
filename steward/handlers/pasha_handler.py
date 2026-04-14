@@ -68,7 +68,7 @@ class PashaSessionHandler(SessionHandlerBase):
         )
 
     def try_activate_session(self, update, session_context):
-        return update.message.text == "/pasha"
+        return update.message is not None and update.message.text == "/pasha"
 
     async def on_session_finished(self, update, session_context):
         pass
