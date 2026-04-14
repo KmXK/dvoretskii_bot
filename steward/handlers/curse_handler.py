@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from steward.bot.context import ChatBotContext
@@ -228,7 +228,7 @@ class CurseHandler(Handler):
         user_id = context.message.from_user.id
         chat_id = context.message.chat_id
         participant = self._find_participant(user_id)
-        now = datetime.now(datetime.UTC)
+        now = datetime.now(timezone.utc)
 
         if participant is None:
             participant = CurseParticipant(
@@ -281,7 +281,7 @@ class CurseHandler(Handler):
             await context.message.reply_text("Сначала подпишись на наказания.")
             return True
 
-        now = datetime.now(datetime.UTC)
+        now = datetime.now(timezone.utc)
         if punishment_id is None:
             participant.last_done_at = now
             await self.repository.save()
