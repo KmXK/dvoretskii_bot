@@ -1,8 +1,12 @@
+import asyncio
+import logging
 from dataclasses import dataclass
 
 from steward.bot.context import ChatBotContext
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError, validate_arguments, validate_command_msg
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -111,12 +115,36 @@ class StandsHandler(Handler):
 
         target_user.stand_name = pending.stand_name
         target_user.stand_description = pending.description
+        target_user.stand_aliases = []
         await self.repository.save()
         self._pending_add.pop(user_id, None)
         await context.message.reply_text(
             f"Готово. Пользователь «{target_user.stand_name}» сохранен для @{target_user.username or target_user.id}.",
         )
+        asyncio.create_task(self._extract_aliases(target_user.id, pending.stand_name, pending.description))
         return True
+
+    async def _extract_aliases(self, user_id: int, stand_name: str, description: str):
+        try:
+            from steward.helpers.ai import make_yandex_ai_query, YandexModelTypes
+            response = await make_yandex_ai_query(
+                user_id=f"stands_aliases_{user_id}",
+                messages=[("user", f"Имя: {stand_name}\nОписание: {description}")],
+                system_prompt=(
+                    "Извлеки из описания человека все имена, прозвища и кличики. "
+                    "Верни только список через запятую без пояснений. "
+                    "Если имён нет — верни пустую строку."
+                ),
+                model=YandexModelTypes.YANDEXGPT_5_PRO,  # type: ignore[arg-type]
+            )
+            aliases = [a.strip() for a in response.split(",") if a.strip() and a.strip().lower() != stand_name.lower()]
+            user = next((u for u in self.repository.db.users if u.id == user_id), None)
+            if user and aliases:
+                user.stand_aliases = aliases
+                await self.repository.save()
+                logger.info("Extracted %d aliases for %s: %s", len(aliases), stand_name, aliases)
+        except Exception as e:
+            logger.warning("Failed to extract aliases for user %d: %s", user_id, e)
 
     async def _remove_stand(self, context: ChatBotContext, stand_name_raw: str):
         stand_name = stand_name_raw.strip()

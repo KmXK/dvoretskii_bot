@@ -1572,6 +1572,577 @@ async def handle_chat_stats(request: web.Request):
     })
 
 
+def _get_tg_user_from_request(request: web.Request) -> dict | None:
+    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("initData")
+    if init_data:
+        return _validate_telegram_init_data(init_data)
+    return None
+
+
+# ── /api/bills ──────────────────────────────────────────────────────────────────
+
+def _serialize_bill_person(p) -> dict:
+    return {
+        "id": p.id,
+        "display_name": p.display_name,
+        "telegram_id": p.telegram_id,
+        "telegram_username": p.telegram_username,
+        "aliases": list(p.aliases),
+        "description": p.description,
+    }
+
+
+def _serialize_assignment(asg) -> dict:
+    return {
+        "unit_count": asg.unit_count,
+        "debtors": list(asg.debtors),
+    }
+
+
+def _serialize_transaction(tx) -> dict:
+    return {
+        "id": tx.id,
+        "item_name": tx.item_name,
+        "creditor": tx.creditor,
+        "unit_price_minor": tx.unit_price_minor,
+        "quantity": tx.quantity,
+        "assignments": [_serialize_assignment(a) for a in tx.assignments],
+        "added_by_person_id": tx.added_by_person_id,
+        "source": tx.source,
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "incomplete": tx.incomplete,
+    }
+
+
+def _serialize_payment_v2(p) -> dict:
+    return {
+        "id": p.id,
+        "debtor": p.debtor,
+        "creditor": p.creditor,
+        "amount_minor": p.amount_minor,
+        "currency": p.currency,
+        "status": p.status,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+        "bill_ids": list(p.bill_ids),
+    }
+
+
+def _serialize_bill_v2(bill, payments: list) -> dict:
+    bill_payments = [p for p in payments if bill.id in p.bill_ids]
+    return {
+        "id": bill.id,
+        "name": bill.name,
+        "author_person_id": bill.author_person_id,
+        "participants": list(bill.participants),
+        "transactions": [_serialize_transaction(tx) for tx in bill.transactions],
+        "currency": bill.currency,
+        "origin_chat_id": bill.origin_chat_id,
+        "created_at": bill.created_at.isoformat() if bill.created_at else None,
+        "updated_at": bill.updated_at.isoformat() if bill.updated_at else None,
+        "closed": bill.closed,
+        "closed_at": bill.closed_at.isoformat() if bill.closed_at else None,
+        "payments": [_serialize_payment_v2(p) for p in bill_payments],
+    }
+
+
+def _serialize_suggestion(s) -> dict:
+    return {
+        "id": s.id,
+        "bill_id": s.bill_id,
+        "proposed_by_person_id": s.proposed_by_person_id,
+        "proposed_tx": [_serialize_transaction(tx) for tx in s.proposed_tx],
+        "status": s.status,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "decided_by_person_id": s.decided_by_person_id,
+        "decided_at": s.decided_at.isoformat() if s.decided_at else None,
+    }
+
+
+def _check_bill_access(
+    bill,
+    tg_user_id: int,
+    repository: Repository,
+    mode: str = "view",
+) -> tuple[bool, str | None]:
+    """Mode: view | edit | close | merge.
+    Returns (allowed, error_message)."""
+    if not tg_user_id:
+        return False, "no auth"
+    is_admin = repository.is_admin(tg_user_id)
+    person = repository.get_bill_person_by_telegram_id(tg_user_id)
+    pid = person.id if person else None
+
+    is_author = pid is not None and pid == bill.author_person_id
+    is_participant = pid is not None and pid in bill.participants
+
+    if mode == "view":
+        if is_admin or is_author or is_participant:
+            return True, None
+        return False, "no access"
+    if mode == "edit":
+        if is_admin or is_author:
+            return True, None
+        return False, "only author/admin can edit"
+    if mode == "close" or mode == "merge":
+        if is_admin or is_author:
+            return True, None
+        return False, "only author/admin"
+    return False, "unknown mode"
+
+
+def _bills_visible_for_user(repository: Repository, tg_user_id: int, scope_all: bool = False) -> list:
+    person = repository.get_bill_person_by_telegram_id(tg_user_id)
+    is_admin = repository.is_admin(tg_user_id)
+    if scope_all and is_admin:
+        user = next((u for u in repository.db.users if u.id == tg_user_id), None)
+        admin_chat_ids = set(user.chat_ids) if user else set()
+        return [
+            b for b in repository.db.bills_v2
+            if (person and (person.id == b.author_person_id or person.id in b.participants))
+            or (b.origin_chat_id in admin_chat_ids)
+        ]
+    if person:
+        return repository.get_bills_v2_for_person(person.id)
+    return []
+
+
+async def handle_bills_list(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    scope = request.query.get("scope", "")
+    bills = _bills_visible_for_user(repository, int(tg_user["id"]), scope == "all")
+    payments = repository.db.bill_payments_v2
+    return web.json_response({
+        "bills": [_serialize_bill_v2(b, payments) for b in bills],
+        "persons": [_serialize_bill_person(p) for p in repository.db.bill_persons],
+    })
+
+
+async def handle_bills_get(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "view")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_create(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillV2
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "name required"}, status=400)
+    currency = data.get("currency", "BYN")
+    origin_chat_id = data.get("origin_chat_id")
+
+    caller, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+    bill = BillV2(
+        id=repository.get_next_bill_v2_id(),
+        name=name,
+        author_person_id=caller.id,
+        participants=[caller.id],
+        transactions=[],
+        currency=currency,
+        origin_chat_id=origin_chat_id,
+        updated_at=datetime.datetime.now(),
+    )
+    repository.db.bills_v2.append(bill)
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_close(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "close")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    bill.closed = True
+    bill.closed_at = datetime.datetime.now()
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_reopen(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "close")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    bill.closed = False
+    bill.closed_at = None
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_tx_add(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillTransaction, BillItemAssignment, UNKNOWN_PERSON_ID
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+
+    data = await request.json()
+    assignments_raw = data.get("assignments", [])
+    assignments = [
+        BillItemAssignment(unit_count=int(a.get("unit_count", 1)), debtors=list(a.get("debtors", [])))
+        for a in assignments_raw
+    ]
+    quantity = int(data.get("quantity", sum(a.unit_count for a in assignments) or 1))
+    incomplete = any(not a.debtors for a in assignments)
+    tx = BillTransaction(
+        id=str(_uuid.uuid4()),
+        item_name=data.get("item_name", ""),
+        creditor=data.get("creditor") or UNKNOWN_PERSON_ID,
+        unit_price_minor=int(data.get("unit_price_minor", 0)),
+        quantity=quantity,
+        assignments=assignments,
+        source=data.get("source", "manual"),
+        incomplete=incomplete,
+    )
+    bill.transactions.append(tx)
+    # Add new participants from assignments
+    for asg in assignments:
+        for d in asg.debtors:
+            if d and d != UNKNOWN_PERSON_ID and d not in bill.participants:
+                bill.participants.append(d)
+    if tx.creditor and tx.creditor != UNKNOWN_PERSON_ID and tx.creditor not in bill.participants:
+        bill.participants.append(tx.creditor)
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_transaction(tx))
+
+
+async def handle_bills_tx_update(request: web.Request):
+    from steward.data.models.bill_v2 import BillItemAssignment
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    tx_id = request.match_info["tid"]
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+
+    tx = next((t for t in bill.transactions if t.id == tx_id), None)
+    if not tx:
+        return web.json_response({"error": "tx not found"}, status=404)
+
+    data = await request.json()
+    if "item_name" in data:
+        tx.item_name = data["item_name"]
+    if "unit_price_minor" in data:
+        tx.unit_price_minor = int(data["unit_price_minor"])
+    if "quantity" in data:
+        tx.quantity = int(data["quantity"])
+    if "creditor" in data:
+        tx.creditor = data["creditor"]
+    if "assignments" in data:
+        tx.assignments = [
+            BillItemAssignment(unit_count=int(a.get("unit_count", 1)), debtors=list(a.get("debtors", [])))
+            for a in data["assignments"]
+        ]
+        tx.incomplete = any(not a.debtors for a in tx.assignments)
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_transaction(tx))
+
+
+async def handle_bills_tx_delete(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    tx_id = request.match_info["tid"]
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    bill.transactions = [t for t in bill.transactions if t.id != tx_id]
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response({"ok": True})
+
+
+async def handle_bills_suggestions_list(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "view")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    suggestions = repository.get_pending_suggestions_for_bill(bill_id)
+    return web.json_response([_serialize_suggestion(s) for s in suggestions])
+
+
+async def handle_bills_suggestion_create(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import (
+        BillItemSuggestion,
+        BillTransaction,
+        BillItemAssignment,
+        UNKNOWN_PERSON_ID,
+    )
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill or bill.closed:
+        return web.json_response({"error": "not found or closed"}, status=404)
+
+    proposer, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+
+    data = await request.json()
+    proposed_tx = []
+    for raw in data.get("transactions", []):
+        assignments = [
+            BillItemAssignment(unit_count=int(a.get("unit_count", 1)), debtors=list(a.get("debtors", [])))
+            for a in raw.get("assignments", [])
+        ]
+        proposed_tx.append(BillTransaction(
+            id=str(_uuid.uuid4()),
+            item_name=raw.get("item_name", ""),
+            creditor=raw.get("creditor") or UNKNOWN_PERSON_ID,
+            unit_price_minor=int(raw.get("unit_price_minor", 0)),
+            quantity=int(raw.get("quantity", 1)),
+            assignments=assignments,
+            source=raw.get("source", "manual"),
+            incomplete=any(not a.debtors for a in assignments),
+        ))
+
+    suggestion = BillItemSuggestion(
+        id=str(_uuid.uuid4()),
+        bill_id=bill.id,
+        proposed_by_person_id=proposer.id,
+        proposed_tx=proposed_tx,
+        bill_updated_at_propose=bill.updated_at,
+    )
+    repository.db.bill_item_suggestions.append(suggestion)
+
+    from steward.delayed_action.bill_suggestion_lifecycle import schedule_suggestion_lifecycle
+    schedule_suggestion_lifecycle(repository, suggestion.id)
+
+    await repository.save()
+    return web.json_response(_serialize_suggestion(suggestion))
+
+
+async def handle_bills_suggestion_approve(request: web.Request):
+    import uuid as _uuid
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    sid = request.match_info["sid"]
+    suggestion = repository.get_bill_suggestion(sid)
+    from steward.data.models.bill_v2 import SuggestionStatus
+    if not suggestion or suggestion.status != SuggestionStatus.PENDING:
+        return web.json_response({"error": "not found or already decided"}, status=404)
+    bill = repository.get_bill_v2(suggestion.bill_id)
+    if not bill:
+        return web.json_response({"error": "bill not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+
+    if suggestion.bill_updated_at_propose and bill.updated_at != suggestion.bill_updated_at_propose:
+        return web.json_response({"error": "bill changed since proposal"}, status=409)
+
+    for tx in suggestion.proposed_tx:
+        tx.id = str(_uuid.uuid4())
+        tx.added_by_person_id = suggestion.proposed_by_person_id
+        bill.transactions.append(tx)
+    if suggestion.proposed_by_person_id not in bill.participants:
+        bill.participants.append(suggestion.proposed_by_person_id)
+    bill.updated_at = datetime.datetime.now()
+    suggestion.status = SuggestionStatus.APPROVED
+    suggestion.decided_at = datetime.datetime.now()
+    person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
+    suggestion.decided_by_person_id = person.id if person else None
+    await repository.save()
+    return web.json_response(_serialize_suggestion(suggestion))
+
+
+async def handle_bills_suggestion_reject(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    sid = request.match_info["sid"]
+    suggestion = repository.get_bill_suggestion(sid)
+    from steward.data.models.bill_v2 import SuggestionStatus
+    if not suggestion or suggestion.status != SuggestionStatus.PENDING:
+        return web.json_response({"error": "not found or already decided"}, status=404)
+    bill = repository.get_bill_v2(suggestion.bill_id)
+    if not bill:
+        return web.json_response({"error": "bill not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    suggestion.status = SuggestionStatus.REJECTED
+    suggestion.decided_at = datetime.datetime.now()
+    person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
+    suggestion.decided_by_person_id = person.id if person else None
+    await repository.save()
+    return web.json_response(_serialize_suggestion(suggestion))
+
+
+async def handle_bills_payment_create(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillPaymentV2, PaymentStatus
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    data = await request.json()
+
+    debtor_person, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+    payment = BillPaymentV2(
+        id=str(_uuid.uuid4()),
+        debtor=debtor_person.id,
+        creditor=data["creditor"],
+        amount_minor=int(data["amount_minor"]),
+        currency=data.get("currency", "BYN"),
+        status=PaymentStatus.PENDING,
+        bill_ids=list(data.get("bill_ids", [])),
+        initiated_chat_id=data.get("initiated_chat_id"),
+    )
+    repository.db.bill_payments_v2.append(payment)
+
+    from steward.delayed_action.bill_payment_reminder import schedule_payment_reminder
+    schedule_payment_reminder(repository, payment.id)
+    await repository.save()
+    return web.json_response(_serialize_payment_v2(payment))
+
+
+async def handle_bills_payment_confirm(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    pid = request.match_info["pid"]
+    payment = repository.get_bill_payment_v2(pid)
+    from steward.data.models.bill_v2 import PaymentStatus
+    if not payment or payment.status != PaymentStatus.PENDING:
+        return web.json_response({"error": "not found or already decided"}, status=404)
+
+    creditor = repository.get_bill_person(payment.creditor)
+    is_admin = repository.is_admin(int(tg_user["id"]))
+    if not is_admin and (not creditor or creditor.telegram_id != int(tg_user["id"])):
+        return web.json_response({"error": "only creditor can confirm"}, status=403)
+
+    payment.status = PaymentStatus.CONFIRMED
+    await repository.save()
+    return web.json_response(_serialize_payment_v2(payment))
+
+
+async def handle_bills_payment_reject(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    pid = request.match_info["pid"]
+    payment = repository.get_bill_payment_v2(pid)
+    from steward.data.models.bill_v2 import PaymentStatus
+    if not payment or payment.status != PaymentStatus.PENDING:
+        return web.json_response({"error": "not found or already decided"}, status=404)
+
+    creditor = repository.get_bill_person(payment.creditor)
+    is_admin = repository.is_admin(int(tg_user["id"]))
+    if not is_admin and (not creditor or creditor.telegram_id != int(tg_user["id"])):
+        return web.json_response({"error": "only creditor can reject"}, status=403)
+
+    payment.status = PaymentStatus.REJECTED
+    await repository.save()
+    return web.json_response(_serialize_payment_v2(payment))
+
+
+async def handle_bills_persons(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    return web.json_response([_serialize_bill_person(p) for p in repository.db.bill_persons])
+
+
+async def handle_bills_diff_get(request: web.Request):
+    repository: Repository = request.app["repository"]
+    token = request.match_info["token"]
+    snapshot = repository.get_bill_diff_snapshot(token)
+    if not snapshot:
+        return web.json_response({"error": "not found or expired"}, status=404)
+    return web.json_response({
+        "token": snapshot.token,
+        "bill_id": snapshot.bill_id,
+        "before": snapshot.before,
+        "after": snapshot.after,
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+    })
+
+
 async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None):
     app = web.Application()
     app["repository"] = repository
@@ -1625,10 +2196,26 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/boardgames/invite", handle_boardgame_invite)
     app.router.add_post("/api/boardgames/invite/update", handle_boardgame_invite_update)
     app.router.add_post("/api/boardgames/invite/delete", handle_boardgame_invite_delete)
+    app.router.add_get("/api/bills", handle_bills_list)
+    app.router.add_post("/api/bills", handle_bills_create)
+    app.router.add_get("/api/bills/persons", handle_bills_persons)
+    app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
+    app.router.add_post("/api/bills/payments", handle_bills_payment_create)
+    app.router.add_put("/api/bills/payments/{pid}/confirm", handle_bills_payment_confirm)
+    app.router.add_put("/api/bills/payments/{pid}/reject", handle_bills_payment_reject)
+    app.router.add_post("/api/bills/suggestions/{sid}/approve", handle_bills_suggestion_approve)
+    app.router.add_post("/api/bills/suggestions/{sid}/reject", handle_bills_suggestion_reject)
+    app.router.add_get("/api/bills/{id}", handle_bills_get)
+    app.router.add_put("/api/bills/{id}/close", handle_bills_close)
+    app.router.add_put("/api/bills/{id}/reopen", handle_bills_reopen)
+    app.router.add_post("/api/bills/{id}/transactions", handle_bills_tx_add)
+    app.router.add_patch("/api/bills/{id}/transactions/{tid}", handle_bills_tx_update)
+    app.router.add_delete("/api/bills/{id}/transactions/{tid}", handle_bills_tx_delete)
+    app.router.add_get("/api/bills/{id}/suggestions", handle_bills_suggestions_list)
+    app.router.add_post("/api/bills/{id}/suggestions", handle_bills_suggestion_create)
     app.router.add_get("/ws/poker", poker_ws_handler)
     app.router.add_get("/ws/blackjack", blackjack_ws_handler)
     app.router.add_get("/ws/boardgames", boardgames_ws_handler)
-
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)

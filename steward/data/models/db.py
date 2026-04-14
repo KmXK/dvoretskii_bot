@@ -10,11 +10,25 @@ from steward.data.models.ai_message import AiMessage
 from steward.data.models.saved_links import SavedLinks
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.reminder import CompletedReminder
+# Import delayed action modules so their @class_mark decorators register at startup
+import steward.delayed_action.bill_payment_reminder  # noqa: F401
+import steward.delayed_action.bill_suggestion_lifecycle  # noqa: F401
+import steward.delayed_action.bill_draft_expire  # noqa: F401
+import steward.delayed_action.bill_incomplete_nudge  # noqa: F401
 from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
 from .banned_user import BannedUser
 from .bill import Bill, DetailsInfo, Payment
+from .bill_v2 import (
+    BillDiffSnapshot,
+    BillDraftEdit,
+    BillItemSuggestion,
+    BillNotificationPrefs,
+    BillPaymentV2,
+    BillPerson,
+    BillV2,
+)
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
@@ -42,6 +56,13 @@ class Database:
     bills: list[Bill] = field(default_factory=list)
     payments: list[Payment] = field(default_factory=list)
     details_infos: list[DetailsInfo] = field(default_factory=list)
+    bill_persons: list[BillPerson] = field(default_factory=list)
+    bills_v2: list[BillV2] = field(default_factory=list)
+    bill_payments_v2: list[BillPaymentV2] = field(default_factory=list)
+    bill_notification_prefs: list[BillNotificationPrefs] = field(default_factory=list)
+    bill_diff_snapshots: list[BillDiffSnapshot] = field(default_factory=list)
+    bill_item_suggestions: list[BillItemSuggestion] = field(default_factory=list)
+    bill_draft_edits: list[BillDraftEdit] = field(default_factory=list)
     users: list[User] = field(default_factory=list)
     rewards: list[Reward] = field(default_factory=list)
     user_rewards: list[UserReward] = field(default_factory=list)
@@ -49,7 +70,7 @@ class Database:
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
 
-    version: int = 11
+    version: int = 12
 
 
 PARSE_CONFIG = Config(

@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { TelegramProvider } from './context/TelegramContext'
 import NavBar from './components/NavBar'
 import ArmyPage from './pages/ArmyPage'
+import BillsPage from './pages/BillsPage'
 import BirthdaysPage from './pages/BirthdaysPage'
 import CasinoPage from './pages/CasinoPage'
 import PokerPage from './pages/PokerPage'
@@ -36,8 +37,9 @@ export default function App() {
               <Route path="/tools" element={<ToolsPage />} />
               <Route path="/reminders" element={<RemindersPage />} />
               <Route path="/birthdays" element={<BirthdaysPage />} />
+              <Route path="/bills" element={<BillsPage />} />
               <Route path="/stats" element={<StatsPage />} />
-              <Route path="*" element={<NotFoundPage />} />
+<Route path="*" element={<NotFoundPage />} />
             </Routes>
           </AnimatePresence>
           <NavBar />
