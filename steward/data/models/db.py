@@ -14,6 +14,7 @@ from steward.helpers.class_mark import try_get_class_by_mark
 
 from .army import Army
 from .banned_user import BannedUser
+from .forward_mute import ForwardMute
 from .bill import Bill, DetailsInfo, Payment
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
@@ -51,6 +52,7 @@ class Database:
     user_rewards: list[UserReward] = field(default_factory=list)
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
+    forward_mutes: list[ForwardMute] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
 
     version: int = 12

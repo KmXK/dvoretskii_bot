@@ -20,6 +20,10 @@ from steward.handlers.army_handler import (
     ArmyViewHandler,
 )
 from steward.handlers.ban_handler import BanCommandHandler, BanEnforcerHandler
+from steward.handlers.mute_forwards_handler import (
+    MuteForwardsCommandHandler,
+    MuteForwardsEnforcerHandler,
+)
 from steward.handlers.broadcast_handler import BroadcastSessionHandler
 from steward.handlers.curse_handler import CurseHandler
 from steward.handlers.curse_metric_handler import CurseMetricHandler
@@ -129,6 +133,8 @@ def get_handlers(log_file: None | str):
             SilenceEnforcerHandler,
             BanCommandHandler,
             BanEnforcerHandler,
+            MuteForwardsCommandHandler,
+            MuteForwardsEnforcerHandler,
             AiRelatedMessageHandler,
             RuleListViewHandler,
             RuleViewHandler,
