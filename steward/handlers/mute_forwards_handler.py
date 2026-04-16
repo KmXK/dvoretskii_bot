@@ -152,10 +152,7 @@ class MuteForwardsEnforcerHandler(Handler):
         has_media = bool(getattr(message, "photo", None)) or getattr(
             message, "video", None
         ) is not None
-        has_caption_or_text = bool(
-            getattr(message, "caption", None) or getattr(message, "text", None)
-        )
-        is_media_post = has_media and has_caption_or_text
+        is_media_post = has_media
 
         if not (is_forward or is_media_post):
             return False
