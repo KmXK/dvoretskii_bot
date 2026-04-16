@@ -97,16 +97,16 @@ class CurseHandler(Handler):
             raise ValidationArgumentsError()
 
         context.metrics.inc("bot_curse_words_total", value=count)
-        await context.message.reply_text(f"Добавил {count} плохих слов.")
+        await context.message.reply_markdown(f"Добавил {count} плохих слов.")
         return True
 
     async def _show_word_list(self, context: ChatBotContext):
         words = sorted(self.repository.db.curse_words)
         if not words:
-            await context.message.reply_text("Список матерных слов пуст.")
+            await context.message.reply_markdown("Список матерных слов пуст.")
             return True
 
-        await context.message.reply_text("Матерные слова:\n\n" + "\n".join(words))
+        await context.message.reply_markdown("Матерные слова:\n\n" + "\n".join(words))
         return True
 
     def _ensure_admin(self, context: ChatBotContext):
@@ -117,7 +117,7 @@ class CurseHandler(Handler):
 
     async def _add_words(self, context: ChatBotContext, raw_words: str):
         if not self._ensure_admin(context):
-            await context.message.reply_text("Недостаточно прав.")
+            await context.message.reply_markdown("Недостаточно прав.")
             return True
 
         items = _parse_words(raw_words)
@@ -131,16 +131,16 @@ class CurseHandler(Handler):
                 added.append(word)
 
         if not added:
-            await context.message.reply_text("Все слова уже есть в списке.")
+            await context.message.reply_markdown("Все слова уже есть в списке.")
             return True
 
         await self.repository.save()
-        await context.message.reply_text("Добавлены слова: " + ", ".join(added))
+        await context.message.reply_markdown("Добавлены слова: " + ", ".join(added))
         return True
 
     async def _remove_words(self, context: ChatBotContext, raw_words: str):
         if not self._ensure_admin(context):
-            await context.message.reply_text("Недостаточно прав.")
+            await context.message.reply_markdown("Недостаточно прав.")
             return True
 
         items = _parse_words(raw_words)
@@ -154,28 +154,28 @@ class CurseHandler(Handler):
                 removed.append(word)
 
         if not removed:
-            await context.message.reply_text("Ни одно слово не найдено в списке.")
+            await context.message.reply_markdown("Ни одно слово не найдено в списке.")
             return True
 
         await self.repository.save()
-        await context.message.reply_text("Удалены слова: " + ", ".join(removed))
+        await context.message.reply_markdown("Удалены слова: " + ", ".join(removed))
         return True
 
     async def _show_punishments(self, context: ChatBotContext):
         punishments = sorted(self.repository.db.curse_punishments, key=lambda item: item.id)
         if not punishments:
-            await context.message.reply_text("Наказаний нет.")
+            await context.message.reply_markdown("Наказаний нет.")
             return True
 
         lines = ["Наказания:"]
         for punishment in punishments:
             lines.append(f"{punishment.id}. {punishment.coeff} -> {punishment.title}")
-        await context.message.reply_text("\n".join(lines))
+        await context.message.reply_markdown("\n".join(lines))
         return True
 
     async def _add_punishment(self, context: ChatBotContext, rest: str):
         if not self._ensure_admin(context):
-            await context.message.reply_text("Недостаточно прав.")
+            await context.message.reply_markdown("Недостаточно прав.")
             return True
 
         parts = rest.split(maxsplit=1)
@@ -191,14 +191,14 @@ class CurseHandler(Handler):
         punishment = CursePunishment(id=next_id, coeff=coeff, title=title)
         self.repository.db.curse_punishments.append(punishment)
         await self.repository.save()
-        await context.message.reply_text(
+        await context.message.reply_markdown(
             f"Наказание добавлено: {punishment.id}. {punishment.coeff} -> {punishment.title}",
         )
         return True
 
     async def _remove_punishment(self, context: ChatBotContext, raw_id: str):
         if not self._ensure_admin(context):
-            await context.message.reply_text("Недостаточно прав.")
+            await context.message.reply_markdown("Недостаточно прав.")
             return True
 
         if not raw_id.isdigit():
@@ -210,12 +210,12 @@ class CurseHandler(Handler):
             None,
         )
         if punishment is None:
-            await context.message.reply_text("Наказание не найдено.")
+            await context.message.reply_markdown("Наказание не найдено.")
             return True
 
         self.repository.db.curse_punishments.remove(punishment)
         await self.repository.save()
-        await context.message.reply_text(f"Наказание {punishment_id} удалено.")
+        await context.message.reply_markdown(f"Наказание {punishment_id} удалено.")
         return True
 
     def _find_participant(self, user_id: int) -> CurseParticipant | None:
@@ -239,7 +239,7 @@ class CurseHandler(Handler):
             )
             self.repository.db.curse_participants.append(participant)
             await self.repository.save()
-            await context.message.reply_text("Подписка на наказания включена.")
+            await context.message.reply_markdown("Подписка на наказания включена.")
             return True
 
         changed = False
@@ -250,19 +250,19 @@ class CurseHandler(Handler):
         if changed:
             await self.repository.save()
 
-        await context.message.reply_text("Подписка на наказания уже включена.")
+        await context.message.reply_markdown("Подписка на наказания уже включена.")
         return True
 
     async def _unsubscribe(self, context: ChatBotContext):
         user_id = context.message.from_user.id
         participant = self._find_participant(user_id)
         if participant is None:
-            await context.message.reply_text("Подписка на наказания не найдена.")
+            await context.message.reply_markdown("Подписка на наказания не найдена.")
             return True
 
         self.repository.db.curse_participants.remove(participant)
         await self.repository.save()
-        await context.message.reply_text("Подписка на наказания отключена.")
+        await context.message.reply_markdown("Подписка на наказания отключена.")
         return True
 
     async def _show_today(self, context: ChatBotContext):
@@ -271,21 +271,21 @@ class CurseHandler(Handler):
             context.metrics,
             context.message.chat_id,
         )
-        await context.message.reply_text(format_punishment_today_text(self.repository, entries))
+        await context.message.reply_markdown(format_punishment_today_text(self.repository, entries))
         return True
 
     async def _done(self, context: ChatBotContext, punishment_id: int | None):
         user_id = context.message.from_user.id
         participant = self._find_participant(user_id)
         if participant is None:
-            await context.message.reply_text("Сначала подпишись на наказания.")
+            await context.message.reply_markdown("Сначала подпишись на наказания.")
             return True
 
         now = datetime.now(timezone.utc)
         if punishment_id is None:
             participant.last_done_at = now
             await self.repository.save()
-            await context.message.reply_text("Отсчёт наказаний сброшен.")
+            await context.message.reply_markdown("Отсчёт наказаний сброшен.")
             return True
 
         punishment = next(
@@ -293,7 +293,7 @@ class CurseHandler(Handler):
             None,
         )
         if punishment is None:
-            await context.message.reply_text("Наказание не найдено.")
+            await context.message.reply_markdown("Наказание не найдено.")
             return True
 
         current_count = await get_current_curse_count(
@@ -313,7 +313,7 @@ class CurseHandler(Handler):
         )
         participant.last_done_at = now
         await self.repository.save()
-        await context.message.reply_text(
+        await context.message.reply_markdown(
             f"Наказание засчитано: {total} {punishment.title}.",
         )
         return True
