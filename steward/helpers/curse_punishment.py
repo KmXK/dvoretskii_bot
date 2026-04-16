@@ -84,7 +84,7 @@ def format_punishment_today_text(repo: Repository, entries: list[PunishmentToday
     lines = ["Наказания на сегодня:", ""]
     punishments = sorted(repo.db.curse_punishments, key=lambda item: item.id)
     for index, entry in enumerate(entries):
-        lines.append(f"{entry.name} — {entry.curse_count} плохих слов")
+        lines.append(f"`{entry.name}` — {entry.curse_count} плохих слов")
         for punishment in punishments:
             lines.append(f"{punishment.coeff * entry.curse_count} {punishment.title}")
         if index != len(entries) - 1:
