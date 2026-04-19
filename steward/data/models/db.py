@@ -24,6 +24,7 @@ from .reward import Reward, UserReward
 from .rule import Rule
 from .todo_item import TodoItem
 from .user import User
+from .user_fact import UserFact
 
 
 @dataclass
@@ -52,8 +53,9 @@ class Database:
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
+    user_facts: list[UserFact] = field(default_factory=list)
 
-    version: int = 12
+    version: int = 13
 
 
 PARSE_CONFIG = Config(

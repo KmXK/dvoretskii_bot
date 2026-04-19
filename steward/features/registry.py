@@ -39,6 +39,7 @@ from steward.features.tarot import TarotFeature
 from steward.features.timezone import TimezoneFeature
 from steward.features.todo import TodoFeature
 from steward.features.translate import TranslateFeature
+from steward.features.user_memory import UserMemoryFeature
 from steward.features.voice_video import VoiceVideoFeature
 from steward.features.watch import WatchFeature
 from steward.framework import bucket
@@ -56,6 +57,7 @@ EARLY << [
     BanEnforcerFeature,
     AiRelatedFeature,
     ReactionCounterFeature,
+    UserMemoryFeature,
 ]
 
 

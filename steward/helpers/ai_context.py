@@ -12,6 +12,13 @@ from steward.bot.context import ChatBotContext
 from steward.data.models.ai_message import AiMessage
 from steward.helpers.tg_streaming import stream_reply
 from steward.helpers.thinking import try_contextual_placeholder
+from steward.helpers.user_memory import (
+    add_facts,
+    extract_facts_via_ai,
+    format_facts_for_prompt,
+    get_recent_facts,
+    prune_expired,
+)
 
 type AiCallable = Callable[[int, list[tuple[str, str]]], str | Awaitable[str]]
 type AiStreamCallable = Callable[
@@ -134,11 +141,25 @@ async def execute_ai_request_streaming(
     quick_call: Callable[[str], str | Awaitable[str]] | None = None,
 ):
     """Same shape as execute_ai_request, but streams tokens into the Telegram
-    message as they arrive. When `quick_call` is given, a random placeholder
-    is shown immediately while a topic-aware one is being generated in the
-    background — when it arrives (within its own timeout) the placeholder is
-    hot-swapped. Persists the final message the same way."""
+    message as they arrive. When `quick_call` is given:
+      - A random placeholder shows immediately; a topic-aware one hot-swaps
+        in when the fast model replies.
+      - Facts about the user (extracted from past messages) are injected as
+        an extra system message into the main model's context.
+      - After the reply, the user's latest message is quietly analysed in
+        the background for new facts to remember.
+    Persists the final message the same way."""
+    user_id = context.message.from_user.id
+    user_name = context.message.from_user.full_name or context.message.from_user.username
+
     messages = await build_reply_context(context, text)
+
+    prune_expired(context.repository)
+    facts = get_recent_facts(context.repository, user_id)
+    if facts:
+        memory_block = format_facts_for_prompt(user_id, user_name, facts)
+        if memory_block:
+            messages = [("system", memory_block), *messages]
 
     upgrade_task: asyncio.Task[str | None] | None = None
     if quick_call is not None:
@@ -147,7 +168,7 @@ async def execute_ai_request_streaming(
         )
 
     try:
-        stream = ai_stream_call(context.message.from_user.id, messages)
+        stream = ai_stream_call(user_id, messages)
         if isawaitable(stream):
             stream = await stream
 
@@ -160,6 +181,11 @@ async def execute_ai_request_streaming(
         if upgrade_task is not None and not upgrade_task.done():
             upgrade_task.cancel()
 
+    if quick_call is not None:
+        asyncio.create_task(
+            _remember_facts_bg(context.repository, user_id, text, quick_call)
+        )
+
     context.repository.db.ai_messages[
         f"{context.message.chat.id}_{bot_message.id}"
     ] = AiMessage(time(), context.message.id, handler_name)
@@ -171,3 +197,23 @@ async def execute_ai_request_streaming(
         )
         del context.repository.db.ai_messages[oldest]
     await context.repository.save()
+
+
+async def _remember_facts_bg(
+    repository,
+    user_id: int,
+    text: str,
+    quick_call: Callable[[str], str | Awaitable[str]],
+):
+    """Background: extract personal facts from `text` and persist them.
+    Silent on failure — never blocks or bubbles into the user reply."""
+    try:
+        facts = await extract_facts_via_ai(text, quick_call)
+        if not facts:
+            return
+        added = add_facts(repository, user_id, facts)
+        if added:
+            await repository.save()
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).debug("fact memory bg failed: %s", e)

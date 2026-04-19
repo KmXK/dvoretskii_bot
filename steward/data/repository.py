@@ -318,4 +318,9 @@ class Repository:
                 data["curse_participants"] = []
             data["version"] = 12
 
+        if data.get("version") == 12:
+            if "user_facts" not in data or not isinstance(data["user_facts"], list):
+                data["user_facts"] = []
+            data["version"] = 13
+
         return data
