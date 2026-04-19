@@ -1,4 +1,20 @@
+import html as _html
 from typing import Any
+
+
+def wrap_as_spoiler(text: str, header: str = "Расшифровка") -> str:
+    """Wrap transcription text into a Telegram expandable blockquote.
+
+    The returned string is ready to send with parse_mode="HTML".
+    Text body is HTML-escaped; header is rendered bold and escaped too.
+    """
+    body = _html.escape(text)
+    if header:
+        header_html = f"<b>{_html.escape(header)}</b>\n"
+    else:
+        header_html = ""
+    return f"<blockquote expandable>{header_html}{body}</blockquote>"
+
 
 OLD_RUSSIAN_NAMES = (
     "Ратибор",

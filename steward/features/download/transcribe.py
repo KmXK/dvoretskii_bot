@@ -13,7 +13,7 @@ from telegram import Message
 from steward.data.repository import Repository
 from steward.features.download.callbacks import download_file
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.transcription import build_named_speakers_text
+from steward.helpers.transcription import build_named_speakers_text, wrap_as_spoiler
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -144,11 +144,11 @@ async def make_transcribation(
             if not text:
                 text = "Не удалось распознать речь"
 
-        text = "<blockquote expandable>" + text + "</blockquote>"
-        if len(text) > 1024:
-            new_message = await message.reply_html(text)
+        html_text = wrap_as_spoiler(text)
+        if len(html_text) > 1024:
+            new_message = await message.reply_html(html_text)
             await message.edit_caption(new_message.link)
         else:
-            await message.edit_caption(text, parse_mode="html")
+            await message.edit_caption(html_text, parse_mode="html")
 
     return True
