@@ -89,3 +89,89 @@ def test_parse_ai_response_strips_numbering():
     raw = "1. Думаю…\n2) Соображаю…\n- Мозгую…\n   * Прикидываю…\n\n"
     result = thinking._parse_ai_response(raw)
     assert result == ["Думаю…", "Соображаю…", "Мозгую…", "Прикидываю…"]
+
+
+def test_clean_contextual_normalises_trailing_dots():
+    assert thinking._clean_contextual("Ищу твою карточку...") == "Ищу твою карточку…"
+    assert thinking._clean_contextual("Мозгую.") == "Мозгую…"
+    assert thinking._clean_contextual("Думаю…") == "Думаю…"
+
+
+def test_clean_contextual_strips_quotes_and_markdown():
+    assert thinking._clean_contextual('"Мозгую…"') == "Мозгую…"
+    assert thinking._clean_contextual("*Мозгую…*") == "Мозгую…"
+    assert thinking._clean_contextual("«Ищу карточку…»") == "Ищу карточку…"
+
+
+def test_clean_contextual_rejects_out_of_range():
+    assert thinking._clean_contextual("") is None
+    assert thinking._clean_contextual("а") is None
+    assert thinking._clean_contextual("Б" * 200) is None
+
+
+def test_clean_contextual_uses_first_line():
+    assert thinking._clean_contextual("Мозгую…\nпояснение модели") == "Мозгую…"
+
+
+async def test_try_contextual_placeholder_returns_ai_phrase():
+    thinking.reset_for_tests()
+
+    async def fake(prompt: str) -> str:
+        assert "скок см" in prompt
+        return "Ищу твою карточку в поликлинике…"
+
+    phrase = await thinking.try_contextual_placeholder(
+        "скок см у меня пенис", fake
+    )
+    assert phrase == "Ищу твою карточку в поликлинике…"
+
+
+async def test_try_contextual_placeholder_none_on_timeout():
+    thinking.reset_for_tests()
+
+    async def slow(prompt: str) -> str:
+        import asyncio
+        await asyncio.sleep(1.0)
+        return "слишком поздно…"
+
+    phrase = await thinking.try_contextual_placeholder(
+        "вопрос", slow, timeout_sec=0.05
+    )
+    assert phrase is None
+
+
+async def test_try_contextual_placeholder_none_on_error():
+    thinking.reset_for_tests()
+
+    async def broken(prompt: str) -> str:
+        raise RuntimeError("nope")
+
+    phrase = await thinking.try_contextual_placeholder("вопрос", broken)
+    assert phrase is None
+
+
+async def test_try_contextual_placeholder_none_on_empty_input():
+    thinking.reset_for_tests()
+
+    called = False
+
+    async def should_not_be_called(prompt: str) -> str:
+        nonlocal called
+        called = True
+        return ""
+
+    phrase = await thinking.try_contextual_placeholder(
+        "   ", should_not_be_called
+    )
+    assert phrase is None
+    assert not called
+
+
+async def test_contextual_placeholder_wrapper_falls_back_to_random():
+    thinking.reset_for_tests()
+
+    async def broken(prompt: str) -> str:
+        raise RuntimeError("nope")
+
+    phrase = await thinking.contextual_placeholder("вопрос", broken)
+    assert phrase in thinking._FALLBACK_PHRASES

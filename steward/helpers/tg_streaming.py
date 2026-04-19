@@ -18,7 +18,7 @@ import asyncio
 import html
 import logging
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable
 
 from telegram import Message
 from telegram.constants import ParseMode
@@ -40,10 +40,14 @@ def _strip_trailing_dots(text: str) -> str:
 
 async def _animate_placeholder(
     bot_message: Message,
-    base: str,
+    base_ref: list[str],
     stop: asyncio.Event,
 ) -> None:
-    """Cycle the trailing dots on `bot_message` (1 → 2 → 3) until `stop` is set."""
+    """Cycle the trailing dots on `bot_message` (1 → 2 → 3) until `stop` is set.
+
+    `base_ref` is a single-element list so the caller can hot-swap the base
+    phrase (e.g. when a contextual placeholder arrives late).
+    """
     n = 1
     while not stop.is_set():
         try:
@@ -52,7 +56,7 @@ async def _animate_placeholder(
         except asyncio.TimeoutError:
             pass
         n = n % 3 + 1
-        text = f"<i>{html.escape(base + '.' * n)}</i>"
+        text = f"<i>{html.escape(base_ref[0] + '.' * n)}</i>"
         try:
             await bot_message.edit_text(text, parse_mode=ParseMode.HTML)
         except RetryAfter as e:
@@ -66,14 +70,48 @@ async def _animate_placeholder(
                 logger.debug("placeholder animation BadRequest: %s", e)
 
 
+async def _upgrade_placeholder(
+    bot_message: Message,
+    base_ref: list[str],
+    upgrade: Awaitable[str | None],
+    stop: asyncio.Event,
+) -> None:
+    """Wait for a better placeholder; when it arrives, swap `base_ref[0]` and
+    render it immediately (with one dot, to keep the animation in sync)."""
+    try:
+        new_phrase = await upgrade
+    except Exception as e:
+        logger.debug("placeholder upgrade task raised: %s", e)
+        return
+    if not new_phrase or stop.is_set():
+        return
+    new_base = _strip_trailing_dots(new_phrase) or new_phrase
+    base_ref[0] = new_base
+    try:
+        await bot_message.edit_text(
+            f"<i>{html.escape(new_base + '.')}</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    except RetryAfter:
+        pass
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.debug("placeholder upgrade BadRequest: %s", e)
+
+
 async def stream_reply(
     target: Message,
     chunks: AsyncIterator[str],
     *,
     placeholder: str | None = None,
+    placeholder_upgrade: Awaitable[str | None] | None = None,
     min_edit_interval: float = _DEFAULT_MIN_INTERVAL,
 ) -> Message:
     """Send a reply to `target` and progressively fill it with streamed text.
+
+    If `placeholder_upgrade` is given, the random starter is shown immediately
+    and replaced in-place once the awaitable resolves to a non-empty string
+    (the animation keeps cycling dots with the new base).
 
     Returns the sent Message (with its final text applied).
     """
@@ -85,10 +123,19 @@ async def stream_reply(
         parse_mode=ParseMode.HTML,
     )
 
+    base_ref = [base]
     stop_animation = asyncio.Event()
     animation_task = asyncio.create_task(
-        _animate_placeholder(bot_message, base, stop_animation)
+        _animate_placeholder(bot_message, base_ref, stop_animation)
     )
+
+    upgrade_task: asyncio.Task | None = None
+    if placeholder_upgrade is not None:
+        upgrade_task = asyncio.create_task(
+            _upgrade_placeholder(
+                bot_message, base_ref, placeholder_upgrade, stop_animation
+            )
+        )
 
     buffer: list[str] = []
     last_edit_at = 0.0
@@ -98,10 +145,12 @@ async def stream_reply(
     async def _stop_animation():
         if not stop_animation.is_set():
             stop_animation.set()
-            try:
-                await animation_task
-            except Exception as e:
-                logger.debug("animation task ended with: %s", e)
+            pending = [t for t in (animation_task, upgrade_task) if t is not None]
+            for t in pending:
+                try:
+                    await t
+                except Exception as e:
+                    logger.debug("background task ended with: %s", e)
 
     async for chunk in chunks:
         if not chunk:

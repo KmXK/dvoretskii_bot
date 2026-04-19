@@ -9,7 +9,9 @@ from steward.framework import (
     wizard,
 )
 from steward.helpers.ai import (
+    OpenRouterModel,
     PASHA_PROMPT,
+    make_openrouter_query,
     make_yandex_ai_query,
     make_yandex_ai_stream,
 )
@@ -30,6 +32,12 @@ def _pasha_call(uid, msgs):
 
 def _pasha_stream(uid, msgs):
     return make_yandex_ai_stream(uid, msgs, PASHA_PROMPT)
+
+
+async def _quick_call(prompt: str) -> str:
+    return await make_openrouter_query(
+        0, OpenRouterModel.FAST, [("user", prompt)], ""
+    )
 
 
 class _GptStep(Step):
@@ -88,7 +96,7 @@ class PashaFeature(Feature):
 
     @on_init
     async def _register(self):
-        register_ai_handler("pasha", _pasha_call, _pasha_stream)
+        register_ai_handler("pasha", _pasha_call, _pasha_stream, quick_call=_quick_call)
 
     @subcommand("", description="Начать диалог")
     async def start(self, ctx: FeatureContext):
@@ -96,7 +104,9 @@ class PashaFeature(Feature):
 
     @subcommand("<text:rest>", description="Одноразовый вопрос", catchall=True)
     async def ask(self, ctx: FeatureContext, text: str):
-        await execute_ai_request_streaming(ctx, text, _pasha_stream, "pasha")
+        await execute_ai_request_streaming(
+            ctx, text, _pasha_stream, "pasha", quick_call=_quick_call
+        )
 
     @wizard("pasha:chat", step("gpt", _GptStep()))
     async def on_done(self, ctx: FeatureContext, **state):

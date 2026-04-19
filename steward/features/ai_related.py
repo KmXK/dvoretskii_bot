@@ -3,6 +3,7 @@ from steward.helpers.ai_context import (
     execute_ai_request,
     execute_ai_request_streaming,
     get_ai_handler,
+    get_ai_quick_handler,
     get_ai_stream_handler,
 )
 
@@ -22,8 +23,13 @@ class AiRelatedFeature(Feature):
         ai_message = ctx.repository.db.ai_messages[key]
         stream_call = get_ai_stream_handler(ai_message.handler)
         if stream_call:
+            quick_call = get_ai_quick_handler(ai_message.handler)
             await execute_ai_request_streaming(
-                ctx, ctx.message.text, stream_call, ai_message.handler
+                ctx,
+                ctx.message.text,
+                stream_call,
+                ai_message.handler,
+                quick_call=quick_call,
             )
             return True
         ai_call = get_ai_handler(ai_message.handler)

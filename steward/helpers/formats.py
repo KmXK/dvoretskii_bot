@@ -1,3 +1,26 @@
+import html as _html
+
+
+def spoiler_block(text: str, header: str = "") -> str:
+    """HTML expandable blockquote — a "spoiler" that stays partially visible
+    and unfolds on tap. Body and header are HTML-escaped; send with
+    parse_mode="HTML".
+    """
+    body = _html.escape(text)
+    if header:
+        header_html = f"<b>{_html.escape(header)}</b>\n"
+    else:
+        header_html = ""
+    return f"<blockquote expandable>{header_html}{body}</blockquote>"
+
+
+def spoiler_inline(text: str) -> str:
+    """HTML inline spoiler — text is hidden until the user taps it. The whole
+    thing is HTML-escaped; send with parse_mode="HTML".
+    """
+    return f"<tg-spoiler>{_html.escape(text)}</tg-spoiler>"
+
+
 def escape_markdown(text: str) -> str:
     return (
         text.replace("_", "\\_")

@@ -19,6 +19,31 @@ from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
+_CONTEXT_PROMPT = (
+    "Ты помогаешь Telegram-боту сгенерировать короткую шуточную фразу-заглушку, "
+    "которую пользователь увидит пока бот думает над ответом. Фраза должна "
+    "намекать на тему вопроса, быть 2–6 слов, заканчиваться многоточием '…'. "
+    "Перемешивай стили: нейтральный, разговорный с юмором, пацанский/дворовой, "
+    "дерзкий с лёгкой вульгарностью и матом, абсурдный. Без политики, без "
+    "оскорблений конкретных людей, без нацизма/расизма.\n\n"
+    "Примеры:\n"
+    '- "сколько лет Москве?" → Загружаю летопись…\n'
+    '- "скок см у меня пенис" → Ищу твою карточку в поликлинике…\n'
+    '- "что приготовить на ужин?" → Лезу в холодильник…\n'
+    '- "расскажи анекдот" → Перебираю пошлые варианты…\n'
+    '- "напиши код" → Разминаю пальцы, блядь…\n'
+    '- "когда приедет автобус?" → Звоню диспетчеру…\n'
+    '- "переведи на английский" → Роюсь в словаре…\n\n'
+    "Выдай СТРОГО одну фразу, без кавычек, без пояснений, без вводного текста. "
+    "Только сама фраза с троеточием в конце.\n\n"
+    "Вопрос пользователя: {question}"
+)
+
+_CONTEXT_TIMEOUT_SEC = 2.5
+_CONTEXT_MIN_LEN = 3
+_CONTEXT_MAX_LEN = 60
+_CONTEXT_QUESTION_LIMIT = 400
+
 _CACHE_PATH = Path("data/thinking_phrases.json")
 _MIN_PHRASE_LEN = 3
 _MAX_PHRASE_LEN = 40
@@ -199,3 +224,69 @@ def reset_for_tests() -> None:
     """Reset the in-memory pool. Intended for tests only."""
     global _phrases
     _phrases = list(_FALLBACK_PHRASES)
+
+
+def _clean_contextual(text: str) -> str | None:
+    text = text.strip()
+    if not text:
+        return None
+    # model occasionally wraps answer in quotes or markdown
+    for ch in ('"', "'", "«", "»", "*", "_", "`"):
+        text = text.strip(ch).strip()
+    text = text.split("\n", 1)[0].strip()
+    if not text:
+        return None
+    if text.endswith("..."):
+        text = text[:-3] + "…"
+    elif not text.endswith("…"):
+        text = text.rstrip(".!?") + "…"
+    if not (_CONTEXT_MIN_LEN <= len(text) <= _CONTEXT_MAX_LEN):
+        return None
+    return text
+
+
+async def try_contextual_placeholder(
+    user_text: str,
+    quick_call: Callable[[str], str | Awaitable[str]],
+    *,
+    timeout_sec: float = _CONTEXT_TIMEOUT_SEC,
+) -> str | None:
+    """Ask a fast model for a topic-aware thinking phrase. Returns None on
+    timeout, error, empty input, or if the response didn't pass validation."""
+    question = user_text.strip()[:_CONTEXT_QUESTION_LIMIT]
+    if not question:
+        return None
+
+    prompt = _CONTEXT_PROMPT.format(question=question)
+
+    async def _run() -> str | None:
+        result = quick_call(prompt)
+        if isawaitable(result):
+            result = await result
+        if not isinstance(result, str):
+            return None
+        return _clean_contextual(result)
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        return None
+    except Exception as e:
+        logger.debug("contextual placeholder failed: %s", e)
+        return None
+
+
+async def contextual_placeholder(
+    user_text: str,
+    quick_call: Callable[[str], str | Awaitable[str]],
+    *,
+    timeout_sec: float = _CONTEXT_TIMEOUT_SEC,
+) -> str:
+    """Same as `try_contextual_placeholder` but falls back to `random_phrase()`
+    instead of None. Prefer the `try_*` variant when you can render a random
+    placeholder immediately and then hot-swap it if/when the contextual one
+    arrives."""
+    result = await try_contextual_placeholder(
+        user_text, quick_call, timeout_sec=timeout_sec
+    )
+    return result or random_phrase()
