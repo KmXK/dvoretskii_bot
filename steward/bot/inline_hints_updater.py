@@ -1,4 +1,4 @@
-from typing import Callable, Optional, TypeGuard
+from typing import Callable
 
 from telegram import (
     BotCommandScope,
@@ -11,6 +11,37 @@ from telegram.ext import ExtBot
 
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
+
+_DESCRIPTION_LIMIT = 256
+
+
+def _command_entry(handler: Handler) -> tuple[str, str] | None:
+    """Return (command_name, description) for set_my_commands, or None if the
+    handler should not appear in the Telegram command menu."""
+    command = getattr(handler, "command", None)
+    description = getattr(handler, "description", "") or ""
+
+    if not command:
+        # Fallback for legacy handlers that don't expose `command`: parse the
+        # single-line help() string ("/foo - description").
+        help_text = handler.help()
+        if not help_text:
+            return None
+        first_line = help_text.split("\n", 1)[0]
+        parts = first_line.split(" ", 1)
+        name = parts[0]
+        if not name.startswith("/"):
+            return None
+        description = parts[1] if len(parts) > 1 else ""
+    else:
+        name = f"/{command}"
+
+    description = description.replace("\n", " ").strip()
+    if len(description) > _DESCRIPTION_LIMIT:
+        description = description[: _DESCRIPTION_LIMIT - 1].rstrip() + "…"
+    if not description:
+        description = name
+    return name, description
 
 
 class InlineHintsUpdater:
@@ -52,19 +83,13 @@ class InlineHintsUpdater:
         filter_func: Callable[[Handler], bool],
         scope: BotCommandScope,
     ) -> bool:
-        def check_not_null[T](x: Optional[T]) -> TypeGuard[T]:
-            return x is not None
-
-        command_texts = [
-            *filter(check_not_null, (x.help() for x in self.handlers if filter_func(x)))
-        ]
-
-        def parse_help_msg(x: str):
-            parts = x.split(" ")
-            return (parts[0], " ".join(parts[1:]))
-
-        commands = [parse_help_msg(x) for x in command_texts]
-
+        commands: list[tuple[str, str]] = []
+        for handler in self.handlers:
+            if not filter_func(handler):
+                continue
+            entry = _command_entry(handler)
+            if entry is not None:
+                commands.append(entry)
         return await bot.set_my_commands(commands, scope)
 
     async def _update_admin_hints(
