@@ -8,8 +8,16 @@ from steward.framework import (
     subcommand,
     wizard,
 )
-from steward.helpers.ai import PASHA_PROMPT, make_yandex_ai_query
-from steward.helpers.ai_context import execute_ai_request, register_ai_handler
+from steward.helpers.ai import (
+    PASHA_PROMPT,
+    make_yandex_ai_query,
+    make_yandex_ai_stream,
+)
+from steward.helpers.ai_context import (
+    execute_ai_request_streaming,
+    register_ai_handler,
+)
+from steward.helpers.tg_streaming import stream_reply
 from steward.session.step import Step
 
 
@@ -18,6 +26,10 @@ _STOP_CB = "pasha:stop"
 
 def _pasha_call(uid, msgs):
     return make_yandex_ai_query(uid, msgs, PASHA_PROMPT)
+
+
+def _pasha_stream(uid, msgs):
+    return make_yandex_ai_stream(uid, msgs, PASHA_PROMPT)
 
 
 class _GptStep(Step):
@@ -39,15 +51,26 @@ class _GptStep(Step):
 
         history = context.session_context["history"]
         history.append(("user", context.message.text))
-        response = await _pasha_call(
+        stream = await _pasha_stream(
             context.update.message.from_user.id,
             history,
         )
+        collected: list[str] = []
+
+        async def _tap():
+            async for chunk in stream:
+                collected.append(chunk)
+                yield chunk
+
+        bot_message = await stream_reply(context.message, _tap())
+        response = "".join(collected)
         if "Я не могу обсуждать эту тему." in response:
-            await context.message.reply_text("Ой, иди нахуй")
+            try:
+                await bot_message.edit_text("Ой, иди нахуй")
+            except Exception:
+                pass
             history.pop()
         else:
-            await context.message.reply_text(response)
             history.append(("assistant", response))
         return False
 
@@ -65,7 +88,7 @@ class PashaFeature(Feature):
 
     @on_init
     async def _register(self):
-        register_ai_handler("pasha", _pasha_call)
+        register_ai_handler("pasha", _pasha_call, _pasha_stream)
 
     @subcommand("", description="Начать диалог")
     async def start(self, ctx: FeatureContext):
@@ -73,7 +96,7 @@ class PashaFeature(Feature):
 
     @subcommand("<text:rest>", description="Одноразовый вопрос", catchall=True)
     async def ask(self, ctx: FeatureContext, text: str):
-        await execute_ai_request(ctx, text, _pasha_call, "pasha")
+        await execute_ai_request_streaming(ctx, text, _pasha_stream, "pasha")
 
     @wizard("pasha:chat", step("gpt", _GptStep()))
     async def on_done(self, ctx: FeatureContext, **state):

@@ -1,6 +1,6 @@
 from inspect import isawaitable
 from time import time
-from typing import Awaitable, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 import telethon
 from async_lru import alru_cache
@@ -8,18 +8,34 @@ from telethon import TelegramClient
 
 from steward.bot.context import ChatBotContext
 from steward.data.models.ai_message import AiMessage
+from steward.helpers.tg_streaming import stream_reply
 
 type AiCallable = Callable[[int, list[tuple[str, str]]], str | Awaitable[str]]
+type AiStreamCallable = Callable[
+    [int, list[tuple[str, str]]],
+    AsyncIterator[str] | Awaitable[AsyncIterator[str]],
+]
 
 _ai_handlers: dict[str, AiCallable] = {}
+_ai_stream_handlers: dict[str, AiStreamCallable] = {}
 
 
-def register_ai_handler(name: str, call: AiCallable):
+def register_ai_handler(
+    name: str,
+    call: AiCallable,
+    stream_call: AiStreamCallable | None = None,
+):
     _ai_handlers[name] = call
+    if stream_call is not None:
+        _ai_stream_handlers[name] = stream_call
 
 
 def get_ai_handler(name: str) -> AiCallable | None:
     return _ai_handlers.get(name)
+
+
+def get_ai_stream_handler(name: str) -> AiStreamCallable | None:
+    return _ai_stream_handlers.get(name)
 
 
 @alru_cache(1024)
@@ -82,6 +98,34 @@ async def execute_ai_request(
         response = await response
 
     bot_message = await context.message.reply_markdown(response)
+
+    context.repository.db.ai_messages[
+        f"{context.message.chat.id}_{bot_message.id}"
+    ] = AiMessage(time(), context.message.id, handler_name)
+
+    if len(context.repository.db.ai_messages) > 1000:
+        oldest = min(
+            context.repository.db.ai_messages,
+            key=lambda k: context.repository.db.ai_messages[k].timestamp,
+        )
+        del context.repository.db.ai_messages[oldest]
+    await context.repository.save()
+
+
+async def execute_ai_request_streaming(
+    context: ChatBotContext,
+    text: str,
+    ai_stream_call: AiStreamCallable,
+    handler_name: str,
+):
+    """Same shape as execute_ai_request, but streams tokens into the Telegram
+    message as they arrive. Persists the final message the same way."""
+    messages = await build_reply_context(context, text)
+    stream = ai_stream_call(context.message.from_user.id, messages)
+    if isawaitable(stream):
+        stream = await stream
+
+    bot_message = await stream_reply(context.message, stream)
 
     context.repository.db.ai_messages[
         f"{context.message.chat.id}_{bot_message.id}"

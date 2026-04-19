@@ -8,8 +8,9 @@ from pathlib import Path
 from telegram import InputFile
 
 from steward.framework import Feature, FeatureContext, subcommand
-from steward.helpers.ai import TAROT_PROMPT, make_yandex_ai_query
+from steward.helpers.ai import TAROT_PROMPT, make_yandex_ai_stream
 from steward.helpers.media import run_ffmpeg
+from steward.helpers.tg_streaming import stream_reply
 
 logger = logging.getLogger(__name__)
 
@@ -168,33 +169,18 @@ class TarotFeature(Feature):
                 prompt_text = f"[Вопрос]\n{question}\n\n"
                 for i, card in enumerate(selected):
                     prompt_text += f"[Карта{i + 1}]\n{json.dumps(card, ensure_ascii=False, indent=2)}\n\n"
-                ai_response = await make_yandex_ai_query(
-                    ctx.user_id,
-                    [("user", prompt_text)],
-                    TAROT_PROMPT,
-                )
                 with open(out_path, "rb") as f:
                     if ctx.message:
                         await ctx.message.reply_photo(
                             InputFile(f, filename="tarot_reading.png"),
                         )
-                max_len = 4096
-                if len(ai_response) <= max_len:
-                    await ctx.reply(ai_response)
-                else:
-                    offset = 0
-                    while offset < len(ai_response):
-                        chunk = ai_response[offset : offset + max_len]
-                        if offset + max_len < len(ai_response):
-                            last_nl = chunk.rfind("\n")
-                            if last_nl > max_len - 200:
-                                chunk = chunk[:last_nl]
-                                offset += last_nl + 1
-                            else:
-                                offset += max_len
-                        else:
-                            offset = len(ai_response)
-                        await ctx.reply(chunk)
+                if ctx.message:
+                    stream = await make_yandex_ai_stream(
+                        ctx.user_id,
+                        [("user", prompt_text)],
+                        TAROT_PROMPT,
+                    )
+                    await stream_reply(ctx.message, stream)
             finally:
                 os.unlink(out_path)
         except Exception as e:
