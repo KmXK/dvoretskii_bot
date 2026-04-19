@@ -42,6 +42,12 @@ def _ai_stream(uid, msgs):
     return make_openrouter_stream(uid, OpenRouterModel.GROK_4_FAST, msgs, _build_system_prompt())
 
 
+async def _quick_call(prompt: str) -> str:
+    return await make_openrouter_query(
+        0, OpenRouterModel.FAST, [("user", prompt)], ""
+    )
+
+
 class AIFeature(Feature):
     command = "ai"
     description = "Поговорить с ИИ"
@@ -49,7 +55,7 @@ class AIFeature(Feature):
     @on_init
     async def _set_repo(self):
         _REPO_HOLDER["repo"] = self.repository
-        register_ai_handler("ai", _ai_call, _ai_stream)
+        register_ai_handler("ai", _ai_call, _ai_stream, quick_call=_quick_call)
         await ensure_thinking_phrases(
             lambda prompt: make_openrouter_query(
                 0, OpenRouterModel.GROK_4_FAST, [("user", prompt)], ""
@@ -59,8 +65,16 @@ class AIFeature(Feature):
     @subcommand("<text:rest>", description="Запрос к ИИ", catchall=True)
     async def ask(self, ctx: FeatureContext, text: str):
         full_text = ctx.message.text if ctx.message else text
-        await execute_ai_request_streaming(ctx, full_text, _ai_stream, "ai")
+        await execute_ai_request_streaming(
+            ctx, full_text, _ai_stream, "ai", quick_call=_quick_call
+        )
 
     @subcommand("", description="Без аргументов")
     async def empty(self, ctx: FeatureContext):
-        await execute_ai_request_streaming(ctx, ctx.message.text or "", _ai_stream, "ai")
+        await execute_ai_request_streaming(
+            ctx,
+            ctx.message.text or "",
+            _ai_stream,
+            "ai",
+            quick_call=_quick_call,
+        )

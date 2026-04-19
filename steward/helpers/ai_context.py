@@ -6,9 +6,12 @@ import telethon
 from async_lru import alru_cache
 from telethon import TelegramClient
 
+import asyncio
+
 from steward.bot.context import ChatBotContext
 from steward.data.models.ai_message import AiMessage
 from steward.helpers.tg_streaming import stream_reply
+from steward.helpers.thinking import try_contextual_placeholder
 
 type AiCallable = Callable[[int, list[tuple[str, str]]], str | Awaitable[str]]
 type AiStreamCallable = Callable[
@@ -16,18 +19,24 @@ type AiStreamCallable = Callable[
     AsyncIterator[str] | Awaitable[AsyncIterator[str]],
 ]
 
+type QuickCallable = Callable[[str], str | Awaitable[str]]
+
 _ai_handlers: dict[str, AiCallable] = {}
 _ai_stream_handlers: dict[str, AiStreamCallable] = {}
+_ai_quick_handlers: dict[str, QuickCallable] = {}
 
 
 def register_ai_handler(
     name: str,
     call: AiCallable,
     stream_call: AiStreamCallable | None = None,
+    quick_call: QuickCallable | None = None,
 ):
     _ai_handlers[name] = call
     if stream_call is not None:
         _ai_stream_handlers[name] = stream_call
+    if quick_call is not None:
+        _ai_quick_handlers[name] = quick_call
 
 
 def get_ai_handler(name: str) -> AiCallable | None:
@@ -36,6 +45,10 @@ def get_ai_handler(name: str) -> AiCallable | None:
 
 def get_ai_stream_handler(name: str) -> AiStreamCallable | None:
     return _ai_stream_handlers.get(name)
+
+
+def get_ai_quick_handler(name: str) -> QuickCallable | None:
+    return _ai_quick_handlers.get(name)
 
 
 @alru_cache(1024)
@@ -117,15 +130,35 @@ async def execute_ai_request_streaming(
     text: str,
     ai_stream_call: AiStreamCallable,
     handler_name: str,
+    *,
+    quick_call: Callable[[str], str | Awaitable[str]] | None = None,
 ):
     """Same shape as execute_ai_request, but streams tokens into the Telegram
-    message as they arrive. Persists the final message the same way."""
+    message as they arrive. When `quick_call` is given, a random placeholder
+    is shown immediately while a topic-aware one is being generated in the
+    background — when it arrives (within its own timeout) the placeholder is
+    hot-swapped. Persists the final message the same way."""
     messages = await build_reply_context(context, text)
-    stream = ai_stream_call(context.message.from_user.id, messages)
-    if isawaitable(stream):
-        stream = await stream
 
-    bot_message = await stream_reply(context.message, stream)
+    upgrade_task: asyncio.Task[str | None] | None = None
+    if quick_call is not None:
+        upgrade_task = asyncio.create_task(
+            try_contextual_placeholder(text, quick_call)
+        )
+
+    try:
+        stream = ai_stream_call(context.message.from_user.id, messages)
+        if isawaitable(stream):
+            stream = await stream
+
+        bot_message = await stream_reply(
+            context.message,
+            stream,
+            placeholder_upgrade=upgrade_task,
+        )
+    finally:
+        if upgrade_task is not None and not upgrade_task.done():
+            upgrade_task.cancel()
 
     context.repository.db.ai_messages[
         f"{context.message.chat.id}_{bot_message.id}"

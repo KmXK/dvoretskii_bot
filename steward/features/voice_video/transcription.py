@@ -10,7 +10,8 @@ from elevenlabs.client import ElevenLabs
 from elevenlabs.types import SpeechToTextChunkResponseModel
 
 from steward.features.voice_video.conversion import run_ffmpeg
-from steward.helpers.transcription import build_named_speakers_text, wrap_as_spoiler
+from steward.helpers.formats import spoiler_block
+from steward.helpers.transcription import build_named_speakers_text
 
 logger = logging.getLogger(__name__)
 
@@ -118,4 +119,4 @@ async def create_transcription_reply(
         return
     if len(transcription) > 3900:
         transcription = transcription[:3900] + "..."
-    await reply_target.reply_html(wrap_as_spoiler(transcription))
+    await reply_target.reply_html(spoiler_block(transcription, header="Расшифровка"))

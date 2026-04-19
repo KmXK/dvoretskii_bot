@@ -22,6 +22,8 @@ class YandexModelTypes:
 class OpenRouterModel:
     GROK_4_FAST = "x-ai/grok-4-fast"
     AUTO = "openrouter/auto"
+    # Small/fast model for low-latency side tasks (placeholders, classifications).
+    FAST = "google/gemini-2.5-flash"
 
 
 def get_prompt(prompt_name: str):
