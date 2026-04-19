@@ -1,19 +1,37 @@
 import asyncio
+import html
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
-from typing import cast
+from typing import AsyncIterator, cast
 
 import httpx
 from elevenlabs.client import ElevenLabs
 from elevenlabs.types import SpeechToTextChunkResponseModel
+from telegram.constants import ParseMode
+from telegram.error import BadRequest, RetryAfter
 
 from steward.features.voice_video.conversion import run_ffmpeg
+from steward.helpers.ai import OpenRouterModel, make_openrouter_stream
 from steward.helpers.formats import spoiler_block
 from steward.helpers.transcription import build_named_speakers_text
 
 logger = logging.getLogger(__name__)
+
+_TG_TEXT_LIMIT = 4096
+_SUMMARY_MIN_EDIT_INTERVAL = 1.2
+_TRANSCRIPTION_BODY_LIMIT = 3500
+
+_SUMMARY_SYSTEM_PROMPT = (
+    "Ты делаешь ОЧЕНЬ краткую выжимку голосового сообщения. "
+    "Максимум 1-3 коротких предложения, только суть, без воды, "
+    "без вступлений вроде «в сообщении говорится», без приветствий "
+    "и без перечисления очевидного. Сохрани тон и смысл. "
+    "Если сообщение бессмысленное или это флуд — одно предложение "
+    "о чём оно. Без кавычек и без форматирования."
+)
 
 
 def build_speaker_name(
@@ -99,6 +117,80 @@ async def transcribe_voice(
     return None
 
 
+async def _summary_stream(transcription: str) -> AsyncIterator[str]:
+    return await make_openrouter_stream(
+        0,
+        OpenRouterModel.FAST,
+        [("user", transcription)],
+        _SUMMARY_SYSTEM_PROMPT,
+    )
+
+
+def _compose_message(summary: str, spoiler_html: str) -> str:
+    if summary:
+        body = f"{html.escape(summary)}\n\n{spoiler_html}"
+    else:
+        body = spoiler_html
+    if len(body) > _TG_TEXT_LIMIT:
+        body = body[:_TG_TEXT_LIMIT]
+    return body
+
+
+async def _stream_summary_with_spoiler(
+    reply_target,
+    stream: AsyncIterator[str],
+    spoiler_html: str,
+):
+    initial = f"<i>Коротко…</i>\n\n{spoiler_html}"
+    bot_message = await reply_target.reply_html(initial)
+
+    buffer: list[str] = []
+    last_edit_at = 0.0
+    last_text = initial
+    got_anything = False
+
+    try:
+        async for chunk in stream:
+            if not chunk:
+                continue
+            buffer.append(chunk)
+            got_anything = True
+            now = time.monotonic()
+            if now - last_edit_at < _SUMMARY_MIN_EDIT_INTERVAL:
+                continue
+            text = _compose_message("".join(buffer), spoiler_html)
+            if text == last_text:
+                continue
+            try:
+                await bot_message.edit_text(text, parse_mode=ParseMode.HTML)
+                last_edit_at = now
+                last_text = text
+            except RetryAfter as e:
+                await asyncio.sleep(float(e.retry_after))
+            except BadRequest as e:
+                if "not modified" not in str(e).lower():
+                    logger.warning("summary stream edit failed: %s", e)
+    except Exception as e:
+        logger.exception("summary stream iteration failed: %s", e)
+
+    summary = "".join(buffer).strip()
+    final_text = _compose_message(summary if got_anything else "", spoiler_html)
+    if final_text == last_text:
+        return bot_message
+    try:
+        await bot_message.edit_text(final_text, parse_mode=ParseMode.HTML)
+    except RetryAfter as e:
+        await asyncio.sleep(float(e.retry_after))
+        try:
+            await bot_message.edit_text(final_text, parse_mode=ParseMode.HTML)
+        except BadRequest as e2:
+            logger.warning("summary final edit failed: %s", e2)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.warning("summary final edit failed: %s", e)
+    return bot_message
+
+
 async def create_transcription_reply(
     repository,
     reply_target,
@@ -117,6 +209,19 @@ async def create_transcription_reply(
     if not transcription:
         await reply_target.reply_text("Не удалось сделать расшифровку")
         return
-    if len(transcription) > 3900:
-        transcription = transcription[:3900] + "..."
-    await reply_target.reply_html(spoiler_block(transcription, header="Расшифровка"))
+
+    body = (
+        transcription
+        if len(transcription) <= _TRANSCRIPTION_BODY_LIMIT
+        else transcription[:_TRANSCRIPTION_BODY_LIMIT] + "..."
+    )
+    spoiler = spoiler_block(body)
+
+    try:
+        stream = await _summary_stream(transcription)
+    except Exception as e:
+        logger.exception("summary stream init failed: %s", e)
+        await reply_target.reply_html(spoiler)
+        return
+
+    await _stream_summary_with_spoiler(reply_target, stream, spoiler)

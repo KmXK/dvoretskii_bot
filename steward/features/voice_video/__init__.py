@@ -16,6 +16,7 @@ from steward.framework import (
     Keyboard,
     on_callback,
     on_message,
+    subcommand,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,6 @@ class _PendingVoiceRequest:
     speaker_user_id: int | None
     speaker_username: str | None
     speaker_fallback_name: str | None
-    video_clicked: bool = False
     transcribe_clicked: bool = False
     request_clicked: bool = False
 
@@ -47,6 +47,8 @@ class _RouterMessageProxy:
 
 
 class VoiceVideoFeature(Feature):
+    command = "voice_to_video"
+    description = "Сделать видео-ответ из голосового"
     excluded_from_ai_router = True
 
     VIDEO_OFFSET_KEY = "stupid_video"
@@ -62,8 +64,6 @@ class VoiceVideoFeature(Feature):
     ) -> Keyboard | None:
         cb = self.cb("voice:action")
         row: list[Button] = []
-        if not pending.video_clicked:
-            row.append(cb.button("Видео", action="video", request_id=request_id))
         if not pending.transcribe_clicked:
             row.append(cb.button("Расшифровка", action="transcribe", request_id=request_id))
         if not pending.request_clicked:
@@ -75,10 +75,42 @@ class VoiceVideoFeature(Feature):
             [cb.button("Ничего", action="nothing", request_id=request_id)],
         ])
 
+    @subcommand("", description="Сделать видео-ответ (в ответ на голосовое)")
+    async def voice_to_video_cmd(self, ctx: FeatureContext):
+        message = ctx.message
+        if message is None:
+            return
+        reply = message.reply_to_message
+        if reply is None or not reply.voice:
+            await ctx.reply(
+                "Команда работает только как ответ на голосовое сообщение.",
+                markdown=False,
+            )
+            return
+        try:
+            audio_path = await self._resolve_audio_path(ctx, reply.voice.file_id)
+            await create_video_reply(
+                self,
+                reply,
+                audio_path,
+                ctx.user_id,
+                self.VIDEO_OFFSET_KEY,
+                self.BG_AUDIO_OFFSET_KEY,
+            )
+        except Exception as e:
+            logger.exception("voice_to_video command failed: %s", e)
+            await ctx.reply("Не удалось сделать видео", markdown=False)
+
     @on_message
     async def on_voice(self, ctx: FeatureContext) -> bool:
         message = ctx.message
-        if message is None or not message.voice:
+        if message is None:
+            return False
+        if message.voice:
+            file_id = message.voice.file_id
+        elif message.video_note:
+            file_id = message.video_note.file_id
+        else:
             return False
         from_user = message.from_user
         if not from_user:
@@ -100,7 +132,7 @@ class VoiceVideoFeature(Feature):
                 speaker_fallback_name = origin.sender_user_name
 
         self._pending[request_id] = _PendingVoiceRequest(
-            file_id=message.voice.file_id,
+            file_id=file_id,
             requester_user_id=from_user.id,
             speaker_user_id=speaker_user_id,
             speaker_username=speaker_username,
@@ -111,7 +143,7 @@ class VoiceVideoFeature(Feature):
 
         keyboard = self._build_actions_keyboard(request_id, self._pending[request_id])
         await ctx.reply(
-            "Выбери действие для голосового сообщения:",
+            "Выбери действие для сообщения:",
             keyboard=keyboard,
             markdown=False,
         )
@@ -119,7 +151,7 @@ class VoiceVideoFeature(Feature):
 
     @on_callback(
         "voice:action",
-        schema="<action:literal[video|transcribe|request|nothing]>|<request_id:str>",
+        schema="<action:literal[transcribe|request|nothing]>|<request_id:str>",
     )
     async def on_action(self, ctx: FeatureContext, action: str, request_id: str):
         callback_query = ctx.callback_query
@@ -132,20 +164,21 @@ class VoiceVideoFeature(Feature):
             return
 
         if action == "nothing":
-            self._pending.pop(request_id, None)
             await callback_query.answer()
-            try:
-                await message.delete()
-            except Exception:
-                await message.edit_reply_markup(reply_markup=None)
+            if pending.transcribe_clicked or pending.request_clicked:
+                try:
+                    await message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+            else:
+                self._pending.pop(request_id, None)
+                try:
+                    await message.delete()
+                except Exception:
+                    await message.edit_reply_markup(reply_markup=None)
             return
 
-        if action == "video":
-            if pending.video_clicked:
-                await callback_query.answer("Кнопка уже нажата")
-                return
-            pending.video_clicked = True
-        elif action == "transcribe":
+        if action == "transcribe":
             if pending.transcribe_clicked:
                 await callback_query.answer("Кнопка уже нажата")
                 return
@@ -164,16 +197,7 @@ class VoiceVideoFeature(Feature):
 
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
-            if action == "video":
-                await create_video_reply(
-                    self,
-                    message,
-                    audio_path,
-                    pending.requester_user_id,
-                    self.VIDEO_OFFSET_KEY,
-                    self.BG_AUDIO_OFFSET_KEY,
-                )
-            elif action == "transcribe":
+            if action == "transcribe":
                 await create_transcription_reply(
                     self.repository,
                     message,
@@ -184,15 +208,11 @@ class VoiceVideoFeature(Feature):
                 )
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)
-            if (
-                pending.video_clicked
-                and pending.transcribe_clicked
-                and pending.request_clicked
-            ):
+            if pending.transcribe_clicked and pending.request_clicked:
                 self._pending.pop(request_id, None)
         except Exception as e:
             logger.exception("Error processing voice callback: %s", e)
-            await message.reply_text("Ошибка при обработке голосового сообщения")
+            await message.reply_text("Ошибка при обработке сообщения")
 
     async def _resolve_audio_path(self, ctx: FeatureContext, file_id: str) -> Path:
         tg_file = await ctx.bot.get_file(file_id)
