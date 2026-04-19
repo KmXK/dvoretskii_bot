@@ -1,5 +1,10 @@
 from steward.framework import Feature, FeatureContext, on_message
-from steward.helpers.ai_context import execute_ai_request, get_ai_handler
+from steward.helpers.ai_context import (
+    execute_ai_request,
+    execute_ai_request_streaming,
+    get_ai_handler,
+    get_ai_stream_handler,
+)
 
 
 class AiRelatedFeature(Feature):
@@ -15,6 +20,12 @@ class AiRelatedFeature(Feature):
         if key not in ctx.repository.db.ai_messages:
             return False
         ai_message = ctx.repository.db.ai_messages[key]
+        stream_call = get_ai_stream_handler(ai_message.handler)
+        if stream_call:
+            await execute_ai_request_streaming(
+                ctx, ctx.message.text, stream_call, ai_message.handler
+            )
+            return True
         ai_call = get_ai_handler(ai_message.handler)
         if not ai_call:
             return False
