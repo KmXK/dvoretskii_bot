@@ -15,7 +15,7 @@ from steward.framework import (
     on_message,
 )
 from steward.handlers.handler import Handler
-from steward.helpers.ai import get_prompt, make_yandex_ai_query
+from steward.helpers.ai import Model, get_prompt, make_chat_query
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.limiter import Duration, check_limit
 
@@ -116,13 +116,14 @@ class AiRouterHandler(Feature):
             ai_input = f"Контекст сообщения: {reply_context}\n\nЗапрос: {user_request}"
 
         try:
-            response = await make_yandex_ai_query(
+            response = await make_chat_query(
                 ctx.user_id,
+                Model.SMART,
                 [("user", ai_input)],
                 prompt,
             )
         except Exception as e:
-            logger.exception("AI router query failed: %s", e)
+            logger.exception("AI router query failed (all providers): %s", e)
             return False
 
         response = response.strip().strip("`")

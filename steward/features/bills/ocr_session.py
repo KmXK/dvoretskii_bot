@@ -1,6 +1,5 @@
 import base64
 import logging
-import os
 
 import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,9 +19,9 @@ from steward.features.bills.sheets import (
     parse_people_places,
     read_bill_people_places_rows,
 )
-from steward.features.newtext import _yandex_ocr
 from steward.helpers.media import fetch_tg_file_bytes
 from steward.helpers.ai import BILL_OCR_PROMPT, make_yandex_ai_query
+from steward.helpers.ocr import extract_text_from_image
 from steward.helpers.google_drive import insert_rows_into_sheet
 from steward.helpers.tg_update_helpers import get_message
 from steward.session.step import Step
@@ -75,14 +74,6 @@ class CollectBillContextStep(Step):
         text_parts: list[str] = context.session_context.setdefault("bill_context_parts", [])
 
         if context.message.photo:
-            api_key = os.environ.get("AI_VISION_SECRET")
-            folder_id = os.environ.get("YC_FOLDER_ID")
-            if not api_key or not folder_id:
-                await context.message.reply_text(
-                    "Yandex OCR не настроен: задайте AI_VISION_SECRET и YC_FOLDER_ID"
-                )
-                return False
-
             photo = context.message.photo[-1]
             try:
                 data = await fetch_tg_file_bytes(context.bot, photo.file_id)
@@ -90,15 +81,15 @@ class CollectBillContextStep(Step):
                 mime = "JPEG"
                 if data[:8] == b"\x89PNG\r\n\x1a\n":
                     mime = "PNG"
-                text = await _yandex_ocr(content_b64, mime, api_key, folder_id)
+                text = await extract_text_from_image(content_b64, mime)
             except httpx.HTTPStatusError as e:
-                logger.exception("Yandex OCR HTTP error: %s", e)
+                logger.exception("OCR HTTP error: %s", e)
                 await context.message.reply_text(
                     f"Ошибка OCR API: {e.response.status_code}"
                 )
                 return False
             except Exception as e:
-                logger.exception("Yandex OCR failed: %s", e)
+                logger.exception("OCR failed: %s", e)
                 await context.message.reply_text(f"Не удалось распознать фото: {e}")
                 return False
 

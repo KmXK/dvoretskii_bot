@@ -1,17 +1,11 @@
 import asyncio
 import logging
-import os
 import tempfile
 from pathlib import Path
-from typing import cast
 from urllib.parse import urlparse
 
-import httpx
-from elevenlabs.client import ElevenLabs
-from elevenlabs.types import SpeechToTextChunkResponseModel
-
 from steward.features.bills.amounts import normalize_name, parse_amount
-from steward.helpers.transcription import build_named_speakers_text
+from steward.helpers.stt import transcribe_audio_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -53,69 +47,21 @@ async def read_voice_bytes(context, file_id: str) -> bytes:
 
 
 async def transcribe_voice_bytes(data: bytes) -> str | None:
-    stt_key = os.environ.get("EVELEN_LABS_STT")
-    if not stt_key:
-        return None
     with tempfile.TemporaryDirectory(prefix="bill_voice_stt_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         source_audio = tmp_path / "voice.ogg"
         prepared_audio = tmp_path / "voice.mp3"
         source_audio.write_bytes(data)
         await run_ffmpeg(
-            "-i",
-            str(source_audio),
-            "-ac",
-            "1",
-            "-ar",
-            "44100",
+            "-i", str(source_audio),
+            "-ac", "1",
+            "-ar", "44100",
             str(prepared_audio),
         )
-        with open(prepared_audio, "rb") as audio_file:
-            client = ElevenLabs(
-                api_key=stt_key,
-                httpx_client=httpx.Client(
-                    timeout=240,
-                    proxy=os.environ.get("DOWNLOAD_PROXY"),
-                ),
-            )
-            payload = audio_file.read()
-            try:
-                result = await asyncio.to_thread(
-                    lambda: client.speech_to_text.convert(
-                        file=payload,
-                        model_id="scribe_v1",
-                        tag_audio_events=True,
-                        diarize=True,
-                    )
-                )
-            except Exception as e:
-                if "not found" not in str(e).lower():
-                    raise
-                result = await asyncio.to_thread(
-                    lambda: client.speech_to_text.convert(
-                        file=payload,
-                        tag_audio_events=True,
-                        diarize=True,
-                    )
-                )
-        text = getattr(result, "text", None)
-        if isinstance(text, str):
-            stripped = text.strip()
-            if stripped:
-                return stripped
-        words = cast(SpeechToTextChunkResponseModel, result).words or []
-        text_with_names = build_named_speakers_text(words)
-        if text_with_names:
-            cleaned_lines: list[str] = []
-            for line in text_with_names.splitlines():
-                if ":" in line:
-                    cleaned_lines.append(line.split(":", 1)[1].strip())
-                else:
-                    cleaned_lines.append(line.strip())
-            cleaned = "\n".join(x for x in cleaned_lines if x).strip()
-            if cleaned:
-                return cleaned
-    return None
+        return await transcribe_audio_bytes(
+            prepared_audio.read_bytes(),
+            with_speaker_labels=False,
+        )
 
 
 def build_people_places_prompt_block(
