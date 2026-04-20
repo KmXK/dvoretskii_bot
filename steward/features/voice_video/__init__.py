@@ -30,6 +30,7 @@ class _PendingVoiceRequest:
     speaker_username: str | None
     speaker_fallback_name: str | None
     speaker_first_name: str | None
+    is_video_note: bool = False
     transcribe_clicked: bool = False
     request_clicked: bool = False
 
@@ -109,8 +110,10 @@ class VoiceVideoFeature(Feature):
             return False
         if message.voice:
             file_id = message.voice.file_id
+            is_video_note = False
         elif message.video_note:
             file_id = message.video_note.file_id
+            is_video_note = True
         else:
             return False
         from_user = message.from_user
@@ -142,6 +145,7 @@ class VoiceVideoFeature(Feature):
             speaker_username=speaker_username,
             speaker_fallback_name=speaker_fallback_name,
             speaker_first_name=speaker_first_name,
+            is_video_note=is_video_note,
         )
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
@@ -210,6 +214,7 @@ class VoiceVideoFeature(Feature):
                     pending.speaker_username,
                     pending.speaker_fallback_name,
                     pending.speaker_first_name,
+                    video_path=audio_path if pending.is_video_note else None,
                 )
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)

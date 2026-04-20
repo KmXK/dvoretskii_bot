@@ -39,6 +39,7 @@ BILL_OCR_PROMPT = get_prompt("bill_ocr")
 
 
 _YANDEX_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+_YANDEX_OPENAI_URL = "https://llm.api.cloud.yandex.net/v1/chat/completions"
 
 
 def _yandex_payload(
@@ -89,6 +90,58 @@ async def make_yandex_ai_query(
             except Exception as e:
                 logger.error(f"AI request failed: {data}")
                 raise e
+
+
+def _yandex_vlm_model_uri() -> str | None:
+    return environ.get("AI_MODEL_VLM")
+
+
+async def make_yandex_vlm_describe(
+    user_id,
+    prompt: str,
+    images_b64: list[str],
+    max_tokens: int = 200,
+) -> str:
+    """Single-turn VLM call via Yandex OpenAI-compatible endpoint.
+
+    Accepts several base64 JPEG images in one request — cheaper than N single-image calls.
+    """
+    _check_yandex_limits(user_id)
+    model = _yandex_vlm_model_uri()
+    if not model:
+        raise RuntimeError("Yandex VLM not configured: set AI_MODEL_VLM in .env")
+
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for b64 in images_b64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(_YANDEX_OPENAI_URL, json=payload, headers=_yandex_headers())
+        if r.status_code >= 400:
+            body = r.text[:1000]
+            logger.error(
+                "VLM HTTP %s for model=%s images=%d max_tokens=%d body=%s",
+                r.status_code, model, len(images_b64), max_tokens, body,
+            )
+            r.raise_for_status()
+        data = r.json()
+    try:
+        text = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        logger.error("VLM response malformed: %s", data)
+        raise e
+    if not isinstance(text, str):
+        raise RuntimeError(f"VLM response content is not a string: {type(text).__name__}")
+    return text.strip()
 
 
 async def make_yandex_ai_stream(
