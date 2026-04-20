@@ -72,10 +72,10 @@ class VoiceVideoFeature(Feature):
             row.append(cb.button("Запрос", action="request", request_id=request_id))
         if not row:
             return None
-        return Keyboard([
-            row,
-            [cb.button("Ничего", action="nothing", request_id=request_id)],
-        ])
+        rows: list[list[Button]] = [row]
+        if not pending.transcribe_clicked:
+            rows.append([cb.button("Ничего", action="nothing", request_id=request_id)])
+        return Keyboard(rows)
 
     @subcommand("", description="Сделать видео-ответ (в ответ на голосовое)")
     async def voice_to_video_cmd(self, ctx: FeatureContext):
@@ -197,24 +197,31 @@ class VoiceVideoFeature(Feature):
             pending.request_clicked = True
 
         await callback_query.answer()
-        keyboard = self._build_actions_keyboard(request_id, pending)
-        await message.edit_reply_markup(
-            reply_markup=keyboard.to_markup() if keyboard is not None else None
-        )
+
+        def reply_markup_provider():
+            kb = self._build_actions_keyboard(request_id, pending)
+            return kb.to_markup() if kb is not None else None
+
+        try:
+            await message.edit_reply_markup(reply_markup=reply_markup_provider())
+        except Exception as e:
+            logger.debug("keyboard update failed: %s", e)
 
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
             if action == "transcribe":
-                target = message.reply_to_message or message
+                initiator = message.reply_to_message or message
                 await create_transcription_reply(
                     self.repository,
-                    target,
+                    initiator,
                     audio_path,
                     pending.speaker_user_id,
                     pending.speaker_username,
                     pending.speaker_fallback_name,
                     pending.speaker_first_name,
                     video_path=audio_path if pending.is_video_note else None,
+                    edit_message=message,
+                    reply_markup_provider=reply_markup_provider,
                 )
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)

@@ -4,8 +4,9 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
+from telegram import InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 
@@ -159,9 +160,26 @@ async def _stream_summary_with_spoiler(
     reply_target,
     stream: AsyncIterator[str],
     spoiler_html: str,
+    edit_message=None,
+    reply_markup_provider: Callable[[], InlineKeyboardMarkup | None] | None = None,
 ):
+    def current_markup() -> InlineKeyboardMarkup | None:
+        return reply_markup_provider() if reply_markup_provider is not None else None
+
     initial = f"<i>Коротко…</i>\n\n{spoiler_html}"
-    bot_message = await reply_target.reply_html(initial)
+    if edit_message is not None:
+        try:
+            await edit_message.edit_text(
+                initial,
+                parse_mode=ParseMode.HTML,
+                reply_markup=current_markup(),
+            )
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                logger.warning("summary initial edit failed: %s", e)
+        bot_message = edit_message
+    else:
+        bot_message = await reply_target.reply_html(initial)
 
     buffer: list[str] = []
     last_edit_at = 0.0
@@ -181,7 +199,11 @@ async def _stream_summary_with_spoiler(
             if text == last_text:
                 continue
             try:
-                await bot_message.edit_text(text, parse_mode=ParseMode.HTML)
+                await bot_message.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=current_markup(),
+                )
                 last_edit_at = now
                 last_text = text
             except RetryAfter as e:
@@ -197,11 +219,19 @@ async def _stream_summary_with_spoiler(
     if final_text == last_text:
         return bot_message
     try:
-        await bot_message.edit_text(final_text, parse_mode=ParseMode.HTML)
+        await bot_message.edit_text(
+            final_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=current_markup(),
+        )
     except RetryAfter as e:
         await asyncio.sleep(float(e.retry_after))
         try:
-            await bot_message.edit_text(final_text, parse_mode=ParseMode.HTML)
+            await bot_message.edit_text(
+                final_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=current_markup(),
+            )
         except BadRequest as e2:
             logger.warning("summary final edit failed: %s", e2)
     except BadRequest as e:
@@ -219,6 +249,8 @@ async def create_transcription_reply(
     speaker_fallback_name: str | None,
     speaker_first_name: str | None = None,
     video_path: Path | None = None,
+    edit_message=None,
+    reply_markup_provider: Callable[[], InlineKeyboardMarkup | None] | None = None,
 ):
     speaker_name = build_speaker_name(
         repository,
@@ -242,7 +274,15 @@ async def create_transcription_reply(
     if not transcription:
         if visual_task is not None:
             visual_task.cancel()
-        await reply_target.reply_text("Не удалось сделать расшифровку")
+        error_text = "Не удалось сделать расшифровку"
+        if edit_message is not None:
+            markup = reply_markup_provider() if reply_markup_provider else None
+            try:
+                await edit_message.edit_text(error_text, reply_markup=markup)
+                return
+            except Exception as e:
+                logger.warning("failed to edit message with transcription error: %s", e)
+        await reply_target.reply_text(error_text)
         return
 
     visual_description: str | None = None
@@ -271,10 +311,27 @@ async def create_transcription_reply(
         stream = await _summary_stream(transcription, natural_name, visual_description)
     except Exception as e:
         logger.exception("summary stream init failed: %s", e)
-        bot_message = await reply_target.reply_html(spoiler_html)
+        if edit_message is not None:
+            markup = reply_markup_provider() if reply_markup_provider else None
+            try:
+                await edit_message.edit_text(
+                    spoiler_html,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                )
+                bot_message = edit_message
+            except Exception as edit_err:
+                logger.warning("failed to edit message with spoiler: %s", edit_err)
+                bot_message = await reply_target.reply_html(spoiler_html)
+        else:
+            bot_message = await reply_target.reply_html(spoiler_html)
     else:
         bot_message = await _stream_summary_with_spoiler(
-            reply_target, stream, spoiler_html
+            reply_target,
+            stream,
+            spoiler_html,
+            edit_message=edit_message,
+            reply_markup_provider=reply_markup_provider,
         )
 
     if bot_message is not None:
