@@ -33,6 +33,38 @@ _SUMMARY_SYSTEM_PROMPT = (
     "о чём оно. Без кавычек и без форматирования."
 )
 
+_SUMMARY_SPEAKER_HINT = (
+    "Говорящего зовут {name}. В выжимке используй это имя "
+    "(в нужном падеже) вместо обобщений «автор», «спикер», "
+    "«человек»."
+)
+
+
+def natural_speaker_name(
+    repository,
+    user_id: int | None,
+    first_name: str | None,
+    fallback_name: str | None,
+) -> str | None:
+    user = (
+        next((u for u in repository.db.users if u.id == user_id), None)
+        if user_id is not None
+        else None
+    )
+    if user and user.stand_name:
+        clean = user.stand_name.strip()
+        if clean:
+            return clean
+    if first_name:
+        clean = first_name.strip()
+        if clean:
+            return clean
+    if fallback_name:
+        clean = fallback_name.strip()
+        if clean:
+            return clean
+    return None
+
 
 def build_speaker_name(
     repository,
@@ -117,12 +149,19 @@ async def transcribe_voice(
     return None
 
 
-async def _summary_stream(transcription: str) -> AsyncIterator[str]:
+async def _summary_stream(
+    transcription: str, speaker_display_name: str | None
+) -> AsyncIterator[str]:
+    system_prompt = _SUMMARY_SYSTEM_PROMPT
+    if speaker_display_name:
+        system_prompt = (
+            system_prompt + " " + _SUMMARY_SPEAKER_HINT.format(name=speaker_display_name)
+        )
     return await make_openrouter_stream(
         0,
         OpenRouterModel.FAST,
         [("user", transcription)],
-        _SUMMARY_SYSTEM_PROMPT,
+        system_prompt,
     )
 
 
@@ -198,11 +237,18 @@ async def create_transcription_reply(
     speaker_user_id: int | None,
     speaker_username: str | None,
     speaker_fallback_name: str | None,
+    speaker_first_name: str | None = None,
 ):
     speaker_name = build_speaker_name(
         repository,
         speaker_user_id,
         speaker_username,
+        speaker_fallback_name,
+    )
+    natural_name = natural_speaker_name(
+        repository,
+        speaker_user_id,
+        speaker_first_name,
         speaker_fallback_name,
     )
     transcription = await transcribe_voice(audio_path, speaker_name)
@@ -218,7 +264,7 @@ async def create_transcription_reply(
     spoiler = spoiler_block(body)
 
     try:
-        stream = await _summary_stream(transcription)
+        stream = await _summary_stream(transcription, natural_name)
     except Exception as e:
         logger.exception("summary stream init failed: %s", e)
         await reply_target.reply_html(spoiler)
