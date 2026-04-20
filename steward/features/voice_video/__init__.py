@@ -29,6 +29,7 @@ class _PendingVoiceRequest:
     speaker_user_id: int | None
     speaker_username: str | None
     speaker_fallback_name: str | None
+    speaker_first_name: str | None
     transcribe_clicked: bool = False
     request_clicked: bool = False
 
@@ -119,6 +120,7 @@ class VoiceVideoFeature(Feature):
         request_id = uuid.uuid4().hex
         speaker_user_id: int | None = from_user.id
         speaker_username = from_user.username
+        speaker_first_name: str | None = from_user.first_name
         speaker_fallback_name: str | None = None
         origin = getattr(message, "forward_origin", None)
         if origin is not None:
@@ -126,9 +128,11 @@ class VoiceVideoFeature(Feature):
                 speaker_user = origin.sender_user
                 speaker_user_id = speaker_user.id
                 speaker_username = speaker_user.username
+                speaker_first_name = getattr(speaker_user, "first_name", None)
             elif hasattr(origin, "sender_user_name") and origin.sender_user_name:
                 speaker_user_id = None
                 speaker_username = None
+                speaker_first_name = None
                 speaker_fallback_name = origin.sender_user_name
 
         self._pending[request_id] = _PendingVoiceRequest(
@@ -137,6 +141,7 @@ class VoiceVideoFeature(Feature):
             speaker_user_id=speaker_user_id,
             speaker_username=speaker_username,
             speaker_fallback_name=speaker_fallback_name,
+            speaker_first_name=speaker_first_name,
         )
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
@@ -174,8 +179,12 @@ class VoiceVideoFeature(Feature):
                 self._pending.pop(request_id, None)
                 try:
                     await message.delete()
-                except Exception:
-                    await message.edit_reply_markup(reply_markup=None)
+                except Exception as e:
+                    logger.warning("Failed to delete voice action menu: %s", e)
+                    try:
+                        await message.edit_reply_markup(reply_markup=None)
+                    except Exception:
+                        pass
             return
 
         if action == "transcribe":
@@ -205,6 +214,7 @@ class VoiceVideoFeature(Feature):
                     pending.speaker_user_id,
                     pending.speaker_username,
                     pending.speaker_fallback_name,
+                    pending.speaker_first_name,
                 )
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)
