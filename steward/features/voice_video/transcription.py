@@ -15,6 +15,7 @@ from telegram.error import BadRequest, RetryAfter
 
 from steward.data.models.ai_message import AiMessage
 from steward.features.voice_video.conversion import run_ffmpeg
+from steward.features.voice_video.visual import describe_video
 from steward.helpers.ai import OpenRouterModel, make_openrouter_stream
 from steward.helpers.formats import spoiler_block
 from steward.helpers.transcription import build_named_speakers_text
@@ -41,6 +42,13 @@ _SUMMARY_SPEAKER_HINT = (
     "произносит речь, а не тот, к кому обращаются. Местоимения «ты», "
     "«тебя», «тебе» в речи говорящего относятся к его собеседнику, а не "
     "к нему самому."
+)
+
+_SUMMARY_VISUAL_HINT = (
+    "В кружке также есть видео. Вот краткое описание того, что в нём видно: "
+    "«{visual}». Если визуал добавляет важную информацию (обстановка, действия, "
+    "что показывают), коротко отрази это в выжимке; если визуал не несёт смысла "
+    "сверх слов — игнорируй его."
 )
 
 
@@ -154,12 +162,18 @@ async def transcribe_voice(
 
 
 async def _summary_stream(
-    transcription: str, speaker_display_name: str | None
+    transcription: str,
+    speaker_display_name: str | None,
+    visual_context: str | None = None,
 ) -> AsyncIterator[str]:
     system_prompt = _SUMMARY_SYSTEM_PROMPT
     if speaker_display_name:
         system_prompt = (
             system_prompt + " " + _SUMMARY_SPEAKER_HINT.format(name=speaker_display_name)
+        )
+    if visual_context:
+        system_prompt = (
+            system_prompt + " " + _SUMMARY_VISUAL_HINT.format(visual=visual_context)
         )
     return await make_openrouter_stream(
         0,
@@ -242,6 +256,7 @@ async def create_transcription_reply(
     speaker_username: str | None,
     speaker_fallback_name: str | None,
     speaker_first_name: str | None = None,
+    video_path: Path | None = None,
 ):
     speaker_name = build_speaker_name(
         repository,
@@ -255,26 +270,49 @@ async def create_transcription_reply(
         speaker_first_name,
         speaker_fallback_name,
     )
-    transcription = await transcribe_voice(audio_path, speaker_name)
+
+    voice_task = asyncio.create_task(transcribe_voice(audio_path, speaker_name))
+    visual_task = (
+        asyncio.create_task(describe_video(video_path)) if video_path is not None else None
+    )
+
+    transcription = await voice_task
     if not transcription:
+        if visual_task is not None:
+            visual_task.cancel()
         await reply_target.reply_text("Не удалось сделать расшифровку")
         return
+
+    visual_description: str | None = None
+    if visual_task is not None:
+        try:
+            visual_description = await visual_task
+        except asyncio.CancelledError:
+            visual_description = None
+        except Exception as e:
+            logger.exception("visual description task failed: %s", e)
+            visual_description = None
 
     body = (
         transcription
         if len(transcription) <= _TRANSCRIPTION_BODY_LIMIT
         else transcription[:_TRANSCRIPTION_BODY_LIMIT] + "..."
     )
-    spoiler = spoiler_block(body)
+    transcription_spoiler = spoiler_block(body)
+    spoiler_html = transcription_spoiler
+    if visual_description:
+        spoiler_html = transcription_spoiler + "\n" + spoiler_block(
+            visual_description, header="🎬 Визуал"
+        )
 
     try:
-        stream = await _summary_stream(transcription, natural_name)
+        stream = await _summary_stream(transcription, natural_name, visual_description)
     except Exception as e:
         logger.exception("summary stream init failed: %s", e)
-        bot_message = await reply_target.reply_html(spoiler)
+        bot_message = await reply_target.reply_html(spoiler_html)
     else:
         bot_message = await _stream_summary_with_spoiler(
-            reply_target, stream, spoiler
+            reply_target, stream, spoiler_html
         )
 
     if bot_message is not None:
