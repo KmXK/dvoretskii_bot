@@ -9,9 +9,9 @@ from steward.framework import (
     wizard,
 )
 from steward.helpers.ai import (
-    OpenRouterModel,
+    Model,
     PASHA_PROMPT,
-    make_openrouter_query,
+    make_text_query,
     make_yandex_ai_query,
     make_yandex_ai_stream,
 )
@@ -35,9 +35,7 @@ def _pasha_stream(uid, msgs):
 
 
 async def _quick_call(prompt: str) -> str:
-    return await make_openrouter_query(
-        0, OpenRouterModel.FAST, [("user", prompt)], ""
-    )
+    return await make_text_query(0, Model.FAST, [("user", prompt)], "")
 
 
 class _GptStep(Step):

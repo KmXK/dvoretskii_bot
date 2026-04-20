@@ -1,9 +1,9 @@
 from steward.framework import Feature, FeatureContext, on_init, subcommand
 from steward.helpers.ai import (
     GROK_SHORT_AGGRESSIVE,
-    OpenRouterModel,
-    make_openrouter_query,
-    make_openrouter_stream,
+    Model,
+    make_text_query,
+    make_text_stream,
 )
 from steward.helpers.ai_context import (
     execute_ai_request_streaming,
@@ -35,17 +35,15 @@ def _build_system_prompt() -> str:
 
 
 def _ai_call(uid, msgs):
-    return make_openrouter_query(uid, OpenRouterModel.GROK_4_FAST, msgs, _build_system_prompt())
+    return make_text_query(uid, Model.SMART, msgs, _build_system_prompt())
 
 
 def _ai_stream(uid, msgs):
-    return make_openrouter_stream(uid, OpenRouterModel.GROK_4_FAST, msgs, _build_system_prompt())
+    return make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
 
 
 async def _quick_call(prompt: str) -> str:
-    return await make_openrouter_query(
-        0, OpenRouterModel.FAST, [("user", prompt)], ""
-    )
+    return await make_text_query(0, Model.FAST, [("user", prompt)], "")
 
 
 class AIFeature(Feature):
@@ -57,9 +55,7 @@ class AIFeature(Feature):
         _REPO_HOLDER["repo"] = self.repository
         register_ai_handler("ai", _ai_call, _ai_stream, quick_call=_quick_call)
         await ensure_thinking_phrases(
-            lambda prompt: make_openrouter_query(
-                0, OpenRouterModel.GROK_4_FAST, [("user", prompt)], ""
-            )
+            lambda prompt: make_text_query(0, Model.SMART, [("user", prompt)], "")
         )
 
     @subcommand("<text:rest>", description="Запрос к ИИ", catchall=True)

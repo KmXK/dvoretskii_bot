@@ -1,6 +1,5 @@
 import base64
 import logging
-import os
 
 import httpx
 
@@ -73,27 +72,22 @@ class NewTextFeature(Feature):
         ),
     )
     async def on_done(self, ctx: FeatureContext, photo):
+        from steward.helpers.ocr import extract_text_from_image
+
         message = get_message(ctx.update)
-        api_key = os.environ.get("AI_VISION_SECRET")
-        folder_id = os.environ.get("YC_FOLDER_ID")
-        if not api_key or not folder_id:
-            await message.chat.send_message(
-                "Yandex OCR не настроен: задайте AI_VISION_SECRET и YC_FOLDER_ID"
-            )
-            return
         try:
             data = await fetch_tg_file_bytes(self.bot, photo.file_id)
             content_b64 = base64.standard_b64encode(data).decode("ascii")
             mime = "JPEG"
             if data[:8] == b"\x89PNG\r\n\x1a\n":
                 mime = "PNG"
-            text = await _yandex_ocr(content_b64, mime, api_key, folder_id)
+            text = await extract_text_from_image(content_b64, mime)
         except httpx.HTTPStatusError as e:
-            logger.exception("Yandex OCR HTTP error: %s", e)
+            logger.exception("OCR HTTP error: %s", e)
             await message.chat.send_message(f"Ошибка API: {e.response.status_code}")
             return
         except Exception as e:
-            logger.exception("Yandex OCR failed: %s", e)
+            logger.exception("OCR failed: %s", e)
             await message.chat.send_message(f"Не удалось распознать текст: {e}")
             return
 

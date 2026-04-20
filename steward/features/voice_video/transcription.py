@@ -1,24 +1,20 @@
 import asyncio
 import html
 import logging
-import os
 import tempfile
 import time
 from pathlib import Path
-from typing import AsyncIterator, cast
+from typing import AsyncIterator
 
-import httpx
-from elevenlabs.client import ElevenLabs
-from elevenlabs.types import SpeechToTextChunkResponseModel
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 
 from steward.data.models.ai_message import AiMessage
 from steward.features.voice_video.conversion import run_ffmpeg
 from steward.features.voice_video.visual import describe_video
-from steward.helpers.ai import OpenRouterModel, make_openrouter_stream
+from steward.helpers.ai import Model, make_text_stream
 from steward.helpers.formats import spoiler_block
-from steward.helpers.transcription import build_named_speakers_text
+from steward.helpers.stt import transcribe_audio_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -108,57 +104,23 @@ async def transcribe_voice(
     speaker_name: str | None = None,
     with_speaker_labels: bool = True,
 ) -> str | None:
-    stt_key = os.environ.get("EVELEN_LABS_STT")
-    if not stt_key:
-        logger.warning("Voice transcription skipped: EVELEN_LABS_STT is not set")
-        return None
-
     try:
         with tempfile.TemporaryDirectory(prefix="voice_stt_") as tmp_dir:
             prepared_audio = Path(tmp_dir) / "voice.mp3"
             await run_ffmpeg(
-                "-i",
-                str(audio_path),
-                "-ac",
-                "1",
-                "-ar",
-                "44100",
+                "-i", str(audio_path),
+                "-ac", "1",
+                "-ar", "44100",
                 str(prepared_audio),
             )
-
-            with open(prepared_audio, "rb") as audio_file:
-                client = ElevenLabs(
-                    api_key=stt_key,
-                    httpx_client=httpx.Client(
-                        timeout=240,
-                        proxy=os.environ.get("DOWNLOAD_PROXY"),
-                    ),
-                )
-                result = await asyncio.to_thread(
-                    lambda: client.speech_to_text.convert(
-                        file=audio_file.read(),
-                        model_id="scribe_v1",
-                        tag_audio_events=True,
-                        diarize=True,
-                    )
-                )
-
-            words = cast(SpeechToTextChunkResponseModel, result).words or []
-            if with_speaker_labels and words:
-                text_with_names = build_named_speakers_text(
-                    words, primary_speaker_name=speaker_name
-                )
-                if text_with_names:
-                    return text_with_names
-
-            text = getattr(result, "text", None)
-            if isinstance(text, str):
-                clean_text = text.strip()
-                return clean_text if clean_text else None
+            return await transcribe_audio_bytes(
+                prepared_audio.read_bytes(),
+                with_speaker_labels=with_speaker_labels,
+                primary_speaker_name=speaker_name,
+            )
     except Exception as e:
         logger.exception("Voice transcription failed: %s", e)
-
-    return None
+        return None
 
 
 async def _summary_stream(
@@ -175,9 +137,9 @@ async def _summary_stream(
         system_prompt = (
             system_prompt + " " + _SUMMARY_VISUAL_HINT.format(visual=visual_context)
         )
-    return await make_openrouter_stream(
+    return await make_text_stream(
         0,
-        OpenRouterModel.FAST,
+        Model.FAST,
         [("user", transcription)],
         system_prompt,
     )

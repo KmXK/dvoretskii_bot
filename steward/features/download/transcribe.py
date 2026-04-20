@@ -2,19 +2,15 @@ import asyncio
 import logging
 import os
 import tempfile
-from typing import cast
 
-import httpx
 import yt_dlp
-from elevenlabs.client import ElevenLabs
-from elevenlabs.types import SpeechToTextChunkResponseModel
 from telegram import Message
 
 from steward.data.repository import Repository
 from steward.features.download.callbacks import download_file
 from steward.helpers.formats import spoiler_block
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.transcription import build_named_speakers_text
+from steward.helpers.stt import transcribe_audio_bytes
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -118,32 +114,15 @@ async def make_transcribation(
             logging.error("Аудио для транскрибации не найдено")
             return False
 
-        logging.info(os.environ.get("SPEECHKIT_API_SECRET"))
         with open(dir + "/" + audio[0], "rb") as file:
-            client = ElevenLabs(
-                api_key=os.environ.get("EVELEN_LABS_STT"),
-                httpx_client=httpx.Client(
-                    timeout=240, proxy=os.environ.get("DOWNLOAD_PROXY")
-                ),
-            )
+            audio_bytes = file.read()
 
-            file.seek(0)
-            audio_resp = await asyncio.to_thread(
-                lambda: client.speech_to_text.convert(
-                    file=file.read(),
-                    model_id="scribe_v1",
-                    tag_audio_events=True,
-                    diarize=True,
-                )
-            )
-
-            logging.info(audio_resp)
-            words = cast(SpeechToTextChunkResponseModel, audio_resp).words or []
-            text = build_named_speakers_text(words)
-            if not text:
-                text = (getattr(audio_resp, "text", "") or "").strip()
-            if not text:
-                text = "Не удалось распознать речь"
+        text = await transcribe_audio_bytes(
+            audio_bytes,
+            with_speaker_labels=True,
+        )
+        if not text:
+            text = "Не удалось распознать речь"
 
         html_text = spoiler_block(text, header="Расшифровка")
         if len(html_text) > 1024:

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from telegram.ext import ExtBot
 
 from steward.data.repository import Repository
-from steward.helpers.ai import GROK_SHORT_AGGRESSIVE, OpenRouterModel, make_openrouter_query
+from steward.helpers.ai import GROK_SHORT_AGGRESSIVE, Model, make_text_query
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,9 @@ class BirthdayChecker:
         for b in self._repository.db.birthdays:
             if b.day == day and b.month == month:
                 try:
-                    text = await make_openrouter_query(
+                    text = await make_text_query(
                         0,
-                        OpenRouterModel.GROK_4_FAST,
+                        Model.SMART,
                         [("user", f"Поздравь с днём рождения {b.name}")],
                         GROK_SHORT_AGGRESSIVE,
                     )
