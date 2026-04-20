@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import random
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,31 @@ from steward.framework import (
 
 logger = logging.getLogger(__name__)
 
+_VOICE_PROMPT_PHRASES: tuple[str, ...] = (
+    "Слушаю…",
+    "Внимательно слушаю…",
+    "Приложил ухо…",
+    "Ловлю каждое слово…",
+    "Тссс, слушаю…",
+    "Впитываю речь…",
+    "Разбираю каждый звук…",
+    "Ща дослушаю…",
+    "Настроил уши…",
+    "Записываю в блокнотик…",
+    "Прокручиваю в голове…",
+    "Въезжаю в тему…",
+    "Улавливаю вайб…",
+    "Готов к разбору…",
+    "Весь внимание…",
+)
+
+
+def _voice_prompt_phrase() -> str:
+    return random.choice(_VOICE_PROMPT_PHRASES)
+
+
+_REQUEST_MAX_DURATION_SEC = 15
+
 
 @dataclasses.dataclass
 class _PendingVoiceRequest:
@@ -31,8 +57,16 @@ class _PendingVoiceRequest:
     speaker_fallback_name: str | None
     speaker_first_name: str | None
     is_video_note: bool = False
+    duration: int | None = None
     transcribe_clicked: bool = False
     request_clicked: bool = False
+
+    @property
+    def request_allowed(self) -> bool:
+        return (
+            self.duration is not None
+            and self.duration <= _REQUEST_MAX_DURATION_SEC
+        )
 
 
 class _RouterMessageProxy:
@@ -68,7 +102,7 @@ class VoiceVideoFeature(Feature):
         row: list[Button] = []
         if not pending.transcribe_clicked:
             row.append(cb.button("Расшифровка", action="transcribe", request_id=request_id))
-        if not pending.request_clicked:
+        if not pending.request_clicked and pending.request_allowed:
             row.append(cb.button("Запрос", action="request", request_id=request_id))
         if not row:
             return None
@@ -110,9 +144,11 @@ class VoiceVideoFeature(Feature):
             return False
         if message.voice:
             file_id = message.voice.file_id
+            duration = message.voice.duration
             is_video_note = False
         elif message.video_note:
             file_id = message.video_note.file_id
+            duration = message.video_note.duration
             is_video_note = True
         else:
             return False
@@ -146,13 +182,14 @@ class VoiceVideoFeature(Feature):
             speaker_fallback_name=speaker_fallback_name,
             speaker_first_name=speaker_first_name,
             is_video_note=is_video_note,
+            duration=duration,
         )
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
 
         keyboard = self._build_actions_keyboard(request_id, self._pending[request_id])
         await ctx.reply(
-            "Выбери действие для сообщения:",
+            _voice_prompt_phrase(),
             keyboard=keyboard,
             markdown=False,
         )
