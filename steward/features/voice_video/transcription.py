@@ -13,6 +13,7 @@ from elevenlabs.types import SpeechToTextChunkResponseModel
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 
+from steward.data.models.ai_message import AiMessage
 from steward.features.voice_video.conversion import run_ffmpeg
 from steward.helpers.ai import OpenRouterModel, make_openrouter_stream
 from steward.helpers.formats import spoiler_block
@@ -34,9 +35,12 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 _SUMMARY_SPEAKER_HINT = (
-    "Говорящего зовут {name}. В выжимке используй это имя "
-    "(в нужном падеже) вместо обобщений «автор», «спикер», "
-    "«человек»."
+    "Говорящего зовут {name}. Используй это имя как СУБЪЕКТ действия "
+    "в нужном падеже: «{name} говорит / спрашивает / называет кого-то X / "
+    "жалуется / просит». Не ставь его в пассив как объект — он тот, кто "
+    "произносит речь, а не тот, к кому обращаются. Местоимения «ты», "
+    "«тебя», «тебе» в речи говорящего относятся к его собеседнику, а не "
+    "к нему самому."
 )
 
 
@@ -267,7 +271,29 @@ async def create_transcription_reply(
         stream = await _summary_stream(transcription, natural_name)
     except Exception as e:
         logger.exception("summary stream init failed: %s", e)
-        await reply_target.reply_html(spoiler)
-        return
+        bot_message = await reply_target.reply_html(spoiler)
+    else:
+        bot_message = await _stream_summary_with_spoiler(
+            reply_target, stream, spoiler
+        )
 
-    await _stream_summary_with_spoiler(reply_target, stream, spoiler)
+    if bot_message is not None:
+        await _register_ai_reply_target(repository, reply_target, bot_message)
+
+
+async def _register_ai_reply_target(repository, reply_target, bot_message) -> None:
+    try:
+        chat_id = reply_target.chat.id
+        msg_id = bot_message.message_id
+        repository.db.ai_messages[f"{chat_id}_{msg_id}"] = AiMessage(
+            time.time(), reply_target.message_id, "ai"
+        )
+        if len(repository.db.ai_messages) > 1000:
+            oldest = min(
+                repository.db.ai_messages,
+                key=lambda k: repository.db.ai_messages[k].timestamp,
+            )
+            del repository.db.ai_messages[oldest]
+        await repository.save()
+    except Exception as e:
+        logger.debug("failed to register transcription as ai reply target: %s", e)

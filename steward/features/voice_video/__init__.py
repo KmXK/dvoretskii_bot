@@ -170,21 +170,15 @@ class VoiceVideoFeature(Feature):
 
         if action == "nothing":
             await callback_query.answer()
-            if pending.transcribe_clicked or pending.request_clicked:
+            self._pending.pop(request_id, None)
+            try:
+                await message.delete()
+            except Exception as e:
+                logger.warning("Failed to delete voice action menu: %s", e)
                 try:
                     await message.edit_reply_markup(reply_markup=None)
                 except Exception:
                     pass
-            else:
-                self._pending.pop(request_id, None)
-                try:
-                    await message.delete()
-                except Exception as e:
-                    logger.warning("Failed to delete voice action menu: %s", e)
-                    try:
-                        await message.edit_reply_markup(reply_markup=None)
-                    except Exception:
-                        pass
             return
 
         if action == "transcribe":
@@ -207,9 +201,10 @@ class VoiceVideoFeature(Feature):
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
             if action == "transcribe":
+                target = message.reply_to_message or message
                 await create_transcription_reply(
                     self.repository,
-                    message,
+                    target,
                     audio_path,
                     pending.speaker_user_id,
                     pending.speaker_username,
