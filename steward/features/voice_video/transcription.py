@@ -4,9 +4,8 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable
 
-from telegram import InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 
@@ -161,9 +160,9 @@ async def _stream_summary_with_spoiler(
     stream: AsyncIterator[str],
     spoiler_html: str,
     edit_message=None,
-    reply_markup_provider: Callable[[], InlineKeyboardMarkup | None] | None = None,
+    reply_markup_provider: Callable[[], Any] | None = None,
 ):
-    def current_markup() -> InlineKeyboardMarkup | None:
+    def current_markup():
         return reply_markup_provider() if reply_markup_provider is not None else None
 
     initial = f"<i>Коротко…</i>\n\n{spoiler_html}"
@@ -250,7 +249,7 @@ async def create_transcription_reply(
     speaker_first_name: str | None = None,
     video_path: Path | None = None,
     edit_message=None,
-    reply_markup_provider: Callable[[], InlineKeyboardMarkup | None] | None = None,
+    reply_markup_provider: Callable[[], Any] | None = None,
 ):
     speaker_name = build_speaker_name(
         repository,
