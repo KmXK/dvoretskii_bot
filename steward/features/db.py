@@ -8,7 +8,7 @@ class DbFeature(Feature):
     only_admin = True
     description = "Отправить файл db.json"
 
-    TARGET_CHAT_ID = -4517560449
+    TARGET_CHAT_ID = -1003876657662
 
     @subcommand("", description="Отправить db.json в спецчат")
     async def send_db(self, ctx: FeatureContext):
