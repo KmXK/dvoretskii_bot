@@ -196,19 +196,62 @@ def _yandex_stt_api_key() -> str | None:
 
 
 def _extract_yandex_text(response: dict) -> str:
-    chunks: list[str] = []
+    refined: list[str] = []
+    raw: list[str] = []
+
+    for event in response.get("session_events") or []:
+        if not isinstance(event, dict):
+            continue
+        normalized = ((event.get("final_refinement") or {}).get("normalized_text") or {})
+        for alt in normalized.get("alternatives") or []:
+            t = alt.get("text")
+            if isinstance(t, str) and t.strip():
+                refined.append(t.strip())
+                break
+        final = event.get("final") or {}
+        for alt in final.get("alternatives") or []:
+            t = alt.get("text")
+            if isinstance(t, str) and t.strip():
+                raw.append(t.strip())
+                break
+
+    chosen = refined or raw
+    if chosen:
+        return " ".join(chosen).strip()
+
     for ch in response.get("channel_results") or []:
-        for result in ch.get("results") or []:
+        for r in ch.get("results") or []:
             holder = (
-                (result.get("final_refinement") or {}).get("normalized_text")
-                or result.get("final")
+                (r.get("final_refinement") or {}).get("normalized_text")
+                or r.get("final")
                 or {}
             )
             for alt in holder.get("alternatives") or []:
                 t = alt.get("text")
                 if isinstance(t, str) and t.strip():
-                    chunks.append(t.strip())
-    return " ".join(chunks).strip()
+                    chosen.append(t.strip())
+                    break
+    if chosen:
+        return " ".join(chosen).strip()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            alts = node.get("alternatives")
+            if isinstance(alts, list):
+                for alt in alts:
+                    if isinstance(alt, dict):
+                        t = alt.get("text")
+                        if isinstance(t, str) and t.strip():
+                            chosen.append(t.strip())
+                            return
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(response)
+    return " ".join(chosen).strip()
 
 
 async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
@@ -266,6 +309,11 @@ async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
                     return None
                 response = data.get("response") or {}
                 text = _extract_yandex_text(response)
+                if not text:
+                    logger.warning(
+                        "Yandex STT done but no text extracted; response keys: %s",
+                        list(response.keys()),
+                    )
                 return text or None
             logger.warning("Yandex STT polling timed out for operation %s", op_id)
             return None
