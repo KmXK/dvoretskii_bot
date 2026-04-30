@@ -221,9 +221,7 @@ async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
         "recognition_model": {
             "model": "general",
             "audio_format": {
-                "container_audio": {
-                    "container_audio_type": "CONTAINER_AUDIO_TYPE_MP3"
-                }
+                "container_audio": {"container_audio_type": "MP3"}
             },
             "text_normalization": {
                 "text_normalization": "TEXT_NORMALIZATION_ENABLED",
