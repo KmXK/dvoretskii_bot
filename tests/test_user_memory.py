@@ -90,6 +90,7 @@ def test_format_facts_for_prompt_renders():
     assert "Вася" in rendered
     assert "- Любит рок" in rendered
     assert "- 28 лет" in rendered
+    assert "используй" in rendered.lower()
 
 
 def test_parse_facts_strips_markers():

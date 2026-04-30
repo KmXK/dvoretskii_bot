@@ -215,7 +215,9 @@ def format_facts_for_prompt(user_id: int, user_name: str | None, facts: list[str
         return ""
     subject = user_name.strip() if user_name else f"пользователя #{user_id}"
     bullets = "\n".join(f"- {f}" for f in facts)
-    return f"Что мы знаем про {subject} (только недавнее, может устареть):\n{bullets}"
+    return (
+        f"Личный контекст про {subject} (используй при ответе, если уместно):\n{bullets}"
+    )
 
 
 # --- passive collector ----------------------------------------------------
