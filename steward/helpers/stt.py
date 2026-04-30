@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 import os
 import time
@@ -187,6 +188,9 @@ async def _try_elevenlabs(
 
 _YANDEX_STT_SUBMIT_URL = "https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync"
 _YANDEX_OPERATION_URL = "https://operation.api.cloud.yandex.net/operations/{}"
+_YANDEX_GET_RECOGNITION_URL = (
+    "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operationId={}"
+)
 _YANDEX_POLL_INTERVAL_SEC = 3.0
 _YANDEX_POLL_MAX_ATTEMPTS = 80
 
@@ -195,20 +199,45 @@ def _yandex_stt_api_key() -> str | None:
     return os.environ.get("AI_STT_KEY") or os.environ.get("AI_KEY_SECRET")
 
 
-def _extract_yandex_text(response: dict) -> str:
+def _parse_yandex_ndjson(body: str) -> list[dict]:
+    events: list[dict] = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            events.append(obj)
+    if not events and body.strip():
+        try:
+            obj = json.loads(body)
+        except json.JSONDecodeError:
+            return events
+        if isinstance(obj, list):
+            events = [e for e in obj if isinstance(e, dict)]
+        elif isinstance(obj, dict):
+            events = [obj]
+    return events
+
+
+def _extract_yandex_text_from_events(events: list[dict]) -> str:
     refined: list[str] = []
     raw: list[str] = []
 
-    for event in response.get("session_events") or []:
-        if not isinstance(event, dict):
-            continue
-        normalized = ((event.get("final_refinement") or {}).get("normalized_text") or {})
+    for event in events:
+        result = event.get("result") if isinstance(event.get("result"), dict) else event
+
+        normalized = ((result.get("final_refinement") or {}).get("normalized_text") or {})
         for alt in normalized.get("alternatives") or []:
             t = alt.get("text")
             if isinstance(t, str) and t.strip():
                 refined.append(t.strip())
                 break
-        final = event.get("final") or {}
+
+        final = result.get("final") or {}
         for alt in final.get("alternatives") or []:
             t = alt.get("text")
             if isinstance(t, str) and t.strip():
@@ -216,41 +245,6 @@ def _extract_yandex_text(response: dict) -> str:
                 break
 
     chosen = refined or raw
-    if chosen:
-        return " ".join(chosen).strip()
-
-    for ch in response.get("channel_results") or []:
-        for r in ch.get("results") or []:
-            holder = (
-                (r.get("final_refinement") or {}).get("normalized_text")
-                or r.get("final")
-                or {}
-            )
-            for alt in holder.get("alternatives") or []:
-                t = alt.get("text")
-                if isinstance(t, str) and t.strip():
-                    chosen.append(t.strip())
-                    break
-    if chosen:
-        return " ".join(chosen).strip()
-
-    def walk(node) -> None:
-        if isinstance(node, dict):
-            alts = node.get("alternatives")
-            if isinstance(alts, list):
-                for alt in alts:
-                    if isinstance(alt, dict):
-                        t = alt.get("text")
-                        if isinstance(t, str) and t.strip():
-                            chosen.append(t.strip())
-                            return
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(response)
     return " ".join(chosen).strip()
 
 
@@ -307,12 +301,23 @@ async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
                 if err:
                     logger.warning("Yandex STT operation failed: %s", err)
                     return None
-                response = data.get("response") or {}
-                text = _extract_yandex_text(response)
+
+                rec_url = _YANDEX_GET_RECOGNITION_URL.format(op_id)
+                rec_r = await client.get(rec_url, headers=headers)
+                if rec_r.status_code >= 400:
+                    logger.warning(
+                        "Yandex STT getRecognition HTTP %s: %s",
+                        rec_r.status_code,
+                        rec_r.text[:300],
+                    )
+                    return None
+                events = _parse_yandex_ndjson(rec_r.text)
+                text = _extract_yandex_text_from_events(events)
                 if not text:
                     logger.warning(
-                        "Yandex STT done but no text extracted; response keys: %s",
-                        list(response.keys()),
+                        "Yandex STT no text in %d events; first event keys: %s",
+                        len(events),
+                        list(events[0].keys()) if events else [],
                     )
                 return text or None
             logger.warning("Yandex STT polling timed out for operation %s", op_id)
