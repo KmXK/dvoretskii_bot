@@ -262,7 +262,9 @@ async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
             },
             "text_normalization": {
                 "text_normalization": "TEXT_NORMALIZATION_ENABLED",
+                "profanity_filter": False,
                 "literature_text": True,
+                "phone_formatting_mode": "PHONE_FORMATTING_MODE_DISABLED",
             },
             "language_restriction": {
                 "restriction_type": "WHITELIST",
@@ -337,6 +339,10 @@ async def transcribe_audio_bytes(
     if nv:
         return nv
 
+    yandex = await _yandex_transcribe(audio)
+    if yandex:
+        return yandex
+
     if _eleven_circuit_closed():
         text = await _try_elevenlabs(audio, with_speaker_labels, primary_speaker_name)
         if text:
@@ -344,4 +350,4 @@ async def transcribe_audio_bytes(
     else:
         logger.info("ElevenLabs STT skipped: circuit open until %s", _eleven_open_until)
 
-    return await _yandex_transcribe(audio)
+    return None
