@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import logging
 import random
@@ -174,7 +175,7 @@ class VoiceVideoFeature(Feature):
                 speaker_first_name = None
                 speaker_fallback_name = origin.sender_user_name
 
-        self._pending[request_id] = _PendingVoiceRequest(
+        pending = _PendingVoiceRequest(
             file_id=file_id,
             requester_user_id=from_user.id,
             speaker_user_id=speaker_user_id,
@@ -183,17 +184,63 @@ class VoiceVideoFeature(Feature):
             speaker_first_name=speaker_first_name,
             is_video_note=is_video_note,
             duration=duration,
+            transcribe_clicked=True,
         )
+        self._pending[request_id] = pending
         if len(self._pending) > self.MAX_PENDING_REQUESTS:
             self._pending.pop(next(iter(self._pending)))
 
-        keyboard = self._build_actions_keyboard(request_id, self._pending[request_id])
-        await ctx.reply(
+        keyboard = self._build_actions_keyboard(request_id, pending)
+        bot_message = await ctx.reply(
             _voice_prompt_phrase(),
             keyboard=keyboard,
             markdown=False,
         )
+        if bot_message is None:
+            self._pending.pop(request_id, None)
+            return True
+
+        asyncio.create_task(
+            self._run_auto_transcription(ctx, request_id, pending, message, bot_message)
+        )
         return True
+
+    async def _run_auto_transcription(
+        self,
+        ctx: FeatureContext,
+        request_id: str,
+        pending: _PendingVoiceRequest,
+        initiator,
+        bot_message,
+    ) -> None:
+        try:
+            audio_path = await self._resolve_audio_path(ctx, pending.file_id)
+
+            def reply_markup_provider():
+                kb = self._build_actions_keyboard(request_id, pending)
+                return kb.to_markup() if kb is not None else None
+
+            await create_transcription_reply(
+                self.repository,
+                initiator,
+                audio_path,
+                pending.speaker_user_id,
+                pending.speaker_username,
+                pending.speaker_fallback_name,
+                pending.speaker_first_name,
+                video_path=audio_path if pending.is_video_note else None,
+                edit_message=bot_message,
+                reply_markup_provider=reply_markup_provider,
+            )
+        except Exception as e:
+            logger.exception("Auto-transcription failed: %s", e)
+            try:
+                await bot_message.edit_text("Не удалось сделать расшифровку")
+            except Exception:
+                pass
+        finally:
+            if pending.request_clicked or not pending.request_allowed:
+                self._pending.pop(request_id, None)
 
     @on_callback(
         "voice:action",

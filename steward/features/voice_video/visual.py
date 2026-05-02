@@ -111,13 +111,19 @@ async def _extract_frames(video_path: Path, out_dir: Path) -> list[Path]:
 
 async def describe_video(video_path: Path) -> str | None:
     if not os.environ.get("AI_KEY_SECRET"):
+        logger.info("VLM skipped: AI_KEY_SECRET not set")
+        return None
+    if not os.environ.get("AI_MODEL_VLM"):
+        logger.info("VLM skipped: AI_MODEL_VLM not set")
         return None
 
     with tempfile.TemporaryDirectory(prefix="vlm_frames_") as tmp_dir:
         out_dir = Path(tmp_dir)
         frames = await _extract_frames(video_path, out_dir)
         if not frames:
+            logger.warning("VLM skipped: no frames extracted from %s", video_path)
             return None
+        logger.info("VLM extracted %d frames from %s", len(frames), video_path)
 
         images_b64: list[str] = []
         for fp in frames:
@@ -126,13 +132,16 @@ async def describe_video(video_path: Path) -> str | None:
             except Exception as e:
                 logger.warning("frame read failed %s: %s", fp, e)
         if not images_b64:
+            logger.warning("VLM skipped: all frames failed to read")
             return None
 
         try:
             text = await make_yandex_vlm_describe(0, _VLM_PROMPT, images_b64, max_tokens=200)
         except Exception as e:
-            logger.warning("VLM describe failed: %s", e)
+            logger.exception("VLM describe failed: %s", e)
             return None
 
         clean = (text or "").strip()
+        if not clean:
+            logger.warning("VLM returned empty text for %d frames", len(images_b64))
         return clean or None
