@@ -94,11 +94,14 @@ def format_overview(
     person_id: str | None,
     by_id: dict[str, BillPerson],
     payments: list,
+    *,
+    all_mode: bool = False,
 ) -> str:
     from collections import defaultdict
 
     owe: dict[str, int] = defaultdict(int)
     owed: dict[str, int] = defaultdict(int)
+    pair_totals: dict[tuple[str, str], int] = defaultdict(int)
 
     for bill in bills:
         if bill.closed:
@@ -107,6 +110,10 @@ def format_overview(
         net = net_debts(raw)
         bp = [p for p in payments if bill.id in p.bill_ids]
         after = apply_payments(net, bp, clamp_zero=True)
+        for debtor, creds in after.items():
+            for creditor, amt in creds.items():
+                if amt > 0:
+                    pair_totals[(debtor, creditor)] += amt
         if person_id:
             for cred, amt in after.get(person_id, {}).items():
                 if amt > 0:
@@ -116,7 +123,12 @@ def format_overview(
                     owed[deb] += per_cred[person_id]
 
     open_count = sum(1 for b in bills if not b.closed)
-    lines = [f"🧾 *Мои счета* ({open_count} открытых)\n"]
+    closed_count = sum(1 for b in bills if b.closed)
+    title = "Все счета" if all_mode else "Мои счета"
+    counts = f"{open_count} открытых"
+    if all_mode and closed_count:
+        counts += f", {closed_count} закрытых"
+    lines = [f"🧾 *{title}* ({counts})\n"]
 
     if owed:
         lines.append("💚 Тебе должны:")
@@ -128,11 +140,51 @@ def format_overview(
         for pid, amt in sorted(owe.items(), key=lambda x: -x[1]):
             lines.append(f"  → {pname(pid, by_id)}: {minor_to_display(amt)}")
         lines.append("")
-
-    if not owe and not owed:
+    if not owe and not owed and not all_mode:
         lines.append("_Нет открытых долгов_ ✨\n")
 
+    if pair_totals:
+        rows = [
+            [pname(d, by_id), "→", pname(c, by_id), minor_to_display(a)]
+            for (d, c), a in sorted(pair_totals.items(), key=lambda x: -x[1])
+        ]
+        scope = "по всем счетам" if all_mode else "в твоих счетах"
+        lines.append(f"⚖️ *Кто кому {scope}:*")
+        lines.append(_mono_table(["Кто", "", "Кому", "Сумма"], rows))
+        lines.append("")
+
+    if all_mode:
+        lines.append("📋 *Аудит:*")
+        lines.extend(_audit_lines(bills, payments))
+
     return "\n".join(lines)
+
+
+def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
+    out: list[str] = []
+    for bill in sorted(bills, key=lambda b: (b.closed, -b.id)):
+        gross = sum(tx.unit_price_minor * tx.quantity for tx in bill.transactions)
+        raw = compute_bill_debts(bill.transactions, bill.currency)
+        net = net_debts(raw)
+        bp = [p for p in payments if bill.id in p.bill_ids]
+        after = apply_payments(net, bp, clamp_zero=True)
+        outstanding = sum(
+            amt for creds in after.values() for amt in creds.values() if amt > 0
+        )
+        flag = "🔒" if bill.closed else ("✅" if outstanding == 0 else "🔓")
+        name = bill.name[:32]
+        debt_part = (
+            f" · долг {minor_to_display(outstanding, bill.currency)}"
+            if outstanding else " · ✓ закрыт по долгам"
+        )
+        out.append(
+            f"{flag} `#{bill.id}` *{name}* — {len(bill.transactions)} поз., "
+            f"{len(bill.participants)} уч., итог {minor_to_display(gross, bill.currency)}, "
+            f"оплат {len(bp)}{debt_part}"
+        )
+    if not out:
+        return ["_(нет счетов)_"]
+    return out
 
 
 def format_bill_detail(
@@ -341,7 +393,10 @@ def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_adm
     is_participant = person_id and person_id in bill.participants and person_id != bill.author_person_id
 
     if not bill.closed:
-        rows.append([feature.cb("bills:pay_start").button("💸 Оплатить", bill_id=bill.id)])
+        rows.append([
+            feature.cb("bills:pay_start").button("💸 Оплатить", bill_id=bill.id),
+            feature.cb("bills:got_start").button("✅ Получил", bill_id=bill.id),
+        ])
         if is_participant:
             rows.append([feature.cb("bills:suggest_start").button("➕ Предложить", bill_id=bill.id)])
         if can_edit:
@@ -349,7 +404,7 @@ def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_adm
     elif can_edit:
         rows.append([feature.cb("bills:reopen").button("🔓 Открыть", bill_id=bill.id)])
 
-    rows.append([feature.cb("bills:list_open").button("« Назад")])
+    rows.append([feature.cb("bills:overview").button("« Назад")])
     return Keyboard.grid(rows)
 
 
@@ -360,6 +415,8 @@ def kb_pay_global(
     all_bills: list[BillV2],
     payments: list,
     source_bill_id: int,
+    *,
+    back_to_overview: bool = False,
 ) -> tuple[str, Keyboard]:
     """NET debts across ALL open bills between this person and others."""
     from collections import defaultdict
@@ -381,9 +438,13 @@ def kb_pay_global(
 
     my_debts = {c: a for c, a in total_owe.items() if a > 0 and c != person_id}
 
+    def _back_btn():
+        if back_to_overview:
+            return feature.cb("bills:overview").button("« Назад")
+        return feature.cb("bills:view").button("« Назад", bill_id=source_bill_id)
+
     if not my_debts:
-        kb = Keyboard.row(feature.cb("bills:view").button("« Назад", bill_id=source_bill_id))
-        return "💸 Нет долгов ✨", kb
+        return "💸 Нет долгов ✨", Keyboard.row(_back_btn())
 
     lines = ["💸 Твои долги (по всем счетам):\n"]
     rows: list[list[Button]] = []
@@ -398,7 +459,58 @@ def kb_pay_global(
             amount=amount,
         )])
     rows.append([feature.cb("bills:pay_manual").button("✍️ Другая сумма", bill_id=source_bill_id)])
-    rows.append([feature.cb("bills:view").button("« Назад", bill_id=source_bill_id)])
+    rows.append([_back_btn()])
+    return "\n".join(lines), Keyboard.grid(rows)
+
+
+def kb_got_global(
+    feature: "BillsFeature",
+    person_id: str,
+    by_id: dict[str, BillPerson],
+    all_bills: list[BillV2],
+    payments: list,
+    source_bill_id: int,
+    *,
+    back_to_overview: bool = False,
+) -> tuple[str, Keyboard]:
+    """NET debts owed TO this person across all open bills, with quick-confirm buttons."""
+    from collections import defaultdict
+    owed_to_me: dict[str, int] = defaultdict(int)
+
+    for bill in all_bills:
+        if bill.closed:
+            continue
+        raw = compute_bill_debts(bill.transactions, bill.currency)
+        net = net_debts(raw)
+        bp = [p for p in payments if bill.id in p.bill_ids]
+        after = apply_payments(net, bp, clamp_zero=True)
+        for debtor, creds in after.items():
+            amt = creds.get(person_id, 0)
+            if amt > 0:
+                owed_to_me[debtor] += amt
+
+    def _back_btn():
+        if back_to_overview:
+            return feature.cb("bills:overview").button("« Назад")
+        return feature.cb("bills:view").button("« Назад", bill_id=source_bill_id)
+
+    if not owed_to_me:
+        return "✅ Тебе никто ничего не должен ✨", Keyboard.row(_back_btn())
+
+    lines = ["✅ *Тебе должны* (по всем счетам):\n"]
+    rows: list[list[Button]] = []
+    for debtor_id, amount in sorted(owed_to_me.items(), key=lambda x: -x[1]):
+        name = pname(debtor_id, by_id)
+        amt = minor_to_display(amount)
+        lines.append(f"  ← {name}: {amt}")
+        rows.append([feature.cb("bills:qgot").button(
+            f"✅ {name} {amt}",
+            bill_id=source_bill_id,
+            debtor_short=debtor_id[:20],
+            amount=amount,
+        )])
+    rows.append([feature.cb("bills:got_manual").button("✍️ Другая сумма", bill_id=source_bill_id)])
+    rows.append([_back_btn()])
     return "\n".join(lines), Keyboard.grid(rows)
 
 
