@@ -1,5 +1,5 @@
 """Tests for AI response parser — both canonical use cases."""
-from steward.handlers.bills.parse import (
+from steward.features.bills.parse import (
     norm_name_key as _norm_name_key,
     parse_ai_response as _parse_ai_response,
     rows_to_transactions as _rows_to_transactions,

@@ -60,8 +60,8 @@ class BillSuggestionAdminHintAction(DelayedAction):
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
                 keyboard = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Одобрить", callback_data=f"bills_suggest_approve|{suggestion.id}"),
-                    InlineKeyboardButton("❌ Отклонить", callback_data=f"bills_suggest_reject|{suggestion.id}"),
+                    InlineKeyboardButton("✅ Одобрить", callback_data=f"bills:suggest_approve|{suggestion.id}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"bills:suggest_reject|{suggestion.id}"),
                 ]])
                 await context.bot.edit_message_reply_markup(
                     chat_id=suggestion.approval_chat_id,

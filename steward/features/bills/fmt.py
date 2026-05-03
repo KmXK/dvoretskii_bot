@@ -1,9 +1,10 @@
 """Message formatting and keyboards for /bills."""
 from __future__ import annotations
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from typing import TYPE_CHECKING
 
 from steward.data.models.bill_v2 import BillPerson, BillV2, UNKNOWN_PERSON_ID
+from steward.framework import Button, Keyboard
 from steward.helpers.bills_money import (
     apply_payments,
     compute_bill_debts,
@@ -12,11 +13,11 @@ from steward.helpers.bills_money import (
     split_minor,
 )
 
+if TYPE_CHECKING:
+    from steward.features.bills import BillsFeature
 
-# ── Layout helpers ────────────────────────────────────────────────────────────
 
-
-def compact_grid(buttons: list, max_cols: int = 3, max_rows: int = 4) -> list[list]:
+def compact_grid(buttons: list[Button], max_cols: int = 3, max_rows: int = 4) -> list[list[Button]]:
     n = len(buttons)
     if n == 0:
         return []
@@ -38,9 +39,6 @@ def _mono_table(headers: list[str], rows: list[list[str]]) -> str:
         if i == 0:
             lines.append("  ".join("─" * w for w in widths))
     return "```\n" + "\n".join(lines) + "\n```"
-
-
-# ── Text helpers ──────────────────────────────────────────────────────────────
 
 
 def pname(person_id: str, by_id: dict[str, BillPerson]) -> str:
@@ -89,9 +87,6 @@ def _tx_table(txs: list, by_id: dict[str, BillPerson], currency: str = "BYN") ->
         flag = " ⚠" if tx.incomplete else ""
         rows.append([f"{name}{flag}", total, cred, debts_str])
     return _mono_table(["Позиция", "Сумма", "Платил", "Должник"], rows)
-
-
-# ── Formatters ────────────────────────────────────────────────────────────────
 
 
 def format_overview(
@@ -224,7 +219,6 @@ def format_preview(
     lines.append(f"📋 Найдено позиций: {len(transactions)}")
     lines.append("")
 
-    # Transaction table
     from collections import defaultdict
     debt_totals: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -269,11 +263,8 @@ def format_preview(
     return "\n".join(lines)
 
 
-# ── Keyboards ─────────────────────────────────────────────────────────────────
-
-
-def kb_collect(context_items: list[str] | None = None) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
+def kb_collect(feature: "BillsFeature", context_items: list[str] | None = None) -> Keyboard:
+    rows: list[list[Button]] = []
     if context_items:
         photos = sum(1 for c in context_items if c.startswith("[Фото]"))
         voices = sum(1 for c in context_items if c.startswith("[Голосовое]"))
@@ -283,82 +274,87 @@ def kb_collect(context_items: list[str] | None = None) -> InlineKeyboardMarkup:
         if voices: parts.append(f"🎤 {voices}")
         if texts: parts.append(f"📝 {texts}")
         if parts:
-            rows.append([InlineKeyboardButton(" · ".join(parts), callback_data="bills_noop")])
+            rows.append([feature.cb("bills:noop").button(" · ".join(parts))])
     rows.append([
-        InlineKeyboardButton("✅ Готово", callback_data="bills_add_done"),
-        InlineKeyboardButton("❌ Отмена", callback_data="bills_add_cancel"),
+        feature.cb("bills:add_done").button("✅ Готово"),
+        feature.cb("bills:add_cancel").button("❌ Отмена"),
     ])
-    return InlineKeyboardMarkup(rows)
+    return Keyboard.grid(rows)
 
 
-def kb_confirm() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+def kb_confirm(feature: "BillsFeature") -> Keyboard:
+    return Keyboard.grid([
         [
-            InlineKeyboardButton("✅ Сохранить", callback_data="bills_add_confirm"),
-            InlineKeyboardButton("❌ Отмена", callback_data="bills_add_cancel"),
+            feature.cb("bills:add_confirm").button("✅ Сохранить"),
+            feature.cb("bills:add_cancel").button("❌ Отмена"),
         ],
         [
-            InlineKeyboardButton("📎 Ещё контекст", callback_data="bills_add_more"),
-            InlineKeyboardButton("🔄 Людей", callback_data="bills_change_list"),
+            feature.cb("bills:add_more").button("📎 Ещё контекст"),
+            feature.cb("bills:change_list").button("🔄 Людей"),
         ],
     ])
 
 
-def kb_disambiguation(candidates: list) -> InlineKeyboardMarkup:
+def kb_disambiguation(feature: "BillsFeature", candidates: list) -> Keyboard:
     """Candidates for the current name being resolved (always resolve_queue[0])."""
-    buttons = [InlineKeyboardButton(p.display_name, callback_data=f"bills_name_pick|{p.id}")
-               for p in candidates[:6]]
+    buttons = [
+        feature.cb("bills:name_pick").button(p.display_name, person_id=p.id)
+        for p in candidates[:6]
+    ]
     rows = compact_grid(buttons, max_cols=2)
-    rows.append([InlineKeyboardButton("➕ Новый человек", callback_data="bills_name_new")])
-    return InlineKeyboardMarkup(rows)
+    rows.append([feature.cb("bills:name_new").button("➕ Новый человек")])
+    return Keyboard.grid(rows)
 
 
-def kb_change_list(resolved_map: dict[str, str], by_id: dict[str, BillPerson]) -> InlineKeyboardMarkup:
+def kb_change_list(feature: "BillsFeature", resolved_map: dict[str, str], by_id: dict[str, BillPerson]) -> Keyboard:
     sorted_keys = sorted(resolved_map.keys())
     buttons = []
     for idx, key in enumerate(sorted_keys):
         p = by_id.get(resolved_map[key])
         label = f"{key.title()} → {p.display_name if p else '?'}"
-        buttons.append(InlineKeyboardButton(label[:30], callback_data=f"bills_chg|{idx}"))
+        buttons.append(feature.cb("bills:chg").button(label[:30], idx=idx))
     rows = compact_grid(buttons, max_cols=2)
-    rows.append([InlineKeyboardButton("« Назад", callback_data="bills_change_back")])
-    return InlineKeyboardMarkup(rows)
+    rows.append([feature.cb("bills:change_back").button("« Назад")])
+    return Keyboard.grid(rows)
 
 
-def kb_change_pick(idx: int, persons: list) -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(p.display_name, callback_data=f"bills_chgp|{idx}|{p.id}")
-               for p in persons[:10]]
+def kb_change_pick(feature: "BillsFeature", idx: int, persons: list) -> Keyboard:
+    buttons = [
+        feature.cb("bills:chgp").button(p.display_name, idx=idx, person_id=p.id)
+        for p in persons[:10]
+    ]
     rows = compact_grid(buttons, max_cols=2)
-    rows.append([InlineKeyboardButton("➕ Новый", callback_data=f"bills_chgn|{idx}")])
-    rows.append([InlineKeyboardButton("« Назад", callback_data="bills_change_list")])
-    return InlineKeyboardMarkup(rows)
+    rows.append([feature.cb("bills:chgn").button("➕ Новый", idx=idx)])
+    rows.append([feature.cb("bills:change_list").button("« Назад")])
+    return Keyboard.grid(rows)
 
 
-def kb_bill(bill: BillV2, person_id: str | None, is_admin: bool, payments: list) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
+def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_admin: bool, payments: list) -> Keyboard:
+    rows: list[list[Button]] = []
     can_edit = is_admin or (person_id and person_id == bill.author_person_id)
     is_participant = person_id and person_id in bill.participants and person_id != bill.author_person_id
 
     if not bill.closed:
-        rows.append([InlineKeyboardButton("💸 Оплатить", callback_data=f"bills_pay_start|{bill.id}")])
+        rows.append([feature.cb("bills:pay_start").button("💸 Оплатить", bill_id=bill.id)])
         if is_participant:
-            rows.append([InlineKeyboardButton("➕ Предложить", callback_data=f"bills_suggest_start|{bill.id}")])
+            rows.append([feature.cb("bills:suggest_start").button("➕ Предложить", bill_id=bill.id)])
         if can_edit:
-            rows.append([InlineKeyboardButton("🔒 Закрыть", callback_data=f"bills_close|{bill.id}")])
+            rows.append([feature.cb("bills:close").button("🔒 Закрыть", bill_id=bill.id)])
     elif can_edit:
-        rows.append([InlineKeyboardButton("🔓 Открыть", callback_data=f"bills_reopen|{bill.id}")])
+        rows.append([feature.cb("bills:reopen").button("🔓 Открыть", bill_id=bill.id)])
 
-    rows.append([InlineKeyboardButton("« Назад", callback_data="bills_list_open")])
-    return InlineKeyboardMarkup(rows)
+    rows.append([feature.cb("bills:list_open").button("« Назад")])
+    return Keyboard.grid(rows)
 
 
 def kb_pay_global(
+    feature: "BillsFeature",
     person_id: str,
     by_id: dict[str, BillPerson],
     all_bills: list[BillV2],
     payments: list,
     source_bill_id: int,
-) -> tuple[str, InlineKeyboardMarkup]:
+) -> tuple[str, Keyboard]:
     """NET debts across ALL open bills between this person and others."""
     from collections import defaultdict
     total_owe: dict[str, int] = defaultdict(int)
@@ -380,19 +376,29 @@ def kb_pay_global(
     my_debts = {c: a for c, a in total_owe.items() if a > 0 and c != person_id}
 
     if not my_debts:
-        return "💸 Нет долгов ✨", InlineKeyboardMarkup(
-            [[InlineKeyboardButton("« Назад", callback_data=f"bills_view|{source_bill_id}")]])
+        kb = Keyboard.row(feature.cb("bills:view").button("« Назад", bill_id=source_bill_id))
+        return "💸 Нет долгов ✨", kb
 
     lines = ["💸 Твои долги (по всем счетам):\n"]
-    rows: list[list[InlineKeyboardButton]] = []
+    rows: list[list[Button]] = []
     for cred_id, amount in sorted(my_debts.items(), key=lambda x: -x[1]):
         name = pname(cred_id, by_id)
         amt = minor_to_display(amount)
         lines.append(f"  → {name}: {amt}")
-        rows.append([InlineKeyboardButton(
+        rows.append([feature.cb("bills:qpay").button(
             f"💸 {name} {amt}",
-            callback_data=f"bills_qpay|{source_bill_id}|{cred_id[:20]}|{amount}",
+            bill_id=source_bill_id,
+            creditor_short=cred_id[:20],
+            amount=amount,
         )])
-    rows.append([InlineKeyboardButton("✍️ Другая сумма", callback_data=f"bills_pay_manual|{source_bill_id}")])
-    rows.append([InlineKeyboardButton("« Назад", callback_data=f"bills_view|{source_bill_id}")])
-    return "\n".join(lines), InlineKeyboardMarkup(rows)
+    rows.append([feature.cb("bills:pay_manual").button("✍️ Другая сумма", bill_id=source_bill_id)])
+    rows.append([feature.cb("bills:view").button("« Назад", bill_id=source_bill_id)])
+    return "\n".join(lines), Keyboard.grid(rows)
+
+
+def kb_bill_buttons(feature: "BillsFeature", bills: list[BillV2]) -> list[Button]:
+    """Build view-bill buttons for a list of bills (used in list views)."""
+    return [
+        feature.cb("bills:view").button(f"#{b.id} {b.name[:18]}", bill_id=b.id)
+        for b in bills
+    ]

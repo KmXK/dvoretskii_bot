@@ -3,6 +3,7 @@ from steward.features.ai import AIFeature
 from steward.features.ai_related import AiRelatedFeature
 from steward.features.army import ArmyFeature
 from steward.features.ban import BanEnforcerFeature, BanFeature
+from steward.features.bills import BillsFeature
 from steward.features.birthday import BirthdayFeature
 from steward.features.broadcast import BroadcastFeature
 from steward.features.chat_collect import ChatCollectFeature
@@ -64,6 +65,7 @@ COMMANDS = bucket("commands")
 COMMANDS << [
     AdminFeature,
     ArmyFeature,
+    BillsFeature,
     BirthdayFeature,
     DbFeature,
     FeatureRequestFeature,

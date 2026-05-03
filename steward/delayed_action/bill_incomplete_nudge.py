@@ -57,7 +57,7 @@ class BillIncompleteNudgeAction(DelayedAction):
 
         names = ", ".join(f"«{tx.item_name}»" for tx in incomplete_txs[:3])
         extra = f" и ещё {len(incomplete_txs) - 3}" if len(incomplete_txs) > 3 else ""
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📋 Открыть счёт", callback_data=f"bills_view|{bill.id}")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📋 Открыть счёт", callback_data=f"bills:view|{bill.id}")]])
         await send_bill_notification(
             context.bot, repository, author,
             f"⚠️ В счёте «{bill.name}» есть незаполненные позиции: {names}{extra}.\nКому назначить?",
