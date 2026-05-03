@@ -395,7 +395,13 @@ class _BillCollectStep(Step):
             return False
         except Exception as e:
             logger.exception("AI OCR failed: %s", e)
-            await self._send(context, f"Ошибка AI: {e}")
+            kb = fmt.kb_collect(feature, st.context_items)
+            await self._send(
+                context,
+                f"❗️ Ошибка AI: {e}\n\nДанные сохранены. Жми «✅ Готово» чтобы попробовать ещё раз "
+                "или «❌ Отмена» чтобы отбросить счёт.",
+                keyboard=kb,
+            )
             return False
 
         ok = self._ingest_ai_rows(st, feature, ai_response)
@@ -552,11 +558,19 @@ class _BillCollectStep(Step):
             )
         except TimeoutError:
             logger.warning("AI correction timed out for user %s", st.caller_tid)
-            await self._send(context, "⏱ AI не ответил вовремя. Попробуй ещё раз.")
+            await self._send(
+                context,
+                "⏱ AI не ответил вовремя. Опиши исправление ещё раз или нажми «❌ Отмена».",
+                keyboard=fmt.kb_confirm(feature),
+            )
             return
         except Exception as e:
             logger.exception("AI correction failed: %s", e)
-            await self._send(context, f"Ошибка AI: {e}")
+            await self._send(
+                context,
+                f"❗️ Ошибка AI: {e}\n\nИсправление не применено. Опиши его ещё раз или нажми «❌ Отмена».",
+                keyboard=fmt.kb_confirm(feature),
+            )
             return
 
         ok = self._ingest_ai_rows(st, feature, ai_response)
