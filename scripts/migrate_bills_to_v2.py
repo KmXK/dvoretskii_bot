@@ -399,7 +399,192 @@ def make_payment_v2(payment: dict, resolver: PersonResolver) -> tuple[dict | Non
         "reminder_sent_at": None,
         "bill_ids": [],
         "currency": "BYN",
+        "is_refund": False,
     }, []
+
+
+def _compute_net_debts_dict(bill: dict) -> dict[tuple[str, str], int]:
+    """Return {(debtor, creditor): minor} of net debts for a bill_v2 dict."""
+    from steward.helpers.bills_money import split_minor
+
+    raw: dict[str, dict[str, int]] = {}
+    for tx in bill.get("transactions", []):
+        creditor = tx.get("creditor")
+        if not creditor or creditor == UNKNOWN_PERSON_ID:
+            continue
+        unit_price = int(tx.get("unit_price_minor") or 0)
+        for asg in tx.get("assignments", []):
+            debtors = list(asg.get("debtors") or [])
+            if not debtors:
+                continue
+            unit_count = int(asg.get("unit_count") or 1)
+            asg_total = unit_price * unit_count
+            ordered = sorted(debtors, key=lambda d: d == creditor)
+            shares = split_minor(asg_total, len(ordered))
+            for debtor, share in zip(ordered, shares):
+                if debtor == creditor or debtor == UNKNOWN_PERSON_ID:
+                    continue
+                raw.setdefault(debtor, {}).setdefault(creditor, 0)
+                raw[debtor][creditor] += share
+
+    net: dict[tuple[str, str], int] = {}
+    seen: set[tuple[str, str]] = set()
+    for debtor, creds in raw.items():
+        for creditor, amount in creds.items():
+            if (creditor, debtor) in seen:
+                continue
+            seen.add((debtor, creditor))
+            reverse = raw.get(creditor, {}).get(debtor, 0)
+            d = amount - reverse
+            if d > 0:
+                net[(debtor, creditor)] = d
+            elif d < 0:
+                net[(creditor, debtor)] = -d
+    return net
+
+
+def distribute_payments_across_bills(
+    bills_v2: list[dict],
+    payments_v2: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Greedy-split each payment with empty bill_ids into per-bill child payments.
+
+    Pass 1 (forward): allocate against bills where (debtor → creditor) has debt.
+    Pass 2 (refund):  for any remainder, allocate against bills where the
+                      reverse pair (creditor → debtor) has debt — recorded as
+                      is_refund=True so apply_payments adds back instead of
+                      subtracting. Models legacy reverse cash flows.
+    Pass 3 (residual): anything left becomes an orphan with bill_ids=[].
+    """
+    warnings: list[str] = []
+
+    bill_order = sorted(
+        bills_v2,
+        key=lambda b: b.get("created_at") or "",
+    )
+    remaining: dict[int, dict[tuple[str, str], int]] = {
+        b["id"]: _compute_net_debts_dict(b) for b in bill_order
+    }
+
+    payments_v2 = sorted(payments_v2, key=lambda p: p.get("created_at") or "")
+    out: list[dict] = []
+
+    for p in payments_v2:
+        if p.get("bill_ids"):
+            out.append(p)
+            continue
+        amount = int(p.get("amount_minor") or 0)
+        debtor = p.get("debtor")
+        creditor = p.get("creditor")
+        if amount <= 0 or not debtor or not creditor or creditor == UNKNOWN_PERSON_ID:
+            warnings.append(
+                f"payment {p.get('id')}: skipped distribution "
+                f"(amount={amount}, debtor={debtor}, creditor={creditor})"
+            )
+            out.append(p)
+            continue
+
+        for bill in bill_order:
+            if amount <= 0:
+                break
+            bid = bill["id"]
+            debt = remaining[bid].get((debtor, creditor), 0)
+            if debt <= 0:
+                continue
+            take = min(debt, amount)
+            child = {
+                **p,
+                "id": str(uuid.uuid4()),
+                "amount_minor": take,
+                "bill_ids": [bid],
+                "is_refund": False,
+            }
+            out.append(child)
+            remaining[bid][(debtor, creditor)] = debt - take
+            amount -= take
+
+        if amount > 0:
+            for bill in bill_order:
+                bid = bill["id"]
+                reverse_debt = remaining[bid].get((creditor, debtor), 0)
+                if reverse_debt <= 0:
+                    continue
+                child = {
+                    **p,
+                    "id": str(uuid.uuid4()),
+                    "amount_minor": amount,
+                    "bill_ids": [bid],
+                    "is_refund": True,
+                }
+                out.append(child)
+                remaining[bid][(creditor, debtor)] = reverse_debt + amount
+                amount = 0
+                break
+
+        if amount > 0:
+            residual = {
+                **p,
+                "id": str(uuid.uuid4()),
+                "amount_minor": amount,
+                "bill_ids": [],
+                "is_refund": False,
+            }
+            out.append(residual)
+            warnings.append(
+                f"payment {p.get('id')}: {amount} minor unallocated "
+                f"(no matching debt for {debtor}→{creditor} or reverse)"
+            )
+
+    return out, warnings
+
+
+_ROUNDING_NOISE_MAX_MINOR = 100  # residuals below 1.00 are sheet rounding artefacts
+
+
+def synthesize_rounding_corrections(
+    bills_v2: list[dict],
+    payments_v2: list[dict],
+) -> tuple[list[dict], int]:
+    """For each bill, add a confirmed payment clearing any residual <1.00 left
+    after distributed payments. Returns (extra_payments, count_corrected)."""
+    extra: list[dict] = []
+    confirmed = {PaymentStatus.CONFIRMED, PaymentStatus.AUTO_CONFIRMED}
+
+    for bill in bills_v2:
+        net = _compute_net_debts_dict(bill)
+        for p in payments_v2:
+            if bill["id"] not in (p.get("bill_ids") or []):
+                continue
+            if p.get("status") not in confirmed:
+                continue
+            amt = int(p.get("amount_minor") or 0)
+            if p.get("is_refund"):
+                key = (p["creditor"], p["debtor"])
+                net[key] = net.get(key, 0) + amt
+            else:
+                key = (p["debtor"], p["creditor"])
+                if key in net:
+                    net[key] = max(0, net[key] - amt)
+
+        for (debtor, creditor), remaining in net.items():
+            if 0 < remaining < _ROUNDING_NOISE_MAX_MINOR:
+                extra.append({
+                    "id": str(uuid.uuid4()),
+                    "debtor": debtor,
+                    "creditor": creditor,
+                    "amount_minor": remaining,
+                    "status": PaymentStatus.CONFIRMED,
+                    "created_at": datetime.now().isoformat(),
+                    "initiated_chat_id": None,
+                    "confirmation_chat_id": None,
+                    "confirmation_message_id": None,
+                    "reminder_sent_at": None,
+                    "bill_ids": [bill["id"]],
+                    "currency": bill.get("currency", "BYN"),
+                    "is_refund": False,
+                })
+
+    return extra, len(extra)
 
 
 def apply_details_infos(infos: list[dict], resolver: PersonResolver) -> int:
@@ -535,7 +720,21 @@ def run_migration(db_path: Path, apply: bool, force: bool) -> int:
         if pv2 is not None:
             new_payments_v2.append(pv2)
 
-    print(f"  → {len(new_payments_v2)} BillPaymentV2 (status=confirmed, bill_ids=[])")
+    pre_split = len(new_payments_v2)
+    new_payments_v2, dist_warns = distribute_payments_across_bills(new_bills_v2, new_payments_v2)
+    all_warnings.extend(f"distribute — {w}" for w in dist_warns)
+
+    rounding_corrections, n_corr = synthesize_rounding_corrections(
+        new_bills_v2, new_payments_v2
+    )
+    new_payments_v2.extend(rounding_corrections)
+
+    bill_linked = sum(1 for p in new_payments_v2 if p.get("bill_ids"))
+    orphaned = sum(1 for p in new_payments_v2 if not p.get("bill_ids"))
+    print(
+        f"  → {pre_split} legacy → {len(new_payments_v2)} BillPaymentV2 "
+        f"({bill_linked} bill-linked, {orphaned} orphan, {n_corr} rounding fix)"
+    )
 
     print(f"\n=== DetailsInfo ({len(details_infos)}) ===")
     n_desc = apply_details_infos(details_infos, resolver)

@@ -361,6 +361,11 @@ class Repository:
 
             data["version"] = 14
 
+        if data.get("version") == 14:
+            for p in data.get("bill_payments_v2", []):
+                p.setdefault("is_refund", False)
+            data["version"] = 15
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("bill_persons", [])
@@ -412,6 +417,7 @@ class Repository:
             p.setdefault("currency", "BYN")
             p.setdefault("status", "pending")
             p.setdefault("bill_ids", [])
+            p.setdefault("is_refund", False)
 
         return data
 
