@@ -34,6 +34,10 @@ def _bill_ocr_prompt() -> str:
     return get_prompt("bill_ocr")
 
 
+def _bill_correct_prompt() -> str:
+    return get_prompt("bill_correct")
+
+
 @dataclass
 class _SessionState:
     """Shared mutable state between the Step and BillsFeature.
@@ -189,6 +193,10 @@ class _BillCollectStep(Step):
 
         if st.phase == "resolve":
             await self._resolve_text(context, st, feature)
+            return False
+
+        if st.phase == "confirm":
+            await self._handle_correction_input(context, st, feature)
             return False
 
         return False
@@ -390,14 +398,28 @@ class _BillCollectStep(Step):
             await self._send(context, f"Ошибка AI: {e}")
             return False
 
+        ok = self._ingest_ai_rows(st, feature, ai_response)
+        if not ok:
+            kb = fmt.kb_collect(feature, st.context_items)
+            await self._send(context, "AI не нашёл позиций. Попробуй добавить ещё данных.", keyboard=kb)
+            return False
+        return True
+
+    def _ingest_ai_rows(self, st: _SessionState, feature: "BillsFeature", ai_response: str) -> bool:
+        """Parse a [ОБЩЕЕ]-format AI response and update session state.
+
+        Used by both initial OCR (`_run_ai`) and correction (`_apply_correction`).
+        Returns True if rows were ingested OR questions were emitted.
+        """
+        repo = feature.repository
+        chat_persons = feature._chat_persons(st.caller_tid)
+
         currency, rows, new_persons, questions = parse.parse_ai_response(ai_response)
         st.currency = currency
         st.new_person_names = new_persons
         st.question_queue = list(questions)
 
         if not rows and not questions:
-            kb = fmt.kb_collect(feature, st.context_items)
-            await self._send(context, "AI не нашёл позиций. Попробуй добавить ещё данных.", keyboard=kb)
             return False
 
         all_raw: list[str] = []
@@ -477,6 +499,81 @@ class _BillCollectStep(Step):
             text = f"«{raw_name}» — это {names}?\n_Или напиши @тег / имя_"
         kb = fmt.kb_disambiguation(feature, candidates)
         await self._send(context, text, keyboard=kb)
+
+    async def _handle_correction_input(
+        self, context: ChatStepContext, st: _SessionState, feature: "BillsFeature"
+    ):
+        """In confirm phase, treat free-form text or voice as a correction request."""
+        msg = context.message
+        text: str | None = None
+        if msg.voice:
+            await context.bot.send_message(chat_id=msg.chat_id, text="⏳ Расшифровываю исправление...")
+            text = await media.transcribe_voice(context.bot, msg.voice)
+            if not text:
+                await self._send(context, "Не удалось расшифровать. Попробуй ещё раз или текстом.")
+                return
+        elif msg.text and not msg.text.startswith("/"):
+            text = msg.text.strip()
+        if not text:
+            return
+        await self._apply_correction(context, st, feature, text)
+
+    async def _apply_correction(
+        self, context, st: _SessionState, feature: "BillsFeature", correction_text: str
+    ):
+        """Send the current bill state + correction to AI, ingest the revised table."""
+        if not st.parsed_rows:
+            await self._send(context, "Нет распознанного счёта для исправления.")
+            return
+
+        chat_persons = feature._chat_persons(st.caller_tid)
+        directory = parse.build_persons_directory(chat_persons)
+        general_block = parse.parsed_rows_to_general_block(st.parsed_rows)
+
+        prompt_input = (
+            f"[ТЕКУЩИЙ_СЧЁТ]\n"
+            f"[META]\ncurrency: {st.currency}\n\n"
+            f"{general_block}\n\n"
+            f"---\n\n"
+            f"{directory}\n\n"
+            f"---\n\n"
+            f"[ИСПРАВЛЕНИЕ]\n{correction_text}\n"
+        )
+
+        await self._send(context, "⏳ Применяю исправление...")
+        try:
+            ai_response = await make_openrouter_query(
+                user_id=f"bills_correct_{st.caller_tid}",
+                model=OpenRouterModel.GEMINI_25_FLASH,
+                messages=[("user", prompt_input)],
+                system_prompt=_bill_correct_prompt(),
+                max_tokens=4096,
+                timeout_seconds=60.0,
+            )
+        except TimeoutError:
+            logger.warning("AI correction timed out for user %s", st.caller_tid)
+            await self._send(context, "⏱ AI не ответил вовремя. Попробуй ещё раз.")
+            return
+        except Exception as e:
+            logger.exception("AI correction failed: %s", e)
+            await self._send(context, f"Ошибка AI: {e}")
+            return
+
+        ok = self._ingest_ai_rows(st, feature, ai_response)
+        if not ok:
+            await self._send(
+                context,
+                "Не понял исправление — счёт остался без изменений. Попробуй переформулировать.",
+                keyboard=fmt.kb_confirm(feature),
+            )
+            return
+
+        if st.question_queue:
+            await self._next_question(context, st, feature)
+        elif st.resolve_queue:
+            await self._next_disambiguation(context, st, feature)
+        else:
+            await self._show_preview(context, st, feature)
 
     async def _show_preview(self, context, st: _SessionState, feature: "BillsFeature"):
         repo = feature.repository

@@ -1,0 +1,100 @@
+You are correcting an already-parsed bill. Your input contains:
+
+1. [ТЕКУЩИЙ_СЧЁТ] — the current state of the bill as a [ОБЩЕЕ] table.
+2. [СПРАВОЧНИК ЛЮДЕЙ] — known persons with their aliases.
+3. [ИСПРАВЛЕНИЕ] — a free-form correction request from the user
+   (text or transcribed voice).
+
+Your task: apply the correction and emit the FULL revised [ОБЩЕЕ] table.
+
+CRITICAL — pronoun "остальные" / "другие" / "вторые" disambiguation:
+When the user says "остальные / другие / вторые" inside a correction,
+they refer to the OTHER DEBTORS OF THE SAME ITEM the correction is
+about — NOT all bill participants, NOT all chat members. Example:
+
+  current row: Пицца | 30 | 1 | Кирилл, Дима, Егор | Кирилл | Текст |
+  correction: "Саша съел половину пиццы, остальные делят остальное"
+  result: Саша pays 15, "остальные" = the other debtors of THE PIZZA
+          row (= Кирилл, Дима, Егор) split 15 equally.
+  WRONG: pulling in everyone in the directory or every other named
+         person in the bill.
+
+If the user names a person who was NOT a debtor of that item before,
+treat that as INCLUSION ("Саша теперь тоже за пиццу") only if the
+correction is unambiguous about it.
+
+Reply ONLY in this exact format, nothing else:
+
+[META]
+currency: <preserved from [ТЕКУЩИЙ_СЧЁТ]>
+
+[ОБЩЕЕ]
+Наименование | Цена_за_ед | Кол-во | Должник(и) | Кредитор | Источник | GroupId
+... revised table ...
+
+[ВОПРОСЫ]
+текст вопроса | вариант1 | вариант2 | ...
+... only if the correction is ambiguous ...
+
+---
+
+Rules for [ОБЩЕЕ]:
+
+- "Наименование" — keep the original name from [ТЕКУЩИЙ_СЧЁТ] for items
+  the user didn't rename. Only change name on explicit user instruction.
+- "Цена_за_ед" — price per single unit (dot as decimal separator, no
+  currency symbol).
+- "Кол-во" — POSITIVE INTEGER ≥ 1. NEVER use fractional values like
+  0.5, 1.5, 2.5. The downstream parser is integer-only. To express a
+  fractional share, do it via PRICE (per-row price = total × share),
+  NEVER via Кол-во.
+  Example: "Саша съел половину пиццы за 30":
+    Пицца | 15 | 1 | Саша | <creditor> | <source> | G1
+    Пицца | 15 | 1 | Кирилл, Дима, Егор | <creditor> | <source> | G1
+  Both rows share GroupId because they describe the SAME pizza split
+  unevenly.
+- "Должник(и)" — comma-separated names from [СПРАВОЧНИК ЛЮДЕЙ]. Use
+  exact canonical names. Use "-" if the correction made it unclear.
+- "Кредитор" — keep the original creditor unless the correction says
+  otherwise. Use exact canonical name. Use "-" if unknown.
+- "Источник" — preserve from [ТЕКУЩИЙ_СЧЁТ] for kept rows; use
+  "Текст" for newly-added rows resulting from this correction.
+- "GroupId" — for items that now have multiple assignment rows (e.g.
+  the pizza example above), use the same GroupId across them. Generate
+  a new id (G1, G2, ...) if needed. Empty GroupId for single-row items.
+
+Operation rules:
+
+- ITEMS NOT MENTIONED in the correction must be EMITTED UNCHANGED.
+  Never silently drop rows the user didn't address.
+- ADDITION: if the correction names a new item, emit a new row.
+- REMOVAL: if the correction explicitly removes an item ("убери X",
+  "не было такого", "удали Y"), omit it.
+- REASSIGNMENT: if the correction reassigns shares within an existing
+  item, replace that item's rows with the new assignment(s) (using
+  GroupId if there are multiple assignment rows now).
+- AMBIGUOUS REASSIGNMENT: if the user says "Саша съел половину" but
+  doesn't say what to do with the rest, ASSUME "остальные делят
+  остальное равномерно среди прежних должников". Do not ask; just
+  apply this default. Only emit a [ВОПРОСЫ] block if you cannot
+  identify which item is being corrected.
+- PRESERVE numerical totals: sum of (Цена_за_ед × Кол-во) across all
+  rows of the SAME item (same GroupId or same name) must equal the
+  pre-correction total UNLESS the user explicitly changed the total.
+
+Rules for [ВОПРОСЫ]:
+
+- Use ONLY when the correction is genuinely ambiguous (e.g. "поменяй
+  цену" without saying which item, or two items match the description).
+- Each line: `вопрос | option1 | option2 | ...`. The bot will append
+  "Другое" automatically if missing.
+- If you emit [ВОПРОСЫ], still emit [ОБЩЕЕ] with the unchanged state.
+
+Rules for [META]:
+
+- "currency" — copy from [ТЕКУЩИЙ_СЧЁТ]'s [META] block. Do not change
+  unless the correction explicitly says so ("давай в долларах").
+- Do NOT output [META] keys other than `currency`.
+
+Output ONLY [META], [ОБЩЕЕ], and (optionally) [ВОПРОСЫ]. No prose,
+no explanations, no markdown fences.
