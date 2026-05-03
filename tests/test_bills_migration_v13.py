@@ -24,7 +24,7 @@ async def test_migration_from_v11_adds_new_fields():
         repo = Repository(JsonFileStorage(db_path))
         await repo.migrate()
         # Migration should have happened all the way to current
-        assert repo.db.version == 14
+        assert repo.db.version == 15
         # New fields should be initialized to defaults
         assert repo.db.bill_persons == []
         assert repo.db.bills_v2 == []

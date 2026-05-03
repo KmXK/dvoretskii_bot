@@ -173,3 +173,81 @@ class TestApplyPayments:
         )
         result = apply_payments(debts, [payment], clamp_zero=True)
         assert result["a"]["b"] == 0
+
+    def test_refund_increases_reverse_debt(self):
+        from steward.data.models.bill_v2 import BillPaymentV2
+
+        debts = {"a": {"b": 500}}
+        # b refunded 200 to a; this means a owes b 200 more (debt(a→b) goes up).
+        payment = BillPaymentV2(
+            id="p1", debtor="b", creditor="a",
+            amount_minor=200, status="confirmed", is_refund=True,
+        )
+        result = apply_payments(debts, [payment])
+        assert result["a"]["b"] == 700
+
+    def test_refund_no_op_when_no_reverse_debt(self):
+        from steward.data.models.bill_v2 import BillPaymentV2
+
+        debts = {"a": {"b": 500}}
+        # No debt(c→x) exists so refund finds nothing to attach to.
+        payment = BillPaymentV2(
+            id="p1", debtor="c", creditor="x",
+            amount_minor=200, status="confirmed", is_refund=True,
+        )
+        result = apply_payments(debts, [payment])
+        assert result == {"a": {"b": 500}}
+
+class TestDistributePaymentAmount:
+    def test_exact_match(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        allocs, residual = distribute_payment_amount([(1, 2000), (2, 1000)], 3000)
+        assert allocs == [(1, 2000), (2, 1000)]
+        assert residual == 0
+
+    def test_underpay_fifo(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        allocs, residual = distribute_payment_amount([(1, 2000), (2, 1000)], 1500)
+        assert allocs == [(1, 1500)]
+        assert residual == 0
+
+    def test_underpay_spans_bills(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        # 35 paying 20+10 from older first; 25 covers #1 fully + 5 of #2
+        allocs, residual = distribute_payment_amount([(1, 2000), (2, 1000)], 2500)
+        assert allocs == [(1, 2000), (2, 500)]
+        assert residual == 0
+
+    def test_overpay_residual(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        allocs, residual = distribute_payment_amount([(1, 2000), (2, 1000)], 3500)
+        assert allocs == [(1, 2000), (2, 1000)]
+        assert residual == 500
+
+    def test_zero_amount(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        allocs, residual = distribute_payment_amount([(1, 2000)], 0)
+        assert allocs == []
+        assert residual == 0
+
+    def test_no_debt(self):
+        from steward.helpers.bills_money import distribute_payment_amount
+        allocs, residual = distribute_payment_amount([], 500)
+        assert allocs == []
+        assert residual == 500
+
+
+    def test_mixed_forward_and_refund(self):
+        from steward.data.models.bill_v2 import BillPaymentV2
+
+        debts = {"a": {"b": 500}}
+        forward = BillPaymentV2(
+            id="p1", debtor="a", creditor="b",
+            amount_minor=300, status="confirmed",
+        )
+        refund = BillPaymentV2(
+            id="p2", debtor="b", creditor="a",
+            amount_minor=50, status="confirmed", is_refund=True,
+        )
+        result = apply_payments(debts, [forward, refund])
+        assert result["a"]["b"] == 250

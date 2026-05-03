@@ -96,6 +96,11 @@ class BillPaymentV2:
     reminder_sent_at: datetime | None = None
     bill_ids: list[int] = field(default_factory=list)
     currency: str = "BYN"
+    is_refund: bool = False
+    # When True: money flowed from `debtor` to `creditor` as a correction/refund,
+    # increasing debt(creditor → debtor) by amount_minor instead of decreasing
+    # debt(debtor → creditor). Used by legacy migration to preserve net flows
+    # when a one-off transfer went against the usual direction of debt.
 
 
 @dataclass

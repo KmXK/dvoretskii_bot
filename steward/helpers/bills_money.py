@@ -111,19 +111,54 @@ def net_debts(debts: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
     return result
 
 
+def distribute_payment_amount(
+    bills_with_debt: list[tuple[int, int]],
+    amount_minor: int,
+) -> tuple[list[tuple[int, int]], int]:
+    """Greedy-allocate `amount_minor` across bills' outstanding debts in caller-given order.
+
+    `bills_with_debt` is a list of (bill_id, debt_amount_minor); typically sorted FIFO
+    so older bills are paid off first. Returns (allocations, residual) where
+    `allocations` is a list of (bill_id, allocated_amount) and `residual` is leftover
+    overpayment (≥ 0).
+    """
+    if amount_minor <= 0:
+        return [], 0
+    allocations: list[tuple[int, int]] = []
+    remaining = amount_minor
+    for bill_id, debt in bills_with_debt:
+        if remaining <= 0:
+            break
+        if debt <= 0:
+            continue
+        take = min(debt, remaining)
+        allocations.append((bill_id, take))
+        remaining -= take
+    return allocations, remaining
+
+
 def apply_payments(
     debts: dict[str, dict[str, int]],
     payments,
     *,
     clamp_zero: bool = False,
 ) -> dict[str, dict[str, int]]:
-    """Subtract confirmed/auto_confirmed payments from debts dict (in-place)."""
+    """Subtract confirmed/auto_confirmed payments from debts dict (in-place).
+
+    Refund payments (is_refund=True) flip the effect: they ADD to debt in the
+    opposite direction (debt[creditor][debtor]), modelling money flowing back
+    from a previous creditor to their previous debtor.
+    """
     from steward.data.models.bill_v2 import PaymentStatus
     for p in payments:
         if p.status not in PaymentStatus.SETTLED:
             continue
-        if p.debtor in debts and p.creditor in debts[p.debtor]:
-            debts[p.debtor][p.creditor] -= p.amount_minor
-            if clamp_zero and debts[p.debtor][p.creditor] < 0:
-                debts[p.debtor][p.creditor] = 0
+        if getattr(p, "is_refund", False):
+            if p.creditor in debts and p.debtor in debts[p.creditor]:
+                debts[p.creditor][p.debtor] += p.amount_minor
+        else:
+            if p.debtor in debts and p.creditor in debts[p.debtor]:
+                debts[p.debtor][p.creditor] -= p.amount_minor
+                if clamp_zero and debts[p.debtor][p.creditor] < 0:
+                    debts[p.debtor][p.creditor] = 0
     return debts
