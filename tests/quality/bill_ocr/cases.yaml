@@ -1,0 +1,377 @@
+# Test cases for bill_ocr prompt evaluation.
+#
+# Each case has:
+#   id: stable identifier
+#   description: short human note
+#   speaker: optional — name to prepend as "Я = <speaker>"
+#   persons: list of {name, aliases?} for the [СПРАВОЧНИК ЛЮДЕЙ] block
+#   context: raw text passed to the model (already includes line breaks)
+#   expected:
+#     currency: "BYN" / "RUB" / "USD" / "EUR"
+#     items: list of expected items
+#     items_count: optional override of expected number of distinct items
+#                  (default = len(items)). Useful when you want to check "0 items"
+#                  but provide no items entry.
+#     no_items: bool — set true if the case should produce zero rows
+#     expected_questions: bool — true if [ВОПРОСЫ] should be non-empty
+#   tags: optional list, e.g. [fraction, currency, ocr]
+#
+# Each item:
+#   name_contains: substring (lowercased) the item name should match
+#   creditor: name from persons (or "-" for unknown). Used in strict mode.
+#   per_person_minor:           # primary scoring mode for fractions
+#     <person>: <minor amount>  # final debt totals (in kopecks/cents)
+#   strict:                     # optional alternative — strict scoring
+#     unit_price_minor: int
+#     quantity: int
+#     debtors: [<name>, ...]    # debtor names per single assignment
+#
+# At least one of per_person_minor or strict must be present per item, unless
+# no_items is true.
+
+- id: simple_pizza
+  description: 3 people equal split, single payer
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Я купил пиццу за 30 рублей.
+    Поделили на троих со мной, Димой и Егором.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пицц
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1000
+          Дима: 1000
+          Егор: 1000
+  tags: [simple]
+
+- id: two_creditors
+  description: two distinct payers in same context
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Я купил еду за 60 рублей на всех троих (я, Дима, Егор).
+    Дима купил пиво за 30 рублей на нас троих.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: ед
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 2000
+          Дима: 2000
+          Егор: 2000
+      - name_contains: пив
+        creditor: Дима
+        per_person_minor:
+          Кирилл: 1000
+          Дима: 1000
+          Егор: 1000
+  tags: [multi_creditor]
+
+- id: hookah_quarter
+  description: fractional consumption — speaker took 1/4, two others split rest equally
+  speaker: Кирилл
+  persons:
+    - {name: Паша}
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Паша заплатил за один кальян 400 рублей.
+    Я выкурил четверть, остальное Дима и Егор пополам.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: кальян
+        creditor: Паша
+        # 400 split: Кирилл=100 (1/4), Дима=150 (3/8), Егор=150 (3/8)
+        per_person_minor:
+          Кирилл: 10000
+          Дима: 15000
+          Егор: 15000
+  tags: [fraction, headline]
+
+- id: hookah_half
+  description: fractional — speaker took half, friend took half, friend paid
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Лёша, aliases: [Леша]}
+  context: |
+    Мы с Лёшей купили кальян за 55 рублей. Я выкурил половину, он другую.
+    Платил Лёша.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: кальян
+        creditor: Лёша
+        per_person_minor:
+          Кирилл: 2750
+          Лёша: 2750
+  tags: [fraction]
+
+- id: hookah_third
+  description: speaker owes one third, other person paid
+  speaker: Паша
+  persons:
+    - {name: Паша}
+    - {name: Лёша, aliases: [Леша]}
+  context: |
+    Калик стоил 49 рублей, я должен Лёше треть.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: кал
+        creditor: Лёша
+        # speaker owes 1/3 of 49 = 16.33 → 1633 kopecks
+        per_person_minor:
+          Паша: 1633
+  tags: [fraction]
+
+- id: two_hookahs_subgroups
+  description: 2 hookahs, different debtor sets
+  speaker: Кирилл
+  persons:
+    - {name: Паша}
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Паша заплатил за два кальяна по 500 рублей.
+    Один курили мы с Димой вдвоём, второй — Дима, Егор и я втроём.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: кальян
+        creditor: Паша
+        # First hookah 500 between Кирилл+Дима = 250 each
+        # Second hookah 500 between Кирилл+Дима+Егор = 166.67 each → 16667 kopecks
+        per_person_minor:
+          Кирилл: 41667
+          Дима: 41667
+          Егор: 16666
+  tags: [subgroups]
+
+- id: partial_quantity
+  description: 5 sushi portions, speaker ate 2 of 5
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Дима купил суши: 5 порций по 10 рублей.
+    Я съел 2 из 5 порций, остальное Дима и Егор поделили поровну.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: суш
+        creditor: Дима
+        # total 50 BYN, Кирилл = 2/5 = 20, Дима+Егор split 30 = 15 each
+        per_person_minor:
+          Кирилл: 2000
+          Дима: 1500
+          Егор: 1500
+  tags: [fraction, quantity]
+
+- id: explicit_pop
+  description: пиццу пополам с Димой
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я взял пиццу за 24 рубля, поделили пополам с Димой. Платил я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пицц
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1200
+          Дима: 1200
+  tags: [simple]
+
+- id: voice_noise
+  description: voice transcript with disfluencies, repetitions
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    [Голосовое сообщение]
+    Так короче ну в общем мы это с Димой и Егором ну сходили в бар
+    я там купил, ну купил пиво за 45 рублей короче поделили на всех троих
+    ну то есть на меня Диму и Егора короче.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пив
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1500
+          Дима: 1500
+          Егор: 1500
+  tags: [voice]
+
+- id: photo_ocr_lines
+  description: receipt OCR style with prices on separate lines and service tax
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    [Фото — чек из ресторана]
+    Чек № 4521
+    Дата: 02.05.2026
+    Бургер двойной       18.00
+    Картофель фри         7.00
+    Кола 0.5             5.00
+    Подытог             30.00
+    Обслуживание зала 10%  3.00
+    Итого              33.00
+    Поделили с Димой пополам. Платил я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: бургер
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 900
+          Дима: 900
+      - name_contains: картоф
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 350
+          Дима: 350
+      - name_contains: кол
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 250
+          Дима: 250
+      - name_contains: обслуж
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 150
+          Дима: 150
+  tags: [ocr]
+
+- id: rouble_currency
+  description: explicit Russian roubles
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я заплатил за такси 800 рос. руб.
+    Поделили пополам с Димой.
+  expected:
+    currency: RUB
+    items:
+      - name_contains: такси
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 40000
+          Дима: 40000
+  tags: [currency]
+
+- id: dollar_currency
+  description: explicit USD
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я заплатил за такси $30. Поделили пополам с Димой.
+  expected:
+    currency: USD
+    items:
+      - name_contains: такси
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1500
+          Дима: 1500
+  tags: [currency]
+
+- id: unknown_participant
+  description: directory missing someone → expect questions or unknown debtor
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я купил мороженое за 12 рублей мне, Диме и Серёже. Платил я.
+  expected:
+    currency: BYN
+    expected_questions: false
+    items:
+      - name_contains: мороже
+        creditor: Кирилл
+        # Сергей not in directory, expect new person + 4 BYN each
+        per_person_minor:
+          Кирилл: 400
+          Дима: 400
+        new_persons_contains: [Серёж]
+  tags: [unknown]
+
+- id: ambiguous_no_creditor
+  description: купили в баре, no payer named → "-" creditor + question
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Сходили в бар, заказали 3 пива по 10 рублей.
+  expected:
+    currency: BYN
+    expected_questions: true
+    items:
+      - name_contains: пив
+        creditor: "-"
+        # debtors unknown but quantity 3 × 10 should appear
+        unit_price_minor_options: [1000, 3000]
+  tags: [ambiguous]
+
+- id: missing_amount
+  description: speaker mentions tip but no amount → question, no row
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я заплатил за нас на чай официанту в кафе. Со мной был Дима.
+  expected:
+    currency: BYN
+    expected_questions: true
+    no_items: true
+  tags: [missing_amount]
+
+- id: per_person_pricing
+  description: 'po N rubley — N per person'
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Лёша, aliases: [Леша]}
+  context: |
+    Я купил мороженое — себе, Диме и Лёше — по 3 рубля. Платил я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: мороже
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 300
+          Дима: 300
+          Лёша: 300
+  tags: [per_person_pricing]
