@@ -39,6 +39,7 @@ TAROT_PROMPT = get_prompt("tarot")
 GROK_SHORT_AGGRESSIVE = get_prompt("grok_short_aggressive")
 CONCISE = get_prompt("concise")
 BILL_OCR_PROMPT = get_prompt("bill_ocr")
+BILL_CORRECT_PROMPT = get_prompt("bill_correct")
 
 
 _YANDEX_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"

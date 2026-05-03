@@ -260,6 +260,12 @@ def format_preview(
             lines.append("\n⚖️ Итого:")
             lines.append(_debt_table(net, by_id, currency))
 
+    lines.append("")
+    lines.append(
+        "_Нашёл что-то неправильное? Скажи голосом или текстом —_\n"
+        "_например «Саша съел половину пиццы, остальные делят остальное»._"
+    )
+
     return "\n".join(lines)
 
 

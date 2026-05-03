@@ -162,3 +162,62 @@ def build_persons_directory(persons: list) -> str:
         ]))
         lines.append(f"{p.display_name}" + (f" ({extras})" if extras else ""))
     return "\n".join(lines)
+
+
+def parsed_rows_to_general_block(rows: list[dict]) -> str:
+    """Re-emit a [ОБЩЕЕ] block from parsed_rows (the dicts produced by parse_ai_response)."""
+    lines = [
+        "[ОБЩЕЕ]",
+        "Наименование | Цена_за_ед | Кол-во | Должник(и) | Кредитор | Источник | GroupId",
+    ]
+    for r in rows:
+        price_minor = r.get("price_minor", 0)
+        unit_price = f"{price_minor / 100:.2f}".rstrip("0").rstrip(".")
+        if price_minor == 0:
+            unit_price = "0"
+        src = (r.get("source", "text") or "text").capitalize()
+        lines.append(
+            f"{r.get('name','')} | {unit_price} | {r.get('quantity',1)} | "
+            f"{r.get('debtors_raw','')} | {r.get('creditor_raw','')} | "
+            f"{src} | {r.get('group_id','')}"
+        )
+    return "\n".join(lines)
+
+
+def transactions_to_general_block(transactions: list, by_id: dict) -> str:
+    """Re-emit a [ОБЩЕЕ] block from BillTransaction objects.
+
+    Used to feed the current bill state into the correction prompt so
+    the model can edit it. Mirrors the parser's expected schema:
+        Наименование | Цена_за_ед | Кол-во | Должник(и) | Кредитор | Источник | GroupId
+    """
+
+    def _name(pid: str) -> str:
+        if pid == UNKNOWN_PERSON_ID:
+            return "-"
+        p = by_id.get(pid)
+        return p.display_name if p else "-"
+
+    lines = [
+        "[ОБЩЕЕ]",
+        "Наименование | Цена_за_ед | Кол-во | Должник(и) | Кредитор | Источник | GroupId",
+    ]
+    group_counter = 0
+    for tx in transactions:
+        cred = _name(tx.creditor)
+        src = (getattr(tx, "source", "text") or "text").capitalize()
+        # Convert kopecks back to display: dot decimal, trim trailing zeros.
+        unit_price = f"{tx.unit_price_minor / 100:.2f}".rstrip("0").rstrip(".")
+        if tx.unit_price_minor == 0:
+            unit_price = "0"
+        if len(tx.assignments) > 1:
+            group_counter += 1
+            gid = f"G{group_counter}"
+        else:
+            gid = ""
+        for asg in tx.assignments:
+            debtors_str = ", ".join(_name(d) for d in asg.debtors) if asg.debtors else "-"
+            lines.append(
+                f"{tx.item_name} | {unit_price} | {asg.unit_count} | {debtors_str} | {cred} | {src} | {gid}"
+            )
+    return "\n".join(lines)

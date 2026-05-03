@@ -217,3 +217,91 @@ class TestRowsToTransactions:
         assert txs[0].creditor == UNKNOWN_PERSON_ID
         assert txs[0].assignments[0].debtors == []
         assert txs[0].incomplete is True
+
+
+class TestSerializers:
+    """parsed_rows_to_general_block / transactions_to_general_block must round-trip
+    through parse_ai_response so the correction prompt can read them back cleanly."""
+
+    def test_parsed_rows_round_trip_simple(self):
+        from steward.features.bills.parse import parsed_rows_to_general_block
+
+        rows = [
+            {"name": "Пицца", "price_minor": 3000, "quantity": 1,
+             "debtors_raw": "Кирилл, Дима, Егор", "creditor_raw": "Кирилл",
+             "source": "text", "group_id": ""},
+        ]
+        block = parsed_rows_to_general_block(rows)
+        fake = "[META]\ncurrency: BYN\n\n" + block
+        currency, parsed, _, _ = _parse_ai_response(fake)
+        assert currency == "BYN"
+        assert len(parsed) == 1
+        r = parsed[0]
+        assert r["name"] == "Пицца"
+        assert r["price_minor"] == 3000
+        assert r["quantity"] == 1
+        assert r["debtors_raw"] == "Кирилл, Дима, Егор"
+        assert r["creditor_raw"] == "Кирилл"
+        assert r["group_id"] == ""
+
+    def test_parsed_rows_round_trip_multi_assignment(self):
+        from steward.features.bills.parse import parsed_rows_to_general_block
+
+        rows = [
+            {"name": "Кальян", "price_minor": 50000, "quantity": 1,
+             "debtors_raw": "Кирилл", "creditor_raw": "Паша",
+             "source": "voice", "group_id": "G1"},
+            {"name": "Кальян", "price_minor": 50000, "quantity": 3,
+             "debtors_raw": "Дима, Егор", "creditor_raw": "Паша",
+             "source": "voice", "group_id": "G1"},
+        ]
+        block = parsed_rows_to_general_block(rows)
+        currency, parsed, _, _ = _parse_ai_response("[META]\ncurrency: BYN\n\n" + block)
+        assert len(parsed) == 2
+        assert {r["group_id"] for r in parsed} == {"G1"}
+        assert sum(r["quantity"] for r in parsed) == 4
+
+    def test_transactions_round_trip(self):
+        from steward.data.models.bill_v2 import (
+            BillItemAssignment, BillPerson, BillTransaction,
+        )
+        from steward.features.bills.parse import transactions_to_general_block
+
+        people = {"p1": BillPerson(id="p1", display_name="Кирилл"),
+                  "p2": BillPerson(id="p2", display_name="Дима")}
+        txs = [
+            BillTransaction(
+                id="t1", item_name="Бургер", creditor="p1",
+                unit_price_minor=1800, quantity=1,
+                assignments=[BillItemAssignment(unit_count=1, debtors=["p1", "p2"])],
+            ),
+        ]
+        block = transactions_to_general_block(txs, people)
+        # Just confirm it parses without errors and matches our shape.
+        currency, rows, _, _ = _parse_ai_response("[META]\ncurrency: BYN\n\n" + block)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Бургер"
+        assert rows[0]["price_minor"] == 1800
+        assert rows[0]["debtors_raw"] == "Кирилл, Дима"
+        assert rows[0]["creditor_raw"] == "Кирилл"
+
+    def test_unknown_persons_emit_dash(self):
+        from steward.data.models.bill_v2 import (
+            BillItemAssignment, BillPerson, BillTransaction, UNKNOWN_PERSON_ID,
+        )
+        from steward.features.bills.parse import transactions_to_general_block
+
+        people = {"p1": BillPerson(id="p1", display_name="Кирилл")}
+        txs = [
+            BillTransaction(
+                id="t1", item_name="Кофе", creditor=UNKNOWN_PERSON_ID,
+                unit_price_minor=500, quantity=1,
+                assignments=[BillItemAssignment(unit_count=1, debtors=[])],
+            ),
+        ]
+        block = transactions_to_general_block(txs, people)
+        # Both creditor and debtors should be "-"
+        line = [l for l in block.splitlines() if "Кофе" in l][0]
+        parts = [p.strip() for p in line.split("|")]
+        assert parts[3] == "-"  # debtors
+        assert parts[4] == "-"  # creditor
