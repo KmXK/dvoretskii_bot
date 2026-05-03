@@ -18,10 +18,10 @@ async def bot_and_mock():
 
 class TestTelegramApiCalls:
     async def test_miniapp_calls_send_message(self, bot_and_mock):
-        from steward.handlers.miniapp_handler import MiniAppHandler
+        from steward.features.miniapp import MiniAppFeature
 
         bot, mock = bot_and_mock
-        handler = MiniAppHandler()
+        handler = MiniAppFeature()
         handler.repository = make_repository()
         handler.bot = bot
 

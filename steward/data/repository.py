@@ -310,11 +310,25 @@ class Repository:
             data["version"] = 11
 
         if data.get("version") == 11:
+            if "curse_words" not in data or not isinstance(data["curse_words"], list):
+                data["curse_words"] = []
+            if "curse_punishments" not in data or not isinstance(data["curse_punishments"], list):
+                data["curse_punishments"] = []
+            if "curse_participants" not in data or not isinstance(data["curse_participants"], list):
+                data["curse_participants"] = []
+            data["version"] = 12
+
+        if data.get("version") == 12:
+            if "user_facts" not in data or not isinstance(data["user_facts"], list):
+                data["user_facts"] = []
+            data["version"] = 13
+
+        if data.get("version") == 13:
             try:
                 import shutil as _shutil
-                _shutil.copy(self._storage.path, self._storage.path + ".bak.v11")
+                _shutil.copy(self._storage.path, self._storage.path + ".bak.v13")
             except Exception as _e:
-                logger.warning("could not backup db.json before v12 migration: %s", _e)
+                logger.warning("could not backup db.json before v14 migration: %s", _e)
 
             data.setdefault("bill_persons", [])
             data.setdefault("bills_v2", [])
@@ -345,10 +359,10 @@ class Repository:
                     p["amount_minor"] = int(round(float(p["amount"]) * 100))
                 p.setdefault("currency", "BYN")
 
-            data["version"] = 12
+            data["version"] = 14
 
-        # Idempotent fix-ups for prod DBs already at v12 from a previous v2 prototype
-        # with a different schema. Safe to run every startup.
+        # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
+        # Safe to run every startup.
         data.setdefault("bill_persons", [])
         data.setdefault("bills_v2", [])
         data.setdefault("bill_payments_v2", [])
@@ -374,7 +388,6 @@ class Repository:
                 tx.setdefault("added_by_person_id", None)
                 tx.setdefault("source", "manual")
                 tx.setdefault("incomplete", False)
-                # Migrate legacy "parts: [{debtors, amount}]" → assignments + unit_price_minor
                 if "assignments" not in tx:
                     legacy_parts = tx.get("parts", [])
                     if legacy_parts:

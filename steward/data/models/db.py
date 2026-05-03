@@ -32,11 +32,13 @@ from .bill_v2 import (
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
+from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
 from .reward import Reward, UserReward
 from .rule import Rule
 from .todo_item import TodoItem
 from .user import User
+from .user_fact import UserFact
 
 
 @dataclass
@@ -45,6 +47,9 @@ class Database:
     ai_messages: dict[str, AiMessage] = field(default_factory=dict)
     army: list[Army] = field(default_factory=list)
     chats: list[Chat] = field(default_factory=list)
+    curse_participants: list[CurseParticipant] = field(default_factory=list)
+    curse_punishments: list[CursePunishment] = field(default_factory=list)
+    curse_words: set[str] = field(default_factory=set)
     silenced_chats: dict[int, datetime] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
@@ -69,8 +74,9 @@ class Database:
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
+    user_facts: list[UserFact] = field(default_factory=list)
 
-    version: int = 12
+    version: int = 14
 
 
 PARSE_CONFIG = Config(

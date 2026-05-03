@@ -7,6 +7,7 @@ from pyrate_limiter import BucketFullException
 from telegram import (
     Update,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -43,6 +44,16 @@ from steward.session.session_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_post_action(func: Callable[[], Awaitable[Any]]) -> None:
+    try:
+        await func()
+    except BadRequest as e:
+        msg = str(e).lower()
+        if "query is too old" in msg or "query id is invalid" in msg:
+            return
+        raise
 
 
 class Bot:
@@ -129,6 +140,7 @@ class Bot:
                 self.repository,
                 self.bot,
                 self.client,
+                self.metrics,
             )
             asyncio.ensure_future(self.delayed_action_handler.start())
 
@@ -255,7 +267,7 @@ class Bot:
                     logger.warning("Dropped session for non-admin user %s", user_id)
                 elif hasattr(session_handler, action) and await getattr(session_handler, action)(context):
                     if func is not None:
-                        await func()
+                        await _safe_post_action(func)
                     return
         except UnsupportedUpdateType:
             pass
@@ -273,7 +285,7 @@ class Bot:
                     logging.debug(f"Used handler {handler}")
                     self.metrics.inc("bot_handler_calls_total", {"handler": handler.__class__.__name__})
                     if func is not None:
-                        await func()
+                        await _safe_post_action(func)
                     break
             except ValidationArgumentsError as e:
                 logging.warning(f"Validation error: {e} {update.message}")
