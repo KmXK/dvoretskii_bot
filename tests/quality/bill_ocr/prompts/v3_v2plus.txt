@@ -95,6 +95,81 @@ Rules for first-person references:
     Мороженое | 3 | Лёша   | Кирилл | Голосовое |
   (Two separate 1-unit rows because "по 3 рубля" means each item costs 3.)
 
+Rules for "угостить" / treats / gifts — CRITICAL:
+- "Я угостил X", "угощаю", "за мой счёт" without "поделили"/"поровну"/"скидываемся" =
+  this is a one-sided GIFT, not a debt. The treated person owes NOTHING.
+- DO NOT emit a row with the treated person as debtor.
+- Instead, OMIT the row and add a question to [ВОПРОСЫ] asking how to record:
+  Example: "Как записать угощение Димы кофе на 8?" | Подарок (никто не должен) | Дима должен Кириллу 8 | Другое
+- Only override this default if context explicitly says the treated person paid back
+  or the participants explicitly split.
+- Synonyms: "проставился", "за счёт заведения" (no debtor), "подарил".
+
+Rules for settlements / past-debt repayments — CRITICAL:
+- "X отдал Y за прошлое", "X скинул Y", "X перевёл Y за пиво" (when пиво was a previous bill),
+  "Y возмещу позже" — these are SETTLEMENTS of existing debt, NOT new expenses.
+- Do NOT emit a row for these. They reference an item that's either already recorded or
+  outside the scope of the current bill.
+- If the settlement is the ONLY content (e.g. "Дима отдал Паше 20") and there's no item
+  context, omit ALL rows and optionally note in [ВОПРОСЫ] if needed.
+
+Rules for "каждый заказал себе" / per-person orders:
+- "Каждый заказал себе X по N" / "по бургеру каждому" = one row per person, debtor = that person.
+  Do NOT emit a phantom extra row with debtor "-" because a head-count seems off.
+  If text says "всего 4 бургера" and lists 4 people, every person ate one — do not ask "кто съел четвертый".
+- The total quantity equals the participant count by construction; trust the explicit count.
+
+Rules for tips / service charges — fold into items:
+- "плюс чаевые N%" / "+10% за обслуживание" / "и ещё чай N" applied to the WHOLE bill:
+  the FINAL total stated by the user already includes the tip. Emit ONE row at the
+  final total, not separate "Счёт" + "Чаевые" rows.
+- Example: "счёт 200 + чаевые 10%, всего 220 на четверых" → emit one row at 220 split 4-way,
+  NOT "Счёт 200" + "Чаевые 20" two rows.
+- Exception: a printed receipt with an explicit "Обслуживание зала 10%" line gets its own row
+  (it's a separate chargeable item the establishment tracks).
+
+Rules for discounts:
+- "Сумма 120, со скидкой 100" — the EFFECTIVE total is 100. Use 100 as the row price
+  (or proportionally reduced per-item prices), NOT 120. Do not emit a separate "Скидка" row.
+
+Rules for cancellations / corrections in dialogue:
+- If speaker says "стой, нет — не X, а Y" or "отмените X" or "ой, неправильно, на самом деле Y",
+  the FINAL state is Y. Do NOT emit X. Only the corrected item.
+
+Rules for negative phrasing — explicit exclusions:
+- "X ничего не пил/ел/брал", "X не участвовал", "без X" = X is NOT a debtor for that item.
+- Do NOT include X in the debtor list. Compute split among the REMAINING people only.
+
+Rules for canonical names:
+- The directory's first column (before the parenthesized aliases) is the CANONICAL display name.
+- When the context refers to someone by an alias, ALWAYS output the canonical name in the
+  Должник(и) and Кредитор fields, never the alias the user typed.
+  Example: directory has "Кирилл (Кир, Кирыч)". Context says "Кир купил".
+    Output creditor: "Кирилл" (NOT "Кир").
+
+Rules for multi-currency in one context:
+- The [META] currency is SINGLE-VALUED. If the context mixes currencies (e.g. "400 руб + $30"),
+  pick the DOMINANT currency by total amount (or by order of appearance for ties) for [META].
+- Emit all items at FACE-VALUE PRICE (do NOT silently convert). For items in the OTHER currency,
+  ALSO add a [ВОПРОСЫ] entry asking for the exchange rate or whether to drop them.
+- Do NOT silently drop the foreign-currency item; do NOT pre-divide its price.
+
+Rules for conflicting amounts (voice vs photo):
+- If voice says one number and a photo/OCR line shows a different number for the SAME item,
+  prefer the PHOTO (printed receipts are authoritative). Emit ONE row at the photo price.
+- Do NOT emit two rows for the same item. Optionally add a [ВОПРОСЫ] entry confirming the choice.
+
+Rules for OCR noise filtering — CRITICAL:
+- Photo OCR contains many lines that are NOT consumable items. SKIP these unconditionally:
+  • Document headers/footers: company name, "ООО", "УНП", "ИНН", address, phone, "Спасибо"
+  • Receipt metadata: "Чек №", "Дата:", "Кассир:", "Стол", "Заказ #", times
+  • Totals: "Итого", "Промежуточный итог", "Подытог", "К оплате", "Сумма"
+  • Taxes: "НДС", "VAT", "Налог" (unless billed as a separate consumable charge)
+  • Payment lines: "Безнал", "Оплата картой", "Сдача", "Наличные", "Оплачено"
+  • Decorative separators: "----", "===="
+- Only emit rows for actual consumed items: dishes, drinks, services with a clear unit price.
+- Service charges like "Обслуживание зала 10%" ARE a chargeable item — keep those.
+
 Rules for determining who paid (creditor):
 - "я заплатил", "платил я", "я купил X кому-то" → speaker paid. Creditor = speaker.
 - "Лёша заплатил", "платил Лёша" → Лёша paid.
