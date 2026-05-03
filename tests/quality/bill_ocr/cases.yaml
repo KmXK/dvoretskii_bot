@@ -375,3 +375,358 @@
           Дима: 300
           Лёша: 300
   tags: [per_person_pricing]
+
+# ============================================================
+# Round 2 — harder cases (added 2026-05-02)
+# ============================================================
+
+- id: long_dialogue_mixed
+  description: 8-line multi-turn dialogue with text + photo OCR + voice snippets interleaved
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+  context: |
+    [Текст] Кирилл: Сегодня сходили в Mojito с Димой и Егором, было круто.
+    [Текст] Дима: Я Паше отдал за прошлое — он не приходил.
+    [Голосовое — Кирилл] Я короче заплатил за всех за пиццу 36 рублей, поделили на троих.
+    [Фото — чек]
+    Mojito Bar — стол 12
+    Пицца Маргарита 36.00
+    Сангрия 0.5л 24.00
+    Итого 60.00
+    [Текст] Егор: А сангрию мы вдвоём с Димой пили, я потом скинул Кириллу.
+    [Текст] Кирилл: Ага, сангрия 24, на меня и Диму с Егором — нет, только Дима с Егором.
+    [Текст] Дима: Сангрию платил Кирилл всё равно, я скинул.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пицц
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1200
+          Дима: 1200
+          Егор: 1200
+      - name_contains: сангри
+        creditor: Кирилл
+        per_person_minor:
+          Дима: 1200
+          Егор: 1200
+  tags: [realistic, long_dialogue]
+
+- id: complex_fractions_uneven
+  description: uneven fractional consumption that doesn't divide evenly into kopecks
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+  context: |
+    Паша заплатил за бутылку виски 100 рублей.
+    Я выпил 3 стакана из 5, Дима выпил 1, остальное Егор.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: виски
+        creditor: Паша
+        # 100 BYN / 5 stakans = 20 per stakan.
+        # Кирилл = 60 (3 stakans), Дима = 20, Егор = 20
+        per_person_minor:
+          Кирилл: 6000
+          Дима: 2000
+          Егор: 2000
+  tags: [fraction]
+
+- id: treat_someone
+  description: |
+    Speaker treats a friend ("угостил Диму") — interpreted as Дима owes nothing,
+    item only registered as a record but with zero debtors. Picking the
+    "no-row + question" interpretation: prompt should ask whether to record
+    a one-sided gift, since the bill system splits debt.
+    Defensible alternative: emit row with creditor=Кирилл, debtors=Дима (Дима owes
+    Кирилл) — but "угостил" idiomatically means Дима DOES NOT owe.
+    We pick the latter: debtors=[] (or '-'), no debt registered. We accept
+    EITHER 0 items + question, OR 1 item with debtors='-' + question.
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Я угостил Диму кофе за 8 рублей. Себе ничего не брал.
+  expected:
+    currency: BYN
+    expected_questions: true
+    no_items: true
+  tags: [edge, treat]
+
+- id: multi_currency_one_bill
+  description: |
+    Two items in two different currencies in the same context.
+    The [META] currency block is single-valued, so the prompt must pick ONE
+    primary. We expect BYN as primary (dominant by amount/order). The
+    defensible behavior is to emit BOTH items at face value under BYN
+    AND ask a clarifying question about the dollar item. We score on the
+    кальян only (per-person); spurious penalty allows for one extra row.
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Кальян был 400 рублей в баре, потом такси домой $30.
+    Поделили всё пополам с Димой. Я платил.
+  expected:
+    currency: BYN
+    expected_questions: true
+    items:
+      - name_contains: кальян
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 20000
+          Дима: 20000
+      - name_contains: такси
+        creditor: Кирилл
+        # Accept either: row at price 30 (face value under BYN) — 15 each
+        per_person_minor:
+          Кирилл: 1500
+          Дима: 1500
+  tags: [currency, edge]
+
+- id: cancellation_in_dialogue
+  description: speaker corrects a prior statement; final state is sushi only
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    Кирилл: Я купил пиццу.
+    Кирилл: Стой нет, не пиццу — суши за 25 рублей.
+    Кирилл: Поделили с Димой пополам.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: суш
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1250
+          Дима: 1250
+  tags: [realistic, cancellation]
+
+- id: discount_applied
+  description: |
+    Bill total 120, discount applied → effective total 100 split 3 ways.
+    33.33 each → expressed as 33/33/34 OR 33.33 each. We accept either.
+    Test passes if per-person totals sum to 100 ± rounding and each person ~3333 kopecks.
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Кирилл: Сходили в кафе, заказали еды на 120 рублей.
+    Кирилл: Со скидкой получилось 100. Поделили на троих, я платил.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: ед
+        creditor: Кирилл
+        # Each owes ~33.33. Tolerance is 2% so 3300-3400 all pass.
+        per_person_minor:
+          Кирилл: 3333
+          Дима: 3333
+          Егор: 3333
+  tags: [edge, discount]
+
+- id: person_left_early
+  description: two items with different debtor sets — Дима participated only in first
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+    - {name: Лёша, aliases: [Леша]}
+    - {name: Саша}
+  context: |
+    Сходили вшестером в бар (я, Дима, Егор, Паша, Лёша, Саша).
+    Сначала пили пиво — 60 рублей всего, Дима после первого ушёл, но платил за пиво в начале.
+    Закуски на 50 рублей доедали впятером без Димы. Платил их я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пив
+        creditor: Дима
+        # 60 BYN / 6 = 10 each
+        per_person_minor:
+          Кирилл: 1000
+          Дима: 1000
+          Егор: 1000
+          Паша: 1000
+          Лёша: 1000
+          Саша: 1000
+      - name_contains: закус
+        creditor: Кирилл
+        # 50 BYN / 5 (no Дима) = 10 each
+        per_person_minor:
+          Кирилл: 1000
+          Егор: 1000
+          Паша: 1000
+          Лёша: 1000
+          Саша: 1000
+  tags: [realistic, subgroups]
+
+- id: same_item_separate_orders
+  description: each person orders own burger, same price — 4 single-debtor rows OR 1 grouped row
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+  context: |
+    Каждый заказал себе бургер по 15 рублей, всего 4 бургера. Платил Паша.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: бургер
+        creditor: Паша
+        per_person_minor:
+          Кирилл: 1500
+          Дима: 1500
+          Егор: 1500
+          Паша: 1500
+  tags: [realistic, per_person_pricing]
+
+- id: tip_inclusive
+  description: bill plus tip percentage applied — per-person 55, not 50
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+  context: |
+    Я заплатил счёт в ресторане 200 рублей плюс чаевые 10%, всего 220.
+    Поделили на четверых.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: ресторан
+        creditor: Кирилл
+        # 220 / 4 = 55 each
+        per_person_minor:
+          Кирилл: 5500
+          Дима: 5500
+          Егор: 5500
+          Паша: 5500
+  tags: [edge, tip]
+
+- id: alias_resolution
+  description: |
+    Speaker uses an alias; model must canonicalize to display_name.
+    Directory has Кирилл with aliases [Кир, Кирыч].
+    Expected: model emits 'Кирилл' as creditor, NOT 'Кир'.
+  persons:
+    - {name: Кирилл, aliases: [Кир, Кирыч]}
+    - {name: Дима}
+    - {name: Егор}
+  context: |
+    Дима пишет: Кир купил пиццу за 30 рублей, поделили на троих со мной и Егором.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пицц
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1000
+          Дима: 1000
+          Егор: 1000
+  tags: [directory, alias]
+
+- id: negative_phrasing
+  description: speaker excludes someone explicitly — "Дима ничего не пил"
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+    - {name: Егор}
+    - {name: Паша}
+  context: |
+    Дима ничего не пил, не любит. Остальные трое — я, Егор и Паша — скинулись на бутылку 60 рублей.
+    Платил Паша.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: бутыл
+        creditor: Паша
+        per_person_minor:
+          Кирилл: 2000
+          Егор: 2000
+          Паша: 2000
+  tags: [realistic, negative]
+
+- id: conflicting_amounts
+  description: |
+    Voice says "сорок", photo line shows "45.00". Documented expected behavior:
+    model picks ONE (preferably the photo as more authoritative) OR emits
+    a [ВОПРОСЫ] entry asking which is correct. Penalize only if both items
+    are emitted as separate rows.
+    We accept either price 4000 or 4500 minor units.
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    [Голосовое — Кирилл] Сходили на пиво, было сорок рублей.
+    [Фото — чек]
+    Beer Co.
+    Пиво крафтовое   45.00
+    Итого           45.00
+    Поделили с Димой пополам, платил я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: пив
+        creditor: Кирилл
+        unit_price_minor_options: [4000, 4500]
+  tags: [edge, conflict]
+
+- id: ocr_dense_receipt
+  description: dense OCR with many service lines, totals, taxes — only 2 real items
+  speaker: Кирилл
+  persons:
+    - {name: Кирилл}
+    - {name: Дима}
+  context: |
+    [Фото — чек]
+    ООО "Кафе"
+    УНП 123456789
+    Чек № 88321
+    Дата: 02.05.2026 19:42
+    Кассир: Иванов И.И.
+    --------------------
+    Лазанья                           22.00
+    Капучино                           8.00
+    --------------------
+    Промежуточный итог                30.00
+    НДС 20%                            5.00
+    Итого к оплате                    30.00
+    Безнал картой                     30.00
+    Спасибо за покупку!
+    Поделили с Димой пополам, платил я.
+  expected:
+    currency: BYN
+    items:
+      - name_contains: лазань
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 1100
+          Дима: 1100
+      - name_contains: капучино
+        creditor: Кирилл
+        per_person_minor:
+          Кирилл: 400
+          Дима: 400
+  tags: [ocr, edge]
