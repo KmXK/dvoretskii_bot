@@ -9,6 +9,7 @@ from telethon import TelegramClient
 from steward.data.repository import Repository
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
+from steward.metrics.base import MetricsEngine
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +19,25 @@ default_actions: list[DelayedAction] = []
 
 class DelayedActionHandler:
     def __init__(
-        self, repository: Repository, bot: ExtBot[None], client: TelegramClient
+        self,
+        repository: Repository,
+        bot: ExtBot[None],
+        client: TelegramClient,
+        metrics: MetricsEngine,
     ):
         self._repository = repository
         self._bot = bot
         self._client = client
+        self._metrics = metrics
         self._update_future: asyncio.Future[None] = asyncio.Future()
-        self._repository.subscribe_on_save(lambda: self._update_future.set_result(None))
+        self._repository.subscribe_on_save(self._on_save)
+
+    def _on_save(self) -> None:
+        if not self._update_future.done():
+            self._update_future.set_result(None)
 
     async def start(self):
-        context = DelayedActionContext(self._repository, self._bot, self._client)
+        context = DelayedActionContext(self._repository, self._bot, self._client, self._metrics)
 
         while True:
             logger.info("Checking delayed actions...")
@@ -55,9 +65,9 @@ class DelayedActionHandler:
                 self._update_future = asyncio.Future()
                 continue
 
-            ms = (datetime.now(timezone.utc) - nearest_time).microseconds
-            if ms >= 30e3:
-                logger.warning(f"Skipped action due to long waiting: {ms} microseconds")
+            lag = (datetime.now(timezone.utc) - nearest_time).total_seconds()
+            if lag >= 300:
+                logger.warning(f"Skipped action due to long waiting: {lag:.3f}s late")
                 continue
 
             # waited -> execute actions

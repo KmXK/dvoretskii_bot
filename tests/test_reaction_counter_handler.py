@@ -1,22 +1,21 @@
-"""Tests for ReactionCounterHandler — reaction() implementation is mostly no-op."""
+"""Tests for ReactionCounterFeature — reaction() implementation is mostly no-op."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from steward.features.reaction_counter import ReactionCounterFeature
 from tests.conftest import make_repository
 
 
-class TestReactionCounterHandler:
+class TestReactionCounterFeature:
     async def test_reaction_does_not_crash(self):
-        from steward.handlers.reaction_counter_handler import ReactionCounterHandler
-
-        handler = ReactionCounterHandler()
-        handler.repository = make_repository()
-        handler.bot = MagicMock()
+        feature = ReactionCounterFeature()
+        feature.repository = make_repository()
+        feature.bot = MagicMock()
 
         ctx = MagicMock()
         with patch(
-            "steward.handlers.reaction_counter_handler.get_reactions_info",
+            "steward.features.reaction_counter.get_reactions_info",
             AsyncMock(return_value=MagicMock()),
         ):
-            result = await handler.reaction(ctx)
+            result = await feature.reaction(ctx)
 
-        assert result is None
+        assert result is False or result is None

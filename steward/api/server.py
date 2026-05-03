@@ -496,7 +496,12 @@ from aiohttp import ClientSession
 
 from steward.delayed_action.reminder import ReminderDelayedAction, ReminderGenerator, CompletedReminder
 from steward.data.models.birthday import Birthday
-from steward.handlers.timezone_handler import CITY_TIMEZONES, OFFSET_RE, _time_by_offset, _time_by_city
+from steward.features.timezone import (
+    _CITY_TIMEZONES as CITY_TIMEZONES,
+    _OFFSET_RE as OFFSET_RE,
+    _time_by_offset,
+    _time_by_city,
+)
 
 CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
 _CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race", "chess", "checkers"}
@@ -1532,11 +1537,14 @@ async def handle_chat_stats(request: web.Request):
     scope = request.query.get("scope", "chat")
     top_n = int(request.query.get("top", "15"))
 
-    from steward.handlers.stats_handler import (
-        STATS, StatsScope, StatsPeriod,
+    from steward.features.stats import (
+        _STATS as STATS,
+        _Scope as StatsScope,
+        _Period as StatsPeriod,
         _period_range as stats_period_range,
         _promql, _monkey_leaderboard,
-        SCOPE_LABELS, PERIOD_LABELS,
+        _SCOPE_LABELS as SCOPE_LABELS,
+        _PERIOD_LABELS as PERIOD_LABELS,
     )
 
     try:
