@@ -24,6 +24,7 @@ from steward.data.models.bill_v2 import (
     UNKNOWN_PERSON_ID,
 )
 from steward.framework import (
+    Button,
     Feature,
     FeatureContext,
     Keyboard,
@@ -38,7 +39,7 @@ from steward.helpers.bills_notifications import send_bill_notification
 from steward.helpers.bills_person_match import match_name, update_chat_last_seen
 
 from . import fmt, parse
-from .session import _BillCollectStep, _PayingStep, _SessionState
+from .session import _BillCollectStep, _GotStep, _PayingStep, _SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -82,17 +83,14 @@ class BillsFeature(Feature):
         person = self.repository.get_bill_person_by_telegram_id(tid)
         is_admin = self.repository.is_admin(tid)
         if all_mode and is_admin:
-            user = next((u for u in self.repository.db.users if u.id == tid), None)
-            cids = set(user.chat_ids) if user else set()
-            bills = [
-                b for b in self.repository.db.bills_v2
-                if (person and (person.id == b.author_person_id or person.id in b.participants))
-                or b.origin_chat_id in cids
-            ]
+            bills = list(self.repository.db.bills_v2)
         elif person:
             bills = self.repository.get_bills_v2_for_person(person.id)
+            if not all_mode:
+                bills = [b for b in bills if not b.closed]
         else:
             bills = []
+        bills.sort(key=lambda b: (b.closed, -b.id))
         return person, is_admin, bills
 
     # -- Subcommands --
@@ -101,7 +99,7 @@ class BillsFeature(Feature):
     async def cmd_list(self, ctx: FeatureContext):
         await self._show_overview(ctx, all_mode=False)
 
-    @subcommand("all", description="Все счета (только админ)")
+    @subcommand("all", description="Все счета (открытые + закрытые)")
     async def cmd_list_all(self, ctx: FeatureContext):
         await self._show_overview(ctx, all_mode=True)
 
@@ -112,10 +110,11 @@ class BillsFeature(Feature):
             "/bills — список счетов и долги\n"
             "/bills add <название> — создать счёт\n"
             "/bills <id> — посмотреть счёт\n"
-            "/bills pay <сумма> @user — зарегистрировать платёж\n"
+            "/bills pay <сумма> @user — я перевёл (ждёт подтверждения)\n"
+            "/bills got <сумма> @user — мне перевели (auto-confirm)\n"
             "/bills alias <имя> = <псевдоним> — добавить псевдоним\n"
             "/bills notify — настройки уведомлений\n"
-            "/bills all — все счета (админ)"
+            "/bills all — все счета"
         )
 
     @subcommand("<bill_id:int>", description="Посмотреть счёт")
@@ -130,7 +129,7 @@ class BillsFeature(Feature):
     async def cmd_add(self, ctx: FeatureContext, name: str):
         await self._start_create(ctx, name=name.strip())
 
-    @subcommand("pay <amount:float> <target:rest>", description="Зарегистрировать платёж")
+    @subcommand("pay <amount:float> <target:rest>", description="Я перевёл @user — pending до его подтверждения")
     async def cmd_pay(self, ctx: FeatureContext, amount: float, target: str):
         target = target.strip()
         if not target:
@@ -149,6 +148,25 @@ class BillsFeature(Feature):
             chat_id=ctx.chat_id,
             bill_id=None,
             reply_chat_id=ctx.chat_id,
+        )
+
+    @subcommand("got <amount:float> <target:rest>", description="@user перевёл мне — auto-confirm")
+    async def cmd_got(self, ctx: FeatureContext, amount: float, target: str):
+        target = target.strip()
+        if not target:
+            await ctx.reply("Формат: /bills got 100 @username")
+            return
+        try:
+            amount_minor = minor_from_float(amount)
+        except ValueError:
+            await ctx.reply("Неверная сумма.")
+            return
+        await self._creditor_initiated_payment(
+            ctx.bot,
+            from_user=ctx.message.from_user,
+            amount_minor=amount_minor,
+            target_name=target.lstrip("@"),
+            chat_id=ctx.chat_id,
         )
 
     @subcommand("alias <text:rest>", description="Псевдоним: имя = псевдоним")
@@ -210,26 +228,83 @@ class BillsFeature(Feature):
     # -- Common dispatch helpers --
 
     async def _show_overview(self, ctx: FeatureContext, all_mode: bool):
+        await self._render_overview(ctx, all_mode=all_mode, edit=False)
+
+    async def _render_overview(self, ctx: FeatureContext, *, all_mode: bool, edit: bool):
         tid = ctx.user_id
         person, is_admin, bills = self._person_bills(tid, all_mode)
         logger.info(
-            "/bills list: tid=%s person=%s is_admin=%s bills=%d",
-            tid, person.id if person else None, is_admin, len(bills),
+            "/bills list: tid=%s person=%s is_admin=%s bills=%d edit=%s",
+            tid, person.id if person else None, is_admin, len(bills), edit,
         )
         if not bills:
-            await ctx.reply("У тебя пока нет счетов. Создай первый: /bills add <название>")
+            empty_text = "У тебя пока нет счетов. Создай первый: /bills add <название>"
+            await (ctx.edit(empty_text) if edit else ctx.reply(empty_text))
             return
 
         by_id = self._persons()
-        text = fmt.format_overview(bills, person.id if person else None, by_id, self.repository.db.bill_payments_v2)
-        if all_mode:
-            text += "\n_(режим: все чаты)_"
+        text = fmt.format_overview(
+            bills,
+            person.id if person else None,
+            by_id,
+            self.repository.db.bill_payments_v2,
+            all_mode=all_mode,
+        )
 
-        open_bills = [b for b in bills if not b.closed]
-        bill_buttons = fmt.kb_bill_buttons(self, open_bills)
-        rows = fmt.compact_grid(bill_buttons, max_cols=2, max_rows=10)
+        button_bills = bills if all_mode else [b for b in bills if not b.closed]
+        bill_buttons = fmt.kb_bill_buttons(self, button_bills)
+        rows: list[list[Button]] = []
+
+        has_owe, has_owed = self._person_balance_directions(
+            bills, person.id if person else None
+        )
+        action_row: list[Button] = []
+        if has_owe:
+            action_row.append(self.cb("bills:pay_overview").button("💸 Оплатить"))
+        if has_owed:
+            action_row.append(self.cb("bills:got_overview").button("✅ Получил"))
+        if action_row:
+            rows.append(action_row)
+
+        rows.extend(fmt.compact_grid(bill_buttons, max_cols=2, max_rows=10))
         rows.append([self.cb("bills:new").button("➕ Новый счёт")])
-        await ctx.reply(text, keyboard=Keyboard.grid(rows))
+        keyboard = Keyboard.grid(rows)
+        if edit:
+            await ctx.edit(text, keyboard=keyboard)
+        else:
+            await ctx.reply(text, keyboard=keyboard)
+
+    def _person_balance_directions(
+        self, bills: list[BillV2], person_id: str | None
+    ) -> tuple[bool, bool]:
+        """Return (has_owe, has_owed): does `person_id` owe anyone, and does anyone owe them,
+        across the given open bills (after applying payments)."""
+        if not person_id:
+            return False, False
+        from steward.helpers.bills_money import (
+            apply_payments, compute_bill_debts, net_debts,
+        )
+        payments = self.repository.db.bill_payments_v2
+        has_owe = False
+        has_owed = False
+        for bill in bills:
+            if bill.closed:
+                continue
+            raw = compute_bill_debts(bill.transactions, bill.currency)
+            net = net_debts(raw)
+            bp = [p for p in payments if bill.id in p.bill_ids]
+            after = apply_payments(net, bp, clamp_zero=True)
+            if not has_owe:
+                if any(amt > 0 for amt in after.get(person_id, {}).values()):
+                    has_owe = True
+            if not has_owed:
+                for debtor, creds in after.items():
+                    if debtor != person_id and creds.get(person_id, 0) > 0:
+                        has_owed = True
+                        break
+            if has_owe and has_owed:
+                break
+        return has_owe, has_owed
 
     async def _show_bill(self, ctx: FeatureContext, bill_id: int):
         bill = self.repository.get_bill_v2(bill_id)
@@ -271,6 +346,44 @@ class BillsFeature(Feature):
 
     # -- Out-of-session callbacks --
 
+    @on_callback("bills:overview", schema="")
+    async def on_overview(self, ctx: FeatureContext):
+        await self._render_overview(ctx, all_mode=False, edit=True)
+
+    @on_callback("bills:pay_overview", schema="")
+    async def on_pay_overview(self, ctx: FeatureContext):
+        tid = ctx.user_id
+        person = self.repository.get_bill_person_by_telegram_id(tid)
+        if not person:
+            await ctx.toast("Сначала засветись в любом счёте.", alert=True)
+            return
+        by_id = self._persons()
+        text, kb = fmt.kb_pay_global(
+            self, person.id, by_id,
+            self.repository.db.bills_v2,
+            self.repository.db.bill_payments_v2,
+            source_bill_id=0,
+            back_to_overview=True,
+        )
+        await ctx.edit(text, keyboard=kb, markdown=False)
+
+    @on_callback("bills:got_overview", schema="")
+    async def on_got_overview(self, ctx: FeatureContext):
+        tid = ctx.user_id
+        person = self.repository.get_bill_person_by_telegram_id(tid)
+        if not person:
+            await ctx.toast("Сначала засветись в любом счёте.", alert=True)
+            return
+        by_id = self._persons()
+        text, kb = fmt.kb_got_global(
+            self, person.id, by_id,
+            self.repository.db.bills_v2,
+            self.repository.db.bill_payments_v2,
+            source_bill_id=0,
+            back_to_overview=True,
+        )
+        await ctx.edit(text, keyboard=kb, markdown=False)
+
     @on_callback("bills:list_open", schema="")
     async def on_list_open(self, ctx: FeatureContext):
         await self._on_list(ctx, closed=False)
@@ -281,7 +394,7 @@ class BillsFeature(Feature):
 
     async def _on_list(self, ctx: FeatureContext, closed: bool):
         tid = ctx.user_id
-        person, is_admin, bills = self._person_bills(tid)
+        person, is_admin, bills = self._person_bills(tid, all_mode=True)
         logger.info(
             "_on_list: tid=%s person=%s bills=%d closed=%s",
             tid, person.id if person else None, len(bills), closed,
@@ -392,8 +505,8 @@ class BillsFeature(Feature):
 
     @on_callback("bills:pay_manual", schema="<bill_id:int>")
     async def on_pay_manual(self, ctx: FeatureContext, bill_id: int):
-        bill = self.repository.get_bill_v2(bill_id)
-        if not bill:
+        bill = self.repository.get_bill_v2(bill_id) if bill_id else None
+        if bill_id and not bill:
             await ctx.toast("Счёт не найден.", alert=True)
             return
         tid = ctx.user_id
@@ -402,13 +515,84 @@ class BillsFeature(Feature):
             [_PayingStep()],
             ctx,
             paying={
-                "target_bill_id": bill.id,
+                "target_bill_id": bill.id if bill else 0,
                 "origin_chat_id": chat_id,
                 "caller_tid": tid,
-                "bill_name": bill.name,
+                "bill_name": bill.name if bill else "счетов",
             },
             _feature=self,
         )
+
+    @on_callback("bills:got_start", schema="<bill_id:int>")
+    async def on_got_start(self, ctx: FeatureContext, bill_id: int):
+        bill = self.repository.get_bill_v2(bill_id)
+        if not bill:
+            await ctx.toast("Счёт не найден.", alert=True)
+            return
+        tid = ctx.user_id
+        person = self.repository.get_bill_person_by_telegram_id(tid)
+        pid = person.id if person else None
+        if not pid:
+            await ctx.toast("Ты не участник этого счёта.", alert=True)
+            return
+
+        by_id = self._persons()
+        payments = self.repository.db.bill_payments_v2
+        text, kb = fmt.kb_got_global(self, pid, by_id, self.repository.db.bills_v2, payments, bill.id)
+        await ctx.edit(text, keyboard=kb, markdown=False)
+
+    @on_callback("bills:got_manual", schema="<bill_id:int>")
+    async def on_got_manual(self, ctx: FeatureContext, bill_id: int):
+        bill = self.repository.get_bill_v2(bill_id) if bill_id else None
+        if bill_id and not bill:
+            await ctx.toast("Счёт не найден.", alert=True)
+            return
+        tid = ctx.user_id
+        chat_id = ctx.chat_id
+        await self.start_session(
+            [_GotStep()],
+            ctx,
+            gotting={
+                "target_bill_id": bill.id if bill else 0,
+                "origin_chat_id": chat_id,
+                "caller_tid": tid,
+                "bill_name": bill.name if bill else "счетов",
+            },
+            _feature=self,
+        )
+
+    @on_callback(
+        "bills:qgot",
+        schema="<bill_id:int>|<debtor_short:str>|<amount:int>",
+    )
+    async def on_quick_got(
+        self, ctx: FeatureContext, bill_id: int, debtor_short: str, amount: int
+    ):
+        if bill_id != 0 and not self.repository.get_bill_v2(bill_id):
+            await ctx.toast("Счёт не найден.", alert=True)
+            return
+        debtor = next(
+            (p for p in self.repository.db.bill_persons if p.id.startswith(debtor_short)),
+            None,
+        )
+        if not debtor:
+            await ctx.toast("Должник не найден.", alert=True)
+            return
+        from_user = ctx.callback_query.from_user
+        creditor, _ = self.repository.get_or_create_bill_person(
+            telegram_id=from_user.id,
+            display_name=from_user.full_name or str(from_user.id),
+            username=from_user.username,
+        )
+        await self._apply_creditor_received(
+            ctx.bot,
+            creditor=creditor, debtor=debtor,
+            amount_minor=amount, chat_id=ctx.chat_id,
+        )
+        try:
+            await ctx.delete_or_clear_keyboard()
+        except Exception:
+            pass
 
     @on_callback(
         "bills:qpay",
@@ -417,10 +601,11 @@ class BillsFeature(Feature):
     async def on_quick_pay(
         self, ctx: FeatureContext, bill_id: int, creditor_short: str, amount: int
     ):
-        bill = self.repository.get_bill_v2(bill_id)
-        if not bill:
+        bill = self.repository.get_bill_v2(bill_id) if bill_id else None
+        if bill_id and not bill:
             await ctx.toast("Счёт не найден.", alert=True)
             return
+        currency = bill.currency if bill else "BYN"
         tid = ctx.user_id
         user = ctx.callback_query.from_user
         debtor, _ = self.repository.get_or_create_bill_person(
@@ -437,9 +622,9 @@ class BillsFeature(Feature):
             return
 
         chat_id = ctx.chat_id
-        await self._register_payment(ctx.bot, debtor, creditor, amount, bill.currency, chat_id)
+        await self._register_payment(ctx.bot, debtor, creditor, amount, currency, chat_id)
         await ctx.edit(
-            f"💸 Платёж {minor_to_display(amount, bill.currency)} → {creditor.display_name} зарегистрирован.\n"
+            f"💸 Платёж {minor_to_display(amount, currency)} → {creditor.display_name} зарегистрирован.\n"
             f"Ждём подтверждения."
         )
 
@@ -616,36 +801,124 @@ class BillsFeature(Feature):
             await ctx.toast("Только получатель может ответить.", alert=True)
             return
 
-        payment.status = PaymentStatus.CONFIRMED if confirm else PaymentStatus.REJECTED
+        if not confirm:
+            payment.status = PaymentStatus.REJECTED
+            await ctx.edit("❌ Получение не подтверждено.")
+            await self.repository.save()
+            return
 
-        if confirm:
-            debtor = self.repository.get_bill_person(payment.debtor)
-            name = debtor.display_name if debtor else "?"
-            msg = (
+        allocations, residual, auto_closed = self._confirm_and_split_payment(payment)
+        debtor_p = self.repository.get_bill_person(payment.debtor)
+        name = debtor_p.display_name if debtor_p else "?"
+        msg = self._format_payment_outcome(
+            header=(
                 f"✅ Получение {minor_to_display(payment.amount_minor, payment.currency)} "
                 f"от {name} подтверждено."
+            ),
+            allocations=allocations,
+            residual=residual,
+            auto_closed=auto_closed,
+            currency=payment.currency,
+        )
+        await ctx.edit(msg)
+        await self.repository.save()
+
+    def _confirm_and_split_payment(
+        self, payment: BillPaymentV2
+    ) -> tuple[list[tuple[int, int]], int, list[BillV2]]:
+        """Replace `payment` with N confirmed per-bill children based on greedy
+        FIFO allocation across open bills with matching debt. Returns
+        (allocations, residual, auto_closed_bills)."""
+        from steward.helpers.bills_money import (
+            apply_payments,
+            compute_bill_debts,
+            distribute_payment_amount,
+            net_debts,
+        )
+
+        bills_with_debt: list[tuple[int, int]] = []
+        for bill in sorted(self.repository.db.bills_v2, key=lambda b: b.created_at):
+            if bill.closed:
+                continue
+            raw = compute_bill_debts(bill.transactions, bill.currency)
+            net = net_debts(raw)
+            other_payments = [
+                p for p in self.repository.db.bill_payments_v2
+                if p.id != payment.id and bill.id in p.bill_ids
+            ]
+            after = apply_payments(net, other_payments, clamp_zero=True)
+            debt = after.get(payment.debtor, {}).get(payment.creditor, 0)
+            if debt > 0:
+                bills_with_debt.append((bill.id, debt))
+
+        allocations, residual = distribute_payment_amount(
+            bills_with_debt, payment.amount_minor
+        )
+
+        if payment in self.repository.db.bill_payments_v2:
+            self.repository.db.bill_payments_v2.remove(payment)
+
+        def _spawn(amount: int, bill_ids: list[int]) -> BillPaymentV2:
+            return BillPaymentV2(
+                id=str(uuid.uuid4()),
+                debtor=payment.debtor,
+                creditor=payment.creditor,
+                amount_minor=amount,
+                currency=payment.currency,
+                status=PaymentStatus.CONFIRMED,
+                created_at=datetime.now(),
+                initiated_chat_id=payment.initiated_chat_id,
+                confirmation_chat_id=payment.confirmation_chat_id,
+                confirmation_message_id=payment.confirmation_message_id,
+                bill_ids=bill_ids,
+                is_refund=getattr(payment, "is_refund", False),
             )
 
-            from steward.helpers.bills_money import compute_bill_debts, net_debts, apply_payments
-            for bill_id in payment.bill_ids:
-                bill = self.repository.get_bill_v2(bill_id)
-                if not bill or bill.closed:
-                    continue
-                raw = compute_bill_debts(bill.transactions, bill.currency)
-                net = net_debts(raw)
-                bp = [p for p in self.repository.db.bill_payments_v2 if bill_id in p.bill_ids]
-                after = apply_payments(net, bp, clamp_zero=True)
-                has_debts = any(a > 0 for creds in after.values() for a in creds.values())
-                if not has_debts:
-                    bill.closed = True
-                    bill.closed_at = datetime.now()
-                    msg += f"\n🔒 Счёт «{bill.name}» автоматически закрыт — все долги оплачены!"
+        children = [_spawn(amt, [bid]) for bid, amt in allocations]
+        if residual > 0:
+            children.append(_spawn(residual, []))
+        self.repository.db.bill_payments_v2.extend(children)
 
-            await ctx.edit(msg)
-        else:
-            await ctx.edit("❌ Получение не подтверждено.")
+        auto_closed: list[BillV2] = []
+        for bill_id, _ in allocations:
+            bill = self.repository.get_bill_v2(bill_id)
+            if not bill or bill.closed:
+                continue
+            raw = compute_bill_debts(bill.transactions, bill.currency)
+            net = net_debts(raw)
+            bp = [p for p in self.repository.db.bill_payments_v2 if bill_id in p.bill_ids]
+            after = apply_payments(net, bp, clamp_zero=True)
+            if not any(a > 0 for creds in after.values() for a in creds.values()):
+                bill.closed = True
+                bill.closed_at = datetime.now()
+                auto_closed.append(bill)
 
-        await self.repository.save()
+        return allocations, residual, auto_closed
+
+    def _format_payment_outcome(
+        self,
+        *,
+        header: str,
+        allocations: list[tuple[int, int]],
+        residual: int,
+        auto_closed: list[BillV2],
+        currency: str,
+    ) -> str:
+        msg = header
+        if len(allocations) > 1:
+            parts = ", ".join(
+                f"#{bid}: {minor_to_display(amt, currency)}"
+                for bid, amt in allocations
+            )
+            msg += f"\n📊 Распределено: {parts}"
+        if residual > 0:
+            msg += (
+                f"\n💰 Переплата {minor_to_display(residual, currency)} "
+                "(нет открытого долга)"
+            )
+        for bill in auto_closed:
+            msg += f"\n🔒 Счёт «{bill.name}» автоматически закрыт — все долги оплачены!"
+        return msg
 
     # -- Wizard --
 
@@ -836,6 +1109,92 @@ class BillsFeature(Feature):
         )
         await self.repository.save()
         return payment
+
+    async def _creditor_initiated_payment(
+        self,
+        bot,
+        from_user,
+        amount_minor: int,
+        target_name: str,
+        chat_id: int,
+    ):
+        creditor, _ = self.repository.get_or_create_bill_person(
+            telegram_id=from_user.id,
+            display_name=from_user.full_name or str(from_user.id),
+            username=from_user.username,
+        )
+        debtor, candidates = match_name(
+            target_name,
+            self.repository.db.bill_persons,
+            self._users(),
+            caller_telegram_id=from_user.id,
+            origin_chat_id=chat_id,
+        )
+        if not debtor:
+            text = (
+                f"«{target_name}» неоднозначно: {', '.join(p.display_name for p in candidates[:5])}."
+                if candidates
+                else f"Не нашёл «{target_name}»."
+            )
+            await bot.send_message(chat_id=chat_id, text=text)
+            return
+
+        await self._apply_creditor_received(
+            bot, creditor=creditor, debtor=debtor,
+            amount_minor=amount_minor, chat_id=chat_id,
+        )
+
+    async def _apply_creditor_received(
+        self,
+        bot,
+        *,
+        creditor,
+        debtor,
+        amount_minor: int,
+        chat_id: int,
+    ):
+        currency = "BYN"
+        payment = BillPaymentV2(
+            id=str(uuid.uuid4()),
+            debtor=debtor.id,
+            creditor=creditor.id,
+            amount_minor=amount_minor,
+            currency=currency,
+            status=PaymentStatus.CONFIRMED,
+            initiated_chat_id=chat_id,
+            bill_ids=[],
+        )
+        self.repository.db.bill_payments_v2.append(payment)
+        allocations, residual, auto_closed = self._confirm_and_split_payment(payment)
+
+        amount_str = minor_to_display(amount_minor, currency)
+        header = f"✅ Зачёт получения {amount_str} от {debtor.display_name}"
+        msg = self._format_payment_outcome(
+            header=header,
+            allocations=allocations,
+            residual=residual,
+            auto_closed=auto_closed,
+            currency=currency,
+        )
+        if not allocations and residual == amount_minor:
+            msg += "\n_(нет открытых долгов от этого человека — записано как кредит)_"
+        await bot.send_message(chat_id=chat_id, text=msg)
+
+        await send_bill_notification(
+            bot,
+            self.repository,
+            debtor,
+            f"✅ {creditor.display_name} подтвердил, что ты перевёл *{amount_str}*",
+            sender=creditor,
+            parse_mode="Markdown",
+            initiated_chat_id=chat_id,
+        )
+        await self.repository.save()
+        logger.info(
+            "Creditor-initiated payment: %s ← %s %s (allocs=%d, residual=%d)",
+            creditor.display_name, debtor.display_name, amount_str,
+            len(allocations), residual,
+        )
 
     async def _create_payment_for_user(
         self,

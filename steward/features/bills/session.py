@@ -898,6 +898,65 @@ class _PayingStep(Step):
             )
         return False
 
+
+class _GotStep(Step):
+    """Captures one '<amount> @user|name' message — registers an auto-confirmed receipt."""
+
+    def __init__(self):
+        pass
+
+    async def chat(self, context: ChatStepContext) -> bool:
+        st = context.session_context.get("gotting")
+        if st is None:
+            return True
+        feature = context.session_context["_feature"]
+        bill_id = st["target_bill_id"]
+        origin_chat_id = st["origin_chat_id"]
+
+        if not st.get("announced"):
+            st["announced"] = True
+            bill = feature.repository.get_bill_v2(bill_id)
+            name = bill.name if bill else f"#{bill_id}"
+            await context.bot.send_message(
+                chat_id=origin_chat_id,
+                text=(
+                    f"✅ Зачёт получения по «{name}».\nПришли: «сумма @откого» или «сумма Имя».\n\n"
+                    f"Для отмены: /stop"
+                ),
+            )
+            return False
+
+        msg = context.message
+        if msg is None or not msg.text or msg.text.startswith("/"):
+            return False
+        m = re.match(r"([\d.,]+)\s+@?(\S.*)", msg.text.strip())
+        if not m:
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text="Формат: «сумма @username» или «сумма Имя».",
+            )
+            return False
+        try:
+            amount_minor = minor_from_float(float(m.group(1).replace(",", ".")))
+        except ValueError:
+            await context.bot.send_message(chat_id=msg.chat_id, text="Неверная сумма.")
+            return False
+
+        await feature._creditor_initiated_payment(
+            context.bot,
+            from_user=msg.from_user,
+            amount_minor=amount_minor,
+            target_name=m.group(2).strip(),
+            chat_id=origin_chat_id,
+        )
+        return True
+
+    async def callback(self, context: CallbackStepContext) -> bool:
+        st = context.session_context.get("gotting")
+        if st is None:
+            return True
+        return False
+
     def stop(self):
         pass
 
