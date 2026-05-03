@@ -73,6 +73,11 @@ BASELINE: dict[str, set[str]] = {
     },
     "broadcast.py": {"raw_telegram_send", "raw_session_import"},
 
+    # Bills — custom Step drives a non-linear state machine; uses raw bot.send_message
+    # for prompts/edits inside the Step. Follow-up cleanup.
+    "bills/session.py": {"raw_telegram_send", "raw_session_import"},
+    "bills/__init__.py": {"raw_telegram_send"},
+
     # Download callbacks — old callback_data schemes, not yet on @on_callback.
     "download/yt.py": {"raw_inline_keyboard", "raw_callback_data_pipe"},
     "download/callbacks.py": {"raw_inline_keyboard"},

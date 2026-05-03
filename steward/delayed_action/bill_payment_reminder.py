@@ -63,8 +63,8 @@ class BillPaymentReminderAction(DelayedAction):
             f"_{phrase}_\n\nПодтверди получение:"
         )
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Получил", callback_data=f"bills_pay_confirm|{payment.id}"),
-            InlineKeyboardButton("❌ Не получал", callback_data=f"bills_pay_reject|{payment.id}"),
+            InlineKeyboardButton("✅ Получил", callback_data=f"bills:pay_confirm|{payment.id}"),
+            InlineKeyboardButton("❌ Не получал", callback_data=f"bills:pay_reject|{payment.id}"),
         ]])
         msg = await send_bill_notification(
             context.bot, repository, creditor, text,
