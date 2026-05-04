@@ -230,6 +230,54 @@ def parsed_rows_to_general_block(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def bill_to_rows_and_map(bill, by_id: dict) -> tuple[list[dict], dict[str, str]]:
+    """Inverse of `rows_to_transactions`: rebuild parsed_rows + resolved_map from
+    a saved BillV2 so the wizard can resume editing in `confirm` phase.
+
+    `resolved_map` is keyed by `norm_name_key(person.display_name)` so the existing
+    change_list / kb_change_pick / rows_to_transactions paths keep working unchanged.
+    """
+    def _name(pid):
+        if pid == UNKNOWN_PERSON_ID:
+            return "-"
+        p = by_id.get(pid)
+        return p.display_name if p else "-"
+
+    resolved_map: dict[str, str] = {}
+
+    def _register(pid):
+        if pid == UNKNOWN_PERSON_ID:
+            return
+        p = by_id.get(pid)
+        if p:
+            resolved_map[norm_name_key(p.display_name)] = p.id
+
+    rows: list[dict] = []
+    group_counter = 0
+    for tx in bill.transactions:
+        gid = ""
+        if len(tx.assignments) > 1:
+            group_counter += 1
+            gid = f"G{group_counter}"
+        _register(tx.creditor)
+        for asg in tx.assignments:
+            for d in asg.debtors:
+                _register(d)
+            debtors_raw = (
+                ", ".join(_name(d) for d in asg.debtors) if asg.debtors else "-"
+            )
+            rows.append({
+                "name": tx.item_name,
+                "price_minor": tx.unit_price_minor,
+                "quantity": asg.unit_count,
+                "debtors_raw": debtors_raw,
+                "creditor_raw": _name(tx.creditor),
+                "source": (getattr(tx, "source", "manual") or "manual"),
+                "group_id": gid,
+            })
+    return rows, resolved_map
+
+
 def transactions_to_general_block(transactions: list, by_id: dict) -> str:
     """Re-emit a [ОБЩЕЕ] block from BillTransaction objects.
 
