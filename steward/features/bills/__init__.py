@@ -350,6 +350,17 @@ class BillsFeature(Feature):
             if pid in by_id and by_id[pid].telegram_id is None
         ]
 
+    def _unbound_for_resolve(self, caller_tid: int) -> list:
+        """Unbound persons available in the resolve-binding flow.
+
+        Admins always see the system-wide list; regular users see only their own
+        bills. The count shown on the «🔗 Связать имена» button uses the same
+        scope so it never mismatches the list opened by the tap.
+        """
+        all_mode = self.repository.is_admin(caller_tid)
+        _, _, bills = self._person_bills(caller_tid, all_mode=all_mode)
+        return self._unbound_persons_visible_to(caller_tid, bills)
+
     def _unbound_persons_visible_to(self, caller_tid: int, bills: list[BillV2]) -> list:
         """Caller-visible BillPersons without telegram_id, worth asking the user to bind.
 
@@ -714,7 +725,7 @@ class BillsFeature(Feature):
         if action_row:
             rows.append(action_row)
 
-        unbound = self._unbound_persons_visible_to(ctx.user_id, bills)
+        unbound = self._unbound_for_resolve(ctx.user_id)
         if unbound:
             rows.append([
                 self.cb("bills:resolve_list").button(
@@ -857,9 +868,7 @@ class BillsFeature(Feature):
 
     @on_callback("bills:resolve_list", schema="")
     async def on_resolve_list(self, ctx: FeatureContext):
-        tid = ctx.user_id
-        _, _, bills = self._person_bills(tid, all_mode=False)
-        unbound = self._unbound_persons_visible_to(tid, bills)
+        unbound = self._unbound_for_resolve(ctx.user_id)
         if not unbound:
             await ctx.edit("✨ Все имена уже привязаны.")
             return
