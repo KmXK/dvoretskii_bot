@@ -121,7 +121,9 @@ async def make_transcribation(
             audio_bytes,
             with_speaker_labels=True,
         )
-        if not text:
+        if text == "":
+            text = "Речь не распознана"
+        elif not text:
             text = "Не удалось распознать речь"
 
         html_text = spoiler_block(text, header="Расшифровка")

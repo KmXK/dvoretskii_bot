@@ -304,6 +304,8 @@ class _BillCollectStep(Step):
                 st.context_items.append(f"[Голосовое]\n{text}")
                 kb = fmt.kb_collect(feature, st.context_items)
                 await self._send(context, "✅ Голосовое добавлено.", keyboard=kb, edit=False)
+            elif text == "":
+                await self._send(context, "Речь не распознана.", keyboard=kb, edit=False)
             else:
                 await self._send(context, "Не удалось расшифровать.", keyboard=kb, edit=False)
         elif msg.text and not msg.text.startswith("/"):
@@ -525,6 +527,9 @@ class _BillCollectStep(Step):
         if msg.voice:
             await context.bot.send_message(chat_id=msg.chat_id, text="⏳ Расшифровываю исправление...")
             text = await media.transcribe_voice(context.bot, msg.voice)
+            if text == "":
+                await self._send(context, "Речь не распознана. Попробуй ещё раз или текстом.")
+                return
             if not text:
                 await self._send(context, "Не удалось расшифровать. Попробуй ещё раз или текстом.")
                 return
