@@ -273,7 +273,11 @@ async def create_transcription_reply(
     if not transcription:
         if visual_task is not None:
             visual_task.cancel()
-        error_text = "Не удалось сделать расшифровку"
+        error_text = (
+            "Речь не распознана"
+            if transcription == ""
+            else "Не удалось сделать расшифровку"
+        )
         if edit_message is not None:
             markup = reply_markup_provider() if reply_markup_provider else None
             try:

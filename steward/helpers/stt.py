@@ -98,7 +98,7 @@ async def try_nvidia_transcribe_bytes(
     text = payload.get("text") if isinstance(payload, dict) else None
     if isinstance(text, str) and text.strip():
         return text.strip()
-    return None
+    return ""
 
 
 async def _elevenlabs_transcribe(audio: bytes):
@@ -321,7 +321,7 @@ async def _yandex_transcribe(audio_mp3: bytes) -> str | None:
                         len(events),
                         list(events[0].keys()) if events else [],
                     )
-                return text or None
+                return text or ""
             logger.warning("Yandex STT polling timed out for operation %s", op_id)
             return None
     except Exception as e:
@@ -335,12 +335,16 @@ async def transcribe_audio_bytes(
     with_speaker_labels: bool = False,
     primary_speaker_name: str | None = None,
 ) -> str | None:
+    # Return convention:
+    #   non-empty str — recognized text
+    #   ""            — provider succeeded but found no speech; do NOT fall through
+    #   None          — provider failed (transport/API); try the next one
     nv = await try_nvidia_transcribe_bytes(audio)
-    if nv:
+    if nv is not None:
         return nv
 
     yandex = await _yandex_transcribe(audio)
-    if yandex:
+    if yandex is not None:
         return yandex
 
     if _eleven_circuit_closed():
