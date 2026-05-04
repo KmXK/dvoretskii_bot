@@ -50,6 +50,7 @@ class _SessionState:
     caller_tid: int
     is_suggestion: bool = False
     target_bill_id: int | None = None
+    editing_bill_id: int | None = None
     currency: str = "BYN"
     context_items: list[str] = field(default_factory=list)
     parsed_transactions: list = field(default_factory=list)

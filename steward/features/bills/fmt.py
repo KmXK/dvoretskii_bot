@@ -461,7 +461,10 @@ def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_adm
         if is_participant:
             rows.append([feature.cb("bills:suggest_start").button("➕ Предложить", bill_id=bill.id)])
         if can_edit:
-            rows.append([feature.cb("bills:close").button("🔒 Закрыть", bill_id=bill.id)])
+            rows.append([
+                feature.cb("bills:edit").button("✏️ Исправить", bill_id=bill.id),
+                feature.cb("bills:close").button("🔒 Закрыть", bill_id=bill.id),
+            ])
     elif can_edit:
         rows.append([feature.cb("bills:reopen").button("🔓 Открыть", bill_id=bill.id)])
 

@@ -1097,6 +1097,59 @@ class BillsFeature(Feature):
             keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
         )
 
+    @on_callback("bills:edit", schema="<bill_id:int>")
+    async def on_edit(self, ctx: FeatureContext, bill_id: int):
+        bill = self.repository.get_bill_v2(bill_id)
+        if not bill:
+            await ctx.toast("Счёт не найден.", alert=True)
+            return
+        if bill.closed:
+            await ctx.toast("Закрытый счёт нельзя редактировать.", alert=True)
+            return
+        tid = ctx.user_id
+        person = self.repository.get_bill_person_by_telegram_id(tid)
+        is_admin = self.repository.is_admin(tid)
+        if not is_admin and (not person or person.id != bill.author_person_id):
+            await ctx.toast("Только автор счёта или админ.", alert=True)
+            return
+
+        settled = [
+            p for p in self.repository.db.bill_payments_v2
+            if bill.id in p.bill_ids and p.status in PaymentStatus.SETTLED
+        ]
+        if settled:
+            await ctx.toast(
+                "По счёту уже есть подтверждённые платежи — редактирование заблокировано.",
+                alert=True,
+            )
+            return
+
+        by_id = self._persons()
+        rows, resolved_map = parse.bill_to_rows_and_map(bill, by_id)
+        state = _SessionState(
+            phase="confirm",
+            bill_name=bill.name,
+            origin_chat_id=ctx.chat_id,
+            caller_tid=tid,
+            currency=bill.currency,
+            parsed_transactions=list(bill.transactions),
+            parsed_rows=rows,
+            resolved_map=resolved_map,
+            editing_bill_id=bill.id,
+            announced=True,
+        )
+        preview = fmt.format_preview(
+            state.parsed_transactions, by_id, state.currency, state.resolved_map,
+        )
+        await ctx.edit(
+            f"✏️ Редактирование «{bill.name}» (#{bill.id})\n\n{preview}",
+            keyboard=fmt.kb_confirm(self),
+        )
+        if ctx.callback_query and ctx.callback_query.message:
+            state.last_kb_chat = ctx.callback_query.message.chat_id
+            state.last_kb_msg = ctx.callback_query.message.message_id
+        await self.start_wizard("bills:session", ctx, state=state, _feature=self)
+
     @on_callback("bills:close", schema="<bill_id:int>")
     async def on_close(self, ctx: FeatureContext, bill_id: int):
         await self._set_closed(ctx, bill_id, close=True)
@@ -1278,11 +1331,25 @@ class BillsFeature(Feature):
             return
 
         chat_id = ctx.chat_id
-        await self._register_payment(ctx.bot, debtor, creditor, amount, currency, chat_id)
-        await ctx.edit(
-            f"💸 Платёж {minor_to_display(amount, currency)} → {creditor.display_name} зарегистрирован.\n"
-            f"Ждём подтверждения."
-        )
+        result = await self._register_payment(ctx.bot, debtor, creditor, amount, currency, chat_id)
+        if result["auto_confirmed"]:
+            msg = self._format_payment_outcome(
+                header=(
+                    f"✅ Платёж {minor_to_display(amount, currency)} → "
+                    f"{creditor.display_name} засчитан "
+                    f"(получатель не в Telegram)."
+                ),
+                allocations=result["allocations"],
+                residual=result["residual"],
+                auto_closed=result["auto_closed"],
+                currency=currency,
+            )
+            await ctx.edit(msg)
+        else:
+            await ctx.edit(
+                f"💸 Платёж {minor_to_display(amount, currency)} → {creditor.display_name} зарегистрирован.\n"
+                f"Ждём подтверждения."
+            )
 
     # In-session callback schemas (registered so feature.cb() can build buttons; bodies
     # are no-ops because the active session intercepts these callbacks before they reach here).
@@ -1591,7 +1658,9 @@ class BillsFeature(Feature):
             username=user.username,
         )
 
-        participant_ids = [caller.id]
+        participant_ids: list[str] = []
+        if st.editing_bill_id is None:
+            participant_ids.append(caller.id)
         for tx in st.parsed_transactions:
             for asg in tx.assignments:
                 for d in asg.debtors:
@@ -1601,17 +1670,31 @@ class BillsFeature(Feature):
                 participant_ids.append(tx.creditor)
         participants = [p for p in participant_ids if p != UNKNOWN_PERSON_ID]
 
-        bill = BillV2(
-            id=self.repository.get_next_bill_v2_id(),
-            name=st.bill_name,
-            author_person_id=caller.id,
-            participants=participants,
-            transactions=st.parsed_transactions,
-            currency=st.currency,
-            origin_chat_id=st.origin_chat_id,
-            updated_at=datetime.now(),
-        )
-        self.repository.db.bills_v2.append(bill)
+        if st.editing_bill_id is not None:
+            bill = self.repository.get_bill_v2(st.editing_bill_id)
+            if not bill:
+                await send_callback("Счёт исчез — отменяю редактирование.")
+                return
+            if bill.author_person_id and bill.author_person_id not in participants:
+                participants.insert(0, bill.author_person_id)
+            bill.transactions = st.parsed_transactions
+            bill.participants = participants
+            bill.currency = st.currency
+            bill.updated_at = datetime.now()
+            header = f"✏️ Счёт «{bill.name}» \\#{bill.id} обновлён"
+        else:
+            bill = BillV2(
+                id=self.repository.get_next_bill_v2_id(),
+                name=st.bill_name,
+                author_person_id=caller.id,
+                participants=participants,
+                transactions=st.parsed_transactions,
+                currency=st.currency,
+                origin_chat_id=st.origin_chat_id,
+                updated_at=datetime.now(),
+            )
+            self.repository.db.bills_v2.append(bill)
+            header = None
 
         by_id = self._persons()
         for pid in participants:
@@ -1626,6 +1709,8 @@ class BillsFeature(Feature):
 
         by_id = self._persons()
         text = fmt.format_bill_created(bill, by_id)
+        if header is not None:
+            text = header + "\n" + "\n".join(text.splitlines()[1:])
         kb = fmt.kb_bill(
             self,
             bill,
@@ -1732,6 +1817,23 @@ class BillsFeature(Feature):
             bill_ids=all_bill_ids,
         )
         self.repository.db.bill_payments_v2.append(payment)
+        amount_str = minor_to_display(amount_minor, currency)
+
+        if creditor.telegram_id is None:
+            payment.status = PaymentStatus.AUTO_CONFIRMED
+            allocations, residual, auto_closed = self._confirm_and_split_payment(payment)
+            await self.repository.save()
+            logger.info(
+                "Payment %s auto-confirmed (creditor %s has no telegram_id): %s -> %s %s",
+                payment.id[:8], creditor.display_name, debtor.display_name,
+                creditor.display_name, amount_str,
+            )
+            return {
+                "auto_confirmed": True,
+                "allocations": allocations,
+                "residual": residual,
+                "auto_closed": auto_closed,
+            }
 
         from steward.delayed_action.bill_payment_reminder import schedule_payment_reminder
         schedule_payment_reminder(self.repository, payment.id)
@@ -1740,12 +1842,7 @@ class BillsFeature(Feature):
             self.cb("bills:pay_confirm").button("✅ Получил", payment_id=payment.id),
             self.cb("bills:pay_reject").button("❌ Не получал", payment_id=payment.id),
         )
-        amount_str = minor_to_display(amount_minor, currency)
-        mention = (
-            f"[{creditor.display_name}](tg://user?id={creditor.telegram_id})"
-            if creditor.telegram_id
-            else creditor.display_name
-        )
+        mention = f"[{creditor.display_name}](tg://user?id={creditor.telegram_id})"
         notif = await send_bill_notification(
             bot,
             self.repository,
@@ -1764,7 +1861,7 @@ class BillsFeature(Feature):
             payment.id[:8], debtor.display_name, creditor.display_name, amount_str, bool(notif),
         )
         await self.repository.save()
-        return payment
+        return {"auto_confirmed": False}
 
     async def _creditor_initiated_payment(
         self,
@@ -1888,11 +1985,25 @@ class BillsFeature(Feature):
 
         currency = (self.repository.get_bill_v2(bill_id).currency if bill_id else None) or "BYN"
 
-        await self._register_payment(bot, debtor, creditor, amount_minor, currency, chat_id)
-        await bot.send_message(
-            chat_id=reply_chat_id,
-            text=(
-                f"💸 Платёж {minor_to_display(amount_minor, currency)} → "
-                f"{creditor.display_name} зарегистрирован. Ждём подтверждения."
-            ),
-        )
+        result = await self._register_payment(bot, debtor, creditor, amount_minor, currency, chat_id)
+        if result["auto_confirmed"]:
+            msg = self._format_payment_outcome(
+                header=(
+                    f"✅ Платёж {minor_to_display(amount_minor, currency)} → "
+                    f"{creditor.display_name} засчитан "
+                    f"(получатель не в Telegram)."
+                ),
+                allocations=result["allocations"],
+                residual=result["residual"],
+                auto_closed=result["auto_closed"],
+                currency=currency,
+            )
+            await bot.send_message(chat_id=reply_chat_id, text=msg)
+        else:
+            await bot.send_message(
+                chat_id=reply_chat_id,
+                text=(
+                    f"💸 Платёж {minor_to_display(amount_minor, currency)} → "
+                    f"{creditor.display_name} зарегистрирован. Ждём подтверждения."
+                ),
+            )
