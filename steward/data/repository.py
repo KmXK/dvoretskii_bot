@@ -366,6 +366,12 @@ class Repository:
                 p.setdefault("is_refund", False)
             data["version"] = 15
 
+        if data.get("version") == 15:
+            data.setdefault("chat_nicknames", [])
+            for c in data.get("chats", []):
+                c.setdefault("aliases", [])
+            data["version"] = 16
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("bill_persons", [])
@@ -375,6 +381,9 @@ class Repository:
         data.setdefault("bill_diff_snapshots", [])
         data.setdefault("bill_item_suggestions", [])
         data.setdefault("bill_draft_edits", [])
+        data.setdefault("chat_nicknames", [])
+        for c in data.get("chats", []):
+            c.setdefault("aliases", [])
 
         for p in data.get("bill_persons", []):
             p.setdefault("description", "")
@@ -483,6 +492,68 @@ class Repository:
         person = BillPerson(id=str(uuid.uuid4()), display_name=name)
         self.db.bill_persons.append(person)
         return person, True
+
+    def merge_person(self, src_id: str, dst_id: str) -> bool:
+        """Reassign all bill/payment/nick references from src_id → dst_id and drop src.
+
+        Used when the user binds an anonymous BillPerson to a Telegram user that
+        already has a separate BillPerson record.
+        """
+        if src_id == dst_id:
+            return False
+        src = self.get_bill_person(src_id)
+        dst = self.get_bill_person(dst_id)
+        if not src or not dst:
+            return False
+
+        for bill in self.db.bills_v2:
+            if bill.author_person_id == src_id:
+                bill.author_person_id = dst_id
+            if src_id in bill.participants:
+                bill.participants = [
+                    dst_id if pid == src_id else pid for pid in bill.participants
+                ]
+                seen: set[str] = set()
+                bill.participants = [
+                    p for p in bill.participants if not (p in seen or seen.add(p))
+                ]
+            for tx in bill.transactions:
+                if tx.creditor == src_id:
+                    tx.creditor = dst_id
+                for asg in tx.assignments:
+                    asg.debtors = [dst_id if d == src_id else d for d in asg.debtors]
+
+        for pay in self.db.bill_payments_v2:
+            if pay.debtor == src_id:
+                pay.debtor = dst_id
+            if pay.creditor == src_id:
+                pay.creditor = dst_id
+
+        for sug in self.db.bill_item_suggestions:
+            if sug.proposed_by_person_id == src_id:
+                sug.proposed_by_person_id = dst_id
+            if sug.decided_by_person_id == src_id:
+                sug.decided_by_person_id = dst_id
+            for tx in sug.proposed_tx:
+                if tx.creditor == src_id:
+                    tx.creditor = dst_id
+                for asg in tx.assignments:
+                    asg.debtors = [dst_id if d == src_id else d for d in asg.debtors]
+
+        for n in self.db.chat_nicknames:
+            if n.person_id == src_id:
+                n.person_id = dst_id
+
+        for src_alias in src.aliases or []:
+            if src_alias not in dst.aliases:
+                dst.aliases.append(src_alias)
+        for cid, last in (src.chat_last_seen or {}).items():
+            prev = dst.chat_last_seen.get(cid)
+            if prev is None or prev < last:
+                dst.chat_last_seen[cid] = last
+
+        self.db.bill_persons = [p for p in self.db.bill_persons if p.id != src_id]
+        return True
 
     def merge_duplicate_anonymous_persons(self) -> list[str]:
         """After migration: merge anon BillPersons whose display_name matches a real person.
@@ -636,3 +707,116 @@ class Repository:
             d for d in self.db.bill_draft_edits
             if not d.merged and d.expires_at > now
         ]
+
+    # ── ChatNickname ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _norm_nick(s: str) -> str:
+        return (s or "").strip().casefold()
+
+    def list_chat_nicknames(self, chat_id: int):
+        return [n for n in self.db.chat_nicknames if n.chat_id == chat_id]
+
+    def find_chat_nickname(self, chat_id: int, nick: str):
+        key = self._norm_nick(nick)
+        if not key:
+            return None
+        for n in self.db.chat_nicknames:
+            if n.chat_id == chat_id and self._norm_nick(n.nick) == key:
+                return n
+        return None
+
+    def find_person_id_by_nick(self, chat_id: int, nick: str) -> str | None:
+        n = self.find_chat_nickname(chat_id, nick)
+        return n.person_id if n else None
+
+    def add_chat_nickname(
+        self,
+        chat_id: int,
+        person_id: str,
+        nick: str,
+        created_by_telegram_id: int | None = None,
+    ):
+        from steward.data.models.bill_v2 import ChatNickname
+
+        nick = (nick or "").strip()
+        if not nick:
+            return None, "empty"
+        existing = self.find_chat_nickname(chat_id, nick)
+        if existing is not None:
+            if existing.person_id == person_id:
+                return existing, "exists"
+            return existing, "conflict"
+        entry = ChatNickname(
+            chat_id=chat_id,
+            person_id=person_id,
+            nick=nick,
+            created_by_telegram_id=created_by_telegram_id,
+        )
+        self.db.chat_nicknames.append(entry)
+        return entry, "added"
+
+    def remove_chat_nickname(self, chat_id: int, nick: str) -> bool:
+        key = self._norm_nick(nick)
+        before = len(self.db.chat_nicknames)
+        self.db.chat_nicknames = [
+            n for n in self.db.chat_nicknames
+            if not (n.chat_id == chat_id and self._norm_nick(n.nick) == key)
+        ]
+        return len(self.db.chat_nicknames) < before
+
+    def chat_nicknames_for_person(self, person_id: str):
+        return [n for n in self.db.chat_nicknames if n.person_id == person_id]
+
+    def chat_nicknames_index(self) -> dict[int, dict[str, str]]:
+        """{chat_id: {nick_lower: person_id}} — built per-call; cheap (one O(N) pass)."""
+        idx: dict[int, dict[str, str]] = {}
+        for n in self.db.chat_nicknames:
+            idx.setdefault(n.chat_id, {})[self._norm_nick(n.nick)] = n.person_id
+        return idx
+
+    # ── Chat ──────────────────────────────────────────────────────────────────
+
+    def get_chat(self, chat_id: int):
+        for c in self.db.chats:
+            if c.id == chat_id:
+                return c
+        return None
+
+    def find_chat_by_alias(self, alias: str):
+        """Match a chat by user-defined alias (exact, case-insensitive) or by title."""
+        key = self._norm_nick(alias)
+        if not key:
+            return None
+        for c in self.db.chats:
+            if self._norm_nick(c.name) == key:
+                return c
+            for a in (c.aliases or []):
+                if self._norm_nick(a) == key:
+                    return c
+        return None
+
+    def add_chat_alias(self, chat_id: int, alias: str) -> str:
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return "no_chat"
+        alias = (alias or "").strip()
+        if not alias:
+            return "empty"
+        owner = self.find_chat_by_alias(alias)
+        if owner is not None and owner.id != chat_id:
+            return "conflict"
+        existing = chat.aliases or []
+        if any(self._norm_nick(a) == self._norm_nick(alias) for a in existing):
+            return "exists"
+        chat.aliases = existing + [alias]
+        return "added"
+
+    def remove_chat_alias(self, chat_id: int, alias: str) -> bool:
+        chat = self.get_chat(chat_id)
+        if chat is None:
+            return False
+        key = self._norm_nick(alias)
+        before = len(chat.aliases or [])
+        chat.aliases = [a for a in (chat.aliases or []) if self._norm_nick(a) != key]
+        return len(chat.aliases) < before

@@ -24,13 +24,14 @@ async def test_migration_from_v11_adds_new_fields():
         repo = Repository(JsonFileStorage(db_path))
         await repo.migrate()
         # Migration should have happened all the way to current
-        assert repo.db.version == 15
+        assert repo.db.version == 16
         # New fields should be initialized to defaults
         assert repo.db.bill_persons == []
         assert repo.db.bills_v2 == []
         assert repo.db.bill_payments_v2 == []
         assert repo.db.bill_item_suggestions == []
         assert repo.db.bill_draft_edits == []
+        assert repo.db.chat_nicknames == []
     finally:
         os.unlink(db_path)
         # Also clean backup

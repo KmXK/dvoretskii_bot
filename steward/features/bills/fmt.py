@@ -18,13 +18,51 @@ if TYPE_CHECKING:
 
 
 def compact_grid(buttons: list[Button], max_cols: int = 3, max_rows: int = 4) -> list[list[Button]]:
+    """Pack `buttons` into ≤ max_rows rows of ≤ max_cols cells, minimizing rows.
+
+    Always fills max_cols per row before wrapping (the last row may be partial).
+    Excess buttons (beyond max_rows*max_cols) are dropped — callers that want
+    pagination should use `paginate_grid` instead.
+    """
     n = len(buttons)
     if n == 0:
         return []
-    if n <= max_rows:
-        return [[b] for b in buttons]
-    cols = min(max_cols, -(-n // max_rows))
-    return [buttons[i:i + cols] for i in range(0, n, cols)]
+    capacity = max_rows * max_cols
+    if n > capacity:
+        buttons = buttons[:capacity]
+        n = capacity
+    return [buttons[i:i + max_cols] for i in range(0, n, max_cols)]
+
+
+def paginate_grid(
+    buttons: list[Button],
+    *,
+    page: int,
+    max_cols: int,
+    max_rows: int,
+    nav_factory=None,
+) -> tuple[list[list[Button]], int, int]:
+    """Slice `buttons` to one page (max_cols × max_rows) and append a nav row when needed.
+
+    Returns (rows_with_nav, page, total_pages). `nav_factory(page)` must return a
+    Button for that target page (called for prev/next + the centre indicator).
+    """
+    per_page = max(1, max_cols * max_rows)
+    n = len(buttons)
+    total_pages = max(1, -(-n // per_page))
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    chunk = buttons[start:start + per_page]
+    rows = [chunk[i:i + max_cols] for i in range(0, len(chunk), max_cols)]
+    if total_pages > 1 and nav_factory is not None:
+        nav: list[Button] = []
+        if page > 0:
+            nav.append(nav_factory(page - 1, "« Пред"))
+        nav.append(nav_factory(page, f"{page + 1}/{total_pages}", noop=True))
+        if page < total_pages - 1:
+            nav.append(nav_factory(page + 1, "След »"))
+        rows.append(nav)
+    return rows, page, total_pages
 
 
 def _mono_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -89,14 +127,8 @@ def _tx_table(txs: list, by_id: dict[str, BillPerson], currency: str = "BYN") ->
     return _mono_table(["Позиция", "Сумма", "Платил", "Должник"], rows)
 
 
-def format_overview(
-    bills: list[BillV2],
-    person_id: str | None,
-    by_id: dict[str, BillPerson],
-    payments: list,
-    *,
-    all_mode: bool = False,
-) -> str:
+def _compute_balances(bills: list[BillV2], person_id: str | None, payments: list):
+    """Compute (owe, owed, pair_totals) across all open bills in `bills`."""
     from collections import defaultdict
 
     owe: dict[str, int] = defaultdict(int)
@@ -122,6 +154,19 @@ def format_overview(
                 if deb != person_id and per_cred.get(person_id, 0) > 0:
                     owed[deb] += per_cred[person_id]
 
+    return owe, owed, pair_totals
+
+
+def format_overview(
+    bills: list[BillV2],
+    person_id: str | None,
+    by_id: dict[str, BillPerson],
+    payments: list,
+    *,
+    all_mode: bool = False,
+) -> str:
+    owe, owed, _ = _compute_balances(bills, person_id, payments)
+
     open_count = sum(1 for b in bills if not b.closed)
     closed_count = sum(1 for b in bills if b.closed)
     title = "Все счета" if all_mode else "Мои счета"
@@ -131,33 +176,49 @@ def format_overview(
     lines = [f"🧾 *{title}* ({counts})\n"]
 
     if owed:
-        lines.append("💚 Тебе должны:")
-        for pid, amt in sorted(owed.items(), key=lambda x: -x[1]):
-            lines.append(f"  ← {pname(pid, by_id)}: {minor_to_display(amt)}")
+        rows = [
+            [pname(pid, by_id), minor_to_display(amt)]
+            for pid, amt in sorted(owed.items(), key=lambda x: -x[1])
+        ]
+        lines.append("🔪 *Тебе должны:*")
+        lines.append(_mono_table(["Кто", "Сумма"], rows))
         lines.append("")
     if owe:
-        lines.append("❤️ Ты должен:")
-        for pid, amt in sorted(owe.items(), key=lambda x: -x[1]):
-            lines.append(f"  → {pname(pid, by_id)}: {minor_to_display(amt)}")
+        rows = [
+            [pname(pid, by_id), minor_to_display(amt)]
+            for pid, amt in sorted(owe.items(), key=lambda x: -x[1])
+        ]
+        lines.append("🥺 *Ты должен:*")
+        lines.append(_mono_table(["Кому", "Сумма"], rows))
         lines.append("")
     if not owe and not owed and not all_mode:
         lines.append("_Нет открытых долгов_ ✨\n")
 
-    if pair_totals:
-        rows = [
-            [pname(d, by_id), "→", pname(c, by_id), minor_to_display(a)]
-            for (d, c), a in sorted(pair_totals.items(), key=lambda x: -x[1])
-        ]
-        scope = "по всем счетам" if all_mode else "в твоих счетах"
-        lines.append(f"⚖️ *Кто кому {scope}:*")
-        lines.append(_mono_table(["Кто", "", "Кому", "Сумма"], rows))
-        lines.append("")
-
-    if all_mode:
-        lines.append("📋 *Аудит:*")
-        lines.extend(_audit_lines(bills, payments))
-
     return "\n".join(lines)
+
+
+def format_pairs(
+    bills: list[BillV2],
+    by_id: dict[str, BillPerson],
+    payments: list,
+    *,
+    all_mode: bool = False,
+) -> str:
+    """Render the cross-cut debt table across all open bills in `bills`."""
+    _, _, pair_totals = _compute_balances(bills, None, payments)
+    scope = "по всем счетам" if all_mode else "в твоих счетах"
+    title = f"⚖️ *Общие долги {scope}*"
+    if not pair_totals:
+        return f"{title}\n\n_Нет открытых долгов_ ✨"
+    rows = [
+        [pname(d, by_id), "→", pname(c, by_id), minor_to_display(a)]
+        for (d, c), a in sorted(pair_totals.items(), key=lambda x: -x[1])
+    ]
+    return f"{title}\n{_mono_table(['Кто', '', 'Кому', 'Сумма'], rows)}"
+
+
+def format_audit(bills: list[BillV2], payments: list) -> str:
+    return "📋 *Аудит:*\n" + "\n".join(_audit_lines(bills, payments))
 
 
 def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
@@ -520,3 +581,144 @@ def kb_bill_buttons(feature: "BillsFeature", bills: list[BillV2]) -> list[Button
         feature.cb("bills:view").button(f"#{b.id} {b.name[:18]}", bill_id=b.id)
         for b in bills
     ]
+
+
+def kb_resolve_list(
+    feature: "BillsFeature",
+    unbound: list[BillPerson],
+    *,
+    show_back: bool = True,
+) -> Keyboard:
+    """List of unbound persons with «Связать» buttons leading to a per-person picker."""
+    rows: list[list[Button]] = []
+    for p in unbound[:20]:
+        rows.append([
+            feature.cb("bills:resolve").button(
+                f"🔗 {p.display_name[:30]}",
+                person_short=p.id[:20],
+            )
+        ])
+    if show_back:
+        rows.append([feature.cb("bills:overview").button("« Назад")])
+    return Keyboard.grid(rows)
+
+
+def select_history(
+    payments: list,
+    my_person_id: str | None,
+    bills_by_id: dict,
+    *,
+    filter_: str = "all",
+    show_chat_only_for: int | None = None,
+) -> list:
+    """Filter + sort payments for history view (newest first)."""
+    items = list(payments)
+    if show_chat_only_for is not None:
+        bill_ids_for_chat = {
+            b.id for b in bills_by_id.values()
+            if getattr(b, "origin_chat_id", None) == show_chat_only_for
+        }
+        items = [
+            p for p in items
+            if p.initiated_chat_id == show_chat_only_for
+            or any(bid in bill_ids_for_chat for bid in (p.bill_ids or []))
+        ]
+    if my_person_id:
+        if filter_ == "recv":
+            items = [p for p in items if p.creditor == my_person_id]
+        elif filter_ == "sent":
+            items = [p for p in items if p.debtor == my_person_id]
+        else:
+            items = [
+                p for p in items
+                if p.creditor == my_person_id or p.debtor == my_person_id
+            ]
+    items.sort(key=lambda p: p.created_at, reverse=True)
+    return items
+
+
+def _history_status_icon(status: str, is_refund: bool = False) -> str:
+    """Single-cell, single-codepoint glyphs so _mono_table stays aligned.
+
+    `↩` marks a refund — a payment that went *against* the usual direction
+    of debt and thus increases what the receiver owes the sender (see
+    BillPaymentV2.is_refund). Appears mostly after legacy migration.
+    """
+    if is_refund:
+        return "↩"
+    return {
+        "confirmed": "✓",
+        "auto_confirmed": "✓",
+        "pending": "…",
+        "rejected": "✗",
+    }.get(status, "·")
+
+
+def render_history_table(
+    chunk: list,
+    by_id: dict[str, BillPerson],
+    bills_by_id: dict,
+    *,
+    my_person_id: str | None = None,
+    head: str = "",
+) -> str:
+    """Render a chunk of payments as the mono-aligned history table."""
+    if not chunk:
+        return f"{head}\n\n_Пусто._" if head else "_Пусто._"
+
+    rows: list[list[str]] = []
+    for p in chunk:
+        d = p.created_at.strftime("%m-%d") if hasattr(p.created_at, "strftime") else "?"
+        who = (
+            f"{_short_name(p.debtor, by_id, max_len=10)} → "
+            f"{_short_name(p.creditor, by_id, max_len=10)}"
+        )
+        if my_person_id and p.creditor == my_person_id:
+            who = f"← {_short_name(p.debtor, by_id, max_len=12)}"
+        elif my_person_id and p.debtor == my_person_id:
+            who = f"→ {_short_name(p.creditor, by_id, max_len=12)}"
+        amt = minor_to_display(p.amount_minor, p.currency)
+        ico = _history_status_icon(p.status, getattr(p, "is_refund", False))
+        bill_part = ""
+        if p.bill_ids:
+            bid = p.bill_ids[0]
+            b = bills_by_id.get(bid)
+            bname = (b.name[:14] if b else f"#{bid}") if b else f"#{bid}"
+            bill_part = f"#{bid} {bname}"
+        rows.append([d, ico, who, amt, bill_part])
+    table = _mono_table(["Дата", "", "Кто", "Сумма", "Счёт"], rows)
+    return f"{head}\n{table}" if head else table
+
+
+def kb_resolve_picker(
+    feature: "BillsFeature",
+    person: BillPerson,
+    candidates: list[tuple[int, str, float]],
+) -> Keyboard:
+    """Picker for one unbound person — list of TG candidates from chat + extras.
+
+    `candidates` items: (telegram_id, display, score).
+    """
+    rows: list[list[Button]] = []
+    for tid, label, _score in candidates[:8]:
+        rows.append([
+            feature.cb("bills:resolve_pick").button(
+                label[:36],
+                person_short=person.id[:20],
+                user_tid=tid,
+            )
+        ])
+    rows.append([
+        feature.cb("bills:resolve_byname").button(
+            "✏️ По @username",
+            person_short=person.id[:20],
+        ),
+    ])
+    rows.append([
+        feature.cb("bills:resolve_skip").button(
+            "🚫 Не нужно (скрыть)",
+            person_short=person.id[:20],
+        ),
+    ])
+    rows.append([feature.cb("bills:resolve_back").button("« Назад")])
+    return Keyboard.grid(rows)

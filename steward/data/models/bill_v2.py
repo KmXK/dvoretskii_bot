@@ -149,3 +149,12 @@ class BillDiffSnapshot:
     before: dict                                    # serialized BillV2 state
     after: dict                                     # serialized BillV2 state
     created_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class ChatNickname:
+    chat_id: int
+    person_id: str                                  # BillPerson.id
+    nick: str                                       # short alias used inside chat_id
+    created_at: datetime = field(default_factory=datetime.now)
+    created_by_telegram_id: int | None = None
