@@ -152,15 +152,61 @@ def rows_to_transactions(rows: list[dict], name_to_id: dict[str, str]) -> list[B
     return txs
 
 
-def build_persons_directory(persons: list) -> str:
-    """Build the [СПРАВОЧНИК ЛЮДЕЙ] block for the AI prompt."""
+def build_persons_directory(
+    persons: list,
+    *,
+    chat_nicks_by_person: dict[str, list[str]] | None = None,
+) -> str:
+    """Build the [СПРАВОЧНИК ЛЮДЕЙ] block for the AI prompt.
+
+    `chat_nicks_by_person` adds chat-scoped nicknames inline next to each person.
+    """
     lines = ["[СПРАВОЧНИК ЛЮДЕЙ]"]
+    chat_nicks_by_person = chat_nicks_by_person or {}
     for p in persons:
         extras = " / ".join(filter(None, [
             ", ".join(p.aliases) if p.aliases else "",
             f"@{p.telegram_username}" if p.telegram_username else "",
+            (
+                "клички: " + ", ".join(chat_nicks_by_person[p.id])
+                if chat_nicks_by_person.get(p.id) else ""
+            ),
         ]))
         lines.append(f"{p.display_name}" + (f" ({extras})" if extras else ""))
+    return "\n".join(lines)
+
+
+def build_chats_directory(
+    chats: list,
+    members_by_chat: dict[int, list],
+    nicks_by_chat: dict[int, list[tuple[str, str]]] | None = None,
+) -> str:
+    """Build the [ИЗВЕСТНЫЕ ЧАТЫ] block for DM mode.
+
+    `chats`: list of Chat objects to include.
+    `members_by_chat`: {chat_id: [BillPerson, ...]}.
+    `nicks_by_chat`: {chat_id: [(nick, person_display_name), ...]}.
+    """
+    if not chats:
+        return ""
+    nicks_by_chat = nicks_by_chat or {}
+    lines = ["[ИЗВЕСТНЫЕ ЧАТЫ]"]
+    for c in chats:
+        aliases = ", ".join(c.aliases) if getattr(c, "aliases", None) else ""
+        header = f"## {c.name}"
+        if aliases:
+            header += f" (алиасы: {aliases})"
+        lines.append(header)
+        members = members_by_chat.get(c.id, [])
+        if members:
+            lines.append(
+                "  люди: " + ", ".join(p.display_name for p in members[:30])
+            )
+        chat_nicks = nicks_by_chat.get(c.id, [])
+        if chat_nicks:
+            lines.append(
+                "  клички: " + ", ".join(f"{nick}={who}" for nick, who in chat_nicks)
+            )
     return "\n".join(lines)
 
 

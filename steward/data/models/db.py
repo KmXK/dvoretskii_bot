@@ -28,6 +28,7 @@ from .bill_v2 import (
     BillPaymentV2,
     BillPerson,
     BillV2,
+    ChatNickname,
 )
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
@@ -68,6 +69,7 @@ class Database:
     bill_diff_snapshots: list[BillDiffSnapshot] = field(default_factory=list)
     bill_item_suggestions: list[BillItemSuggestion] = field(default_factory=list)
     bill_draft_edits: list[BillDraftEdit] = field(default_factory=list)
+    chat_nicknames: list[ChatNickname] = field(default_factory=list)
     users: list[User] = field(default_factory=list)
     rewards: list[Reward] = field(default_factory=list)
     user_rewards: list[UserReward] = field(default_factory=list)
@@ -76,7 +78,7 @@ class Database:
     birthdays: list[Birthday] = field(default_factory=list)
     user_facts: list[UserFact] = field(default_factory=list)
 
-    version: int = 14
+    version: int = 16
 
 
 PARSE_CONFIG = Config(

@@ -153,9 +153,12 @@ class _BillCollectStep(Step):
         if not st.announced:
             st.announced = True
             if st.phase == "naming":
-                await context.bot.send_message(
-                    chat_id=st.origin_chat_id,
-                    text="Как назовём счёт? Пришли название:",
+                cancel_kb = Keyboard.row(
+                    feature.cb("bills:add_cancel").button("❌ Отмена")
+                )
+                await self._send(
+                    context, "Как назовём счёт? Пришли название:",
+                    keyboard=cancel_kb, edit=False,
                 )
                 return False
             if st.phase == "collect":
@@ -218,9 +221,12 @@ class _BillCollectStep(Step):
         if not st.announced:
             st.announced = True
             if st.phase == "naming":
-                await context.bot.send_message(
-                    chat_id=st.origin_chat_id,
-                    text="Как назовём счёт? Пришли название одним сообщением.",
+                cancel_kb = Keyboard.row(
+                    feature.cb("bills:add_cancel").button("❌ Отмена")
+                )
+                await self._send(
+                    context, "Как назовём счёт? Пришли название одним сообщением.",
+                    keyboard=cancel_kb, edit=False,
                 )
                 return False
             if st.phase == "collect":
@@ -353,12 +359,14 @@ class _BillCollectStep(Step):
                 users_map,
                 caller_telegram_id=st.caller_tid,
                 origin_chat_id=st.origin_chat_id,
+                **feature._match_kwargs(st.caller_tid, st.origin_chat_id),
             )
             if not person:
                 person, _ = repo.get_or_create_anonymous_person(text)
 
         st.resolve_queue.pop(0)
         st.resolved_map[key] = person.id
+        await _learn_chat_nick(feature, st, raw_name, person)
         if st.resolve_queue:
             await self._next_disambiguation(context, st, feature)
         else:
@@ -377,7 +385,8 @@ class _BillCollectStep(Step):
             context_text = f"Я = {caller_name}\n\n" + context_text
 
         chat_persons = feature._chat_persons(st.caller_tid)
-        prompt_input = f"{parse.build_persons_directory(chat_persons)}\n\n---\n\n{context_text}"
+        directory_block = _build_directory_block(feature, st, chat_persons)
+        prompt_input = f"{directory_block}\n\n---\n\n{context_text}"
 
         try:
             ai_response = await make_openrouter_query(
@@ -457,6 +466,7 @@ class _BillCollectStep(Step):
                 users_map,
                 caller_telegram_id=st.caller_tid,
                 origin_chat_id=st.origin_chat_id,
+                **feature._match_kwargs(st.caller_tid, st.origin_chat_id),
             )
             if person and person.telegram_id:
                 resolved[key] = person.id
@@ -533,7 +543,7 @@ class _BillCollectStep(Step):
             return
 
         chat_persons = feature._chat_persons(st.caller_tid)
-        directory = parse.build_persons_directory(chat_persons)
+        directory = _build_directory_block(feature, st, chat_persons)
         general_block = parse.parsed_rows_to_general_block(st.parsed_rows)
 
         prompt_input = (
@@ -682,6 +692,9 @@ class _BillCollectStep(Step):
             return
         raw_name = st.resolve_queue.pop(0)[0]
         st.resolved_map[parse.norm_name_key(raw_name)] = person_id
+        person = feature.repository.get_bill_person(person_id)
+        if person:
+            await _learn_chat_nick(feature, st, raw_name, person)
         if st.resolve_queue:
             await self._next_disambiguation(context, st, feature)
         else:
@@ -964,3 +977,188 @@ class _GotStep(Step):
 def _split_cb(data: str) -> tuple[str, list[str]]:
     parts = data.split("|")
     return parts[0], parts[1:]
+
+
+def _build_directory_block(
+    feature: "BillsFeature",
+    st: _SessionState,
+    chat_persons: list,
+) -> str:
+    """Build the persons directory + chats block for the AI prompt.
+
+    In a group chat: just chat_persons + their chat-scoped nicknames.
+    In DM: chat_persons + a [ИЗВЕСТНЫЕ ЧАТЫ] section listing accessible chats
+    with their members and nicks, so the AI can disambiguate cross-chat refs.
+    """
+    repo = feature.repository
+    is_dm = st.origin_chat_id == st.caller_tid
+
+    nicks_for_persons: dict[str, list[str]] = {}
+    for n in repo.db.chat_nicknames:
+        if is_dm or n.chat_id == st.origin_chat_id:
+            nicks_for_persons.setdefault(n.person_id, []).append(n.nick)
+
+    blocks: list[str] = [
+        parse.build_persons_directory(
+            chat_persons, chat_nicks_by_person=nicks_for_persons,
+        )
+    ]
+
+    if is_dm:
+        author = next(
+            (u for u in repo.db.users if u.id == st.caller_tid), None,
+        )
+        chat_ids = set(getattr(author, "chat_ids", []) or []) if author else set()
+        chats = [c for c in repo.db.chats if c.id in chat_ids]
+        if chats:
+            persons_by_id = {p.id: p for p in chat_persons}
+            members_by_chat: dict[int, list] = {}
+            for c in chats:
+                members: list = []
+                for p in chat_persons:
+                    last_chats = set(p.chat_last_seen.keys())
+                    if str(c.id) in last_chats:
+                        members.append(p)
+                members_by_chat[c.id] = members[:30]
+
+            nicks_by_chat: dict[int, list[tuple[str, str]]] = {}
+            for n in repo.db.chat_nicknames:
+                if n.chat_id in chat_ids:
+                    p = persons_by_id.get(n.person_id) or repo.get_bill_person(n.person_id)
+                    if p:
+                        nicks_by_chat.setdefault(n.chat_id, []).append(
+                            (n.nick, p.display_name)
+                        )
+
+            chats_block = parse.build_chats_directory(chats, members_by_chat, nicks_by_chat)
+            if chats_block:
+                blocks.append(chats_block)
+    return "\n\n".join(blocks)
+
+
+async def _learn_chat_nick(
+    feature: "BillsFeature",
+    st: _SessionState,
+    raw_name: str,
+    person,
+) -> None:
+    """Implicit learning: when the user resolves a free-form name to a person in
+    a real (group) chat, remember it as a chat-scoped nickname so next time the
+    bot resolves it without asking. No-op for DM, conflicts, or trivial matches.
+    """
+    if person is None or not raw_name:
+        return
+    raw_name = raw_name.strip()
+    if not raw_name or " " in raw_name or raw_name.startswith("@"):
+        return
+    chat_id = st.origin_chat_id
+    if chat_id == st.caller_tid:
+        return  # DM
+    if raw_name.casefold() == person.display_name.casefold():
+        return  # the bot would have matched display_name anyway
+    repo = feature.repository
+    existing = repo.find_chat_nickname(chat_id, raw_name)
+    if existing is not None and existing.person_id != person.id:
+        return  # don't override a conflicting nick that someone set explicitly
+    if existing is not None:
+        return  # already there
+    repo.add_chat_nickname(
+        chat_id=chat_id,
+        person_id=person.id,
+        nick=raw_name,
+        created_by_telegram_id=st.caller_tid,
+    )
+    await repo.save()
+
+
+class _ResolveByUsernameStep(Step):
+    """Captures one «@username» message and binds the unbound BillPerson to it."""
+
+    @staticmethod
+    async def _announce_once(bot, st: dict, origin_chat_id: int, feature) -> None:
+        if st.get("announced"):
+            return
+        st["announced"] = True
+        person = feature.repository.get_bill_person(st["person_id"])
+        who = person.display_name if person else "этому человеку"
+        await bot.send_message(
+            chat_id=origin_chat_id,
+            text=(
+                f"✏️ Пришли *@username* одним сообщением — привяжу к «{who}».\n"
+                "Отмена: /stop"
+            ),
+            parse_mode="Markdown",
+        )
+
+    async def chat(self, context: ChatStepContext) -> bool:
+        st = context.session_context.get("resolve_byname")
+        if st is None:
+            return True
+        feature = context.session_context["_feature"]
+        person_id: str = st["person_id"]
+        origin_chat_id: int = st["origin_chat_id"]
+
+        if not st.get("announced"):
+            await self._announce_once(context.bot, st, origin_chat_id, feature)
+            return False
+
+        msg = context.message
+        if msg is None or not msg.text or msg.text.startswith("/"):
+            return False
+        username = msg.text.strip().lstrip("@")
+        if not username:
+            await context.bot.send_message(
+                chat_id=msg.chat_id, text="Нужен @username — попробуй ещё раз.",
+            )
+            return False
+
+        repo = feature.repository
+        person = repo.get_bill_person(person_id)
+        if not person:
+            await context.bot.send_message(chat_id=msg.chat_id, text="Уже привязано.")
+            return True
+        if person.telegram_id is not None:
+            await context.bot.send_message(chat_id=msg.chat_id, text="Уже привязано.")
+            return True
+
+        existing = repo.get_bill_person_by_username(username)
+        if existing is None:
+            user = next(
+                (u for u in repo.db.users if (u.username or "").lower() == username.lower()),
+                None,
+            )
+            if user:
+                existing, _ = repo.get_or_create_bill_person(
+                    telegram_id=user.id,
+                    display_name=user.username or str(user.id),
+                    username=user.username,
+                )
+
+        if existing and existing.telegram_id is not None and existing.id != person.id:
+            repo.merge_person(person.id, existing.id)
+            target = existing
+        elif existing and existing.telegram_id is not None and existing.id == person.id:
+            target = person
+        else:
+            person.telegram_username = username
+            target = person
+
+        await repo.save()
+        await context.bot.send_message(
+            chat_id=msg.chat_id,
+            text=f"✅ {target.display_name} привязан к @{username}.",
+        )
+        return True
+
+    async def callback(self, context: CallbackStepContext) -> bool:
+        st = context.session_context.get("resolve_byname")
+        if st is None:
+            return True
+        feature = context.session_context["_feature"]
+        await self._announce_once(
+            context.bot, st, st["origin_chat_id"], feature,
+        )
+        return False
+
+    def stop(self):
+        pass

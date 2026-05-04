@@ -30,6 +30,7 @@ from steward.framework import (
     Keyboard,
     collection,
     on_callback,
+    paginated,
     step,
     subcommand,
     wizard,
@@ -39,7 +40,13 @@ from steward.helpers.bills_notifications import send_bill_notification
 from steward.helpers.bills_person_match import match_name, update_chat_last_seen
 
 from . import fmt, parse
-from .session import _BillCollectStep, _GotStep, _PayingStep, _SessionState
+from .session import (
+    _BillCollectStep,
+    _GotStep,
+    _PayingStep,
+    _ResolveByUsernameStep,
+    _SessionState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +86,344 @@ class BillsFeature(Feature):
             if p.telegram_id and (u := users_map.get(p.telegram_id)) and set(u.chat_ids) & author_chats
         ]
 
+    def _match_kwargs(self, caller_tid: int, origin_chat_id: int) -> dict:
+        """Build kwargs for match_name: chat_nicknames_index + scoped_chat_ids.
+
+        scoped_chat_ids broadens the chat-nick lookup to all chats the caller is
+        in — used in DM where the bare chat is the user's private chat.
+        """
+        author = next((u for u in self.repository.db.users if u.id == caller_tid), None)
+        scoped = list(getattr(author, "chat_ids", []) or []) if author else []
+        return {
+            "chat_nicknames_index": self.repository.chat_nicknames_index(),
+            "scoped_chat_ids": scoped,
+        }
+
+    def _is_dm(self, chat_id: int, caller_tid: int) -> bool:
+        return chat_id == caller_tid
+
+    async def _resolve_nick_target(
+        self,
+        ctx: FeatureContext,
+        target: str,
+    ):
+        """Resolve the right-hand-side of `nick = target` to a BillPerson.
+
+        - "@username" → existing BillPerson by username, or create from User, or anonymous
+        - free text → match_name across the whole directory (chat-scoped first)
+        Returns (person, created_flag) or (None, error_message).
+        """
+        target = target.strip()
+        if not target:
+            return None, "Пустое имя."
+
+        if target.startswith("@"):
+            username = target.lstrip("@")
+            if not username:
+                return None, "Пустой @."
+            person = self.repository.get_bill_person_by_username(username)
+            if not person:
+                user = next(
+                    (u for u in self.repository.db.users
+                     if (u.username or "").lower() == username.lower()),
+                    None,
+                )
+                if user:
+                    display = (user.username or str(user.id))
+                    person, _ = self.repository.get_or_create_bill_person(
+                        telegram_id=user.id,
+                        display_name=display,
+                        username=user.username,
+                    )
+                else:
+                    person, _ = self.repository.get_or_create_anonymous_person(f"@{username}")
+            return person, None
+
+        person, candidates = match_name(
+            target,
+            self.repository.db.bill_persons,
+            self._users(),
+            caller_telegram_id=ctx.user_id,
+            origin_chat_id=ctx.chat_id,
+            **self._match_kwargs(ctx.user_id, ctx.chat_id),
+        )
+        if person:
+            return person, None
+        if candidates:
+            names = ", ".join(p.display_name for p in candidates[:5])
+            return None, f"«{target}» неоднозначно: {names}. Уточни через @username."
+        person, _ = self.repository.get_or_create_anonymous_person(target)
+        return person, None
+
+    async def _nick_set(self, ctx: FeatureContext, nick: str, target: str):
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            await ctx.reply(
+                "Клички задаются внутри чата, не из лс.\n"
+                "Зайди в нужный чат и выполни `/bills nick <ник> = <кому>`."
+            )
+            return
+        if not nick:
+            await ctx.reply("Пустой ник.")
+            return
+        if " " in nick:
+            await ctx.reply("Ник без пробелов — одно слово.")
+            return
+        person, err = await self._resolve_nick_target(ctx, target)
+        if err:
+            await ctx.reply(err)
+            return
+        entry, status = self.repository.add_chat_nickname(
+            chat_id=ctx.chat_id,
+            person_id=person.id,
+            nick=nick,
+            created_by_telegram_id=ctx.user_id,
+        )
+        if status == "added":
+            await self.repository.save()
+            await ctx.reply(f"✅ В этом чате «{nick}» = {person.display_name}.")
+        elif status == "exists":
+            await ctx.reply(f"«{nick}» уже указывает на {person.display_name}.")
+        elif status == "conflict":
+            other = self.repository.get_bill_person(entry.person_id)
+            await ctx.reply(
+                f"«{nick}» в этом чате уже занят: {other.display_name if other else '?'}.\n"
+                f"Удали через `/bills nick remove {nick}` или выбери другой ник."
+            )
+        else:
+            await ctx.reply("Не получилось.")
+
+    async def _nick_remove(self, ctx: FeatureContext, nick: str):
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            await ctx.reply("Клички удаляются внутри чата, не из лс.")
+            return
+        nick = nick.strip()
+        if not nick:
+            await ctx.reply("Что удалить?")
+            return
+        removed = self.repository.remove_chat_nickname(ctx.chat_id, nick)
+        if removed:
+            await self.repository.save()
+            await ctx.reply(f"✅ «{nick}» удалена.")
+        else:
+            await ctx.reply(f"«{nick}» не найдена.")
+
+    async def _show_nicks(self, ctx: FeatureContext):
+        by_id = self._persons()
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            author = next(
+                (u for u in self.repository.db.users if u.id == ctx.user_id), None,
+            )
+            chat_ids = list(getattr(author, "chat_ids", []) or [])
+            chats_by_id = {c.id: c for c in self.repository.db.chats}
+            grouped: dict[int, list] = {}
+            for n in self.repository.db.chat_nicknames:
+                if n.chat_id in chat_ids:
+                    grouped.setdefault(n.chat_id, []).append(n)
+            if not grouped:
+                await ctx.reply("Кличек пока нет. Задавай в чатах: `/bills nick <ник> = @user`.")
+                return
+            lines = ["📛 *Клички по чатам:*"]
+            for cid, nicks in grouped.items():
+                chat = chats_by_id.get(cid)
+                title = chat.name if chat else f"chat {cid}"
+                lines.append(f"\n*{title}*")
+                for n in sorted(nicks, key=lambda x: x.nick.casefold()):
+                    p = by_id.get(n.person_id)
+                    pname = p.display_name if p else "?"
+                    lines.append(f"  • {n.nick} → {pname}")
+            await ctx.reply("\n".join(lines))
+            return
+
+        nicks = self.repository.list_chat_nicknames(ctx.chat_id)
+        if not nicks:
+            await ctx.reply(
+                "В этом чате кличек нет. Задай через `/bills nick <ник> = @user`,\n"
+                "или ответом на сообщение — `/bills bind <ник>`."
+            )
+            return
+        lines = ["📛 *Клички этого чата:*"]
+        for n in sorted(nicks, key=lambda x: x.nick.casefold()):
+            p = by_id.get(n.person_id)
+            pname = p.display_name if p else "?"
+            lines.append(f"  • {n.nick} → {pname}")
+        await ctx.reply("\n".join(lines))
+
+    async def _show_chat_aliases(self, ctx: FeatureContext):
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            author = next(
+                (u for u in self.repository.db.users if u.id == ctx.user_id), None,
+            )
+            chat_ids = set(getattr(author, "chat_ids", []) or [])
+            chats = [c for c in self.repository.db.chats if c.id in chat_ids]
+            if not chats:
+                await ctx.reply("Ты пока не в общих чатах с ботом.")
+                return
+            lines = ["💬 *Чаты, доступные тебе:*"]
+            for c in chats:
+                aliases_str = (
+                    f"  · алиасы: {', '.join(c.aliases)}" if c.aliases else ""
+                )
+                lines.append(f"  • *{c.name}* (id `{c.id}`){aliases_str}")
+            lines.append(
+                "\nЧтобы добавить алиас — зайди в чат и выполни `/bills chat <alias>`."
+            )
+            await ctx.reply("\n".join(lines))
+            return
+        chat = self.repository.get_chat(ctx.chat_id)
+        if not chat:
+            await ctx.reply("Этот чат пока не учтён.")
+            return
+        aliases_str = ", ".join(chat.aliases) if chat.aliases else "(нет)"
+        await ctx.reply(
+            f"💬 *{chat.name}*\nАлиасы: {aliases_str}\n\n"
+            f"Добавить: `/bills chat <alias>` · Удалить: `/bills chat remove <alias>`"
+        )
+
+    async def _bind_via_reply(self, ctx: FeatureContext, nick: str, *, self_bind: bool):
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            await ctx.reply("Эта команда работает только в групповых чатах.")
+            return
+        if not nick:
+            await ctx.reply("Формат: `/bills bind <ник>` (ответом на сообщение).")
+            return
+        if " " in nick:
+            await ctx.reply("Ник без пробелов — одно слово.")
+            return
+
+        target_user = None
+        if self_bind:
+            target_user = ctx.message.from_user if ctx.message else None
+        else:
+            reply = (ctx.message.reply_to_message if ctx.message else None)
+            if reply is None:
+                await ctx.reply(
+                    "Это работает ответом на сообщение того, кого хочешь привязать.\n"
+                    "Если речь о тебе самом — `/bills iam <ник>`."
+                )
+                return
+            target_user = reply.from_user
+        if target_user is None:
+            await ctx.reply("Не вижу автора сообщения.")
+            return
+
+        person, _ = self.repository.get_or_create_bill_person(
+            telegram_id=target_user.id,
+            display_name=target_user.full_name or target_user.username or str(target_user.id),
+            username=target_user.username,
+        )
+        entry, status = self.repository.add_chat_nickname(
+            chat_id=ctx.chat_id,
+            person_id=person.id,
+            nick=nick,
+            created_by_telegram_id=ctx.user_id,
+        )
+        if status == "conflict":
+            other = self.repository.get_bill_person(entry.person_id)
+            await ctx.reply(
+                f"«{nick}» в этом чате уже занят: {other.display_name if other else '?'}.\n"
+                f"Удали через `/bills nick remove {nick}` или выбери другой ник."
+            )
+            return
+        await self.repository.save()
+        if status == "exists":
+            await ctx.reply(f"✅ «{nick}» уже = {person.display_name}.")
+        else:
+            await ctx.reply(
+                f"✅ Запомнил: в этом чате «{nick}» = {person.display_name} "
+                f"(@{target_user.username})."
+                if target_user.username else
+                f"✅ Запомнил: в этом чате «{nick}» = {person.display_name}."
+            )
+
+    def _unbound_persons_for_chat(self, chat_id: int) -> list:
+        """BillPersons referenced in this chat's bills that have no telegram_id."""
+        chat_bills = [b for b in self.repository.db.bills_v2 if b.origin_chat_id == chat_id]
+        if not chat_bills:
+            return []
+        seen: set[str] = set()
+        for b in chat_bills:
+            seen.add(b.author_person_id)
+            seen.update(b.participants)
+        by_id = {p.id: p for p in self.repository.db.bill_persons}
+        return [
+            by_id[pid] for pid in seen
+            if pid in by_id and by_id[pid].telegram_id is None
+        ]
+
+    def _unbound_persons_visible_to(self, caller_tid: int, bills: list[BillV2]) -> list:
+        """Caller-visible BillPersons without telegram_id, worth asking the user to bind.
+
+        Filters out:
+          - persons explicitly marked as not-on-TG (alias 'external')
+          - persons appearing only in closed bills (settled history — don't bug the user)
+        """
+        in_open: set[str] = set()
+        in_any: set[str] = set()
+        for b in bills:
+            ids = {b.author_person_id, *b.participants}
+            in_any.update(ids)
+            if not b.closed:
+                in_open.update(ids)
+        by_id = {p.id: p for p in self.repository.db.bill_persons}
+        out = []
+        for pid in in_any:
+            p = by_id.get(pid)
+            if p is None or p.telegram_id is not None:
+                continue
+            if "external" in (p.aliases or []):
+                continue
+            if pid not in in_open:
+                continue
+            out.append(p)
+        return out
+
+    def _telegram_candidates_for(
+        self,
+        person: "BillPerson",
+        chat_id: int,
+        caller_tid: int,
+        limit: int = 8,
+    ) -> list[tuple[int, str, float]]:
+        """Rank chat-member Telegram users as binding candidates for `person`.
+
+        For DM context, broadens to all caller chats. Returns
+        (telegram_id, display_label, score) sorted desc.
+        """
+        from steward.helpers.bills_person_match import fuzzy_score_telegram_candidate
+
+        users_map = self._users()
+        bound_tids = {p.telegram_id for p in self.repository.db.bill_persons if p.telegram_id}
+
+        if self._is_dm(chat_id, caller_tid):
+            caller = users_map.get(caller_tid)
+            scoped_chat_ids = set(getattr(caller, "chat_ids", []) or []) if caller else set()
+            users = [u for u in self.repository.db.users if set(u.chat_ids or []) & scoped_chat_ids]
+        else:
+            users = [u for u in self.repository.db.users if chat_id in (u.chat_ids or [])]
+
+        scored: list[tuple[int, str, float]] = []
+        for u in users:
+            if u.id in bound_tids:
+                continue
+            score = fuzzy_score_telegram_candidate(person.display_name, u, person)
+            for alias in person.aliases or []:
+                score = max(score, fuzzy_score_telegram_candidate(alias, u, person))
+            label = (
+                f"@{u.username}" if u.username else (u.stand_name or str(u.id))
+            )
+            scored.append((u.id, label, score))
+        scored.sort(key=lambda x: -x[2])
+        if any(s > 0 for _, _, s in scored):
+            scored = [x for x in scored if x[2] > 0]
+        return scored[:limit]
+
+    def _find_unbound_person(self, person_short: str):
+        """Look up a BillPerson whose id starts with `person_short` and has no telegram_id."""
+        for p in self.repository.db.bill_persons:
+            if p.id.startswith(person_short) and p.telegram_id is None:
+                return p
+        return None
+
     def _person_bills(self, tid: int, all_mode: bool = False):
         person = self.repository.get_bill_person_by_telegram_id(tid)
         is_admin = self.repository.is_admin(tid)
@@ -103,18 +448,35 @@ class BillsFeature(Feature):
     async def cmd_list_all(self, ctx: FeatureContext):
         await self._show_overview(ctx, all_mode=True)
 
+    @subcommand("history", description="История моих переводов")
+    async def cmd_history(self, ctx: FeatureContext):
+        await self.paginate(ctx, "bills_history", metadata="all")
+
     @subcommand("help", description="Справка")
     async def cmd_help(self, ctx: FeatureContext):
         await ctx.reply(
             "📖 *Справка /bills*\n\n"
+            "*Счета и платежи*\n"
             "/bills — список счетов и долги\n"
             "/bills add <название> — создать счёт\n"
             "/bills <id> — посмотреть счёт\n"
-            "/bills pay <сумма> @user — я перевёл (ждёт подтверждения)\n"
+            "/bills pay <сумма> @user — я перевёл (pending)\n"
             "/bills got <сумма> @user — мне перевели (auto-confirm)\n"
-            "/bills alias <имя> = <псевдоним> — добавить псевдоним\n"
-            "/bills notify — настройки уведомлений\n"
-            "/bills all — все счета"
+            "/bills history — история моих переводов\n"
+            "/bills all — все счета (включая закрытые)\n"
+            "\n*Имена и клички*\n"
+            "/bills nick <ник> = @user — кличка в этом чате\n"
+            "/bills nick <ник> = Имя — кличка для уже известного человека\n"
+            "/bills nick remove <ник> — удалить\n"
+            "/bills nicks — список кличек\n"
+            "/bills bind <ник> — *в ответ на сообщение* привязать автора\n"
+            "/bills iam <ник> — кличка для меня самого в этом чате\n"
+            "/bills alias <имя> = <псевдоним> — глобальный псевдоним\n"
+            "\n*Чаты (для резолва из лс)*\n"
+            "/bills chat <alias> — короткий алиас для текущего чата\n"
+            "/bills chat — список чатов и алиасов\n"
+            "\n*Прочее*\n"
+            "/bills notify — настройки уведомлений"
         )
 
     @subcommand("<bill_id:int>", description="Посмотреть счёт")
@@ -186,6 +548,7 @@ class BillsFeature(Feature):
             self._users(),
             caller_telegram_id=ctx.user_id,
             origin_chat_id=ctx.chat_id,
+            **self._match_kwargs(ctx.user_id, ctx.chat_id),
         )
         if not person:
             msg = (
@@ -203,6 +566,86 @@ class BillsFeature(Feature):
         await ctx.reply(
             f"✅ Добавлено {len(added)} псевдонимов для {person.display_name}: {', '.join(added)}"
         )
+
+    # -- Per-chat nicknames --
+
+    @subcommand("nicks", description="Список кличек этого чата")
+    async def cmd_nicks(self, ctx: FeatureContext):
+        await self._show_nicks(ctx)
+
+    @subcommand(
+        "nick <text:rest>",
+        description="Кличка для чата: ник = @user или ник = Имя",
+    )
+    async def cmd_nick(self, ctx: FeatureContext, text: str):
+        text = text.strip()
+        if not text:
+            await ctx.reply(
+                "Формат: `/bills nick <ник> = @user` или `/bills nick <ник> = Имя`\n"
+                "Удалить: `/bills nick remove <ник>`"
+            )
+            return
+        if text.lower().startswith("remove "):
+            await self._nick_remove(ctx, text[len("remove "):].strip())
+            return
+        m = re.match(r"(.+?)\s*=\s*(.+)", text)
+        if not m:
+            await ctx.reply("Формат: `/bills nick <ник> = @user` или `<ник> = Имя`")
+            return
+        nick, target = m.group(1).strip(), m.group(2).strip()
+        await self._nick_set(ctx, nick, target)
+
+    @subcommand(
+        "bind <nick:rest>",
+        description="Ответом на сообщение: «/bills bind <ник>» — связать автора и сохранить кличку",
+    )
+    async def cmd_bind(self, ctx: FeatureContext, nick: str):
+        await self._bind_via_reply(ctx, nick.strip(), self_bind=False)
+
+    @subcommand(
+        "iam <nick:rest>",
+        description="«я в этом чате — Х»: ставит кличку себе и привязывается",
+    )
+    async def cmd_iam(self, ctx: FeatureContext, nick: str):
+        await self._bind_via_reply(ctx, nick.strip(), self_bind=True)
+
+    @subcommand(
+        "chat <alias:rest>",
+        description="Алиас текущего чата (использовать в лс: «из <alias>»)",
+    )
+    async def cmd_chat_alias(self, ctx: FeatureContext, alias: str):
+        alias = alias.strip()
+        if not alias:
+            await self._show_chat_aliases(ctx)
+            return
+        if alias.lower().startswith("remove "):
+            target = alias[len("remove "):].strip()
+            removed = self.repository.remove_chat_alias(ctx.chat_id, target)
+            if removed:
+                await self.repository.save()
+                await ctx.reply(f"✅ Алиас «{target}» удалён.")
+            else:
+                await ctx.reply(f"Алиас «{target}» не найден.")
+            return
+        if self._is_dm(ctx.chat_id, ctx.user_id):
+            await ctx.reply(
+                "Алиас чата задаётся внутри самого чата, не из лс.\n"
+                "Зайди в нужный чат и выполни `/bills chat <alias>`."
+            )
+            return
+        result = self.repository.add_chat_alias(ctx.chat_id, alias)
+        if result == "added":
+            await self.repository.save()
+            await ctx.reply(f"✅ Чат теперь также откликается на «{alias}».")
+        elif result == "exists":
+            await ctx.reply(f"Алиас «{alias}» уже задан.")
+        elif result == "conflict":
+            owner = self.repository.find_chat_by_alias(alias)
+            await ctx.reply(
+                f"«{alias}» уже занят чатом «{owner.name if owner else '?'}»."
+            )
+        else:
+            await ctx.reply("Не получилось.")
 
     @subcommand("notify", description="Настройки уведомлений")
     async def cmd_notify_show(self, ctx: FeatureContext):
@@ -230,7 +673,14 @@ class BillsFeature(Feature):
     async def _show_overview(self, ctx: FeatureContext, all_mode: bool):
         await self._render_overview(ctx, all_mode=all_mode, edit=False)
 
-    async def _render_overview(self, ctx: FeatureContext, *, all_mode: bool, edit: bool):
+    async def _render_overview(
+        self,
+        ctx: FeatureContext,
+        *,
+        all_mode: bool,
+        edit: bool,
+        page: int = 0,
+    ):
         tid = ctx.user_id
         person, is_admin, bills = self._person_bills(tid, all_mode)
         logger.info(
@@ -251,8 +701,6 @@ class BillsFeature(Feature):
             all_mode=all_mode,
         )
 
-        button_bills = bills if all_mode else [b for b in bills if not b.closed]
-        bill_buttons = fmt.kb_bill_buttons(self, button_bills)
         rows: list[list[Button]] = []
 
         has_owe, has_owed = self._person_balance_directions(
@@ -266,13 +714,34 @@ class BillsFeature(Feature):
         if action_row:
             rows.append(action_row)
 
-        rows.extend(fmt.compact_grid(bill_buttons, max_cols=2, max_rows=10))
-        rows.append([self.cb("bills:new").button("➕ Новый счёт")])
+        unbound = self._unbound_persons_visible_to(ctx.user_id, bills)
+        if unbound:
+            rows.append([
+                self.cb("bills:resolve_list").button(
+                    f"🔗 Связать имена ({len(unbound)})",
+                )
+            ])
+
+        rows.append([
+            self.cb("bills:list_open").button("📋 Список счетов"),
+            self.cb("bills:pairs").button("⚖️ Общие долги"),
+        ])
+        rows.append([
+            self.cb("bills:hist_open").button("📜 История"),
+            self.cb("bills:new").button("➕ Новый счёт"),
+        ])
         keyboard = Keyboard.grid(rows)
         if edit:
             await ctx.edit(text, keyboard=keyboard)
         else:
             await ctx.reply(text, keyboard=keyboard)
+
+    def _page_nav_factory(self, view: str):
+        def make(p: int, label: str, *, noop: bool = False):
+            if noop:
+                return self.cb("bills:noop").button(label)
+            return self.cb("bills:page").button(label, view=view, page=p)
+        return make
 
     def _person_balance_directions(
         self, bills: list[BillV2], person_id: str | None
@@ -384,27 +853,205 @@ class BillsFeature(Feature):
         )
         await ctx.edit(text, keyboard=kb, markdown=False)
 
+    # -- Resolve unbound persons (binding) --
+
+    @on_callback("bills:resolve_list", schema="")
+    async def on_resolve_list(self, ctx: FeatureContext):
+        tid = ctx.user_id
+        _, _, bills = self._person_bills(tid, all_mode=False)
+        unbound = self._unbound_persons_visible_to(tid, bills)
+        if not unbound:
+            await ctx.edit("✨ Все имена уже привязаны.")
+            return
+        await ctx.edit(
+            f"🔗 *Связать имена*\n\nВыбери, кого хочешь привязать к Telegram-юзеру:",
+            keyboard=fmt.kb_resolve_list(self, unbound),
+        )
+
+    @on_callback("bills:resolve", schema="<person_short:str>")
+    async def on_resolve(self, ctx: FeatureContext, person_short: str):
+        person = self._find_unbound_person(person_short)
+        if not person:
+            await ctx.toast("Уже привязано или не найдено.", alert=True)
+            await self.on_resolve_list(ctx)
+            return
+        candidates = self._telegram_candidates_for(
+            person, ctx.chat_id, ctx.user_id,
+        )
+        if not candidates:
+            text = (
+                f"🔗 «{person.display_name}»\n\n"
+                "Среди участников чата подходящих не нашлось.\n"
+                "Попробуй ввести @username или отметь как не-TG."
+            )
+        else:
+            top = candidates[0][2]
+            verb = "Похоже на" if top >= 600 else "Кандидаты"
+            names = ", ".join(label for _, label, _ in candidates[:3])
+            text = f"🔗 «{person.display_name}»\n\n{verb}: {names}"
+        await ctx.edit(text, keyboard=fmt.kb_resolve_picker(self, person, candidates))
+
+    @on_callback("bills:resolve_pick", schema="<person_short:str>|<user_tid:int>")
+    async def on_resolve_pick(
+        self, ctx: FeatureContext, person_short: str, user_tid: int
+    ):
+        person = self._find_unbound_person(person_short)
+        if not person:
+            await ctx.toast("Уже привязано или не найдено.", alert=True)
+            return
+
+        existing = self.repository.get_bill_person_by_telegram_id(user_tid)
+        if existing and existing.id != person.id:
+            self.repository.merge_person(person.id, existing.id)
+            target = existing
+        else:
+            user = next(
+                (u for u in self.repository.db.users if u.id == user_tid), None,
+            )
+            person.telegram_id = user_tid
+            if user and user.username:
+                person.telegram_username = user.username
+            target = person
+
+        await self.repository.save()
+        await ctx.toast(f"✅ {target.display_name} привязан.")
+        await self.on_resolve_list(ctx)
+
+    @on_callback("bills:resolve_skip", schema="<person_short:str>")
+    async def on_resolve_skip(self, ctx: FeatureContext, person_short: str):
+        person = self._find_unbound_person(person_short)
+        if not person:
+            await ctx.toast("Уже привязано или не найдено.", alert=True)
+            return
+        if "external" not in (person.aliases or []):
+            person.aliases = list(person.aliases or []) + ["external"]
+            await self.repository.save()
+        await ctx.toast(f"🚫 «{person.display_name}» скрыт.")
+        await self.on_resolve_list(ctx)
+
+    @on_callback("bills:resolve_back", schema="")
+    async def on_resolve_back(self, ctx: FeatureContext):
+        await self.on_resolve_list(ctx)
+
+    @on_callback("bills:resolve_byname", schema="<person_short:str>")
+    async def on_resolve_byname(self, ctx: FeatureContext, person_short: str):
+        person = self._find_unbound_person(person_short)
+        if not person:
+            await ctx.toast("Уже привязано или не найдено.", alert=True)
+            return
+        await self.start_session(
+            [_ResolveByUsernameStep()],
+            ctx,
+            resolve_byname={
+                "person_id": person.id,
+                "origin_chat_id": ctx.chat_id,
+                "caller_tid": ctx.user_id,
+            },
+            _feature=self,
+        )
+
+    # -- History --
+
+    @on_callback("bills:hist_open", schema="")
+    async def on_hist_open(self, ctx: FeatureContext):
+        await self.paginate(ctx, "bills_history", metadata="all")
+
+    @paginated("bills_history", per_page=8)
+    def bills_history_page(self, ctx: FeatureContext, metadata: str):
+        filter_ = metadata or "all"
+        tid = ctx.user_id
+        person = self.repository.get_bill_person_by_telegram_id(tid)
+        if not person:
+            return [], (lambda _: "📜 Истории нет — ты ещё не участвовал в платежах."), None
+        by_id = self._persons()
+        bills_by_id = {b.id: b for b in self.repository.db.bills_v2}
+        chat_only = None if self._is_dm(ctx.chat_id, tid) else ctx.chat_id
+        items = fmt.select_history(
+            self.repository.db.bill_payments_v2,
+            person.id,
+            bills_by_id,
+            filter_=filter_,
+            show_chat_only_for=chat_only,
+        )
+
+        title_filter = {"all": "все", "recv": "полученные", "sent": "отправленные"}.get(
+            filter_, "все",
+        )
+        head = f"📜 *История переводов* ({title_filter}, {len(items)})"
+
+        def render(chunk):
+            return fmt.render_history_table(chunk, by_id, bills_by_id, my_person_id=person.id, head=head)
+
+        filter_row = []
+        for key, label in (("all", "Все"), ("recv", "⬇ Полученные"), ("sent", "⬆ Отправленные")):
+            if key == filter_:
+                filter_row.append(self.cb("bills:noop").button(f"• {label}"))
+            else:
+                filter_row.append(self.page_button("bills_history", label, metadata=key, page=0))
+        extra = Keyboard.grid([filter_row, [self.cb("bills:overview").button("« Назад")]])
+        return items, render, extra
+
     @on_callback("bills:list_open", schema="")
     async def on_list_open(self, ctx: FeatureContext):
-        await self._on_list(ctx, closed=False)
+        await self._on_list(ctx, closed=False, page=0)
 
     @on_callback("bills:list_closed", schema="")
     async def on_list_closed(self, ctx: FeatureContext):
-        await self._on_list(ctx, closed=True)
+        await self._on_list(ctx, closed=True, page=0)
 
-    async def _on_list(self, ctx: FeatureContext, closed: bool):
+    @on_callback("bills:pairs", schema="")
+    async def on_pairs(self, ctx: FeatureContext):
+        tid = ctx.user_id
+        _, _, bills = self._person_bills(tid, all_mode=False)
+        if not bills:
+            await ctx.edit("Нет открытых счетов.")
+            return
+        text = fmt.format_pairs(
+            bills, self._persons(), self.repository.db.bill_payments_v2,
+            all_mode=False,
+        )
+        kb = Keyboard.row(self.cb("bills:overview").button("« Назад"))
+        await ctx.edit(text, keyboard=kb)
+
+    @on_callback("bills:page", schema="<view:str>|<page:int>")
+    async def on_page(self, ctx: FeatureContext, view: str, page: int):
+        if view == "lo":
+            await self._on_list(ctx, closed=False, page=page)
+        elif view == "lc":
+            await self._on_list(ctx, closed=True, page=page)
+
+    async def _on_list(self, ctx: FeatureContext, closed: bool, page: int = 0):
         tid = ctx.user_id
         person, is_admin, bills = self._person_bills(tid, all_mode=True)
         logger.info(
-            "_on_list: tid=%s person=%s bills=%d closed=%s",
-            tid, person.id if person else None, len(bills), closed,
+            "_on_list: tid=%s person=%s bills=%d closed=%s page=%d",
+            tid, person.id if person else None, len(bills), closed, page,
         )
         filtered = [b for b in bills if b.closed == closed]
         if not filtered:
-            await ctx.edit("Нет закрытых счетов." if closed else "Нет открытых счетов.")
+            await ctx.edit(
+                "Нет закрытых счетов." if closed else "Нет открытых счетов.",
+                keyboard=Keyboard.row(
+                    self.cb("bills:list_open" if closed else "bills:list_closed").button(
+                        "📂 Открытые" if closed else "📕 Закрытые"
+                    ),
+                    self.cb("bills:overview").button("« Назад"),
+                ),
+            )
             return
         bill_buttons = fmt.kb_bill_buttons(self, filtered)
-        rows = fmt.compact_grid(bill_buttons, max_cols=2, max_rows=10)
+        view = "lc" if closed else "lo"
+        rows, _, _ = fmt.paginate_grid(
+            bill_buttons,
+            page=page,
+            max_cols=2,
+            max_rows=4,
+            nav_factory=self._page_nav_factory(view),
+        )
+        toggle = self.cb(
+            "bills:list_open" if closed else "bills:list_closed"
+        ).button("📂 Открытые" if closed else "📕 Закрытые")
+        rows.append([toggle, self.cb("bills:overview").button("« Назад")])
         if not closed:
             rows.append([self.cb("bills:new").button("➕ Новый")])
         label = "📕 *Закрытые счета:*" if closed else "📋 *Открытые счета:*"
@@ -1129,6 +1776,7 @@ class BillsFeature(Feature):
             self._users(),
             caller_telegram_id=from_user.id,
             origin_chat_id=chat_id,
+            **self._match_kwargs(from_user.id, chat_id),
         )
         if not debtor:
             text = (
@@ -1218,6 +1866,7 @@ class BillsFeature(Feature):
             self._users(),
             caller_telegram_id=from_user.id,
             origin_chat_id=chat_id,
+            **self._match_kwargs(from_user.id, chat_id),
         )
         if not creditor:
             text = (
