@@ -10,8 +10,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NVIDIA_STT_MODEL = "nvidia/parakeet-ctc-1.1b"
-
 _ELEVEN_FAIL_THRESHOLD = 3
 _ELEVEN_OPEN_DURATION_SEC = 12 * 60 * 60
 
@@ -61,44 +59,6 @@ def _eleven_record_error(err: BaseException) -> None:
 def _eleven_record_success() -> None:
     global _eleven_consecutive_errors
     _eleven_consecutive_errors = 0
-
-
-def nvidia_stt_configured() -> bool:
-    return bool(os.environ.get("NVIDIA_API_KEY")) and bool(os.environ.get("NVIDIA_STT_URL"))
-
-
-async def try_nvidia_transcribe_bytes(
-    audio: bytes,
-    filename: str = "voice.mp3",
-    language: str | None = "ru",
-) -> str | None:
-    api_key = os.environ.get("NVIDIA_API_KEY")
-    url = os.environ.get("NVIDIA_STT_URL")
-    if not api_key or not url:
-        return None
-
-    model = os.environ.get("NVIDIA_STT_MODEL") or _DEFAULT_NVIDIA_STT_MODEL
-    files = {"file": (filename, audio, "audio/mpeg")}
-    data: dict[str, str] = {"model": model}
-    if language:
-        data["language"] = language
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    try:
-        async with httpx.AsyncClient(timeout=240.0, trust_env=False) as client:
-            r = await client.post(url, headers=headers, data=data, files=files)
-            if r.status_code >= 400:
-                logger.warning("NVIDIA STT HTTP %s: %s", r.status_code, r.text[:300])
-                return None
-            payload = r.json()
-    except Exception as e:
-        logger.warning("NVIDIA STT failed: %s", e)
-        return None
-
-    text = payload.get("text") if isinstance(payload, dict) else None
-    if isinstance(text, str) and text.strip():
-        return text.strip()
-    return ""
 
 
 async def _elevenlabs_transcribe(audio: bytes):
@@ -339,10 +299,6 @@ async def transcribe_audio_bytes(
     #   non-empty str — recognized text
     #   ""            — provider succeeded but found no speech; do NOT fall through
     #   None          — provider failed (transport/API); try the next one
-    nv = await try_nvidia_transcribe_bytes(audio)
-    if nv is not None:
-        return nv
-
     yandex = await _yandex_transcribe(audio)
     if yandex is not None:
         return yandex
