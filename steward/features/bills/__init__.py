@@ -75,15 +75,28 @@ class BillsFeature(Feature):
     def _users(self) -> dict[int, Any]:
         return {u.id: u for u in self.repository.db.users}
 
-    def _chat_persons(self, author_tid: int) -> list:
+    def _chat_persons(self, author_tid: int, origin_chat_id: int | None = None) -> list:
+        """Bill persons reachable from the calling user.
+
+        In a group chat (origin_chat_id != author_tid), restrict to people who are
+        actually in *this* chat — otherwise the AI directory pulls in strangers
+        from other shared chats and the model auto-rewrites a bare first name
+        ("Лёша") to whichever candidate exists globally, even when the local
+        chat has its own match.
+
+        In DM (no origin chat or origin_chat_id == author_tid) we keep the
+        broader cross-chat lookup so the user can still reference people
+        from any of their groups by name.
+        """
         author = next((u for u in self.repository.db.users if u.id == author_tid), None)
         if not author:
             return [p for p in self.repository.db.bill_persons if p.telegram_id]
-        author_chats = set(author.chat_ids)
         users_map = self._users()
+        is_dm = origin_chat_id is None or origin_chat_id == author_tid
+        scope = set(author.chat_ids) if is_dm else {origin_chat_id}
         return [
             p for p in self.repository.db.bill_persons
-            if p.telegram_id and (u := users_map.get(p.telegram_id)) and set(u.chat_ids) & author_chats
+            if p.telegram_id and (u := users_map.get(p.telegram_id)) and set(u.chat_ids) & scope
         ]
 
     def _match_kwargs(self, caller_tid: int, origin_chat_id: int) -> dict:

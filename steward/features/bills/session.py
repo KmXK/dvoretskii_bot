@@ -382,12 +382,22 @@ class _BillCollectStep(Step):
 
         repo = feature.repository
         caller = repo.get_bill_person_by_telegram_id(st.caller_tid)
+        if caller is None:
+            user_obj = next(
+                (u for u in repo.db.users if u.id == st.caller_tid), None,
+            )
+            if user_obj:
+                caller, _ = repo.get_or_create_bill_person(
+                    telegram_id=st.caller_tid,
+                    display_name=user_obj.stand_name or user_obj.username or str(st.caller_tid),
+                    username=user_obj.username,
+                )
         caller_name = caller.display_name if caller else None
         context_text = "\n\n".join(st.context_items)
         if caller_name:
             context_text = f"Я = {caller_name}\n\n" + context_text
 
-        chat_persons = feature._chat_persons(st.caller_tid)
+        chat_persons = feature._chat_persons(st.caller_tid, st.origin_chat_id)
         directory_block = _build_directory_block(feature, st, chat_persons)
         prompt_input = f"{directory_block}\n\n---\n\n{context_text}"
 
@@ -430,7 +440,7 @@ class _BillCollectStep(Step):
         Returns True if rows were ingested OR questions were emitted.
         """
         repo = feature.repository
-        chat_persons = feature._chat_persons(st.caller_tid)
+        chat_persons = feature._chat_persons(st.caller_tid, st.origin_chat_id)
 
         currency, rows, new_persons, questions = parse.parse_ai_response(ai_response)
         st.currency = currency
@@ -509,7 +519,7 @@ class _BillCollectStep(Step):
             return await self._show_preview(context, st, feature)
         st.phase = "resolve"
         raw_name, candidates = st.resolve_queue[0]
-        chat_persons = feature._chat_persons(st.caller_tid)
+        chat_persons = feature._chat_persons(st.caller_tid, st.origin_chat_id)
         is_unknown = len(candidates) == len(chat_persons)
         if is_unknown:
             text = f"Не знаю кто такой «{raw_name}».\n_Выбери из знакомых, напиши @тег или имя_"
@@ -548,7 +558,7 @@ class _BillCollectStep(Step):
             await self._send(context, "Нет распознанного счёта для исправления.")
             return
 
-        chat_persons = feature._chat_persons(st.caller_tid)
+        chat_persons = feature._chat_persons(st.caller_tid, st.origin_chat_id)
         directory = _build_directory_block(feature, st, chat_persons)
         general_block = parse.parsed_rows_to_general_block(st.parsed_rows)
 
