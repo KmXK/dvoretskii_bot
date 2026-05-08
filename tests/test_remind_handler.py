@@ -155,7 +155,7 @@ class TestRemindMigrationV18:
         }
 
         migrated = repo._migrate(data)
-        assert migrated["version"] == 18
+        assert migrated["version"] == 19
 
         # Order: earlier (2026-01-01) -> later (2026-01-02) -> completed (2026-01-03)
         assert migrated["delayed_actions"][0]["id"] == 2
