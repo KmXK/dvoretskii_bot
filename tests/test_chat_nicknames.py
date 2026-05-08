@@ -246,7 +246,7 @@ async def test_migration_v15_adds_chat_nicknames_and_aliases(tmp_path):
     repo = Repository(JsonFileStorage(str(db_path)))
     await repo.migrate()
 
-    assert repo.db.version == 17
+    assert repo.db.version == 18
     assert repo.db.chat_nicknames == []
     chat = next(c for c in repo.db.chats if c.id == -100)
     assert chat.aliases == []
