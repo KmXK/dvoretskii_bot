@@ -55,11 +55,12 @@ async def build_punishment_today_entries(
         if participant.user_id not in user_ids_in_chat:
             continue
 
-        count = await get_current_curse_count(
+        raw_count = await get_current_curse_count(
             queryable,
             participant.user_id,
             _participant_since(participant),
         )
+        count = max(raw_count - (participant.done_words_offset or 0), 0)
         if count <= 0:
             continue
 

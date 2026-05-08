@@ -178,11 +178,20 @@ class CurseFeature(Feature):
     async def done_default(self, ctx: FeatureContext):
         await self._done(ctx, None)
 
+    @subcommand("done <id:int> <count:int>", description="Засчитать часть наказания")
+    async def done_with_id_and_count(self, ctx: FeatureContext, id: int, count: int):
+        await self._done(ctx, id, count)
+
     @subcommand("done <id:int>", description="Засчитать наказание")
     async def done_with_id(self, ctx: FeatureContext, id: int):
         await self._done(ctx, id)
 
-    async def _done(self, ctx: FeatureContext, punishment_id: int | None):
+    async def _done(
+        self,
+        ctx: FeatureContext,
+        punishment_id: int | None,
+        count: int | None = None,
+    ):
         user_id = ctx.user_id
         participant = self.curse_participants.find_by(user_id=user_id)
         if participant is None:
@@ -191,6 +200,7 @@ class CurseFeature(Feature):
         now = datetime.now(timezone.utc)
         if punishment_id is None:
             participant.last_done_at = now
+            participant.done_words_offset = 0
             await self.curse_participants.save()
             await ctx.reply("Отсчёт наказаний сброшен.")
             return
@@ -198,20 +208,64 @@ class CurseFeature(Feature):
         if punishment is None:
             await ctx.reply("Наказание не найдено.")
             return
+        if count is not None:
+            if count <= 0:
+                raise ValidationArgumentsError()
+            coeff = punishment.coeff
+            if coeff <= 0:
+                await ctx.reply("Наказание настроено некорректно.")
+                return
+            if count % coeff != 0:
+                lo = count - (count % coeff)
+                hi = lo + coeff
+                await ctx.reply(
+                    "Количество должно быть кратно коэффициенту наказания "
+                    f"({coeff}). Пример: {lo} или {hi}."
+                )
+                return
         current_count = await get_current_curse_count(
             ctx.metrics,
             user_id,
             participant.last_done_at or participant.subscribed_at,
         )
-        total = punishment.coeff * current_count
-        ctx.metrics.inc(
-            "bot_curse_punishment_done_total",
-            {
-                "punishment_id": str(punishment.id),
-                "punishment_title": punishment.title,
-            },
-            total,
-        )
-        participant.last_done_at = now
+        effective_words = max(current_count - (participant.done_words_offset or 0), 0)
+        if effective_words <= 0:
+            await ctx.reply("Сейчас наказаний нет.")
+            return
+
+        labels = {
+            "punishment_id": str(punishment.id),
+            "punishment_title": punishment.title,
+        }
+
+        if count is None:
+            total = punishment.coeff * effective_words
+            ctx.metrics.inc("bot_curse_punishment_done_total", labels, total)
+            participant.last_done_at = now
+            participant.done_words_offset = 0
+            await self.curse_participants.save()
+            await ctx.reply(f"Наказание засчитано: {total} {punishment.title}.")
+            return
+
+        words_paid = min(count // punishment.coeff, effective_words)
+        units_paid = words_paid * punishment.coeff
+        remaining_words = effective_words - words_paid
+        remaining_units = remaining_words * punishment.coeff
+
+        if units_paid > 0:
+            ctx.metrics.inc("bot_curse_punishment_done_total", labels, units_paid)
+
+        if remaining_words <= 0:
+            participant.last_done_at = now
+            participant.done_words_offset = 0
+            await self.curse_participants.save()
+            await ctx.reply(
+                f"Наказание засчитано: {units_paid} {punishment.title}. Долг закрыт."
+            )
+            return
+
+        participant.done_words_offset = (participant.done_words_offset or 0) + words_paid
         await self.curse_participants.save()
-        await ctx.reply(f"Наказание засчитано: {total} {punishment.title}.")
+        await ctx.reply(
+            f"Засчитано: {units_paid} {punishment.title}. Осталось: {remaining_units} {punishment.title}."
+        )
