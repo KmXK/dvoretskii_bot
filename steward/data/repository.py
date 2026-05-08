@@ -411,6 +411,49 @@ class Repository:
 
             data["version"] = 18
 
+        if data.get("version") == 18:
+            from datetime import timezone as _timezone
+            from zoneinfo import ZoneInfo as _ZoneInfo
+
+            tz = _ZoneInfo("Europe/Minsk")
+            now_local = datetime.datetime.now(tz)
+
+            def _parse_dt(v: Any) -> datetime.datetime | None:
+                if isinstance(v, (int, float)):
+                    return datetime.datetime.fromtimestamp(float(v), tz=_timezone.utc)
+                if isinstance(v, str):
+                    try:
+                        dt = datetime.datetime.fromisoformat(v)
+                    except Exception:
+                        return None
+                    return dt if dt.tzinfo is not None else dt.replace(tzinfo=_timezone.utc)
+                return None
+
+            def _set_time(dt_utc: datetime.datetime, hour: int, minute: int) -> datetime.datetime:
+                local = dt_utc.astimezone(tz)
+                local = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if local <= now_local:
+                    local += datetime.timedelta(days=1)
+                return local.astimezone(_timezone.utc)
+
+            targets: dict[int, tuple[int, int]] = {15: (9, 0), 18: (10, 0)}
+            for a in data.get("delayed_actions", []):
+                if not isinstance(a, dict) or a.get("__class_mark__") != "delayed_action/reminder":
+                    continue
+                rid = a.get("id")
+                if not isinstance(rid, int) or rid not in targets:
+                    continue
+                gen = a.get("generator")
+                if not isinstance(gen, dict):
+                    continue
+                dt = _parse_dt(gen.get("next_fire"))
+                if dt is None:
+                    continue
+                h, m = targets[rid]
+                gen["next_fire"] = _set_time(dt, h, m).isoformat()
+
+            data["version"] = 19
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("bill_persons", [])
