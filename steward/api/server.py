@@ -1400,8 +1400,12 @@ async def handle_reminder_create(request: web.Request):
     )
     generator.skip_to_allowed_day()
 
+    next_id = max(
+        (a.id for a in repository.db.delayed_actions if isinstance(a, ReminderDelayedAction)),
+        default=0,
+    ) + 1
     reminder = ReminderDelayedAction(
-        id=str(uuid.uuid4())[:8],
+        id=int(next_id),
         chat_id=chat_id,
         user_id=user_id,
         text=text,
@@ -1418,7 +1422,7 @@ async def handle_reminder_create(request: web.Request):
 
 async def handle_reminder_delete(request: web.Request):
     repository: Repository = request.app["repository"]
-    reminder_id = request.match_info["id"]
+    reminder_id = int(request.match_info["id"])
     user_id = int(request.query.get("user_id", "0"))
 
     reminder = next(
@@ -1436,7 +1440,7 @@ async def handle_reminder_delete(request: web.Request):
 
 async def handle_reminder_update(request: web.Request):
     repository: Repository = request.app["repository"]
-    reminder_id = request.match_info["id"]
+    reminder_id = int(request.match_info["id"])
     body = await request.json()
     user_id = int(body.get("user_id", 0))
     new_text = str(body.get("text", "")).strip()

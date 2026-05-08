@@ -30,7 +30,7 @@ class ReminderGenerator(Generator):
 @dataclass
 @class_mark("delayed_action/reminder")
 class ReminderDelayedAction(DelayedAction):
-    id: str
+    id: int
     chat_id: int
     user_id: int
     text: str
@@ -66,7 +66,7 @@ class ReminderDelayedAction(DelayedAction):
 @dataclass
 @class_mark("reminder/completed")
 class CompletedReminder:
-    id: str
+    id: int
     chat_id: int
     user_id: int
     text: str
