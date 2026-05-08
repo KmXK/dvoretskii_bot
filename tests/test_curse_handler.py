@@ -95,6 +95,66 @@ class TestCursePunishment:
         assert participant.last_done_at is not None
         metrics.inc.assert_called_once()
 
+    async def test_done_with_id_and_count_partially_offsets_words(self):
+        repo = make_repository()
+        repo.db.curse_punishments = [CursePunishment(id=2, coeff=4, title="приседаний")]
+        participant = CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime.now(timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        )
+        repo.db.curse_participants = [participant]
+
+        metrics = MagicMock()
+        metrics.query = AsyncMock(return_value=[MetricSample(labels={}, value=3)])
+
+        reply, ok = await invoke(CurseFeature, "/curse done 2 4", repo, metrics=metrics)
+        assert ok
+        assert "Засчитано: 4 приседаний" in reply
+        assert "Осталось: 8 приседаний" in reply
+        assert participant.last_done_at is None
+        assert participant.done_words_offset == 1
+        metrics.inc.assert_called_once()
+
+    async def test_done_with_id_and_count_requires_multiple_of_coeff(self):
+        repo = make_repository()
+        repo.db.curse_punishments = [CursePunishment(id=2, coeff=4, title="приседаний")]
+        participant = CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime.now(timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        )
+        repo.db.curse_participants = [participant]
+
+        metrics = MagicMock()
+        metrics.query = AsyncMock(return_value=[MetricSample(labels={}, value=3)])
+
+        reply, ok = await invoke(CurseFeature, "/curse done 2 5", repo, metrics=metrics)
+        assert ok
+        assert "кратно" in reply.lower()
+        assert participant.done_words_offset == 0
+        metrics.inc.assert_not_called()
+
+    async def test_done_with_id_and_count_caps_overpay_and_closes(self):
+        repo = make_repository()
+        repo.db.curse_punishments = [CursePunishment(id=2, coeff=4, title="приседаний")]
+        participant = CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime.now(timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        )
+        repo.db.curse_participants = [participant]
+
+        metrics = MagicMock()
+        metrics.query = AsyncMock(return_value=[MetricSample(labels={}, value=3)])
+
+        reply, ok = await invoke(CurseFeature, "/curse done 2 100", repo, metrics=metrics)
+        assert ok
+        assert "Долг закрыт" in reply
+        assert participant.last_done_at is not None
+        assert participant.done_words_offset == 0
+        metrics.inc.assert_called_once()
+
     async def test_subscribe_adds_chat_marker(self):
         repo = make_repository()
         reply, ok = await invoke(

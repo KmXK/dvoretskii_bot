@@ -231,7 +231,7 @@ class TestFuzzyTgCandidate:
 
 @pytest.mark.asyncio
 async def test_migration_v15_adds_chat_nicknames_and_aliases(tmp_path):
-    """A db at version 15 (with no chat_nicknames) migrates to 16 and gains the field."""
+    """A db at version 15 (with no chat_nicknames) migrates to latest and gains the field."""
     import json
     from steward.data.repository import JsonFileStorage, Repository
 
@@ -246,7 +246,7 @@ async def test_migration_v15_adds_chat_nicknames_and_aliases(tmp_path):
     repo = Repository(JsonFileStorage(str(db_path)))
     await repo.migrate()
 
-    assert repo.db.version == 16
+    assert repo.db.version == 17
     assert repo.db.chat_nicknames == []
     chat = next(c for c in repo.db.chats if c.id == -100)
     assert chat.aliases == []

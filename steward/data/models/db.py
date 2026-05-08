@@ -78,7 +78,7 @@ class Database:
     birthdays: list[Birthday] = field(default_factory=list)
     user_facts: list[UserFact] = field(default_factory=list)
 
-    version: int = 16
+    version: int = 17
 
 
 PARSE_CONFIG = Config(

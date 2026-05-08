@@ -372,6 +372,12 @@ class Repository:
                 c.setdefault("aliases", [])
             data["version"] = 16
 
+        if data.get("version") == 16:
+            for p in data.get("curse_participants", []):
+                if isinstance(p, dict):
+                    p.setdefault("done_words_offset", 0)
+            data["version"] = 17
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("bill_persons", [])
@@ -384,6 +390,10 @@ class Repository:
         data.setdefault("chat_nicknames", [])
         for c in data.get("chats", []):
             c.setdefault("aliases", [])
+
+        for p in data.get("curse_participants", []):
+            if isinstance(p, dict):
+                p.setdefault("done_words_offset", 0)
 
         for p in data.get("bill_persons", []):
             p.setdefault("description", "")

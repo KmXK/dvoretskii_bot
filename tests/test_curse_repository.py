@@ -13,3 +13,23 @@ class TestCurseRepositoryMigration:
         assert migrated["curse_words"] == []
         assert migrated["curse_punishments"] == []
         assert migrated["curse_participants"] == []
+
+    async def test_migrate_adds_done_words_offset(self):
+        repo = make_repository()
+
+        migrated = repo._migrate(
+            {
+                "version": 16,
+                "curse_participants": [
+                    {
+                        "user_id": 1,
+                        "subscribed_at": "2026-01-01T00:00:00+00:00",
+                        "last_done_at": None,
+                        "source_chat_ids": [123],
+                    }
+                ],
+            }
+        )
+
+        assert migrated["version"] >= 17
+        assert migrated["curse_participants"][0]["done_words_offset"] == 0
