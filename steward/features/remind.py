@@ -1,5 +1,4 @@
 import re
-import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -164,6 +163,19 @@ def _format_completed(r: CompletedReminder) -> str:
     count_str = f" (x{r.fired_count})" if r.fired_count > 1 else ""
     return f"`{r.id}` {time_str}{count_str} — {r.text}"
 
+def _next_reminder_id(
+    delayed_actions,
+    completed_reminders,
+) -> int:
+    max_id = 0
+    for a in delayed_actions:
+        if isinstance(a, ReminderDelayedAction) and isinstance(a.id, int):
+            max_id = max(max_id, a.id)
+    for r in completed_reminders:
+        if isinstance(r.id, int):
+            max_id = max(max_id, r.id)
+    return max_id + 1
+
 
 class RemindFeature(Feature):
     command = "remind"
@@ -195,8 +207,8 @@ class RemindFeature(Feature):
     async def list_(self, ctx: FeatureContext):
         await self._show_list(ctx)
 
-    @subcommand("remove <id:str>", description="Удалить")
-    async def remove(self, ctx: FeatureContext, id: str):
+    @subcommand("remove <id:int>", description="Удалить")
+    async def remove(self, ctx: FeatureContext, id: int):
         chat_id = ctx.chat_id
         reminder = self.delayed_actions.find_one(
             lambda a: isinstance(a, ReminderDelayedAction) and a.id == id and a.chat_id == chat_id
@@ -208,8 +220,8 @@ class RemindFeature(Feature):
         await self.delayed_actions.save()
         await ctx.reply(f"🗑 Удалено: {reminder.text}")
 
-    @subcommand("edit <id:str> <new_text:rest>", description="Изменить текст")
-    async def edit(self, ctx: FeatureContext, id: str, new_text: str):
+    @subcommand("edit <id:int> <new_text:rest>", description="Изменить текст")
+    async def edit(self, ctx: FeatureContext, id: int, new_text: str):
         chat_id = ctx.chat_id
         reminder = self.delayed_actions.find_one(
             lambda a: isinstance(a, ReminderDelayedAction) and a.id == id and a.chat_id == chat_id
@@ -286,7 +298,7 @@ class RemindFeature(Feature):
         generator.skip_to_allowed_day()
 
         reminder = ReminderDelayedAction(
-            id=str(uuid.uuid4())[:8],
+            id=_next_reminder_id(self.delayed_actions, self.completed_reminders),
             chat_id=ctx.chat_id,
             user_id=ctx.user_id,
             text=text,

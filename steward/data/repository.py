@@ -378,6 +378,39 @@ class Repository:
                     p.setdefault("done_words_offset", 0)
             data["version"] = 17
 
+        if data.get("version") == 17:
+            def _to_ts(v: Any) -> float:
+                if isinstance(v, (int, float)):
+                    return float(v)
+                if isinstance(v, str):
+                    try:
+                        return datetime.datetime.fromisoformat(v).timestamp()
+                    except Exception:
+                        return 0.0
+                return 0.0
+
+            reminders: list[dict[str, Any]] = []
+            for a in data.get("delayed_actions", []):
+                if isinstance(a, dict) and a.get("__class_mark__") == "delayed_action/reminder":
+                    reminders.append(a)
+            for r in data.get("completed_reminders", []):
+                if isinstance(r, dict) and r.get("__class_mark__") == "reminder/completed":
+                    reminders.append(r)
+
+            reminders.sort(
+                key=lambda x: (
+                    _to_ts(x.get("created_at")),
+                    int(x.get("chat_id") or 0),
+                    int(x.get("user_id") or 0),
+                    str(x.get("text") or ""),
+                )
+            )
+
+            for i, r in enumerate(reminders, 1):
+                r["id"] = i
+
+            data["version"] = 18
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("bill_persons", [])
