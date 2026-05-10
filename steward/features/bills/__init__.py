@@ -31,6 +31,7 @@ from steward.framework import (
     collection,
     on_callback,
     paginated,
+    resource_author,
     step,
     subcommand,
     wizard,
@@ -66,6 +67,19 @@ class BillsFeature(Feature):
     bill_item_suggestions = collection("bill_item_suggestions")
     bill_notification_prefs = collection("bill_notification_prefs")
     users = collection("users")
+
+    def resolve_owner(self, field: str, value: Any) -> int | None:
+        if field == "bill_id":
+            bill = self.repository.get_bill_v2(int(value))
+        elif field == "suggestion_id":
+            suggestion = self.repository.get_bill_suggestion(str(value))
+            bill = self.repository.get_bill_v2(suggestion.bill_id) if suggestion else None
+        else:
+            return None
+        if not bill:
+            return None
+        person = self.repository.get_bill_person(bill.author_person_id)
+        return person.telegram_id if person and person.telegram_id else None
 
     # -- Internal helpers --
 
@@ -1110,7 +1124,11 @@ class BillsFeature(Feature):
             keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
         )
 
-    @on_callback("bills:edit", schema="<bill_id:int>")
+    @on_callback(
+        "bills:edit",
+        schema="<bill_id:int>",
+        access=resource_author("bill_id", admin_bypass=True),
+    )
     async def on_edit(self, ctx: FeatureContext, bill_id: int):
         bill = self.repository.get_bill_v2(bill_id)
         if not bill:
@@ -1120,11 +1138,6 @@ class BillsFeature(Feature):
             await ctx.toast("Закрытый счёт нельзя редактировать.", alert=True)
             return
         tid = ctx.user_id
-        person = self.repository.get_bill_person_by_telegram_id(tid)
-        is_admin = self.repository.is_admin(tid)
-        if not is_admin and (not person or person.id != bill.author_person_id):
-            await ctx.toast("Только автор счёта или админ.", alert=True)
-            return
 
         settled = [
             p for p in self.repository.db.bill_payments_v2
@@ -1163,11 +1176,19 @@ class BillsFeature(Feature):
             state.last_kb_msg = ctx.callback_query.message.message_id
         await self.start_wizard("bills:session", ctx, state=state, _feature=self)
 
-    @on_callback("bills:close", schema="<bill_id:int>")
+    @on_callback(
+        "bills:close",
+        schema="<bill_id:int>",
+        access=resource_author("bill_id", admin_bypass=True),
+    )
     async def on_close(self, ctx: FeatureContext, bill_id: int):
         await self._set_closed(ctx, bill_id, close=True)
 
-    @on_callback("bills:reopen", schema="<bill_id:int>")
+    @on_callback(
+        "bills:reopen",
+        schema="<bill_id:int>",
+        access=resource_author("bill_id", admin_bypass=True),
+    )
     async def on_reopen(self, ctx: FeatureContext, bill_id: int):
         await self._set_closed(ctx, bill_id, close=False)
 
@@ -1179,9 +1200,6 @@ class BillsFeature(Feature):
         tid = ctx.user_id
         person = self.repository.get_bill_person_by_telegram_id(tid)
         is_admin = self.repository.is_admin(tid)
-        if not is_admin and (not person or person.id != bill.author_person_id):
-            await ctx.toast("Нет прав.", alert=True)
-            return
 
         bill.closed = close
         bill.closed_at = datetime.now() if close else None
@@ -1448,11 +1466,19 @@ class BillsFeature(Feature):
         state.announced = True
         await self.start_wizard("bills:session", ctx, state=state, _feature=self)
 
-    @on_callback("bills:suggest_approve", schema="<suggestion_id:str>")
+    @on_callback(
+        "bills:suggest_approve",
+        schema="<suggestion_id:str>",
+        access=resource_author("suggestion_id", admin_bypass=True),
+    )
     async def on_suggest_approve(self, ctx: FeatureContext, suggestion_id: str):
         await self._on_suggest_decide(ctx, suggestion_id, approve=True)
 
-    @on_callback("bills:suggest_reject", schema="<suggestion_id:str>")
+    @on_callback(
+        "bills:suggest_reject",
+        schema="<suggestion_id:str>",
+        access=resource_author("suggestion_id", admin_bypass=True),
+    )
     async def on_suggest_reject(self, ctx: FeatureContext, suggestion_id: str):
         await self._on_suggest_decide(ctx, suggestion_id, approve=False)
 
@@ -1471,10 +1497,6 @@ class BillsFeature(Feature):
             return
         tid = ctx.user_id
         person = self.repository.get_bill_person_by_telegram_id(tid)
-        is_admin = self.repository.is_admin(tid)
-        if not is_admin and (not person or person.id != bill.author_person_id):
-            await ctx.toast("Нет прав.", alert=True)
-            return
 
         if approve:
             if (

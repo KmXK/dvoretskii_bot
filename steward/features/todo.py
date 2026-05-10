@@ -1,6 +1,7 @@
 from steward.data.models.reward import Reward, UserReward
 from steward.data.models.todo_item import TodoItem
 from steward.framework import (
+    INITIATOR_ONLY,
     Feature,
     FeatureContext,
     Keyboard,
@@ -79,7 +80,7 @@ class TodoFeature(Feature):
     @on_callback(
         "todo:reward",
         schema="<answer:literal[yes|no]>|<todo_id:int>|<initiator:int>",
-        only_initiator=True,
+        access=INITIATOR_ONLY,
     )
     async def on_reward(
         self, ctx: FeatureContext, answer: str, todo_id: int, initiator: int

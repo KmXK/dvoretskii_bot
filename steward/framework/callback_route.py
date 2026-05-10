@@ -1,7 +1,8 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from steward.framework.access import OPEN, AccessPolicy
 from steward.framework.keyboard import Button
 
 
@@ -148,16 +149,14 @@ def _split_schema(schema: str) -> list[str]:
 class CallbackRoute:
     schema: CallbackSchema
     func: Callable[..., Awaitable[Any]]
-    only_initiator: bool = False
-    initiator_field: str = "initiator"
+    access: AccessPolicy = field(default_factory=lambda: OPEN)
 
 
 def on_callback(
     name: str,
     *,
     schema: str = "",
-    only_initiator: bool = False,
-    initiator_field: str = "initiator",
+    access: AccessPolicy = OPEN,
 ):
     parsed_schema = parse_schema(name, schema)
 
@@ -170,8 +169,7 @@ def on_callback(
             CallbackRoute(
                 schema=parsed_schema,
                 func=func,
-                only_initiator=only_initiator,
-                initiator_field=initiator_field,
+                access=access,
             )
         )
         setattr(func, "_feature_marker", "callback")

@@ -3,6 +3,7 @@ from typing import Any, Awaitable, Callable
 
 from telegram import Update
 
+from steward.framework.access import OPEN, AccessPolicy
 from steward.framework.keyboard import Button, Keyboard
 from steward.helpers.validation import (
     Error,
@@ -246,18 +247,20 @@ class WizardSpec:
     step_specs: list[Any]
     on_done: Callable[..., Awaitable[Any]]
     keys: list[str] = field(default_factory=list)
+    access: AccessPolicy = field(default_factory=lambda: OPEN)
 
     def build_steps(self) -> list[Step]:
         return [s.build() for s in self.step_specs]
 
 
-def wizard(name: str, *step_specs: Any):
+def wizard(name: str, *step_specs: Any, access: AccessPolicy = OPEN):
     def decorator(func):
         spec = WizardSpec(
             name=name,
             step_specs=list(step_specs),
             on_done=func,
             keys=[s.key for s in step_specs],
+            access=access,
         )
         setattr(func, "_feature_wizard", spec)
         setattr(func, "_feature_marker", "wizard")
