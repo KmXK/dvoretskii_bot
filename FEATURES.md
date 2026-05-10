@@ -99,7 +99,7 @@ class FooFeature(Feature):
 ```python
 @on_callback("todo:reward",
              schema="<answer:literal[yes|no]>|<todo_id:int>|<initiator:int>",
-             only_initiator=True)
+             access=INITIATOR_ONLY)
 async def on_reward(self, ctx, answer, todo_id, initiator):
     if answer == "no":
         await ctx.delete_or_clear_keyboard()
@@ -119,7 +119,30 @@ await ctx.reply("Засчитать?", keyboard=kb)
 ```
 
 Имя callback'а — `feature:action`. Поля схемы — через `|`.
-Опции: `only_initiator=True` (автопроверка `ctx.user_id == kwargs[initiator]`), `initiator_field=` (если поле называется иначе).
+
+### Access policy
+
+`@on_callback` и `@wizard` принимают параметр `access: AccessPolicy` (по умолчанию `OPEN` — кнопкой может пользоваться любой). Доступные политики:
+
+- `OPEN` — без ограничений.
+- `INITIATOR_ONLY` (или `initiator_only("field")` для другого имени поля) — кнопка работает только у юзера с `ctx.user_id == kwargs["initiator"]`. Поле должно быть в схеме и заполняться при создании кнопки.
+- `resource_author("field", admin_bypass=False)` — доступ только у автора ресурса. Фреймворк парсит `kwargs[field]`, вызывает `Feature.resolve_owner(field, value) -> int | None` (его нужно переопределить в фиче) и сравнивает с `ctx.user_id`.
+
+Пример (`/bills`):
+```python
+@on_callback("bills:edit", schema="<bill_id:int>",
+             access=resource_author("bill_id", admin_bypass=True))
+async def on_edit(self, ctx, bill_id): ...
+
+def resolve_owner(self, field: str, value):
+    if field == "bill_id":
+        bill = self.repository.get_bill_v2(int(value))
+        person = bill and self.repository.get_bill_person(bill.author_person_id)
+        return person.telegram_id if person and person.telegram_id else None
+    return None
+```
+
+Если проверка не прошла, фреймворк сам шлёт `toast` (или `reply` для не-callback контекста) и не вызывает обработчик.
 
 ## Pagination
 

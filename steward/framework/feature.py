@@ -12,6 +12,7 @@ from steward.bot.context import (
     ReactionBotContext,
 )
 from steward.data.repository import Repository
+from steward.framework.access import AccessMode, AccessPolicy
 from steward.framework.callback_route import (
     CallbackFactory,
     CallbackRoute,
@@ -195,10 +196,8 @@ class Feature(Handler):
             if parsed_cb is None:
                 continue
             feature_ctx = from_callback_context(ctx)
-            if route.only_initiator and route.initiator_field in parsed_cb:
-                expected = parsed_cb[route.initiator_field]
-                if feature_ctx.user_id != expected:
-                    return False
+            if not await self._check_access(feature_ctx, route.access, parsed_cb):
+                return False
             try:
                 result = await route.func(self, feature_ctx, **parsed_cb)
             except TypeError:
@@ -209,6 +208,45 @@ class Feature(Handler):
             return True
 
         return False
+
+    def resolve_owner(self, field: str, value: Any) -> int | None:
+        """Override in features that use AccessMode.RESOURCE_AUTHOR.
+
+        Return the Telegram user_id of the resource owner for the given
+        callback/wizard schema field, or None if the resource is missing or
+        has no owner reachable as a Telegram user (which denies access).
+        """
+        return None
+
+    async def _check_access(
+        self, ctx: FeatureContext, policy: AccessPolicy, values: dict
+    ) -> bool:
+        if policy.mode == AccessMode.OPEN:
+            return True
+        if policy.admin_bypass and ctx.repository.is_admin(ctx.user_id):
+            return True
+        if policy.mode == AccessMode.INITIATOR_ONLY:
+            expected = values.get(policy.initiator_field)
+            if expected is None or ctx.user_id != expected:
+                await self._deny_access(ctx, "Этой кнопкой может пользоваться только инициатор.")
+                return False
+            return True
+        if policy.mode == AccessMode.RESOURCE_AUTHOR:
+            value = values.get(policy.resource_field)
+            if value is None:
+                return False
+            owner_uid = self.resolve_owner(policy.resource_field, value)
+            if owner_uid is None or ctx.user_id != owner_uid:
+                await self._deny_access(ctx, "Эта операция доступна только владельцу.")
+                return False
+            return True
+        return False
+
+    async def _deny_access(self, ctx: FeatureContext, message: str) -> None:
+        if ctx.is_callback:
+            await ctx.toast(message, alert=True)
+        else:
+            await ctx.reply(message)
 
     async def reaction(self, ctx: ReactionBotContext) -> bool:  # type: ignore[override]
         if not self._on_reaction_handlers:
@@ -401,6 +439,8 @@ class Feature(Handler):
         if name not in self._wizard_sessions:
             raise KeyError(f"No wizard registered: {name!r}")
         session = self._wizard_sessions[name]
+        if not await self._check_access(ctx, session._spec.access, initial):
+            return False
         session.stage_start(ctx.update, initial)
         await self._activate_session(session, ctx)
         return True

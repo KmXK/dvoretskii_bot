@@ -1,5 +1,6 @@
 import pytest
 
+from steward.framework.access import AccessMode, initiator_only
 from steward.framework.callback_route import (
     CallbackFactory,
     on_callback,
@@ -77,12 +78,12 @@ def test_invalid_name_rejected():
 
 
 def test_decorator_collects_route():
-    @on_callback("todo:reward", schema="<a:int>", only_initiator=True, initiator_field="a")
+    @on_callback("todo:reward", schema="<a:int>", access=initiator_only("a"))
     async def fn(self, ctx, a):
         return None
 
     routes = fn._feature_callbacks
     assert len(routes) == 1
     assert routes[0].schema.name == "todo:reward"
-    assert routes[0].only_initiator is True
-    assert routes[0].initiator_field == "a"
+    assert routes[0].access.mode == AccessMode.INITIATOR_ONLY
+    assert routes[0].access.initiator_field == "a"
