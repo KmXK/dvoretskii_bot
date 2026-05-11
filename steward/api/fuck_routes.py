@@ -39,8 +39,6 @@ from steward.api.auth import (
 from steward.data.repository import Repository
 from steward.helpers.avatars import (
     cached_avatar_path,
-    diagnostic_events,
-    record_event,
     save_photo_from_url,
     try_fetch_from_bot,
 )
@@ -150,24 +148,15 @@ def _schedule_bot_avatar_fallback(request: web.Request, user_id: int) -> None:
 
 
 async def _capture_avatar_on_auth(
-    request: web.Request, source: str, user_id: int, user_obj: dict
+    request: web.Request, user_id: int, photo_url: str | None
 ) -> None:
-    photo_url = user_obj.get("photo_url")
-    record_event(
-        user_id, f"auth-{source}",
-        photo_url_present=bool(photo_url),
-        photo_url=photo_url,
-        username=user_obj.get("username"),
-        first_name=user_obj.get("first_name"),
-    )
     if photo_url:
         try:
             path = await save_photo_from_url(user_id, photo_url)
             if path is not None:
                 return
-        except Exception as e:
+        except Exception:
             logger.exception("photo_url capture for %s failed", user_id)
-            record_event(user_id, "url-capture-exception", error=str(e))
     _schedule_bot_avatar_fallback(request, user_id)
 
 
@@ -184,12 +173,11 @@ async def handle_auth_webapp(request: web.Request):
     except Exception:
         logger.exception("auth/webapp: ingest_user failed for %s — continuing", uid)
     try:
-        await _capture_avatar_on_auth(request, "webapp", uid, user)
+        await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
     except Exception:
         logger.exception("auth/webapp: avatar capture failed for %s — continuing", uid)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
-    logger.info("auth/webapp: ok uid=%s", uid)
     return resp
 
 
@@ -210,12 +198,11 @@ async def handle_auth_widget(request: web.Request):
     except Exception:
         logger.exception("auth/widget: ingest_user failed for %s — continuing", uid)
     try:
-        await _capture_avatar_on_auth(request, "widget", uid, user)
+        await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
     except Exception:
         logger.exception("auth/widget: avatar capture failed for %s — continuing", uid)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
-    logger.info("auth/widget: ok uid=%s", uid)
     return resp
 
 
@@ -465,77 +452,6 @@ async def handle_get_avatar(request: web.Request):
     )
 
 
-async def handle_avatar_diagnose(request: web.Request):
-    uid = require_user(request)
-
-    cache_info: dict | None = None
-    path = cached_avatar_path(uid)
-    if path is not None:
-        try:
-            data = path.read_bytes()
-            from steward.helpers.avatars import _detect_ext
-            cache_info = {
-                "path": str(path),
-                "size_bytes": len(data),
-                "detected_format": _detect_ext(data),
-                "magic_head_hex": data[:8].hex(),
-            }
-        except Exception as e:
-            cache_info = {"path": str(path), "read_error": str(e)}
-
-    bot = request.app.get("bot")
-    profile_photos: dict | None = None
-    chat_photo: dict | None = None
-    if bot is not None:
-        try:
-            res = await bot.get_user_profile_photos(uid, limit=1)
-            profile_photos = {
-                "total_count": getattr(res, "total_count", None),
-                "has_photos": bool(res.photos and res.photos[0]),
-            }
-        except Exception as e:
-            profile_photos = {"error": str(e)}
-        try:
-            chat = await bot.get_chat(uid)
-            photo = getattr(chat, "photo", None)
-            chat_photo = {
-                "type": getattr(chat, "type", None),
-                "first_name": getattr(chat, "first_name", None),
-                "username": getattr(chat, "username", None),
-                "has_photo": photo is not None,
-                "big_file_id": getattr(photo, "big_file_id", None) if photo else None,
-            }
-        except Exception as e:
-            chat_photo = {"error": str(e)}
-
-    return web.json_response({
-        "user_id": uid,
-        "cache": cache_info,
-        "live_get_user_profile_photos": profile_photos,
-        "live_get_chat": chat_photo,
-        "events": diagnostic_events(uid),
-    })
-
-
-async def handle_avatar_recapture(request: web.Request):
-    uid = require_user(request)
-    bot = request.app.get("bot")
-    if bot is None:
-        return web.json_response({"error": "no bot"}, status=503)
-    record_event(uid, "manual-recapture-start")
-    try:
-        await try_fetch_from_bot(bot, uid)
-    except Exception as e:
-        record_event(uid, "manual-recapture-error", error=str(e))
-    path = cached_avatar_path(uid)
-    return web.json_response({
-        "user_id": uid,
-        "cached": path is not None,
-        "path": str(path) if path else None,
-        "events": diagnostic_events(uid),
-    })
-
-
 # === Route registration ===
 
 def register_routes(app: web.Application) -> None:
@@ -544,8 +460,6 @@ def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/auth/widget", handle_auth_widget)
     app.router.add_get("/api/auth/me", handle_auth_me)
     app.router.add_post("/api/auth/logout", handle_auth_logout)
-    app.router.add_get("/api/avatars/me/diagnose", handle_avatar_diagnose)
-    app.router.add_post("/api/avatars/me/recapture", handle_avatar_recapture)
     app.router.add_get("/api/avatars/{user_id}", handle_get_avatar)
     app.router.add_get("/api/fuck/assets", handle_list_assets)
     app.router.add_post("/api/fuck/assets", handle_create_asset)
