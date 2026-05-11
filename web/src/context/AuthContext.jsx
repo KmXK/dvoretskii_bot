@@ -28,12 +28,14 @@ export function AuthProvider({ children }) {
     let cancelled = false
     ;(async () => {
       try {
-        const data = await refresh()
-        if (cancelled) return
         if (mode === 'miniapp' && WebApp?.initData) {
-          await api.post('/api/auth/webapp', { initData: WebApp.initData })
-          if (!cancelled && !data.authenticated) await refresh()
+          try {
+            await api.post('/api/auth/webapp', { initData: WebApp.initData })
+          } catch {
+            // fall through to refresh; auth_me will tell us if we're logged in
+          }
         }
+        if (!cancelled) await refresh()
       } catch (e) {
         if (!cancelled) setError(e.message)
       } finally {
@@ -64,17 +66,20 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => {
     const tgUser = WebApp?.initDataUnsafe?.user
+    const userId = me?.user_id ?? tgUser?.id ?? null
+    const tgPhoto = tgUser?.photo_url ?? null
+    const photoUrl = tgPhoto ?? (userId ? `/api/avatars/${userId}` : null)
     return {
       mode,
       me,
       loading,
       error,
       isAuthenticated: !!me,
-      userId: me?.user_id ?? tgUser?.id ?? null,
+      userId,
       username: me?.username ?? tgUser?.username ?? '',
-      firstName: tgUser?.first_name ?? '',
+      firstName: me?.first_name ?? tgUser?.first_name ?? '',
       lastName: tgUser?.last_name ?? '',
-      photoUrl: tgUser?.photo_url ?? null,
+      photoUrl,
       isAdmin: !!me?.is_admin,
       isPremium: tgUser?.is_premium ?? false,
       initData: WebApp?.initData ?? '',

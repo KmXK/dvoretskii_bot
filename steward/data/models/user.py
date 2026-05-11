@@ -12,3 +12,4 @@ class User:
     stand_name: Optional[str] = None
     stand_description: Optional[str] = None
     stand_aliases: list[str] = field(default_factory=list)
+    first_name: Optional[str] = None

@@ -25,6 +25,7 @@ from pathlib import Path
 from aiohttp import web
 
 from steward.data.models.fuck_asset import FuckAsset
+from steward.data.models.user import User
 
 from steward.api.auth import (
     clear_session_cookie,
@@ -96,42 +97,90 @@ async def handle_auth_config(request: web.Request):
     return web.json_response({"bot_username": bot_username})
 
 
-def _kick_avatar_capture(request: web.Request, user_id: int, photo_url: str | None) -> None:
+async def _ingest_auth_user(
+    repository: Repository,
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+) -> None:
+    if not (username or first_name):
+        return
+    u = next((x for x in repository.db.users if x.id == user_id), None)
+    changed = False
+    if u is None:
+        repository.db.users.append(User(user_id, username, [], first_name=first_name))
+        changed = True
+    else:
+        if username and u.username != username:
+            u.username = username
+            changed = True
+        if first_name and u.first_name != first_name:
+            u.first_name = first_name
+            changed = True
+    if changed:
+        await repository.save()
+
+
+_AVATAR_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_bot_avatar_fallback(request: web.Request, user_id: int) -> None:
+    from steward.helpers.avatars import has_cached_avatar
+    if has_cached_avatar(user_id):
+        return
     bot = request.app.get("bot")
+    if bot is None:
+        return
 
     async def _do():
         try:
-            if photo_url:
-                path = await save_photo_from_url(user_id, photo_url)
-                if path is not None:
-                    return
-            if bot is not None:
-                await try_fetch_from_bot(bot, user_id)
+            await try_fetch_from_bot(bot, user_id)
         except Exception:
-            logger.exception("avatar capture on auth for %s failed", user_id)
+            logger.exception("bot-api avatar fallback for %s failed", user_id)
 
-    asyncio.create_task(_do())
+    task = asyncio.create_task(_do())
+    _AVATAR_BG_TASKS.add(task)
+    task.add_done_callback(_AVATAR_BG_TASKS.discard)
+
+
+async def _capture_avatar_on_auth(
+    request: web.Request, user_id: int, photo_url: str | None
+) -> None:
+    if photo_url:
+        try:
+            path = await save_photo_from_url(user_id, photo_url)
+            if path is not None:
+                return
+        except Exception:
+            logger.exception("photo_url capture for %s failed", user_id)
+    _schedule_bot_avatar_fallback(request, user_id)
 
 
 async def handle_auth_webapp(request: web.Request):
+    repository: Repository = request.app["repository"]
     body = await request.json()
     user = validate_webapp_init_data(str(body.get("initData", "")))
     if not user:
         return web.json_response({"error": "invalid initData"}, status=403)
-    resp = web.json_response({"user_id": user["id"]})
-    set_session_cookie(resp, int(user["id"]))
-    _kick_avatar_capture(request, int(user["id"]), user.get("photo_url"))
+    uid = int(user["id"])
+    await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
+    await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
+    resp = web.json_response({"user_id": uid})
+    set_session_cookie(resp, uid)
     return resp
 
 
 async def handle_auth_widget(request: web.Request):
+    repository: Repository = request.app["repository"]
     body = await request.json()
     user = validate_login_widget(body)
     if not user:
         return web.json_response({"error": "invalid signature"}, status=403)
-    resp = web.json_response({"user_id": user["id"]})
-    set_session_cookie(resp, int(user["id"]))
-    _kick_avatar_capture(request, int(user["id"]), user.get("photo_url"))
+    uid = int(user["id"])
+    await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
+    await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
+    resp = web.json_response({"user_id": uid})
+    set_session_cookie(resp, uid)
     return resp
 
 
@@ -145,6 +194,7 @@ async def handle_auth_me(request: web.Request):
         "authenticated": True,
         "user_id": uid,
         "username": user.username if user else None,
+        "first_name": user.first_name if user else None,
         "is_admin": uid in repository.db.admin_ids,
     })
 
@@ -353,6 +403,34 @@ async def handle_get_asset_data(request: web.Request):
     )
 
 
+_AVATAR_CONTENT_TYPE = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
+
+
+async def handle_get_avatar(request: web.Request):
+    require_user(request)
+    try:
+        target_uid = int(request.match_info["user_id"])
+    except (KeyError, ValueError):
+        raise web.HTTPNotFound()
+    from steward.helpers.avatars import cached_avatar_path
+    path = cached_avatar_path(target_uid)
+    if path is None:
+        raise web.HTTPNotFound()
+    ct = _AVATAR_CONTENT_TYPE.get(path.suffix.lstrip(".").lower(), "application/octet-stream")
+    return web.FileResponse(
+        path,
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "Content-Type": ct,
+        },
+    )
+
+
 # === Route registration ===
 
 def register_routes(app: web.Application) -> None:
@@ -361,6 +439,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/auth/widget", handle_auth_widget)
     app.router.add_get("/api/auth/me", handle_auth_me)
     app.router.add_post("/api/auth/logout", handle_auth_logout)
+    app.router.add_get("/api/avatars/{user_id}", handle_get_avatar)
     app.router.add_get("/api/fuck/assets", handle_list_assets)
     app.router.add_post("/api/fuck/assets", handle_create_asset)
     app.router.add_delete("/api/fuck/assets/{id}", handle_delete_asset)
