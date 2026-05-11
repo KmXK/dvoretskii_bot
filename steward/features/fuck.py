@@ -9,28 +9,22 @@ import shutil
 import tempfile
 import time
 import uuid
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
 from telegram import InputFile, MessageEntity
-from telegram.ext import ExtBot
 
 from steward.data.models.fuck_asset import FuckAsset
+from steward.data.models.user import User
 from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
-from steward.helpers.media import fetch_tg_file_bytes
+from steward.helpers.avatars import get_avatar_image
 
 logger = logging.getLogger(__name__)
 
 ASSETS_DIR = Path("data/fuck")
 MAX_OUTPUT_DIM = 480
-_FALLBACK_COLORS = [
-    (244, 67, 54), (33, 150, 243), (76, 175, 80),
-    (255, 152, 0), (156, 39, 176), (0, 188, 212),
-    (255, 87, 34), (63, 81, 181),
-]
 
 
 _MEDIA_EXTS = ("webp", "gif", "mp4", "webm", "mov")
@@ -218,31 +212,6 @@ def _draw_avatar_circumscribed(
     frame.alpha_composite(a, (tx, ty))
 
 
-def _fallback_avatar(seed: int) -> Image.Image:
-    color = _FALLBACK_COLORS[seed % len(_FALLBACK_COLORS)]
-    size = 256
-    img = Image.new("RGBA", (size, size), color + (255,))
-    return img
-
-
-async def _fetch_avatar(bot: ExtBot, user_id: int) -> Image.Image | None:
-    try:
-        photos = await bot.get_user_profile_photos(user_id, limit=1)
-    except Exception as e:
-        logger.warning("/fuck get_user_profile_photos(%s) failed: %s", user_id, e)
-        return None
-    if not photos.photos or not photos.photos[0]:
-        logger.info("/fuck no profile photo for user %s", user_id)
-        return None
-    file_id = photos.photos[0][-1].file_id
-    try:
-        data = await fetch_tg_file_bytes(bot, file_id)
-        return Image.open(BytesIO(data)).convert("RGBA")
-    except Exception as e:
-        logger.warning("/fuck avatar download failed for %s: %s", user_id, e)
-        return None
-
-
 def _compose_gif(
     source_path: Path,
     annotation: dict[str, Any],
@@ -297,29 +266,55 @@ class FuckFeature(Feature):
 
     @subcommand("", description="Ответом — на сообщение цели")
     async def do_reply(self, ctx: FeatureContext):
-        target_id = self._resolve_target(ctx, identifier=None)
-        if target_id is None:
+        target = await self._resolve_target(ctx, identifier=None)
+        if target is None:
             await ctx.reply("Укажи жертву: /fuck @username или ответом на сообщение")
             return
-        await self._run(ctx, target_id)
+        target_id, target_name = target
+        await self._run(ctx, target_id, target_name)
 
     @subcommand("<target:rest>", description="@user, id или username без @")
     async def do(self, ctx: FeatureContext, target: str):
         identifier = target.strip().split()[0] if target.strip() else ""
-        target_id = self._resolve_target(ctx, identifier=identifier)
-        if target_id is None:
-            await ctx.reply(f"Пользователь {identifier} не найден. Попроси его написать что-нибудь в чат — бот запомнит.")
+        resolved = await self._resolve_target(ctx, identifier=identifier)
+        if resolved is None:
+            await ctx.reply(f"Не нашёл {identifier}. Либо имя без @ скрыто, либо такого юзера нет.")
             return
-        await self._run(ctx, target_id)
+        target_id, target_name = resolved
+        await self._run(ctx, target_id, target_name)
 
-    async def _run(self, ctx: FeatureContext, target_id: int):
+    async def _run(self, ctx: FeatureContext, target_id: int, target_name: str | None):
+        msg = ctx.message
+        author_name = None
+        if msg is not None and msg.from_user is not None:
+            author_name = msg.from_user.first_name or msg.from_user.username
+        if not author_name:
+            author_name = self._username_from_repo(ctx.user_id)
+        await self._compose_and_send(
+            ctx,
+            ctx.user_id,
+            author_name,
+            target_id,
+            target_name,
+            tag="/fuck",
+        )
 
+    async def _compose_and_send(
+        self,
+        ctx: FeatureContext,
+        a_id: int,
+        a_name: str | None,
+        b_id: int,
+        b_name: str | None,
+        *,
+        tag: str,
+    ) -> None:
         asset = await asyncio.to_thread(_pick_random_asset, self.repository, ctx.chat_id)
         if asset is None:
             total = len(self.repository.db.fuck_assets)
             logger.warning(
-                "/fuck: no visible asset for chat=%s; total in DB=%s",
-                ctx.chat_id, total,
+                "%s: no visible asset for chat=%s; total in DB=%s",
+                tag, ctx.chat_id, total,
             )
             await ctx.reply(
                 f"Нет доступных ассетов для этого чата (всего в базе: {total})."
@@ -327,8 +322,8 @@ class FuckFeature(Feature):
             return
         source_path, annotation = asset
 
-        author_avatar = await _fetch_avatar(self.bot, ctx.user_id) or _fallback_avatar(ctx.user_id)
-        target_avatar = await _fetch_avatar(self.bot, target_id) or _fallback_avatar(target_id)
+        a_avatar = await get_avatar_image(self.bot, a_id, name_hint=a_name)
+        b_avatar = await get_avatar_image(self.bot, b_id, name_hint=b_name)
 
         try:
             with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
@@ -337,8 +332,8 @@ class FuckFeature(Feature):
                     _compose_gif,
                     source_path,
                     annotation,
-                    author_avatar,
-                    target_avatar,
+                    a_avatar,
+                    b_avatar,
                     output_path,
                 )
                 with output_path.open("rb") as f:
@@ -347,26 +342,111 @@ class FuckFeature(Feature):
                         animation=InputFile(f, filename="fuck.gif"),
                     )
         except Exception as e:
-            logger.exception("Failed to compose /fuck gif: %s", e)
+            logger.exception("Failed to compose %s gif: %s", tag, e)
             await ctx.reply("Не получилось сгенерить, попробуй позже")
 
-    def _resolve_target(self, ctx: FeatureContext, identifier: str | None) -> int | None:
+    def _username_from_repo(self, user_id: int) -> str | None:
+        user = next((u for u in self.repository.db.users if u.id == user_id), None)
+        return user.username if user else None
+
+    async def _resolve_target(
+        self, ctx: FeatureContext, identifier: str | None
+    ) -> tuple[int, str | None] | None:
         msg = ctx.message
         if msg is not None:
             reply = msg.reply_to_message
             if reply is not None and reply.from_user is not None:
-                return reply.from_user.id
+                u = reply.from_user
+                return u.id, (u.first_name or u.username)
             for ent in (msg.entities or ()):
                 if ent.type == MessageEntity.TEXT_MENTION and ent.user is not None:
-                    return ent.user.id
+                    u = ent.user
+                    return u.id, (u.first_name or u.username)
         if not identifier:
             return None
         ident = identifier.lstrip("@")
         try:
-            return int(ident)
+            target_id = int(ident)
+        except ValueError:
+            target_id = None
+        if target_id is not None:
+            name = self._username_from_repo(target_id)
+            return target_id, name
+
+        user = self.users.find_one(
+            lambda u: u.username and u.username.lower() == ident.lower()
+        )
+        if user is not None:
+            return user.id, user.username
+
+        return await self._lookup_by_username(ident)
+
+    async def _lookup_by_username(self, username: str) -> tuple[int, str | None] | None:
+        try:
+            chat = await self.bot.get_chat(f"@{username}")
+        except Exception as e:
+            logger.info("/fuck: get_chat(@%s) failed: %s", username, e)
+            return None
+        if getattr(chat, "type", None) != "private":
+            return None
+        target_id = int(chat.id)
+        name = chat.first_name or chat.username or username
+        if not self.users.find_one(lambda u: u.id == target_id):
+            self.users.add(User(target_id, chat.username, []))
+            await self.users.save()
+        try:
+            from steward.helpers.avatars import save_photo_from_file_id
+            photo = getattr(chat, "photo", None)
+            file_id = getattr(photo, "big_file_id", None) if photo else None
+            if file_id:
+                await save_photo_from_file_id(self.bot, target_id, file_id)
+        except Exception as e:
+            logger.info("/fuck: caching avatar for @%s failed: %s", username, e)
+        return target_id, name
+
+
+class SexFeature(FuckFeature):
+    command = "sex"
+    description = "Сгенерить гифку насилия между двумя пользователями"
+    help_examples = ["/sex @author @target"]
+
+    @subcommand(
+        "<a:str> <b:str>",
+        description="@a, @b — два пользователя (id, username или @user)",
+    )
+    async def do_pair(self, ctx: FeatureContext, a: str, b: str):
+        ra = await self._resolve_target_arg(a)
+        if ra is None:
+            await ctx.reply(f"Не нашёл {a}. Либо приватность, либо нет такого юзера.")
+            return
+        rb = await self._resolve_target_arg(b)
+        if rb is None:
+            await ctx.reply(f"Не нашёл {b}. Либо приватность, либо нет такого юзера.")
+            return
+        a_id, a_name = ra
+        b_id, b_name = rb
+        await self._compose_and_send(ctx, a_id, a_name, b_id, b_name, tag="/sex")
+
+    @subcommand("", description="Нужны два аргумента")
+    async def do_reply(self, ctx: FeatureContext):
+        await ctx.reply("Юзай так: /sex @author @target")
+
+    @subcommand("<args:rest>", description="Нужны два аргумента")
+    async def do(self, ctx: FeatureContext, args: str):
+        await ctx.reply("Юзай так: /sex @author @target")
+
+    async def _resolve_target_arg(self, ident: str) -> tuple[int, str | None] | None:
+        ident = ident.strip().lstrip("@")
+        if not ident:
+            return None
+        try:
+            uid = int(ident)
+            return uid, self._username_from_repo(uid)
         except ValueError:
             pass
         user = self.users.find_one(
             lambda u: u.username and u.username.lower() == ident.lower()
         )
-        return user.id if user else None
+        if user is not None:
+            return user.id, user.username
+        return await self._lookup_by_username(ident)

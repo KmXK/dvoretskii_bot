@@ -92,6 +92,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState(null)
   const [loaded, setLoaded] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [sourceKind, setSourceKind] = useState(null)
   const [duration, setDuration] = useState(0)
   const [playheadRatio, setPlayheadRatio] = useState(0)
@@ -451,6 +452,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
   const loadFromFile = useCallback(async (file, annotations) => {
     setError(null)
     setLoaded(false)
+    setLoading(true)
     try {
       if (sourceRef.current && sourceRef.current.dispose) sourceRef.current.dispose()
       const src = await loadSource(file)
@@ -471,6 +473,8 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
     } catch (e) {
       setError(e.message || String(e))
       throw e
+    } finally {
+      setLoading(false)
     }
   }, [render])
 
@@ -581,7 +585,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
         />
         {!loaded && (
           <div className="text-spotify-text/60 text-sm py-12">
-            {error ? 'не удалось загрузить' : 'загружаю…'}
+            {error ? 'не удалось загрузить' : loading ? 'загружаю…' : 'выбери файл'}
           </div>
         )}
       </div>

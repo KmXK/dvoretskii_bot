@@ -14,6 +14,7 @@ Auth model:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -35,6 +36,7 @@ from steward.api.auth import (
     validate_webapp_init_data,
 )
 from steward.data.repository import Repository
+from steward.helpers.avatars import save_photo_from_url, try_fetch_from_bot
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,23 @@ async def handle_auth_config(request: web.Request):
     return web.json_response({"bot_username": bot_username})
 
 
+def _kick_avatar_capture(request: web.Request, user_id: int, photo_url: str | None) -> None:
+    bot = request.app.get("bot")
+
+    async def _do():
+        try:
+            if photo_url:
+                path = await save_photo_from_url(user_id, photo_url)
+                if path is not None:
+                    return
+            if bot is not None:
+                await try_fetch_from_bot(bot, user_id)
+        except Exception:
+            logger.exception("avatar capture on auth for %s failed", user_id)
+
+    asyncio.create_task(_do())
+
+
 async def handle_auth_webapp(request: web.Request):
     body = await request.json()
     user = validate_webapp_init_data(str(body.get("initData", "")))
@@ -101,6 +120,7 @@ async def handle_auth_webapp(request: web.Request):
         return web.json_response({"error": "invalid initData"}, status=403)
     resp = web.json_response({"user_id": user["id"]})
     set_session_cookie(resp, int(user["id"]))
+    _kick_avatar_capture(request, int(user["id"]), user.get("photo_url"))
     return resp
 
 
@@ -111,6 +131,7 @@ async def handle_auth_widget(request: web.Request):
         return web.json_response({"error": "invalid signature"}, status=403)
     resp = web.json_response({"user_id": user["id"]})
     set_session_cookie(resp, int(user["id"]))
+    _kick_avatar_capture(request, int(user["id"]), user.get("photo_url"))
     return resp
 
 
