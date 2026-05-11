@@ -26,6 +26,9 @@ const STATUS_FILTERS = [
 
 const SORT_OPTIONS = [
   { value: 'priority', label: 'По приоритету' },
+  { value: 'votes_desc', label: 'По лайкам ↓' },
+  { value: 'priority_votes', label: 'Приоритет + лайки' },
+  { value: 'votes_priority', label: 'Лайки + приоритет' },
   { value: 'id_asc', label: 'По ID ↑' },
   { value: 'id_desc', label: 'По ID ↓' },
   { value: 'status', label: 'По статусу' },
@@ -92,7 +95,7 @@ function StatusFilter({ selected, onChange }) {
   )
 }
 
-function FeatureCardModal({ feature, open, onClose, onSave }) {
+function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
   const [status, setStatus] = useState(feature?.status ?? STATUS.OPEN)
   const [priority, setPriority] = useState(feature?.priority ?? 5)
   const [newNote, setNewNote] = useState('')
@@ -137,9 +140,23 @@ function FeatureCardModal({ feature, open, onClose, onSave }) {
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
           bg-spotify-dark rounded-2xl w-[calc(100%-2rem)] max-w-md max-h-[85vh] overflow-y-auto z-50 p-5">
-          <Dialog.Title className="text-white text-lg font-bold mb-1">
-            Фича-реквест #{feature.id}
-          </Dialog.Title>
+          <div className="flex items-start justify-between gap-3 mb-1">
+            <Dialog.Title className="text-white text-lg font-bold">
+              Фича-реквест #{feature.id}
+            </Dialog.Title>
+            <button
+              onClick={() => onVote && onVote()}
+              className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors shrink-0 ${
+                feature.voted
+                  ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
+                  : 'bg-white/5 text-spotify-text hover:bg-white/10'
+              }`}
+              title={feature.voted ? 'Убрать лайк' : 'Лайкнуть'}
+            >
+              <span>{feature.voted ? '❤️' : '🤍'}</span>
+              <span>{feature.votes_count ?? 0}</span>
+            </button>
+          </div>
 
           <p className="text-white text-sm leading-relaxed mb-4">{feature.text}</p>
 
@@ -331,11 +348,26 @@ export default function FeaturesPage() {
     setShowCreate(false)
   }, [])
 
+  const handleVote = useCallback(async (id) => {
+    try {
+      const updated = await api.post(`/api/feature-requests/${id}/vote`)
+      setFeatures(prev => prev.map(f => f.id === updated.id ? updated : f))
+      setSelectedFeature(prev => (prev && prev.id === updated.id ? updated : prev))
+    } catch { /* noop */ }
+  }, [])
+
   const sortFn = useCallback((items) => {
     const copy = [...items]
+    const votes = (f) => f.votes_count ?? 0
     switch (sort) {
       case 'priority':
         return copy.sort((a, b) => a.priority - b.priority)
+      case 'votes_desc':
+        return copy.sort((a, b) => votes(b) - votes(a) || a.priority - b.priority)
+      case 'priority_votes':
+        return copy.sort((a, b) => a.priority - b.priority || votes(b) - votes(a))
+      case 'votes_priority':
+        return copy.sort((a, b) => votes(b) - votes(a) || a.priority - b.priority)
       case 'id_asc':
         return copy.sort((a, b) => a.id - b.id)
       case 'id_desc':
@@ -455,6 +487,18 @@ export default function FeaturesPage() {
                     <span className="text-sm" title={`Приоритет ${fr.priority}`}>
                       {PRIORITY_EMOJI[fr.priority] ?? '⚪'}
                     </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleVote(fr.id) }}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 transition-colors ${
+                        fr.voted
+                          ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
+                          : 'bg-white/5 text-spotify-text hover:bg-white/10'
+                      }`}
+                      title={fr.voted ? 'Убрать лайк' : 'Лайкнуть'}
+                    >
+                      <span>{fr.voted ? '❤️' : '🤍'}</span>
+                      <span>{fr.votes_count ?? 0}</span>
+                    </button>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${cfg.class}`}>
                     {cfg.label}
@@ -521,6 +565,7 @@ export default function FeaturesPage() {
         open={!!selectedFeature}
         onClose={() => setSelectedFeature(null)}
         onSave={handleSave}
+        onVote={() => selectedFeature && handleVote(selectedFeature.id)}
       />
 
       <CreateFeatureModal

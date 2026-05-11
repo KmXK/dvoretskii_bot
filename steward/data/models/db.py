@@ -80,7 +80,7 @@ class Database:
     user_facts: list[UserFact] = field(default_factory=list)
     fuck_assets: list[FuckAsset] = field(default_factory=list)
 
-    version: int = 20
+    version: int = 21
 
 
 PARSE_CONFIG = Config(

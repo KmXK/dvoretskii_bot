@@ -73,7 +73,8 @@ async def handle_todo_toggle(request: web.Request):
     return web.json_response(serialize_todo(todo))
 
 
-def serialize_feature_request(fr):
+def serialize_feature_request(fr, viewer_id: int | None = None):
+    votes = fr.votes if fr.votes is not None else set()
     return {
         "id": fr.id,
         "text": fr.text,
@@ -83,6 +84,8 @@ def serialize_feature_request(fr):
         "creation_timestamp": fr.creation_timestamp,
         "priority": fr.priority,
         "notes": fr.notes,
+        "votes_count": len(votes),
+        "voted": viewer_id is not None and viewer_id in votes,
         "history": [
             {
                 "status": int(c.status),
@@ -95,8 +98,9 @@ def serialize_feature_request(fr):
 
 async def handle_feature_requests(request: web.Request):
     repository: Repository = request.app["repository"]
+    viewer_id = session_user_id(request)
     return web.json_response(
-        [serialize_feature_request(fr) for fr in repository.db.feature_requests]
+        [serialize_feature_request(fr, viewer_id) for fr in repository.db.feature_requests]
     )
 
 
@@ -108,7 +112,7 @@ async def handle_feature_request_detail(request: web.Request):
         return web.json_response({"error": "not found"}, status=404)
 
     fr = repository.db.feature_requests[fr_id - 1]
-    return web.json_response(serialize_feature_request(fr))
+    return web.json_response(serialize_feature_request(fr, session_user_id(request)))
 
 
 async def handle_feature_request_update(request: web.Request):
@@ -147,7 +151,31 @@ async def handle_feature_request_update(request: web.Request):
             fr.notes.append(note)
 
     await repository.save()
-    return web.json_response(serialize_feature_request(fr))
+    return web.json_response(serialize_feature_request(fr, session_user_id(request)))
+
+
+async def handle_feature_request_vote(request: web.Request):
+    repository: Repository = request.app["repository"]
+    fr_id = int(request.match_info["id"])
+
+    if fr_id <= 0 or fr_id > len(repository.db.feature_requests):
+        return web.json_response({"error": "not found"}, status=404)
+
+    user_id = session_user_id(request)
+    if user_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    fr = repository.db.feature_requests[fr_id - 1]
+    if fr.votes is None:
+        fr.votes = set()
+
+    if user_id in fr.votes:
+        fr.votes.discard(user_id)
+    else:
+        fr.votes.add(user_id)
+
+    await repository.save()
+    return web.json_response(serialize_feature_request(fr, user_id))
 
 
 async def handle_feature_request_create(request: web.Request):
@@ -171,7 +199,9 @@ async def handle_feature_request_create(request: web.Request):
     )
     repository.db.feature_requests.append(fr)
     await repository.save()
-    return web.json_response(serialize_feature_request(fr), status=201)
+    return web.json_response(
+        serialize_feature_request(fr, session_user_id(request)), status=201
+    )
 
 
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -2189,6 +2219,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/feature-requests", handle_feature_request_create)
     app.router.add_get("/api/feature-requests/{id}", handle_feature_request_detail)
     app.router.add_patch("/api/feature-requests/{id}", handle_feature_request_update)
+    app.router.add_post("/api/feature-requests/{id}/vote", handle_feature_request_vote)
     app.router.add_get("/api/profile/{user_id}", handle_profile)
     app.router.add_get("/api/profile/{user_id}/history", handle_profile_history)
     app.router.add_get("/api/poker/stats/{user_id}", handle_poker_stats)

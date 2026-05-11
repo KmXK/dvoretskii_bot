@@ -2,6 +2,8 @@ import datetime
 import re
 from enum import Enum
 
+from telegram import ReactionTypeEmoji
+
 from steward.data.models.feature_request import (
     FeatureRequest,
     FeatureRequestChange,
@@ -12,10 +14,18 @@ from steward.framework import (
     FeatureContext,
     Keyboard,
     collection,
+    on_reaction,
     paginated,
     subcommand,
 )
 from steward.helpers.formats import escape_markdown, format_lined_list
+
+
+_VOTE_EMOJIS = {"❤", "\U0001f44d", "\U0001f525"}
+
+
+def _strip_variation(s: str) -> str:
+    return s.replace("\ufe0f", "")
 
 
 _STATUS_LABELS = {
@@ -91,6 +101,7 @@ class FeatureRequestFeature(Feature):
         "«покажи фича-реквесты» → /fr list",
         "«отметь фичу 7 выполненной» → /fr done 7",
         "«установи приоритет 1 для фичи 3» → /fr 3 priority 1",
+        "«лайкни фичу 5» → /fr like 5",
     ]
 
     feature_requests = collection("feature_requests")
@@ -167,6 +178,10 @@ class FeatureRequestFeature(Feature):
     async def cmd_testing(self, ctx, ids):
         await self._batch_status(ctx, "testing", ids.split())
 
+    @subcommand("like <ids:rest>", description="Лайкнуть/снять лайк")
+    async def cmd_like(self, ctx: FeatureContext, ids: str):
+        await self._batch_like(ctx, ids.split())
+
     @subcommand("<text:rest>", description="Добавить фичу", catchall=True)
     async def add(self, ctx: FeatureContext, text: str):
         if ctx.message is None:
@@ -200,7 +215,8 @@ class FeatureRequestFeature(Feature):
             text = escape_markdown(fr.text)
             text = re.sub(r"@[a-zA-Z0-9]+", lambda m: f"`{m.group(0)}`", text)
             p = _PRIORITY_EMOJI.get(fr.priority, "⚪")
-            return f"{p} `{author}`: {text}"
+            votes = f" ❤️{len(fr.votes)}" if fr.votes else ""
+            return f"{p}{votes} `{author}`: {text}"
 
         def render(batch):
             return format_lined_list(items=[(fr.id, fmt(fr)) for fr in batch], delimiter=". ")
@@ -210,6 +226,58 @@ class FeatureRequestFeature(Feature):
             for label, f in _FILTER_OPTIONS if f != filter_type
         ])
         return items, render, extra
+
+    async def _batch_like(self, ctx: FeatureContext, ids: list[str]):
+        if not ids:
+            await ctx.reply("Укажите номера фичи-реквеста(ов)")
+            return
+        items = list(self.feature_requests)
+        formatted: list[tuple[int | str, str]] = []
+        for raw in ids:
+            if not raw.isdigit():
+                formatted.append((raw, "Неверный номер фичи-реквеста"))
+                continue
+            fid = int(raw)
+            if fid <= 0 or fid > len(items):
+                formatted.append((fid, "Фича-реквеста с таким номером не существует"))
+                continue
+            fr = items[fid - 1]
+            if ctx.user_id in fr.votes:
+                fr.votes.discard(ctx.user_id)
+                formatted.append((fr.id, f"💔 ({len(fr.votes)})"))
+            else:
+                fr.votes.add(ctx.user_id)
+                formatted.append((fr.id, f"❤️ ({len(fr.votes)})"))
+        await self.feature_requests.save()
+        await ctx.reply(format_lined_list(formatted))
+
+    @on_reaction
+    async def on_react(self, ctx: FeatureContext) -> bool:
+        mr = ctx.reaction
+        if mr is None:
+            return False
+        chat_id = mr.chat.id if mr.chat else None
+        user_id = mr.user.id if mr.user else None
+        if chat_id is None or user_id is None:
+            return False
+        fr = self.feature_requests.find_by(chat_id=chat_id, message_id=mr.message_id)
+        if fr is None:
+            return False
+        has_vote = any(
+            isinstance(r, ReactionTypeEmoji)
+            and _strip_variation(r.emoji) in _VOTE_EMOJIS
+            for r in (mr.new_reaction or [])
+        )
+        changed = False
+        if has_vote and user_id not in fr.votes:
+            fr.votes.add(user_id)
+            changed = True
+        elif not has_vote and user_id in fr.votes:
+            fr.votes.discard(user_id)
+            changed = True
+        if changed:
+            await self.feature_requests.save()
+        return False
 
     async def _batch_status(self, ctx: FeatureContext, cmd: str, ids: list[str]):
         if not ids:
@@ -291,11 +359,12 @@ class FeatureRequestFeature(Feature):
             notes_text = "\n\nПримечания:"
             for i, note in enumerate(fr.notes, 1):
                 notes_text += f"\n{i}\\. {escape_markdown(note)}"
+        votes_text = f"\nЛайки: ❤️ {len(fr.votes)}" if fr.votes else ""
         return (
             f"Фича-реквест #{fr.id}\n"
             f"Статус: {status_text}\n"
             f"Приоритет: {p_emoji} {fr.priority}\n"
             f"Автор: `{author}`\n"
             f"Текст: {text}"
-            f"{date_str}{history_text}{notes_text}"
+            f"{votes_text}{date_str}{history_text}{notes_text}"
         )

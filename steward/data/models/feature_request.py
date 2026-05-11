@@ -32,6 +32,7 @@ class FeatureRequest:
     priority: int = 5
     notes: list[str] = field(default_factory=list)
     history: list[FeatureRequestChange] = field(default_factory=list)
+    votes: set[int] = field(default_factory=set)
 
     @property
     def status(self) -> FeatureRequestStatus:
