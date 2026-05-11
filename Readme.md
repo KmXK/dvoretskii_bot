@@ -26,6 +26,27 @@ make logs-dev                         # логи
 
 Для корректной работы HTTPS туннеля через localhost.run для тестирования миниаппы нужно включить чек "Enable host networking" для Docker Desktop (актуально для Windows)
 
+#### Стабильный URL туннеля (опционально, но удобно)
+
+По умолчанию `localhost.run` выдаёт случайный `*.lhr.life` URL при каждом
+переподключении — приходится каждый раз делать `/setdomain` в BotFather. Чтобы
+URL был стабильным, привяжи персональный SSH-ключ:
+
+```bash
+# 1. Сгенерь отдельный ключ под туннель (не используй основной ~/.ssh/id_*)
+ssh-keygen -t ed25519 -N "" -f scripts/tunnel-key/id_ed25519 -C "dvoretskii-bot-tunnel"
+
+# 2. Открой https://admin.localhost.run/, залогинься (любым способом) и добавь
+#    публичную часть из scripts/tunnel-key/id_ed25519.pub. Этот ключ будет
+#    привязан к стабильному субдомену вида <hash>.lhr.life.
+
+# 3. make dev — в логах localhost-run увидишь свой постоянный URL.
+#    Один раз делаешь /setdomain в BotFather — и забываешь.
+```
+
+Папка `scripts/tunnel-key/` в gitignore, ключ остаётся локально. Если ключа
+нет — `make dev` работает как раньше (анонимный режим, случайный URL).
+
 ### Prod
 ```bash
 make prod         # запустить

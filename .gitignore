@@ -190,4 +190,8 @@ web/key.pem
 web/cert.pem
 nginx/ssl/
 
+# localhost.run tunnel key (опционально — см. Readme.md)
+scripts/tunnel-key/*
+!scripts/tunnel-key/.gitkeep
+
 CLAUDE.md

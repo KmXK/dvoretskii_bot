@@ -49,6 +49,7 @@ services:
       - LOCAL_HOST=web
     volumes:
       - tunnel-info:/shared
+      - ./scripts/tunnel-key:/key:ro
     networks:
       - bot
     depends_on:
