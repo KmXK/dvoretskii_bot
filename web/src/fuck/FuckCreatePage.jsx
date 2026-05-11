@@ -3,11 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import { fuckApi as api } from './api'
 import { useAuth } from '../context/useAuth'
+import Annotator from './annotator/Annotator'
 
-const ANNOTATOR_URL = '/fuck/annotator.html?embedded=1'
+const ACCEPT = 'video/*,image/gif,image/webp'
 
-
-function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, onSave, onCancel }) {
+function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, onSave, onCancel, onPickFile, hasLocalFile }) {
   const isEdit = mode === 'edit'
   return (
     <div className="bg-spotify-dark rounded-2xl p-4 mb-4">
@@ -17,7 +17,7 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={loaded ? 'дай имя ассету' : 'сначала загрузи файл в annotator ниже'}
+            placeholder={loaded ? 'дай имя ассету' : 'сначала загрузи файл'}
             disabled={!loaded || busy}
             className="w-full bg-black/40 text-white text-base rounded-lg px-3 py-2.5 border border-white/10 focus:border-spotify-green focus:outline-none disabled:opacity-50"
           />
@@ -43,7 +43,19 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {!isEdit && (
+            <label className="px-4 py-2.5 rounded-lg text-sm bg-white/5 text-white hover:bg-white/10 cursor-pointer">
+              {hasLocalFile ? 'Заменить файл' : 'Файл'}
+              <input
+                type="file"
+                accept={ACCEPT}
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = '' }}
+              />
+            </label>
+          )}
           <button
             onClick={onCancel}
             disabled={busy}
@@ -57,11 +69,6 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
         </div>
       </div>
 
-      {!loaded && !isEdit && (
-        <p className="text-spotify-text/60 text-xs mt-3">
-          Загрузи видео/gif/webp в annotator ниже, расставь keyframes для A и B, потом нажми «Создать».
-        </p>
-      )}
       {error && (
         <div className="mt-3 bg-red-500/15 text-red-300 text-sm rounded-lg px-3 py-2">{error}</div>
       )}
@@ -76,47 +83,13 @@ export default function FuckCreatePage() {
   const { initData } = useAuth()
   const mode = editId ? 'edit' : 'create'
 
-  const iframeRef = useRef(null)
-  const pendingResolveRef = useRef(null)
-  const editPayloadRef = useRef(null)
-
-  const [loaded, setLoaded] = useState(null)
+  const annotatorRef = useRef(null)
   const [name, setName] = useState('')
   const [scope, setScope] = useState('global')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-
-  useEffect(() => {
-    const onMessage = (e) => {
-      const msg = e.data
-      if (!msg || typeof msg !== 'object') return
-      if (msg.type === 'ready' && editPayloadRef.current) {
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: 'loadFromUrl', ...editPayloadRef.current },
-          '*',
-        )
-      } else if (msg.type === 'loaded') {
-        setLoaded(msg)
-        if (mode === 'create' && !name) {
-          const stem = String(msg.filename || '').replace(/\.[^.]+$/, '')
-          setName(stem)
-        }
-      } else if (msg.type === 'editLoaded') {
-        // annotator finished loading existing media + keyframes
-      } else if (msg.type === 'annotations') {
-        const resolve = pendingResolveRef.current
-        pendingResolveRef.current = null
-        if (resolve) resolve({ ok: true, ...msg })
-      } else if (msg.type === 'error') {
-        const resolve = pendingResolveRef.current
-        pendingResolveRef.current = null
-        if (resolve) resolve({ ok: false, error: msg.error })
-        else setError(msg.error)
-      }
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [name, mode])
+  const [loaded, setLoaded] = useState(false)
+  const [hasLocalFile, setHasLocalFile] = useState(false)
 
   useEffect(() => {
     if (mode !== 'edit') return
@@ -131,16 +104,14 @@ export default function FuckCreatePage() {
         if (cancelled) return
         setName(asset.name)
         setScope(asset.scope)
-        editPayloadRef.current = {
-          mediaUrl: asset.media_url,
-          filename: `${asset.id}.${asset.extension}`,
+        const headers = initData ? { 'X-Init-Data': initData } : {}
+        await annotatorRef.current?.loadFromUrl(
+          asset.media_url,
+          `${asset.id}.${asset.extension}`,
           annotations,
-          initData,
-        }
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: 'loadFromUrl', ...editPayloadRef.current },
-          '*',
+          headers,
         )
+        if (!cancelled) setLoaded(true)
       } catch (e) {
         if (!cancelled) setError(e.message)
       }
@@ -148,33 +119,36 @@ export default function FuckCreatePage() {
     return () => { cancelled = true }
   }, [mode, editId, initData])
 
-  const requestAnnotations = useCallback(() => new Promise((resolve) => {
-    pendingResolveRef.current = resolve
-    iframeRef.current?.contentWindow?.postMessage({ type: 'getAnnotations' }, '*')
-    setTimeout(() => {
-      if (pendingResolveRef.current === resolve) {
-        pendingResolveRef.current = null
-        resolve({ ok: false, error: 'annotator не ответил' })
-      }
-    }, 5000)
-  }), [])
+  const onPickFile = useCallback(async (file) => {
+    setError(null)
+    try {
+      await annotatorRef.current?.loadFromFile(file, null)
+      if (!name) setName(file.name.replace(/\.[^.]+$/, ''))
+      setLoaded(true)
+      setHasLocalFile(true)
+    } catch (e) {
+      setError(e.message)
+      setLoaded(false)
+    }
+  }, [name])
 
   const save = async () => {
     setError(null)
     setBusy(true)
     try {
-      const res = await requestAnnotations()
-      if (!res.ok) throw new Error(res.error)
+      const res = annotatorRef.current?.getAnnotations()
+      if (!res) throw new Error('annotator не готов')
+      if (res.error) throw new Error(res.error)
       if (mode === 'edit') {
         await api.patchAsset(editId, {
           name: name.trim(),
           scope,
-          annotations: res.annotations,
+          annotations: res.data,
         })
       } else {
         await api.createAsset({
           file: res.file,
-          annotations: res.annotations,
+          annotations: res.data,
           name: name.trim(),
           scope,
         })
@@ -193,12 +167,12 @@ export default function FuckCreatePage() {
       <div className="max-w-6xl mx-auto px-4 pt-4">
         <header className="mb-4">
           <h1 className="text-2xl font-bold">
-            {mode === 'edit' ? 'Редактировать /fuck-ассет' : 'Новый /fuck-ассет'}
+            {mode === 'edit' ? 'Редактировать ассет' : 'Новый ассет'}
           </h1>
           <p className="text-spotify-text text-sm mt-1">
             {mode === 'edit'
-              ? 'Подвинь bbox\'ы и пересохрани кейфреймы.'
-              : 'Загрузи видео/gif/webp, разметь bbox\'ы A и B по keyframes и нажми «Создать».'}
+              ? 'Двигай bbox\'ы и пересохрани кейфреймы.'
+              : 'Загрузи файл, разметь bbox\'ы A и B по кейфреймам, сохрани.'}
           </p>
         </header>
 
@@ -213,14 +187,13 @@ export default function FuckCreatePage() {
           setScope={setScope}
           onSave={save}
           onCancel={() => navigate('/fuck/assets')}
+          onPickFile={onPickFile}
+          hasLocalFile={hasLocalFile}
         />
 
-        <iframe
-          ref={iframeRef}
-          src={ANNOTATOR_URL}
-          title="annotator"
-          className="w-full h-[80vh] rounded-2xl border-0 bg-black"
-        />
+        <div className="bg-spotify-dark rounded-2xl p-3">
+          <Annotator ref={annotatorRef} />
+        </div>
       </div>
     </div>
   )
