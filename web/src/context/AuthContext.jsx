@@ -30,9 +30,9 @@ export function AuthProvider({ children }) {
       try {
         const data = await refresh()
         if (cancelled) return
-        if (!data.authenticated && mode === 'miniapp' && WebApp?.initData) {
+        if (mode === 'miniapp' && WebApp?.initData) {
           await api.post('/api/auth/webapp', { initData: WebApp.initData })
-          if (!cancelled) await refresh()
+          if (!cancelled && !data.authenticated) await refresh()
         }
       } catch (e) {
         if (!cancelled) setError(e.message)

@@ -1,6 +1,12 @@
+import asyncio
+import logging
+
 from steward.data.models.chat import Chat
 from steward.data.models.user import User
 from steward.framework import Feature, FeatureContext, collection, on_init, on_message
+from steward.helpers.avatars import has_cached_avatar, try_fetch_from_bot
+
+logger = logging.getLogger(__name__)
 
 
 class ChatCollectFeature(Feature):
@@ -9,14 +15,31 @@ class ChatCollectFeature(Feature):
 
     _chat_ids: set[int]
     _users_by_id: dict[int, User]
+    _avatar_attempted: set[int]
 
     @on_init
     def _populate_cache(self):
+        self._avatar_attempted = set()
         self._update_cache()
 
     def _update_cache(self):
         self._chat_ids = set(c.id for c in self.chats)
         self._users_by_id = {u.id: u for u in self.users}
+
+    def _kick_avatar_fetch(self, user_id: int) -> None:
+        if user_id in self._avatar_attempted:
+            return
+        self._avatar_attempted.add(user_id)
+        if has_cached_avatar(user_id):
+            return
+
+        async def _do():
+            try:
+                await try_fetch_from_bot(self.bot, user_id)
+            except Exception:
+                logger.exception("avatar background fetch for %s failed", user_id)
+
+        asyncio.create_task(_do())
 
     @on_message
     async def collect(self, ctx: FeatureContext) -> bool:
@@ -63,4 +86,6 @@ class ChatCollectFeature(Feature):
         if changed:
             await self.users.save()
             self._update_cache()
+        if from_user is not None:
+            self._kick_avatar_fetch(from_user.id)
         return False
