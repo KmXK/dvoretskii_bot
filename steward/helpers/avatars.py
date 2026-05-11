@@ -47,8 +47,17 @@ def cached_avatar_path(user_id: int) -> Optional[Path]:
         return None
     for ext in _AVATAR_EXTS:
         p = AVATAR_DIR / f"{user_id}.{ext}"
-        if p.exists():
-            return p
+        if not p.exists():
+            continue
+        try:
+            head = p.read_bytes()[:16]
+        except Exception:
+            continue
+        if _detect_ext(head) is None:
+            logger.info("avatar: dropping stale non-raster cache %s", p)
+            p.unlink(missing_ok=True)
+            continue
+        return p
     return None
 
 
@@ -69,14 +78,29 @@ def _save_bytes(user_id: int, data: bytes, ext: str) -> Path:
     return path
 
 
-def _detect_ext(data: bytes) -> str:
+def _detect_ext(data: bytes) -> Optional[str]:
+    """Return raster image extension or None for unknown/non-raster (incl. SVG)."""
+    if len(data) < 12:
+        return None
     if data[:3] == b"\xff\xd8\xff":
         return "jpg"
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "png"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp"
-    return "jpg"
+    return None
+
+
+def _save_image_bytes(user_id: int, data: bytes, source: str) -> Optional[Path]:
+    ext = _detect_ext(data)
+    if ext is None:
+        head = data[:32].decode("ascii", errors="replace").strip()
+        logger.info(
+            "avatar: %s for %s returned non-raster data (head=%r, %d bytes) — skipping",
+            source, user_id, head[:40], len(data),
+        )
+        return None
+    return _save_bytes(user_id, data, ext)
 
 
 async def save_photo_from_file_id(bot: ExtBot, user_id: int, file_id: str) -> Optional[Path]:
@@ -85,7 +109,7 @@ async def save_photo_from_file_id(bot: ExtBot, user_id: int, file_id: str) -> Op
     except Exception as e:
         logger.warning("avatar: download file_id %s for %s failed: %s", file_id, user_id, e)
         return None
-    return _save_bytes(user_id, data, _detect_ext(data))
+    return _save_image_bytes(user_id, data, f"file_id={file_id}")
 
 
 async def save_photo_from_url(user_id: int, url: str) -> Optional[Path]:
@@ -105,7 +129,7 @@ async def save_photo_from_url(user_id: int, url: str) -> Optional[Path]:
         return None
     if not data:
         return None
-    return _save_bytes(user_id, data, _detect_ext(data))
+    return _save_image_bytes(user_id, data, f"url={url}")
 
 
 async def try_fetch_from_bot(bot: ExtBot, user_id: int) -> Optional[Path]:
