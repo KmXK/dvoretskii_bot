@@ -274,9 +274,19 @@ async def handle_patch_asset(request: web.Request):
         annotations = body["annotations"]
         if not isinstance(annotations, dict):
             return web.json_response({"error": "annotations must be an object"}, status=400)
+        kfs = annotations.get("keyframes") or {}
+        ka = kfs.get("a") if isinstance(kfs, dict) else None
+        kb = kfs.get("b") if isinstance(kfs, dict) else None
         _, ann_path = _asset_paths(asset)
         ann_path.parent.mkdir(parents=True, exist_ok=True)
         ann_path.write_text(json.dumps(annotations, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(
+            "/fuck patch: %s by user %s keyframes A=%d B=%d -> %s (%d bytes)",
+            asset_id, uid,
+            len(ka) if isinstance(ka, list) else -1,
+            len(kb) if isinstance(kb, list) else -1,
+            ann_path, ann_path.stat().st_size,
+        )
     await repository.save()
     return web.json_response(_serialize_asset(repository, asset, uid))
 

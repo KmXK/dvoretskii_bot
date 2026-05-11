@@ -84,6 +84,8 @@ export default function FuckCreatePage() {
   const mode = editId ? 'edit' : 'create'
 
   const annotatorRef = useRef(null)
+  const loadedAssetRef = useRef(null)
+  const initDataRef = useRef(initData)
   const [name, setName] = useState('')
   const [scope, setScope] = useState('global')
   const [busy, setBusy] = useState(false)
@@ -91,8 +93,12 @@ export default function FuckCreatePage() {
   const [loaded, setLoaded] = useState(false)
   const [hasLocalFile, setHasLocalFile] = useState(false)
 
+  useEffect(() => { initDataRef.current = initData }, [initData])
+
   useEffect(() => {
     if (mode !== 'edit') return
+    if (loadedAssetRef.current === editId) return
+    loadedAssetRef.current = editId
     let cancelled = false
     ;(async () => {
       try {
@@ -104,7 +110,7 @@ export default function FuckCreatePage() {
         if (cancelled) return
         setName(asset.name)
         setScope(asset.scope)
-        const headers = initData ? { 'X-Init-Data': initData } : {}
+        const headers = initDataRef.current ? { 'X-Init-Data': initDataRef.current } : {}
         await annotatorRef.current?.loadFromUrl(
           asset.media_url,
           `${asset.id}.${asset.extension}`,
@@ -113,11 +119,14 @@ export default function FuckCreatePage() {
         )
         if (!cancelled) setLoaded(true)
       } catch (e) {
-        if (!cancelled) setError(e.message)
+        if (!cancelled) {
+          loadedAssetRef.current = null
+          setError(e.message)
+        }
       }
     })()
     return () => { cancelled = true }
-  }, [mode, editId, initData])
+  }, [mode, editId])
 
   const onPickFile = useCallback(async (file) => {
     setError(null)
