@@ -127,7 +127,7 @@ export default function FuckCreatePage() {
         name: name.trim(),
         scope,
       })
-      navigate('/fuck/admin')
+      navigate('/fuck/assets')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -155,7 +155,7 @@ export default function FuckCreatePage() {
           scope={scope}
           setScope={setScope}
           onSave={save}
-          onCancel={() => navigate('/fuck/admin')}
+          onCancel={() => navigate('/fuck/assets')}
         />
 
         <iframe

@@ -29,7 +29,7 @@ export const NAV_GROUPS = [
   {
     label: '/fuck',
     items: [
-      { to: '/fuck/admin', label: 'Ассеты', icon: '🤡', home: { title: '/fuck', desc: 'Ассеты и редактор', color: 'from-fuchsia-500/20 to-fuchsia-900/20' } },
+      { to: '/fuck/assets', label: 'Ассеты', icon: '🤡', home: { title: '/fuck', desc: 'Гифки доступные тебе', color: 'from-fuchsia-500/20 to-fuchsia-900/20' } },
       { to: '/fuck/new', label: 'Создать', icon: '➕' },
     ],
   },

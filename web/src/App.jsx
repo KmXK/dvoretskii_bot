@@ -18,7 +18,7 @@ import StatsPage from './pages/StatsPage'
 import ToolsPage from './pages/ToolsPage'
 import NotFoundPage from './pages/NotFoundPage'
 import TodoPage from './pages/TodoPage'
-import FuckAdminPage from './fuck/FuckAdminPage'
+import FuckAssetsPage from './fuck/FuckAssetsPage'
 import FuckCreatePage from './fuck/FuckCreatePage'
 
 export default function App() {
@@ -43,7 +43,7 @@ export default function App() {
                 <Route path="/birthdays" element={<BirthdaysPage />} />
                 <Route path="/bills" element={<BillsPage />} />
                 <Route path="/stats" element={<StatsPage />} />
-                <Route path="/fuck/admin" element={<FuckAdminPage />} />
+                <Route path="/fuck/assets" element={<FuckAssetsPage />} />
                 <Route path="/fuck/new" element={<FuckCreatePage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Routes>
