@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
@@ -290,7 +290,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
 }
 
 export default function RemindersPage() {
-  const { userId } = useTelegram()
+  const { userId } = useAuth()
   const [data, setData] = useState({ active: [], completed: [] })
   const [chats, setChats] = useState([])
   const [loading, setLoading] = useState(true)

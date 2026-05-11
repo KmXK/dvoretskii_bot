@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const PERIODS = [
@@ -37,7 +37,7 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 export default function ProfilePage() {
-  const { userId, firstName, lastName, username, photoUrl } = useTelegram()
+  const { userId, firstName, lastName, username, photoUrl } = useAuth()
   const [rewards, setRewards] = useState(null)
   const [stand, setStand] = useState(null)
   const [stats, setStats] = useState(null)

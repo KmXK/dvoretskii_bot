@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const STATUS = { OPEN: 0, DONE: 1, DENIED: 2, IN_PROGRESS: 3, TESTING: 4 }
@@ -302,7 +302,7 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
 }
 
 export default function FeaturesPage() {
-  const { firstName, lastName, username } = useTelegram()
+  const { firstName, lastName, username } = useAuth()
   const authorName = username || [firstName, lastName].filter(Boolean).join(' ') || ''
 
   const [features, setFeatures] = useState([])

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
@@ -1288,7 +1288,7 @@ function actionColor(action) {
 }
 
 export default function PokerPage() {
-  const { userId, initData } = useTelegram()
+  const { userId, initData } = useAuth()
   const [view, setView] = useState('lobby')
   const [rooms, setRooms] = useState([])
   const [room, setRoom] = useState(null)
