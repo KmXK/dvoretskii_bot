@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import { fuckApi as api } from './api'
+import { useAuth } from '../context/useAuth'
 
 const ANNOTATOR_URL = '/fuck/annotator.html?embedded=1'
 
@@ -72,6 +73,7 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
 export default function FuckCreatePage() {
   const navigate = useNavigate()
   const { id: editId } = useParams()
+  const { initData } = useAuth()
   const mode = editId ? 'edit' : 'create'
 
   const iframeRef = useRef(null)
@@ -133,8 +135,8 @@ export default function FuckCreatePage() {
           mediaUrl: asset.media_url,
           filename: `${asset.id}.${asset.extension}`,
           annotations,
+          initData,
         }
-        // If iframe already sent "ready" before this fetched, kick it now.
         iframeRef.current?.contentWindow?.postMessage(
           { type: 'loadFromUrl', ...editPayloadRef.current },
           '*',
@@ -144,7 +146,7 @@ export default function FuckCreatePage() {
       }
     })()
     return () => { cancelled = true }
-  }, [mode, editId])
+  }, [mode, editId, initData])
 
   const requestAnnotations = useCallback(() => new Promise((resolve) => {
     pendingResolveRef.current = resolve

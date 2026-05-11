@@ -926,13 +926,20 @@ if (IS_EMBEDDED) {
       });
     } else if (msg.type === 'loadFromUrl') {
       try {
-        const res = await fetch(msg.mediaUrl, { credentials: 'include' });
+        const headers = msg.initData ? { 'X-Init-Data': msg.initData } : {};
+        const res = await fetch(msg.mediaUrl, { credentials: 'include', headers });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const blob = await res.blob();
         const filename = msg.filename || 'asset';
-        const type = blob.type || (filename.endsWith('.gif') ? 'image/gif'
-                       : filename.endsWith('.webp') ? 'image/webp'
-                       : 'video/mp4');
+        const extMime = {
+          gif: 'image/gif',
+          webp: 'image/webp',
+          mp4: 'video/mp4',
+          webm: 'video/webm',
+          mov: 'video/quicktime',
+        };
+        const ext = (filename.split('.').pop() || '').toLowerCase();
+        const type = extMime[ext] || (blob.type && blob.type !== 'application/octet-stream' ? blob.type : 'application/octet-stream');
         const file = new File([blob], filename, { type });
         await loadFileThrowing(file);
         if (msg.annotations && msg.annotations.keyframes) {
