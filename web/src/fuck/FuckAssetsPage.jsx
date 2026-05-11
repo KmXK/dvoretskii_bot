@@ -34,95 +34,6 @@ function AssetMedia({ asset }) {
 }
 
 
-function EditDialog({ asset, open, onClose, onSaved }) {
-  const [name, setName] = useState(asset?.name ?? '')
-  const [scope, setScope] = useState(asset?.scope ?? 'global')
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (open && asset) { setName(asset.name); setScope(asset.scope) }
-  }, [open, asset])
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      const updated = await api.patchAsset(asset.id, { name: name.trim(), scope })
-      onSaved(updated)
-      onClose()
-    } catch (e) {
-      alert('Ошибка: ' + e.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/70 z-50 backdrop-blur-sm" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
-          bg-spotify-dark rounded-2xl w-[calc(100%-2rem)] max-w-md z-50 p-6 shadow-2xl">
-          <Dialog.Title className="text-white text-lg font-semibold mb-5">
-            Редактировать ассет
-          </Dialog.Title>
-
-          <label className="block mb-5">
-            <div className="text-spotify-text text-sm mb-2">Название</div>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              className="w-full bg-black/40 text-white text-base rounded-lg px-3 py-2.5 border border-white/10 focus:border-spotify-green focus:outline-none"
-              placeholder="имя ассета"
-            />
-          </label>
-
-          <div className="mb-6">
-            <div className="text-spotify-text text-sm mb-2">Кому доступно</div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setScope('global')}
-                className={`px-3 py-3 rounded-lg text-sm font-medium transition-all ${
-                  scope === 'global'
-                    ? 'bg-spotify-green text-black'
-                    : 'bg-white/5 text-white hover:bg-white/10'
-                }`}
-              >🌍 всем</button>
-              <button
-                onClick={() => setScope('personal')}
-                className={`px-3 py-3 rounded-lg text-sm font-medium transition-all ${
-                  scope === 'personal'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-white/5 text-white hover:bg-white/10'
-                }`}
-              >👥 моим чатам</button>
-            </div>
-            <p className="text-spotify-text/60 text-xs mt-2 leading-relaxed">
-              «Моим чатам» — гифка показывается в /fuck только в чатах, где состоишь ты сам.
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            <Dialog.Close asChild>
-              <button className="flex-1 py-3 rounded-lg text-sm font-medium bg-white/5 text-white hover:bg-white/10">
-                Отмена
-              </button>
-            </Dialog.Close>
-            <button
-              onClick={save}
-              disabled={saving || !name.trim()}
-              className="flex-1 py-3 rounded-lg text-sm font-medium bg-spotify-green text-black disabled:opacity-40 disabled:cursor-not-allowed hover:bg-spotify-green/90"
-            >
-              {saving ? 'Сохраняю…' : 'Сохранить'}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
-
 function ConfirmDeleteDialog({ asset, open, onClose, onConfirmed }) {
   const [busy, setBusy] = useState(false)
 
@@ -169,7 +80,7 @@ function ConfirmDeleteDialog({ asset, open, onClose, onConfirmed }) {
 }
 
 
-function AssetCard({ asset, onEdit, onDelete }) {
+function AssetCard({ asset, onDelete }) {
   return (
     <motion.div
       layout
@@ -193,20 +104,16 @@ function AssetCard({ asset, onEdit, onDelete }) {
           {formatDate(asset.created_at)}
         </p>
 
-        <div className="mt-auto flex flex-wrap gap-2">
+        <div className="mt-auto flex gap-2">
           {asset.can_edit ? (
             <>
-              <button
-                onClick={() => onEdit(asset)}
-                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium bg-white/5 text-white hover:bg-white/10"
-              >Изменить</button>
               <Link
                 to={`/fuck/assets/${asset.id}/edit`}
-                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium text-center bg-white/5 text-white hover:bg-white/10"
-              >Кейфреймы</Link>
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium text-center bg-white/5 text-white hover:bg-white/10"
+              >Изменить</Link>
               <button
                 onClick={() => onDelete(asset)}
-                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-300 hover:bg-red-500/20"
               >Удалить</button>
             </>
           ) : (
@@ -224,7 +131,6 @@ export default function FuckAssetsPage() {
   const [assets, setAssets] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [editing, setEditing] = useState(null)
   const [deleting, setDeleting] = useState(null)
 
   const reload = useCallback(async () => {
@@ -284,7 +190,6 @@ export default function FuckAssetsPage() {
                 <AssetCard
                   key={a.id}
                   asset={a}
-                  onEdit={setEditing}
                   onDelete={setDeleting}
                 />
               ))}
@@ -293,12 +198,6 @@ export default function FuckAssetsPage() {
         )}
       </div>
 
-      <EditDialog
-        asset={editing}
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        onSaved={(u) => setAssets((prev) => prev.map((x) => x.id === u.id ? u : x))}
-      />
       <ConfirmDeleteDialog
         asset={deleting}
         open={!!deleting}
