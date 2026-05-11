@@ -123,13 +123,18 @@ def parse_session_token(token: str) -> int | None:
 
 
 def set_session_cookie(response: web.StreamResponse, user_id: int) -> None:
+    # SameSite=None is required for Telegram WebApp (the bot's UI is loaded
+    # in a cross-site iframe on web.telegram.org, so Lax cookies are blocked
+    # in those fetches). None requires Secure=True, which prod has.
+    # In dev (no HTTPS) we fall back to Lax to keep cookies usable.
+    secure = _is_secure_env()
     response.set_cookie(
         SESSION_COOKIE,
         make_session_token(user_id),
         max_age=SESSION_MAX_AGE,
         httponly=True,
-        secure=_is_secure_env(),
-        samesite="Lax",
+        secure=secure,
+        samesite="None" if secure else "Lax",
     )
 
 

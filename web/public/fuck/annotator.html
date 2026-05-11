@@ -825,32 +825,41 @@ function setStatus(msg, isErr) {
   el.classList.toggle('err', !!isErr);
 }
 
-async function loadFile(file) {
+async function loadFileThrowing(file) {
   setStatus('Loading…');
+  const isGif = file.type === 'image/gif' || /\.gif$/i.test(file.name);
+  const isWebp = file.type === 'image/webp' || /\.webp$/i.test(file.name);
+  if (isGif) app.source = new GifSource(file);
+  else if (isWebp) app.source = new WebpSource(file);
+  else app.source = new VideoSource(file);
   try {
-    const isGif = file.type === 'image/gif' || /\.gif$/i.test(file.name);
-    const isWebp = file.type === 'image/webp' || /\.webp$/i.test(file.name);
-    if (isGif) app.source = new GifSource(file);
-    else if (isWebp) app.source = new WebpSource(file);
-    else app.source = new VideoSource(file);
     await app.source.load();
+  } catch (err) {
+    app.source = null;
+    throw err;
+  }
 
-    app.canvas.width = app.source.width;
-    app.canvas.height = app.source.height;
-    app.keyframes = { a: [], b: [] };
-    app.bbox = { a: null, b: null };
+  app.canvas.width = app.source.width;
+  app.canvas.height = app.source.height;
+  app.keyframes = { a: [], b: [] };
+  app.bbox = { a: null, b: null };
 
-    fpsInput.value = app.source.fps.toFixed(2);
-    fpsInput.disabled = app.source.kind !== 'video';
+  fpsInput.value = app.source.fps.toFixed(2);
+  fpsInput.disabled = app.source.kind !== 'video';
 
-    document.getElementById('workspace').style.display = '';
-    document.getElementById('dropZone').textContent = `Loaded: ${file.name} — ${app.source.width}×${app.source.height}, ${app.source.duration.toFixed(2)}s, ${app.source.frames} frames`;
+  document.getElementById('workspace').style.display = '';
+  document.getElementById('dropZone').textContent = `Loaded: ${file.name} — ${app.source.width}×${app.source.height}, ${app.source.duration.toFixed(2)}s, ${app.source.frames} frames`;
 
-    await app.source.seek(0);
-    render();
-    const note = app.source.kind === 'video' ? '' : `${app.source.kind.toUpperCase()} frames pre-rendered.`;
-    setStatus('Ready. ' + note);
-    window.dispatchEvent(new CustomEvent('annotator:loaded', { detail: app.source }));
+  await app.source.seek(0);
+  render();
+  const note = app.source.kind === 'video' ? '' : `${app.source.kind.toUpperCase()} frames pre-rendered.`;
+  setStatus('Ready. ' + note);
+  window.dispatchEvent(new CustomEvent('annotator:loaded', { detail: app.source }));
+}
+
+async function loadFile(file) {
+  try {
+    await loadFileThrowing(file);
   } catch (err) {
     console.error(err);
     setStatus('Error: ' + err.message, true);
@@ -925,7 +934,7 @@ if (IS_EMBEDDED) {
                        : filename.endsWith('.webp') ? 'image/webp'
                        : 'video/mp4');
         const file = new File([blob], filename, { type });
-        await loadFile(file);
+        await loadFileThrowing(file);
         if (msg.annotations && msg.annotations.keyframes) {
           app.keyframes = {
             a: Array.isArray(msg.annotations.keyframes.a) ? msg.annotations.keyframes.a : [],
