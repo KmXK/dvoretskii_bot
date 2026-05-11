@@ -14,6 +14,7 @@ resolution by `@username` (`save_photo_from_file_id`).
 from __future__ import annotations
 
 import logging
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,21 @@ logger = logging.getLogger(__name__)
 
 AVATAR_DIR = Path("data/avatars")
 _AVATAR_EXTS = ("jpg", "jpeg", "webp", "png")
+
+# Per-user ring of last events for diagnostics. Kept in memory only.
+_DIAGNOSTIC_LOG: dict[int, list[dict]] = {}
+_DIAGNOSTIC_MAX_EVENTS = 20
+
+
+def record_event(user_id: int, kind: str, **fields) -> None:
+    events = _DIAGNOSTIC_LOG.setdefault(user_id, [])
+    events.append({"ts": time.time(), "kind": kind, **fields})
+    if len(events) > _DIAGNOSTIC_MAX_EVENTS:
+        del events[: len(events) - _DIAGNOSTIC_MAX_EVENTS]
+
+
+def diagnostic_events(user_id: int) -> list[dict]:
+    return list(_DIAGNOSTIC_LOG.get(user_id, []))
 
 _FALLBACK_COLORS = [
     (229, 115, 115), (186, 104, 200), (149, 117, 205),
@@ -99,8 +115,14 @@ def _save_image_bytes(user_id: int, data: bytes, source: str) -> Optional[Path]:
             "avatar: %s for %s returned non-raster data (head=%r, %d bytes) — skipping",
             source, user_id, head[:40], len(data),
         )
+        record_event(
+            user_id, "non-raster-skip",
+            source=source, bytes=len(data), head=head[:40],
+        )
         return None
-    return _save_bytes(user_id, data, ext)
+    path = _save_bytes(user_id, data, ext)
+    record_event(user_id, "saved", source=source, ext=ext, bytes=len(data), path=str(path))
+    return path
 
 
 async def save_photo_from_file_id(bot: ExtBot, user_id: int, file_id: str) -> Optional[Path]:
@@ -115,17 +137,25 @@ async def save_photo_from_file_id(bot: ExtBot, user_id: int, file_id: str) -> Op
 async def save_photo_from_url(user_id: int, url: str) -> Optional[Path]:
     if not url:
         return None
+    record_event(user_id, "url-fetch-start", url=url)
     try:
         from aiohttp import ClientSession, ClientTimeout
         timeout = ClientTimeout(total=10)
         async with ClientSession(timeout=timeout) as session:
             async with session.get(url) as resp:
+                content_type = resp.headers.get("Content-Type", "")
                 if resp.status != 200:
                     logger.info("avatar: photo_url %s for %s returned HTTP %s", url, user_id, resp.status)
+                    record_event(user_id, "url-fetch-bad-status", url=url, status=resp.status)
                     return None
                 data = await resp.read()
+                record_event(
+                    user_id, "url-fetch-ok",
+                    url=url, status=200, content_type=content_type, bytes=len(data),
+                )
     except Exception as e:
         logger.warning("avatar: photo_url %s for %s failed: %s", url, user_id, e)
+        record_event(user_id, "url-fetch-error", url=url, error=str(e))
         return None
     if not data:
         return None
@@ -136,6 +166,11 @@ async def try_fetch_from_bot(bot: ExtBot, user_id: int) -> Optional[Path]:
     """Try every Bot API method to obtain a profile photo. Caches on success."""
     try:
         photos = await bot.get_user_profile_photos(user_id, limit=1)
+        record_event(
+            user_id, "bot-getUserProfilePhotos",
+            total=getattr(photos, "total_count", None),
+            has_first=bool(photos.photos and photos.photos[0]),
+        )
         if photos.photos and photos.photos[0]:
             file_id = photos.photos[0][-1].file_id
             path = await save_photo_from_file_id(bot, user_id, file_id)
@@ -143,17 +178,25 @@ async def try_fetch_from_bot(bot: ExtBot, user_id: int) -> Optional[Path]:
                 return path
     except Exception as e:
         logger.info("avatar: get_user_profile_photos(%s) failed: %s", user_id, e)
+        record_event(user_id, "bot-getUserProfilePhotos-error", error=str(e))
 
     try:
         chat = await bot.get_chat(user_id)
         photo = getattr(chat, "photo", None)
         file_id = getattr(photo, "big_file_id", None) if photo else None
+        record_event(
+            user_id, "bot-getChat",
+            type=getattr(chat, "type", None),
+            has_photo=photo is not None,
+            big_file_id=file_id,
+        )
         if file_id:
             path = await save_photo_from_file_id(bot, user_id, file_id)
             if path is not None:
                 return path
     except Exception as e:
         logger.info("avatar: get_chat(%s) failed: %s", user_id, e)
+        record_event(user_id, "bot-getChat-error", error=str(e))
 
     return None
 
