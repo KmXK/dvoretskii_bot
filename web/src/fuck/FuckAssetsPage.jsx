@@ -215,7 +215,7 @@ function AssetCard({ asset, onEdit, onDelete }) {
 }
 
 
-export default function FuckAdminPage() {
+export default function FuckAssetsPage() {
   const { me } = useAuth()
   const [assets, setAssets] = useState([])
   const [loading, setLoading] = useState(false)
