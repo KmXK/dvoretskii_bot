@@ -839,22 +839,30 @@ async function loadFileThrowing(file) {
     throw err;
   }
 
-  app.canvas.width = app.source.width;
-  app.canvas.height = app.source.height;
+  const src = app.source;
+  if (!src || !Number.isFinite(src.width) || !Number.isFinite(src.height) || !Number.isFinite(src.duration)) {
+    app.source = null;
+    throw new Error(`не удалось декодировать ${src?.kind || 'файл'} (${file.type || 'unknown mime'}, ${file.size} bytes)`);
+  }
+  if (!Number.isFinite(src.fps)) src.fps = 30;
+  if (!Number.isFinite(src.frames)) src.frames = Math.max(1, Math.round(src.duration * src.fps));
+
+  app.canvas.width = src.width;
+  app.canvas.height = src.height;
   app.keyframes = { a: [], b: [] };
   app.bbox = { a: null, b: null };
 
-  fpsInput.value = app.source.fps.toFixed(2);
-  fpsInput.disabled = app.source.kind !== 'video';
+  fpsInput.value = src.fps.toFixed(2);
+  fpsInput.disabled = src.kind !== 'video';
 
   document.getElementById('workspace').style.display = '';
-  document.getElementById('dropZone').textContent = `Loaded: ${file.name} — ${app.source.width}×${app.source.height}, ${app.source.duration.toFixed(2)}s, ${app.source.frames} frames`;
+  document.getElementById('dropZone').textContent = `Loaded: ${file.name} — ${src.width}×${src.height}, ${src.duration.toFixed(2)}s, ${src.frames} frames`;
 
-  await app.source.seek(0);
+  await src.seek(0);
   render();
-  const note = app.source.kind === 'video' ? '' : `${app.source.kind.toUpperCase()} frames pre-rendered.`;
+  const note = src.kind === 'video' ? '' : `${src.kind.toUpperCase()} frames pre-rendered.`;
   setStatus('Ready. ' + note);
-  window.dispatchEvent(new CustomEvent('annotator:loaded', { detail: app.source }));
+  window.dispatchEvent(new CustomEvent('annotator:loaded', { detail: src }));
 }
 
 async function loadFile(file) {
