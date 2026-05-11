@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import tempfile
 from io import BytesIO
@@ -65,15 +66,21 @@ def _lerp(a: float, b: float, r: float) -> float:
     return a + (b - a) * r
 
 
-def _interpolate(keyframes: list[dict[str, float]], t: float) -> dict[str, float] | None:
+def _is_visible(k: dict[str, Any]) -> bool:
+    return k.get("visible", True) is not False
+
+
+def _interpolate(keyframes: list[dict[str, Any]], t: float) -> dict[str, float] | None:
     if not keyframes:
         return None
     if t <= keyframes[0]["t"]:
-        return dict(keyframes[0])
+        return dict(keyframes[0]) if _is_visible(keyframes[0]) else None
     if t >= keyframes[-1]["t"]:
-        return dict(keyframes[-1])
+        return dict(keyframes[-1]) if _is_visible(keyframes[-1]) else None
     for k0, k1 in zip(keyframes, keyframes[1:]):
         if k0["t"] <= t <= k1["t"]:
+            if not _is_visible(k0):
+                return None
             span = k1["t"] - k0["t"]
             r = (t - k0["t"]) / span if span > 0 else 0.0
             return {
@@ -82,6 +89,7 @@ def _interpolate(keyframes: list[dict[str, float]], t: float) -> dict[str, float
                 "y": _lerp(k0["y"], k1["y"], r),
                 "w": _lerp(k0["w"], k1["w"], r),
                 "h": _lerp(k0["h"], k1["h"], r),
+                "angle": _lerp(float(k0.get("angle", 0)), float(k1.get("angle", 0)), r),
             }
     return None
 
@@ -118,12 +126,33 @@ def _load_via_imageio(path: Path) -> tuple[list[Image.Image], list[int]]:
     return frames, [duration_ms] * len(frames)
 
 
-def _round_avatar(avatar: Image.Image, w: int, h: int) -> Image.Image:
-    resized = avatar.resize((w, h), Image.LANCZOS).convert("RGBA")
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, w, h), fill=255)
-    resized.putalpha(mask)
-    return resized
+def _draw_avatar_circumscribed(
+    frame: Image.Image,
+    avatar: Image.Image,
+    box: dict[str, float],
+) -> None:
+    """Draw a circular avatar that circumscribes the bbox (bbox inscribed in circle)."""
+    w = max(2.0, float(box["w"]))
+    h = max(2.0, float(box["h"]))
+    diam = int(math.ceil(math.sqrt(w * w + h * h)))
+    cx = float(box["x"]) + w / 2
+    cy = float(box["y"]) + h / 2
+
+    a = avatar.resize((diam, diam), Image.LANCZOS).convert("RGBA")
+    mask = Image.new("L", (diam, diam), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, diam, diam), fill=255)
+    a.putalpha(mask)
+
+    angle = float(box.get("angle", 0) or 0)
+    if angle:
+        # Annotator/canvas convention: positive angle = clockwise.
+        # PIL.rotate is CCW, so negate.
+        a = a.rotate(-angle, resample=Image.BICUBIC, expand=True)
+
+    aw, ah = a.size
+    tx = int(round(cx - aw / 2))
+    ty = int(round(cy - ah / 2))
+    frame.alpha_composite(a, (tx, ty))
 
 
 def _fallback_avatar(seed: int) -> Image.Image:
@@ -173,9 +202,7 @@ def _compose_gif(
             box = _interpolate(keyframes, t)
             if box is None:
                 continue
-            w, h = max(2, int(box["w"])), max(2, int(box["h"]))
-            patch = _round_avatar(avatar, w, h)
-            composite.alpha_composite(patch, (int(box["x"]), int(box["y"])))
+            _draw_avatar_circumscribed(composite, avatar, box)
         cum_ms += durations[i]
 
         if max(composite.size) > MAX_OUTPUT_DIM:
