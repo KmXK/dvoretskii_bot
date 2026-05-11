@@ -19,6 +19,12 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     'allowedHosts': true,
+    // File events from host bind-mount don't reliably reach the container on
+    // macOS+colima/Docker Desktop. Polling makes HMR catch changes consistently.
+    watch: {
+      usePolling: true,
+      interval: 200,
+    },
     proxy: {
       '/api': {
         target: 'http://bot:8080',

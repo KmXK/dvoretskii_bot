@@ -454,8 +454,13 @@ class Repository:
 
             data["version"] = 19
 
+        if data.get("version") == 19:
+            data.setdefault("fuck_assets", [])
+            data["version"] = 20
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
+        data.setdefault("fuck_assets", [])
         data.setdefault("bill_persons", [])
         data.setdefault("bills_v2", [])
         data.setdefault("bill_payments_v2", [])

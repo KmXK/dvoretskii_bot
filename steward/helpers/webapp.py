@@ -1,10 +1,23 @@
 import os
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultsButton, WebAppInfo
 from telegram.ext import ExtBot
 
+_TUNNEL_FILE = Path("/shared/tunnel_url")
+
 
 def _get_direct_url() -> str | None:
+    # Prefer the live tunnel URL written by the localhost.run sidecar — picks up
+    # rotations without a bot restart. Fall back to the env var that was snapshotted
+    # at startup (or set explicitly for prod).
+    if _TUNNEL_FILE.exists():
+        try:
+            url = _TUNNEL_FILE.read_text().strip()
+            if url.startswith("https://"):
+                return url
+        except OSError:
+            pass
     url = os.environ.get("WEB_APP_URL")
     if url and url.startswith("https://"):
         return url

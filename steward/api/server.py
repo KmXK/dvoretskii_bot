@@ -2228,6 +2228,10 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/ws/poker", poker_ws_handler)
     app.router.add_get("/ws/blackjack", blackjack_ws_handler)
     app.router.add_get("/ws/boardgames", boardgames_ws_handler)
+
+    from steward.api.fuck_routes import register_routes as register_fuck_routes
+    register_fuck_routes(app)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)

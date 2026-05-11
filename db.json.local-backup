@@ -1,0 +1,791 @@
+{
+    "admin_ids": [
+        841595610
+    ],
+    "ai_messages": {
+        "-1003876657662_1744": {
+            "handler": "ai",
+            "message_id": 1742,
+            "timestamp": 1776101599.312665
+        },
+        "-1003876657662_1762": {
+            "handler": "ai",
+            "message_id": 1761,
+            "timestamp": 1776101699.9742224
+        },
+        "-1003876657662_2034": {
+            "handler": "ai",
+            "message_id": 2033,
+            "timestamp": 1776623426.9304335
+        },
+        "-1003876657662_2036": {
+            "handler": "ai",
+            "message_id": 2035,
+            "timestamp": 1776623446.463844
+        },
+        "-1003876657662_2040": {
+            "handler": "ai",
+            "message_id": 2039,
+            "timestamp": 1776623605.9570754
+        },
+        "-1003876657662_2042": {
+            "handler": "ai",
+            "message_id": 2041,
+            "timestamp": 1776623614.5778627
+        },
+        "-1003876657662_2044": {
+            "handler": "ai",
+            "message_id": 2043,
+            "timestamp": 1776623642.2043607
+        },
+        "-1003876657662_2046": {
+            "handler": "ai",
+            "message_id": 2045,
+            "timestamp": 1776623677.3595226
+        },
+        "-1003876657662_2050": {
+            "handler": "ai",
+            "message_id": 2049,
+            "timestamp": 1776623903.0911555
+        },
+        "-1003876657662_2052": {
+            "handler": "ai",
+            "message_id": 2051,
+            "timestamp": 1776623913.4422572
+        },
+        "-1003876657662_2054": {
+            "handler": "ai",
+            "message_id": 2053,
+            "timestamp": 1776623937.6302388
+        },
+        "-1003876657662_2063": {
+            "handler": "ai",
+            "message_id": 2061,
+            "timestamp": 1776624359.3387146
+        },
+        "-1003876657662_2065": {
+            "handler": "ai",
+            "message_id": 2064,
+            "timestamp": 1776625307.4548216
+        },
+        "-1003876657662_2067": {
+            "handler": "ai",
+            "message_id": 2066,
+            "timestamp": 1776625318.4597945
+        },
+        "-1003876657662_2071": {
+            "handler": "ai",
+            "message_id": 2070,
+            "timestamp": 1776625367.4036677
+        },
+        "-1003876657662_2145": {
+            "handler": "ai",
+            "message_id": 2144,
+            "timestamp": 1776855355.1347976
+        },
+        "841595610_3357": {
+            "handler": "pasha",
+            "message_id": 3356,
+            "timestamp": 1770590273.4174674
+        },
+        "841595610_3359": {
+            "handler": "pasha",
+            "message_id": 3358,
+            "timestamp": 1770590285.3589349
+        },
+        "841595610_3361": {
+            "handler": "pasha",
+            "message_id": 3360,
+            "timestamp": 1770590291.5869076
+        },
+        "841595610_3363": {
+            "handler": "pasha",
+            "message_id": 3362,
+            "timestamp": 1770590300.4735458
+        },
+        "841595610_3365": {
+            "handler": "pasha",
+            "message_id": 3364,
+            "timestamp": 1770590309.0521607
+        },
+        "841595610_3375": {
+            "handler": "ai",
+            "message_id": 3374,
+            "timestamp": 1770590596.5981717
+        },
+        "841595610_3385": {
+            "handler": "ai",
+            "message_id": 3384,
+            "timestamp": 1770594212.639836
+        },
+        "841595610_3387": {
+            "handler": "ai",
+            "message_id": 3386,
+            "timestamp": 1770594222.1810365
+        },
+        "841595610_3390": {
+            "handler": "ai",
+            "message_id": 3389,
+            "timestamp": 1770594382.2665946
+        },
+        "841595610_3392": {
+            "handler": "ai",
+            "message_id": 3391,
+            "timestamp": 1770594401.8451056
+        },
+        "841595610_3695": {
+            "handler": "ai",
+            "message_id": 3694,
+            "timestamp": 1775420987.1104655
+        },
+        "841595610_4199": {
+            "handler": "ai",
+            "message_id": 4198,
+            "timestamp": 1776622388.5967107
+        },
+        "841595610_4201": {
+            "handler": "ai",
+            "message_id": 4200,
+            "timestamp": 1776622392.3253706
+        },
+        "841595610_4248": {
+            "handler": "ai",
+            "message_id": 4247,
+            "timestamp": 1776623362.4399455
+        },
+        "841595610_4250": {
+            "handler": "ai",
+            "message_id": 4249,
+            "timestamp": 1776624943.990459
+        },
+        "841595610_4252": {
+            "handler": "ai",
+            "message_id": 4251,
+            "timestamp": 1776624950.1895278
+        },
+        "841595610_4254": {
+            "handler": "ai",
+            "message_id": 4253,
+            "timestamp": 1776624954.0899532
+        },
+        "841595610_4263": {
+            "handler": "ai",
+            "message_id": 4262,
+            "timestamp": 1776625218.8826668
+        },
+        "841595610_4265": {
+            "handler": "ai",
+            "message_id": 4264,
+            "timestamp": 1776625228.6751
+        },
+        "841595610_4267": {
+            "handler": "ai",
+            "message_id": 4266,
+            "timestamp": 1776625247.301425
+        },
+        "841595610_4269": {
+            "handler": "ai",
+            "message_id": 4268,
+            "timestamp": 1776625257.2958128
+        },
+        "841595610_4271": {
+            "handler": "ai",
+            "message_id": 4270,
+            "timestamp": 1776625266.3097584
+        },
+        "841595610_4280": {
+            "handler": "ai",
+            "message_id": 4279,
+            "timestamp": 1776626683.4974585
+        },
+        "841595610_4318": {
+            "handler": "ai",
+            "message_id": 4317,
+            "timestamp": 1776628048.6536922
+        },
+        "841595610_4332": {
+            "handler": "ai",
+            "message_id": 4331,
+            "timestamp": 1776645292.7724795
+        },
+        "841595610_4335": {
+            "handler": "ai",
+            "message_id": 4334,
+            "timestamp": 1776646551.557978
+        },
+        "841595610_4338": {
+            "handler": "ai",
+            "message_id": 4337,
+            "timestamp": 1776646638.6113765
+        },
+        "841595610_4342": {
+            "handler": "ai",
+            "message_id": 4341,
+            "timestamp": 1776647127.9459188
+        },
+        "841595610_4345": {
+            "handler": "ai",
+            "message_id": 4344,
+            "timestamp": 1776647168.42085
+        },
+        "841595610_4348": {
+            "handler": "ai",
+            "message_id": 4347,
+            "timestamp": 1776647326.9764175
+        },
+        "841595610_4351": {
+            "handler": "ai",
+            "message_id": 4350,
+            "timestamp": 1776647600.9989805
+        },
+        "841595610_4354": {
+            "handler": "ai",
+            "message_id": 4353,
+            "timestamp": 1776647767.1965618
+        },
+        "841595610_4357": {
+            "handler": "ai",
+            "message_id": 4356,
+            "timestamp": 1776648834.9593925
+        },
+        "841595610_4359": {
+            "handler": "ai",
+            "message_id": 4358,
+            "timestamp": 1776649073.907278
+        },
+        "841595610_4368": {
+            "handler": "ai",
+            "message_id": 4367,
+            "timestamp": 1776649615.80997
+        }
+    },
+    "army": [
+        {
+            "end_date": 1747612800.0,
+            "name": "test",
+            "start_date": 1745020800.0
+        },
+        {
+            "end_date": 1779148800.0,
+            "name": "test",
+            "start_date": 1776556800.0
+        }
+    ],
+    "banned_users": [],
+    "bill_diff_snapshots": [],
+    "bill_draft_edits": [],
+    "bill_item_suggestions": [],
+    "bill_notification_prefs": [],
+    "bill_payments_v2": [],
+    "bill_persons": [],
+    "bills": [],
+    "bills_v2": [],
+    "birthdays": [],
+    "channel_subscriptions": [],
+    "chats": [
+        {
+            "id": -4517560449,
+            "name": "てつ"
+        },
+        {
+            "id": 841595610,
+            "name": "@KmXKK"
+        },
+        {
+            "id": -1003876657662,
+            "name": "てつ"
+        },
+        {
+            "id": -1003054935050,
+            "name": "фамилу"
+        }
+    ],
+    "completed_reminders": [
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T01:05:05.316342+00:00",
+            "created_at": "2025-12-02T01:03:05.242809+00:00",
+            "fired_count": 1,
+            "id": "b80de9d4",
+            "text": "sosal",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T01:10:14.278953+00:00",
+            "created_at": "2025-12-02T01:07:14.041094+00:00",
+            "fired_count": 1,
+            "id": "ab84bf39",
+            "text": "123",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T01:15:31.643224+00:00",
+            "created_at": "2025-12-02T01:15:01.387558+00:00",
+            "fired_count": 3,
+            "id": "6f092216",
+            "text": "sosal x3",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T01:30:00.086521+00:00",
+            "created_at": "2025-12-02T01:11:35.830618+00:00",
+            "fired_count": 1,
+            "id": "a7f535b8",
+            "text": "123111",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T03:00:01.093456+00:00",
+            "created_at": "2025-12-02T01:09:59.016457+00:00",
+            "fired_count": 1,
+            "id": "f2d16ec8",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-02T03:00:01.170138+00:00",
+            "created_at": "2025-12-02T01:09:59.295423+00:00",
+            "fired_count": 1,
+            "id": "965e3ca8",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:05:31.378845+00:00",
+            "created_at": "2025-12-02T01:09:59.552058+00:00",
+            "fired_count": 1,
+            "id": "f4be69c2",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:05:31.449756+00:00",
+            "created_at": "2025-12-02T01:09:59.759048+00:00",
+            "fired_count": 1,
+            "id": "e96ee8a1",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:10:17.067964+00:00",
+            "created_at": "2025-12-02T01:10:00.046112+00:00",
+            "fired_count": 1,
+            "id": "0774bd09",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:10:17.135957+00:00",
+            "created_at": "2025-12-02T01:10:00.211348+00:00",
+            "fired_count": 1,
+            "id": "9f455779",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.058417+00:00",
+            "created_at": "2025-12-02T01:10:00.457727+00:00",
+            "fired_count": 1,
+            "id": "83026859",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.119107+00:00",
+            "created_at": "2025-12-02T01:10:00.671703+00:00",
+            "fired_count": 1,
+            "id": "af496823",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.179105+00:00",
+            "created_at": "2025-12-02T01:10:01.172661+00:00",
+            "fired_count": 1,
+            "id": "08a855c8",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.254486+00:00",
+            "created_at": "2025-12-02T01:10:01.763833+00:00",
+            "fired_count": 1,
+            "id": "97c1b298",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.347925+00:00",
+            "created_at": "2025-12-02T01:10:01.807810+00:00",
+            "fired_count": 1,
+            "id": "73bec3bc",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.414389+00:00",
+            "created_at": "2025-12-02T01:10:01.839868+00:00",
+            "fired_count": 1,
+            "id": "add26d25",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.479702+00:00",
+            "created_at": "2025-12-02T01:10:01.857626+00:00",
+            "fired_count": 1,
+            "id": "67caa456",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.545043+00:00",
+            "created_at": "2025-12-02T01:10:02.083817+00:00",
+            "fired_count": 1,
+            "id": "2a8274d6",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.609532+00:00",
+            "created_at": "2025-12-02T01:10:02.135860+00:00",
+            "fired_count": 1,
+            "id": "76f9f1e0",
+            "text": "12312312",
+            "user_id": 841595610
+        },
+        {
+            "__class_mark__": "reminder/completed",
+            "chat_id": 841595610,
+            "completed_at": "2025-12-03T23:48:33.670088+00:00",
+            "created_at": "2025-12-02T01:10:02.313438+00:00",
+            "fired_count": 1,
+            "id": "f65b0995",
+            "text": "12312312",
+            "user_id": 841595610
+        }
+    ],
+    "curse_participants": [],
+    "curse_punishments": [
+        {
+            "coeff": 5,
+            "id": 1,
+            "title": "test"
+        }
+    ],
+    "curse_words": [],
+    "data_offsets": {
+        "lofi_audio": 4802.8,
+        "stupid_video": 4802.8
+    },
+    "delayed_actions": [
+        {
+            "__class_mark__": "delayed_action/curse_punishment_digest",
+            "generator": {
+                "__class_mark__": "generator/constant",
+                "period": 86400.0,
+                "start": "2025-01-01T22:22:00+03:00"
+            }
+        },
+        {
+            "__class_mark__": "delayed_action/watch",
+            "chat_id": 841595610,
+            "generator": {
+                "__class_mark__": "generator/minute"
+            },
+            "is_private": true,
+            "message_id": 4241
+        }
+    ],
+    "details_infos": [],
+    "feature_requests": [
+        {
+            "author_id": 685016046,
+            "author_name": "@Dehydrohaloalkan",
+            "chat_id": -4517560449,
+            "creation_timestamp": 1770628562.454632,
+            "history": [],
+            "id": 1,
+            "message_id": 3444,
+            "notes": [],
+            "priority": 100,
+            "text": "динамические переходящие награды основанные на статистике, типа \"главный пиздун - больше всего сообщений за последний месяц\""
+        }
+    ],
+    "payments": [],
+    "rewards": [
+        {
+            "custom_emoji_id": null,
+            "description": "Больше всего сообщений",
+            "dynamic_key": "most_messages",
+            "emoji": "💬",
+            "id": 1,
+            "name": "Болтун"
+        },
+        {
+            "custom_emoji_id": null,
+            "description": "Больше всего покерных раздач",
+            "dynamic_key": "most_poker_hands",
+            "emoji": "🃏",
+            "id": 2,
+            "name": "Картёжник"
+        },
+        {
+            "custom_emoji_id": null,
+            "description": "Лучший винрейт в покере (мин. 10 раздач)",
+            "dynamic_key": "best_poker_winrate",
+            "emoji": "🎯",
+            "id": 3,
+            "name": "Шулер"
+        },
+        {
+            "custom_emoji_id": null,
+            "description": "Больше всего обезьянок",
+            "dynamic_key": "most_monkeys",
+            "emoji": "🐵",
+            "id": 4,
+            "name": "Обезьяний рабовладелец"
+        },
+        {
+            "custom_emoji_id": null,
+            "description": "Больше всего игр в казино",
+            "dynamic_key": "most_casino_games",
+            "emoji": "🎲",
+            "id": 5,
+            "name": "Главный лудик"
+        },
+        {
+            "custom_emoji_id": null,
+            "description": "Больше всего поставлено обезьянок",
+            "dynamic_key": "most_casino_bet",
+            "emoji": "💸",
+            "id": 6,
+            "name": "Спонсор"
+        }
+    ],
+    "rules": [],
+    "saved_links": {
+        "links": {
+            "0a2ca15eaff947c7bb18b3a2db08746e": {
+                "created_at": "2026-04-22T10:56:45.158734+00:00",
+                "expire_at": "2026-05-22T10:56:45.158735+00:00",
+                "link": "https://vt.tiktok.com/ZS9RqpCUw/"
+            },
+            "16aa1b2dd46144f8a163d5600c1170c1": {
+                "created_at": "2026-04-10T08:37:31.848401+00:00",
+                "expire_at": "2026-05-10T08:37:31.848401+00:00",
+                "link": "https://vt.tiktok.com/ZSHxbJrHA/"
+            },
+            "22b8609cb5c4424281d99640935317a7": {
+                "created_at": "2026-04-15T06:27:40.139142+00:00",
+                "expire_at": "2026-05-15T06:27:40.139142+00:00",
+                "link": "https://vt.tiktok.com/ZSHGsk6RR/"
+            },
+            "259edf9736c143439b9da23029413b2d": {
+                "created_at": "2026-04-06T20:03:23.295171+00:00",
+                "expire_at": "2026-05-06T20:03:23.295172+00:00",
+                "link": "https://vt.tiktok.com/ZSHfyd2sh/"
+            },
+            "2cc2b4c4d0ba4d548ea3e9226605daf3": {
+                "created_at": "2026-04-08T21:06:49.837052+00:00",
+                "expire_at": "2026-05-08T21:06:49.837053+00:00",
+                "link": "https://vt.tiktok.com/ZSHuFuhGd"
+            },
+            "30e9cd0068964e9fb839d951766e4c39": {
+                "created_at": "2026-04-19T19:54:25.935274+00:00",
+                "expire_at": "2026-05-19T19:54:25.935275+00:00",
+                "link": "https://vt.tiktok.com/ZSHEDWn5D/"
+            },
+            "49e4444370984e9a8f3c5734f4d50663": {
+                "created_at": "2026-04-07T06:10:50.326688+00:00",
+                "expire_at": "2026-05-07T06:10:50.326688+00:00",
+                "link": "https://vt.tiktok.com/ZSHPSmyhF"
+            },
+            "4a133ec605804a1e8f714e138d3ccd3c": {
+                "created_at": "2026-04-11T21:37:49.181363+00:00",
+                "expire_at": "2026-05-11T21:37:49.181363+00:00",
+                "link": "https://vt.tiktok.com/ZSH4jLgsA/"
+            },
+            "5a2809f934714f06ba77c27785c6ffe7": {
+                "created_at": "2026-04-07T05:59:21.629878+00:00",
+                "expire_at": "2026-05-07T05:59:21.629879+00:00",
+                "link": "https://vt.tiktok.com/ZSHPBFQDP"
+            },
+            "646e3cf849914929b36dc70d98cbda64": {
+                "created_at": "2026-04-15T20:51:50.939520+00:00",
+                "expire_at": "2026-05-15T20:51:50.939520+00:00",
+                "link": "https://vt.tiktok.com/ZSHnNyE4q"
+            },
+            "74ca5db6b09b4e3585fcd81165bbdf66": {
+                "created_at": "2026-04-19T19:31:06.323934+00:00",
+                "expire_at": "2026-05-19T19:31:06.323936+00:00",
+                "link": "https://vt.tiktok.com/ZSHEAkxy7/"
+            },
+            "98016134978346aeaabd3303c17f48db": {
+                "created_at": "2026-04-16T09:21:20.960192+00:00",
+                "expire_at": "2026-05-16T09:21:20.960192+00:00",
+                "link": "https://vt.tiktok.com/ZSHWy937A"
+            },
+            "9b24475a67d44d558848790a2753a7c5": {
+                "created_at": "2026-04-12T21:01:57.211821+00:00",
+                "expire_at": "2026-05-12T21:01:57.211823+00:00",
+                "link": "https://vt.tiktok.com/ZSHqMLEAL/"
+            },
+            "9d8666960cbe402bb678ee208d0cfec0": {
+                "created_at": "2026-04-17T01:40:30.382377+00:00",
+                "expire_at": "2026-05-17T01:40:30.382378+00:00",
+                "link": "https://vt.tiktok.com/ZSH7TfPDP"
+            },
+            "b31c3624c5434aa2aba977d5516e7aae": {
+                "created_at": "2026-04-07T06:03:32.411429+00:00",
+                "expire_at": "2026-05-07T06:03:32.411430+00:00",
+                "link": "https://vt.tiktok.com/ZSHPBKKGQ"
+            },
+            "b8535e6972ed491c87e15825ead77b87": {
+                "created_at": "2026-04-13T07:39:17.067512+00:00",
+                "expire_at": "2026-05-13T07:39:17.067513+00:00",
+                "link": "https://vt.tiktok.com/ZSHb6NkXK"
+            },
+            "bb500bd1d00d469f8f676d23249771ce": {
+                "created_at": "2026-04-18T09:29:38.150490+00:00",
+                "expire_at": "2026-05-18T09:29:38.150491+00:00",
+                "link": "https://vt.tiktok.com/ZSHT2cqLo"
+            },
+            "cffa9c746ed44812ba82ef5707499985": {
+                "created_at": "2026-04-16T08:09:38.605874+00:00",
+                "expire_at": "2026-05-16T08:09:38.605875+00:00",
+                "link": "https://vt.tiktok.com/ZSHWrRm32/"
+            },
+            "d6227d852da249b7aa813351302ab959": {
+                "created_at": "2026-04-08T11:32:22.999008+00:00",
+                "expire_at": "2026-05-08T11:32:22.999009+00:00",
+                "link": "https://vt.tiktok.com/ZSHmhx3xV"
+            },
+            "e2f6c3df14504e89872c7ddfb0828cba": {
+                "created_at": "2026-04-21T23:20:39.126618+00:00",
+                "expire_at": "2026-05-21T23:20:39.126618+00:00",
+                "link": "https://vt.tiktok.com/ZS9dBrcL9"
+            },
+            "e4e20c69623f4fd2a3df674a33378414": {
+                "created_at": "2026-04-15T20:54:23.751064+00:00",
+                "expire_at": "2026-05-15T20:54:23.751065+00:00",
+                "link": "https://vt.tiktok.com/ZSHnFBAYS"
+            },
+            "fa3ff8c057574d2a9e8c6300b38e5afd": {
+                "created_at": "2026-04-08T02:06:12.905399+00:00",
+                "expire_at": "2026-05-08T02:06:12.905401+00:00",
+                "link": "https://vt.tiktok.com/ZSHa25U9X"
+            },
+            "ff5cd94a78074e619f3ab87f1dbcaa8a": {
+                "created_at": "2026-04-15T06:27:27.120344+00:00",
+                "expire_at": "2026-05-15T06:27:27.120345+00:00",
+                "link": "https://vt.tiktok.com/ZSHGg3owT/"
+            }
+        }
+    },
+    "silenced_chats": {},
+    "todo_items": [],
+    "user_facts": [
+        {
+            "created_at": 1776649616.6739237,
+            "text": "Пользователь возмущен.",
+            "user_id": 841595610
+        }
+    ],
+    "user_rewards": [
+        {
+            "reward_id": 4,
+            "user_id": 841595610
+        }
+    ],
+    "users": [
+        {
+            "casino_last_bonus": 0,
+            "chat_ids": [
+                841595610,
+                -1003876657662,
+                -1003054935050
+            ],
+            "id": 841595610,
+            "monkeys": 100,
+            "stand_aliases": [],
+            "stand_description": null,
+            "stand_name": null,
+            "username": "KmXKK"
+        },
+        {
+            "casino_last_bonus": 0,
+            "chat_ids": [
+                -1003876657662
+            ],
+            "id": 685016046,
+            "monkeys": 100,
+            "stand_aliases": [],
+            "stand_description": null,
+            "stand_name": null,
+            "username": "Dehydrohaloalkan"
+        },
+        {
+            "casino_last_bonus": 0,
+            "chat_ids": [
+                841595610
+            ],
+            "id": 7535710694,
+            "monkeys": 100,
+            "stand_aliases": [],
+            "stand_description": null,
+            "stand_name": null,
+            "username": "anya_kotenok_bot"
+        },
+        {
+            "casino_last_bonus": 0,
+            "chat_ids": [
+                -1003054935050
+            ],
+            "id": 1192930907,
+            "monkeys": 100,
+            "stand_aliases": [],
+            "stand_description": null,
+            "stand_name": null,
+            "username": "vyferin"
+        }
+    ],
+    "version": 5
+}

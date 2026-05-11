@@ -46,9 +46,11 @@ services:
       dockerfile: Dockerfile.localhost-run
     environment:
       - LOCAL_PORT=5173
+      - LOCAL_HOST=web
     volumes:
       - tunnel-info:/shared
-    network_mode: "service:web"
+    networks:
+      - bot
     depends_on:
       - web
     restart: always

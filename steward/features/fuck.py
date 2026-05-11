@@ -5,7 +5,10 @@ import json
 import logging
 import math
 import random
+import shutil
 import tempfile
+import time
+import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -14,6 +17,8 @@ from PIL import Image, ImageDraw
 from telegram import InputFile, MessageEntity
 from telegram.ext import ExtBot
 
+from steward.data.models.fuck_asset import FuckAsset
+from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.media import fetch_tg_file_bytes
 
@@ -28,38 +33,96 @@ _FALLBACK_COLORS = [
 ]
 
 
-def _list_annotation_files(dir_path: Path) -> list[Path]:
-    if not dir_path.exists():
-        return []
-    return sorted(p for p in dir_path.iterdir() if p.suffix.lower() == ".json")
+_MEDIA_EXTS = ("webp", "gif", "mp4", "webm", "mov")
 
 
-_MEDIA_EXTS = (".webp", ".gif", ".mp4", ".webm", ".mov")
+def _asset_files(asset: FuckAsset) -> tuple[Path, Path]:
+    base = ASSETS_DIR / str(asset.owner_id)
+    return base / f"{asset.id}.{asset.extension}", base / f"{asset.id}.json"
 
 
-def _resolve_source(json_path: Path) -> Path | None:
-    for ext in _MEDIA_EXTS:
-        sibling = json_path.with_suffix(ext)
-        if sibling.exists():
-            return sibling
-    return None
+def _user_in_chat(repo: Repository, user_id: int, chat_id: int) -> bool:
+    user = next((u for u in repo.db.users if u.id == user_id), None)
+    return bool(user and chat_id in (user.chat_ids or []))
 
 
-def _pick_random_asset(dir_path: Path) -> tuple[Path, dict[str, Any]] | None:
-    candidates = _list_annotation_files(dir_path)
+def _visible_assets(repo: Repository, chat_id: int) -> list[FuckAsset]:
+    out = []
+    for a in repo.db.fuck_assets:
+        if a.scope == "global":
+            out.append(a)
+        elif a.scope == "personal" and _user_in_chat(repo, a.owner_id, chat_id):
+            out.append(a)
+    return out
+
+
+def _pick_random_asset(repo: Repository, chat_id: int) -> tuple[Path, dict[str, Any]] | None:
+    candidates = _visible_assets(repo, chat_id)
     random.shuffle(candidates)
-    for path in candidates:
-        source_path = _resolve_source(path)
-        if source_path is None:
-            logger.warning("Asset %s: no sibling media file with matching name", path)
+    for asset in candidates:
+        media, ann = _asset_files(asset)
+        if not media.exists() or not ann.exists():
+            logger.warning("Asset %s: missing files (%s, %s)", asset.id, media, ann)
             continue
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(ann.read_text())
         except Exception as e:
-            logger.warning("Skipping %s: bad JSON (%s)", path, e)
+            logger.warning("Asset %s: bad JSON (%s)", asset.id, e)
             continue
-        return source_path, data
+        return media, data
     return None
+
+
+def migrate_legacy_fuck_assets(repo: Repository) -> int:
+    """Move flat data/fuck/<name>.{webp,json,...} into data/fuck/<owner_id>/<uuid>.{ext,json}
+    and create FuckAsset records. Returns the number of assets migrated.
+
+    Owner: first admin in repo.db.admin_ids. If no admin is configured, the migration
+    is skipped (will retry on next start). Existing DB records are left untouched.
+    """
+    if not ASSETS_DIR.exists():
+        return 0
+    if not repo.db.admin_ids:
+        return 0
+    legacy_jsons = [p for p in ASSETS_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".json"]
+    if not legacy_jsons:
+        return 0
+    owner_id = next(iter(repo.db.admin_ids))
+    owner_dir = ASSETS_DIR / str(owner_id)
+    owner_dir.mkdir(parents=True, exist_ok=True)
+
+    migrated = 0
+    for json_path in legacy_jsons:
+        stem = json_path.stem
+        media_src = None
+        for ext in _MEDIA_EXTS:
+            candidate = json_path.with_suffix(f".{ext}")
+            if candidate.exists():
+                media_src = candidate
+                break
+        if media_src is None:
+            logger.warning("Skipping legacy fuck asset %s: no media sibling", json_path)
+            continue
+        asset_id = uuid.uuid4().hex
+        media_dst = owner_dir / f"{asset_id}.{media_src.suffix.lstrip('.')}"
+        ann_dst = owner_dir / f"{asset_id}.json"
+        try:
+            shutil.move(str(media_src), media_dst)
+            shutil.move(str(json_path), ann_dst)
+        except Exception:
+            logger.exception("Failed to move legacy fuck asset %s", json_path)
+            continue
+        repo.db.fuck_assets.append(FuckAsset(
+            id=asset_id,
+            owner_id=owner_id,
+            name=stem,
+            scope="global",
+            extension=media_src.suffix.lstrip("."),
+            created_at=int(time.time()),
+        ))
+        migrated += 1
+        logger.info("Migrated legacy fuck asset '%s' → %s (owner %s)", stem, asset_id, owner_id)
+    return migrated
 
 
 def _lerp(a: float, b: float, r: float) -> float:
@@ -251,17 +314,15 @@ class FuckFeature(Feature):
 
     async def _run(self, ctx: FeatureContext, target_id: int):
 
-        asset = await asyncio.to_thread(_pick_random_asset, ASSETS_DIR)
+        asset = await asyncio.to_thread(_pick_random_asset, self.repository, ctx.chat_id)
         if asset is None:
-            resolved = ASSETS_DIR.resolve()
-            exists = ASSETS_DIR.exists()
-            count = len(_list_annotation_files(ASSETS_DIR)) if exists else 0
+            total = len(self.repository.db.fuck_assets)
             logger.warning(
-                "/fuck: no usable asset; dir=%s exists=%s json_count=%s",
-                resolved, exists, count,
+                "/fuck: no visible asset for chat=%s; total in DB=%s",
+                ctx.chat_id, total,
             )
             await ctx.reply(
-                f"Ассеты не найдены в `{ASSETS_DIR}` (exists={exists}, json={count})"
+                f"Нет доступных ассетов для этого чата (всего в базе: {total})."
             )
             return
         source_path, annotation = asset
