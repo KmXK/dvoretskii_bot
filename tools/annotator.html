@@ -65,7 +65,9 @@
       <button id="delKf">− Keyframe</button>
       <label style="font-size:11px;color:#888">w <input id="wInput" type="number" min="2" step="1" style="width:60px"></label>
       <label style="font-size:11px;color:#888">h <input id="hInput" type="number" min="2" step="1" style="width:60px"></label>
+      <label style="font-size:11px;color:#888">∠ <input id="angleInput" type="number" step="1" style="width:60px"></label>
       <button id="applySizeAll" title="Apply current W×H to all keyframes of active character">size→all</button>
+      <button id="toggleHide" title="Toggle visibility of keyframe at current time (H)">hide/show</button>
       <label style="font-size:11px;color:#888">fps <input id="fpsInput" type="number" min="1" max="120" step="0.01" value="30"></label>
       <button id="exportBtn">Export JSON</button>
       <span id="info" class="info"></span>
@@ -77,7 +79,9 @@
       <kbd>Tab</kbd> switch A/B &nbsp;
       <kbd>K</kbd> add keyframe &nbsp;
       <kbd>⌫</kbd> remove keyframe &nbsp;
-      <kbd>1</kbd>/<kbd>2</kbd> jump prev/next keyframe (active)
+      <kbd>1</kbd>/<kbd>2</kbd> jump prev/next keyframe (active) &nbsp;
+      <kbd>H</kbd> toggle hide/show &nbsp;
+      drag rotation handle above bbox to rotate &nbsp; <kbd>Shift</kbd>+corner = proportional
     </div>
     <div id="status" class="status"></div>
   </div>
@@ -271,12 +275,19 @@ app.ctx = app.canvas.getContext('2d');
 
 function lerp(a, b, r) { return a + (b - a) * r; }
 
+function kfVisible(k) { return k.visible !== false; }
+
+function kfAngle(k) { return k.angle || 0; }
+
 function interpolate(kfs, t) {
   if (kfs.length === 0) return null;
-  if (t <= kfs[0].t) return { t, x: kfs[0].x, y: kfs[0].y, w: kfs[0].w, h: kfs[0].h };
+  if (t <= kfs[0].t) {
+    const k = kfs[0];
+    return { t, x: k.x, y: k.y, w: k.w, h: k.h, angle: kfAngle(k), visible: kfVisible(k) };
+  }
   if (t >= kfs[kfs.length - 1].t) {
     const k = kfs[kfs.length - 1];
-    return { t, x: k.x, y: k.y, w: k.w, h: k.h };
+    return { t, x: k.x, y: k.y, w: k.w, h: k.h, angle: kfAngle(k), visible: kfVisible(k) };
   }
   for (let i = 0; i < kfs.length - 1; i++) {
     if (t >= kfs[i].t && t <= kfs[i+1].t) {
@@ -288,6 +299,8 @@ function interpolate(kfs, t) {
         y: lerp(kfs[i].y, kfs[i+1].y, r),
         w: lerp(kfs[i].w, kfs[i+1].w, r),
         h: lerp(kfs[i].h, kfs[i+1].h, r),
+        angle: lerp(kfAngle(kfs[i]), kfAngle(kfs[i+1]), r),
+        visible: kfVisible(kfs[i]),
       };
     }
   }
@@ -301,14 +314,33 @@ function findKeyframeAt(ch, t) {
   return app.keyframes[ch].findIndex(k => Math.abs(k.t - t) < tol);
 }
 
-function upsertKeyframe(ch, box) {
+function upsertKeyframe(ch, box, opts) {
   const t = app.source.currentTime;
-  const entry = { t, x: round(box.x), y: round(box.y), w: round(box.w), h: round(box.h) };
   const idx = findKeyframeAt(ch, t);
+  const prevVisible = idx >= 0 ? kfVisible(app.keyframes[ch][idx]) : true;
+  const visible = (opts && 'visible' in opts) ? opts.visible : prevVisible;
+  const entry = { t, x: round(box.x), y: round(box.y), w: round(box.w), h: round(box.h) };
+  const ang = round(box.angle || 0);
+  if (ang) entry.angle = ang;
+  if (!visible) entry.visible = false;
   if (idx >= 0) app.keyframes[ch][idx] = entry;
   else {
     app.keyframes[ch].push(entry);
     app.keyframes[ch].sort((a, b) => a.t - b.t);
+  }
+}
+
+function toggleVisibilityAtCurrent(ch) {
+  const t = app.source.currentTime;
+  const idx = findKeyframeAt(ch, t);
+  const box = app.bbox[ch];
+  if (!box) return;
+  if (idx >= 0) {
+    const k = app.keyframes[ch][idx];
+    if (kfVisible(k)) k.visible = false;
+    else delete k.visible;
+  } else {
+    upsertKeyframe(ch, box, { visible: false });
   }
 }
 
@@ -332,6 +364,7 @@ function updateBboxes() {
         x: ch === 'a' ? w * 0.25 - size/2 : w * 0.65 - size/2,
         y: h * 0.35,
         w: size, h: size,
+        angle: 0,
       };
     }
   }
@@ -350,37 +383,66 @@ function render() {
     const b = app.bbox[ch];
     if (!b) continue;
     const isActive = ch === app.active;
+    const isHidden = b.visible === false;
+    const ctr = boxCenter(b);
+    const hw = b.w / 2, hh = b.h / 2;
+    const diag = Math.sqrt(b.w * b.w + b.h * b.h);
+
+    ctx.save();
+    ctx.translate(ctr.x, ctr.y);
+    ctx.rotate(boxAngleRad(b));
+
     ctx.strokeStyle = COLORS[ch];
     ctx.lineWidth = isActive ? 3 : 2;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.globalAlpha = isHidden ? 0.5 : 1;
+    if (isHidden) ctx.setLineDash([6, 4]);
+    ctx.strokeRect(-hw, -hh, b.w, b.h);
+    ctx.setLineDash([]);
+
+    ctx.globalAlpha = isHidden ? 0.25 : 0.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, diag / 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
 
     ctx.fillStyle = COLORS[ch];
+    ctx.globalAlpha = isHidden ? 0.5 : 1;
     ctx.font = 'bold 14px -apple-system, sans-serif';
-    ctx.fillText(ch.toUpperCase(), b.x + 4, b.y + 16);
+    ctx.fillText(ch.toUpperCase() + (isHidden ? ' (hidden)' : ''), -hw + 4, -hh + 16);
+    ctx.globalAlpha = 1;
 
     if (isActive) {
       const s = 8;
-      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
       const handles = [
-        [b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h],
-        [cx, b.y], [cx, b.y + b.h], [b.x, cy], [b.x + b.w, cy],
+        [-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh],
+        [0, -hh], [0, hh], [-hw, 0], [hw, 0],
       ];
       for (const [px, py] of handles) {
         ctx.fillStyle = COLORS[ch];
         ctx.fillRect(px - s/2, py - s/2, s, s);
       }
+      ctx.strokeStyle = COLORS[ch];
+      ctx.beginPath();
+      ctx.moveTo(0, -hh);
+      ctx.lineTo(0, -hh - ROT_HANDLE_OFFSET);
+      ctx.stroke();
+      ctx.fillStyle = COLORS[ch];
+      ctx.beginPath();
+      ctx.arc(0, -hh - ROT_HANDLE_OFFSET, 6, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     if (findKeyframeAt(ch, app.source.currentTime) >= 0) {
       ctx.fillStyle = COLORS[ch];
       ctx.beginPath();
-      ctx.arc(b.x + b.w - 7, b.y + 7, 4, 0, Math.PI * 2);
+      ctx.arc(hw - 7, -hh + 7, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.beginPath();
-      ctx.arc(b.x + b.w - 7, b.y + 7, 1.5, 0, Math.PI * 2);
+      ctx.arc(hw - 7, -hh + 7, 1.5, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
   }
 
   updateTimeline();
@@ -420,8 +482,10 @@ function syncSizeInputs() {
   if (!b) return;
   const wEl = document.getElementById('wInput');
   const hEl = document.getElementById('hInput');
+  const aEl = document.getElementById('angleInput');
   if (document.activeElement !== wEl) wEl.value = Math.round(b.w);
   if (document.activeElement !== hEl) hEl.value = Math.round(b.h);
+  if (document.activeElement !== aEl) aEl.value = Math.round(b.angle || 0);
 }
 
 // ===== Mouse on canvas =====
@@ -436,20 +500,44 @@ function getCanvasCoords(e) {
   };
 }
 
+const ROT_HANDLE_OFFSET = 24;
+
+function boxAngleRad(b) { return ((b.angle || 0) * Math.PI) / 180; }
+function boxCenter(b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; }
+
+function localToWorld(b, lx, ly) {
+  const a = boxAngleRad(b);
+  const c = Math.cos(a), s = Math.sin(a);
+  const ctr = boxCenter(b);
+  return { x: ctr.x + lx * c - ly * s, y: ctr.y + lx * s + ly * c };
+}
+
+function worldToLocal(b, wx, wy) {
+  const a = -boxAngleRad(b);
+  const c = Math.cos(a), s = Math.sin(a);
+  const ctr = boxCenter(b);
+  const dx = wx - ctr.x, dy = wy - ctr.y;
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
+
 function hitTest(box, x, y) {
+  const rot = localToWorld(box, 0, -box.h / 2 - ROT_HANDLE_OFFSET);
+  if (Math.hypot(x - rot.x, y - rot.y) < 10) return 'rotate';
+
+  const lp = worldToLocal(box, x, y);
   const s = 14;
-  const nearX = (xx) => Math.abs(x - xx) < s;
-  const nearY = (yy) => Math.abs(y - yy) < s;
-  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
-  if (nearX(box.x) && nearY(box.y)) return 'nw';
-  if (nearX(box.x + box.w) && nearY(box.y)) return 'ne';
-  if (nearX(box.x) && nearY(box.y + box.h)) return 'sw';
-  if (nearX(box.x + box.w) && nearY(box.y + box.h)) return 'se';
-  if (nearX(cx) && nearY(box.y)) return 'n';
-  if (nearX(cx) && nearY(box.y + box.h)) return 's';
-  if (nearX(box.x) && nearY(cy)) return 'w';
-  if (nearX(box.x + box.w) && nearY(cy)) return 'e';
-  if (x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) return 'move';
+  const hw = box.w / 2, hh = box.h / 2;
+  const nearX = (xx) => Math.abs(lp.x - xx) < s;
+  const nearY = (yy) => Math.abs(lp.y - yy) < s;
+  if (nearX(-hw) && nearY(-hh)) return 'nw';
+  if (nearX(hw) && nearY(-hh)) return 'ne';
+  if (nearX(-hw) && nearY(hh)) return 'sw';
+  if (nearX(hw) && nearY(hh)) return 'se';
+  if (nearX(0) && nearY(-hh)) return 'n';
+  if (nearX(0) && nearY(hh)) return 's';
+  if (nearX(-hw) && nearY(0)) return 'w';
+  if (nearX(hw) && nearY(0)) return 'e';
+  if (lp.x >= -hw && lp.x <= hw && lp.y >= -hh && lp.y <= hh) return 'move';
   return null;
 }
 
@@ -479,27 +567,65 @@ window.addEventListener('mousemove', e => {
   const o = app.dragging.orig;
   const m = app.dragging.mode;
   const b = app.bbox[app.dragging.ch];
+
+  if (m === 'rotate') {
+    const ctr = boxCenter(o);
+    const ang = Math.atan2(p.y - ctr.y, p.x - ctr.x);
+    let deg = (ang * 180) / Math.PI + 90;
+    while (deg > 180) deg -= 360;
+    while (deg < -180) deg += 360;
+    b.angle = deg;
+    b.x = o.x; b.y = o.y; b.w = o.w; b.h = o.h;
+    render();
+    return;
+  }
   if (m === 'move') {
     b.x = o.x + dx; b.y = o.y + dy;
-  } else if (m === 'nw') {
-    b.x = o.x + dx; b.y = o.y + dy; b.w = o.w - dx; b.h = o.h - dy;
-  } else if (m === 'ne') {
-    b.y = o.y + dy; b.w = o.w + dx; b.h = o.h - dy;
-  } else if (m === 'sw') {
-    b.x = o.x + dx; b.w = o.w - dx; b.h = o.h + dy;
-  } else if (m === 'se') {
-    b.w = o.w + dx; b.h = o.h + dy;
-  } else if (m === 'n') {
-    b.y = o.y + dy; b.h = o.h - dy;
-  } else if (m === 's') {
-    b.h = o.h + dy;
-  } else if (m === 'w') {
-    b.x = o.x + dx; b.w = o.w - dx;
-  } else if (m === 'e') {
-    b.w = o.w + dx;
+    b.w = o.w; b.h = o.h; b.angle = o.angle || 0;
+    render();
+    return;
   }
-  if (b.w < 4) b.w = 4;
-  if (b.h < 4) b.h = 4;
+
+  // Resize in local frame, then preserve fixed opposite corner in world.
+  const a = ((o.angle || 0) * Math.PI) / 180;
+  const cosA = Math.cos(a), sinA = Math.sin(a);
+  const localDx = dx * Math.cos(-a) - dy * Math.sin(-a);
+  const localDy = dx * Math.sin(-a) + dy * Math.cos(-a);
+
+  const moveE = m.includes('e');
+  const moveW = m.includes('w');
+  const moveS = m.includes('s');
+  const moveN = m.includes('n');
+
+  let newW = o.w + (moveE ? localDx : moveW ? -localDx : 0);
+  let newH = o.h + (moveS ? localDy : moveN ? -localDy : 0);
+
+  if (e.shiftKey && ['nw', 'ne', 'sw', 'se'].includes(m)) {
+    const aspect = o.w / o.h;
+    const wDriven = Math.abs(newW / o.w - 1) >= Math.abs(newH / o.h - 1);
+    if (wDriven) newH = newW / aspect;
+    else newW = newH * aspect;
+  }
+
+  newW = Math.max(4, newW);
+  newH = Math.max(4, newH);
+
+  const fixedLocalX = moveE ? -o.w / 2 : moveW ? o.w / 2 : 0;
+  const fixedLocalY = moveS ? -o.h / 2 : moveN ? o.h / 2 : 0;
+  const oldCtr = boxCenter(o);
+  const fixedWX = oldCtr.x + fixedLocalX * cosA - fixedLocalY * sinA;
+  const fixedWY = oldCtr.y + fixedLocalX * sinA + fixedLocalY * cosA;
+
+  const newFixedLocalX = moveE ? -newW / 2 : moveW ? newW / 2 : 0;
+  const newFixedLocalY = moveS ? -newH / 2 : moveN ? newH / 2 : 0;
+  const newCx = fixedWX - (newFixedLocalX * cosA - newFixedLocalY * sinA);
+  const newCy = fixedWY - (newFixedLocalX * sinA + newFixedLocalY * cosA);
+
+  b.x = newCx - newW / 2;
+  b.y = newCy - newH / 2;
+  b.w = newW;
+  b.h = newH;
+  b.angle = o.angle || 0;
   render();
 });
 
@@ -570,6 +696,7 @@ window.addEventListener('keydown', e => {
   else if (e.code === 'Delete' || e.code === 'Backspace') { e.preventDefault(); removeKeyframeAt(app.active); render(); }
   else if (e.code === 'Digit1') { e.preventDefault(); jumpKeyframe(-1); }
   else if (e.code === 'Digit2') { e.preventDefault(); jumpKeyframe(+1); }
+  else if (e.code === 'KeyH') { e.preventDefault(); toggleVisibilityAtCurrent(app.active); render(); }
 });
 
 // ===== UI =====
@@ -602,6 +729,20 @@ document.getElementById('wInput').addEventListener('change', () => applySizeInpu
 document.getElementById('hInput').addEventListener('change', () => applySizeInput('h'));
 document.getElementById('wInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applySizeInput('w'); }});
 document.getElementById('hInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applySizeInput('h'); }});
+
+function applyAngleInput() {
+  const b = app.bbox[app.active];
+  if (!b) return;
+  const v = parseFloat(document.getElementById('angleInput').value);
+  if (Number.isNaN(v)) return;
+  b.angle = v;
+  upsertKeyframe(app.active, b);
+  render();
+}
+document.getElementById('angleInput').addEventListener('change', applyAngleInput);
+document.getElementById('angleInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyAngleInput(); }});
+
+document.getElementById('toggleHide').addEventListener('click', () => { toggleVisibilityAtCurrent(app.active); render(); });
 
 document.getElementById('applySizeAll').addEventListener('click', () => {
   const b = app.bbox[app.active];
