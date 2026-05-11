@@ -45,6 +45,7 @@ export default function App() {
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/fuck/assets" element={<FuckAssetsPage />} />
                 <Route path="/fuck/new" element={<FuckCreatePage />} />
+                <Route path="/fuck/assets/:id/edit" element={<FuckCreatePage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Routes>
             </AnimatePresence>

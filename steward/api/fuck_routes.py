@@ -270,6 +270,13 @@ async def handle_patch_asset(request: web.Request):
         scope = str(body["scope"])
         if scope in ALLOWED_SCOPES:
             asset.scope = scope
+    if "annotations" in body:
+        annotations = body["annotations"]
+        if not isinstance(annotations, dict):
+            return web.json_response({"error": "annotations must be an object"}, status=400)
+        _, ann_path = _asset_paths(asset)
+        ann_path.parent.mkdir(parents=True, exist_ok=True)
+        ann_path.write_text(json.dumps(annotations, ensure_ascii=False, indent=2), encoding="utf-8")
     await repository.save()
     return web.json_response(_serialize_asset(repository, asset, uid))
 

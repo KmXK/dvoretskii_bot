@@ -2,6 +2,7 @@ import { api } from '../api/client'
 
 export const fuckApi = {
   listAssets: () => api.get('/api/fuck/assets'),
+  getAssetData: (id) => api.get(`/api/fuck/assets/${id}/data`),
   createAsset: ({ file, annotations, name, scope }) => {
     const fd = new FormData()
     fd.append('file', file, file.name)

@@ -915,6 +915,28 @@ if (IS_EMBEDDED) {
         file: app.source.file,
         filename: app.source.file.name,
       });
+    } else if (msg.type === 'loadFromUrl') {
+      try {
+        const res = await fetch(msg.mediaUrl, { credentials: 'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
+        const filename = msg.filename || 'asset';
+        const type = blob.type || (filename.endsWith('.gif') ? 'image/gif'
+                       : filename.endsWith('.webp') ? 'image/webp'
+                       : 'video/mp4');
+        const file = new File([blob], filename, { type });
+        await loadFile(file);
+        if (msg.annotations && msg.annotations.keyframes) {
+          app.keyframes = {
+            a: Array.isArray(msg.annotations.keyframes.a) ? msg.annotations.keyframes.a : [],
+            b: Array.isArray(msg.annotations.keyframes.b) ? msg.annotations.keyframes.b : [],
+          };
+          render();
+        }
+        postToParent({ type: 'editLoaded' });
+      } catch (err) {
+        postToParent({ type: 'error', error: 'load failed: ' + err.message });
+      }
     }
   });
 

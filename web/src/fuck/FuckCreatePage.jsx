@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import { fuckApi as api } from './api'
 
 const ANNOTATOR_URL = '/fuck/annotator.html?embedded=1'
 
 
-function NewAssetForm({ loaded, busy, error, name, setName, scope, setScope, onSave, onCancel }) {
+function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, onSave, onCancel }) {
+  const isEdit = mode === 'edit'
   return (
     <div className="bg-spotify-dark rounded-2xl p-4 mb-4">
       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
@@ -51,11 +52,11 @@ function NewAssetForm({ loaded, busy, error, name, setName, scope, setScope, onS
             onClick={onSave}
             disabled={!loaded || !name.trim() || busy}
             className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-spotify-green text-black hover:bg-spotify-green/90 disabled:opacity-40 disabled:cursor-not-allowed"
-          >{busy ? 'Сохраняю…' : 'Создать'}</button>
+          >{busy ? 'Сохраняю…' : isEdit ? 'Сохранить' : 'Создать'}</button>
         </div>
       </div>
 
-      {!loaded && (
+      {!loaded && !isEdit && (
         <p className="text-spotify-text/60 text-xs mt-3">
           Загрузи видео/gif/webp в annotator ниже, расставь keyframes для A и B, потом нажми «Создать».
         </p>
@@ -70,9 +71,12 @@ function NewAssetForm({ loaded, busy, error, name, setName, scope, setScope, onS
 
 export default function FuckCreatePage() {
   const navigate = useNavigate()
+  const { id: editId } = useParams()
+  const mode = editId ? 'edit' : 'create'
 
   const iframeRef = useRef(null)
   const pendingResolveRef = useRef(null)
+  const editPayloadRef = useRef(null)
 
   const [loaded, setLoaded] = useState(null)
   const [name, setName] = useState('')
@@ -84,12 +88,19 @@ export default function FuckCreatePage() {
     const onMessage = (e) => {
       const msg = e.data
       if (!msg || typeof msg !== 'object') return
-      if (msg.type === 'loaded') {
+      if (msg.type === 'ready' && editPayloadRef.current) {
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: 'loadFromUrl', ...editPayloadRef.current },
+          '*',
+        )
+      } else if (msg.type === 'loaded') {
         setLoaded(msg)
-        if (!name) {
+        if (mode === 'create' && !name) {
           const stem = String(msg.filename || '').replace(/\.[^.]+$/, '')
           setName(stem)
         }
+      } else if (msg.type === 'editLoaded') {
+        // annotator finished loading existing media + keyframes
       } else if (msg.type === 'annotations') {
         const resolve = pendingResolveRef.current
         pendingResolveRef.current = null
@@ -98,11 +109,42 @@ export default function FuckCreatePage() {
         const resolve = pendingResolveRef.current
         pendingResolveRef.current = null
         if (resolve) resolve({ ok: false, error: msg.error })
+        else setError(msg.error)
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [name])
+  }, [name, mode])
+
+  useEffect(() => {
+    if (mode !== 'edit') return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const assets = await api.listAssets()
+        const asset = assets.find((a) => a.id === editId)
+        if (!asset) throw new Error('ассет не найден или нет доступа')
+        if (!asset.can_edit) throw new Error('можно редактировать только свои ассеты')
+        const annotations = await api.getAssetData(editId)
+        if (cancelled) return
+        setName(asset.name)
+        setScope(asset.scope)
+        editPayloadRef.current = {
+          mediaUrl: asset.media_url,
+          filename: `${asset.id}.${asset.extension}`,
+          annotations,
+        }
+        // If iframe already sent "ready" before this fetched, kick it now.
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: 'loadFromUrl', ...editPayloadRef.current },
+          '*',
+        )
+      } catch (e) {
+        if (!cancelled) setError(e.message)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [mode, editId])
 
   const requestAnnotations = useCallback(() => new Promise((resolve) => {
     pendingResolveRef.current = resolve
@@ -121,12 +163,20 @@ export default function FuckCreatePage() {
     try {
       const res = await requestAnnotations()
       if (!res.ok) throw new Error(res.error)
-      await api.createAsset({
-        file: res.file,
-        annotations: res.annotations,
-        name: name.trim(),
-        scope,
-      })
+      if (mode === 'edit') {
+        await api.patchAsset(editId, {
+          name: name.trim(),
+          scope,
+          annotations: res.annotations,
+        })
+      } else {
+        await api.createAsset({
+          file: res.file,
+          annotations: res.annotations,
+          name: name.trim(),
+          scope,
+        })
+      }
       navigate('/fuck/assets')
     } catch (e) {
       setError(e.message)
@@ -140,13 +190,18 @@ export default function FuckCreatePage() {
       <BackButton />
       <div className="max-w-6xl mx-auto px-4 pt-4">
         <header className="mb-4">
-          <h1 className="text-2xl font-bold">Новый /fuck-ассет</h1>
+          <h1 className="text-2xl font-bold">
+            {mode === 'edit' ? 'Редактировать /fuck-ассет' : 'Новый /fuck-ассет'}
+          </h1>
           <p className="text-spotify-text text-sm mt-1">
-            Загрузи видео/gif/webp, разметь bbox'ы A и B по keyframes и нажми «Создать».
+            {mode === 'edit'
+              ? 'Подвинь bbox\'ы и пересохрани кейфреймы.'
+              : 'Загрузи видео/gif/webp, разметь bbox\'ы A и B по keyframes и нажми «Создать».'}
           </p>
         </header>
 
-        <NewAssetForm
+        <AssetForm
+          mode={mode}
           loaded={loaded}
           busy={busy}
           error={error}
