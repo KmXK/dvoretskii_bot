@@ -458,6 +458,11 @@ class Repository:
             data.setdefault("fuck_assets", [])
             data["version"] = 20
 
+        if data.get("version") == 20:
+            for fr in data.get("feature_requests", []):
+                fr.setdefault("votes", [])
+            data["version"] = 21
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -475,6 +480,10 @@ class Repository:
         for p in data.get("curse_participants", []):
             if isinstance(p, dict):
                 p.setdefault("done_words_offset", 0)
+
+        for fr in data.get("feature_requests", []):
+            if isinstance(fr, dict):
+                fr.setdefault("votes", [])
 
         for p in data.get("bill_persons", []):
             p.setdefault("description", "")
