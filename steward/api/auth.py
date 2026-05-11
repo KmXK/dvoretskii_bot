@@ -1,16 +1,3 @@
-"""Auth helpers for the web API.
-
-Two paths to log a user in:
-
-- Inside Telegram Mini App: client sends `Telegram.WebApp.initData` (URL-encoded
-  key-value pairs signed with HMAC-SHA256, secret = HMAC(b"WebAppData", bot_token)).
-- In a regular browser: Telegram Login Widget POSTs the user object (id, first_name,
-  username, photo_url, auth_date, hash) signed with HMAC-SHA256, secret = SHA256(bot_token).
-
-After successful validation we set an HttpOnly cookie with a signed session token
-(`user_id:issued_at:hmac`). Subsequent API calls read the cookie via `session_user_id()`.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -20,15 +7,17 @@ import logging
 import time
 from os import environ
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "dvoretskii_sid"
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
-LOGIN_WIDGET_MAX_AGE = 60 * 60       # 1 hour: don't accept stale widget payloads
+SESSION_MAX_AGE = 60 * 60 * 24 * 30
+LOGIN_WIDGET_MAX_AGE = 60 * 60
+INIT_DATA_MAX_AGE = 60 * 60 * 24
+INIT_DATA_HEADER = "X-Init-Data"
 
 
 def _bot_token() -> str:
@@ -39,10 +28,14 @@ def _is_secure_env() -> bool:
     return bool(environ.get("DOMAIN")) and environ.get("DOMAIN", "").strip() != "localhost"
 
 
-# === Telegram payload validation ===
+def _allowed_origins() -> set[str]:
+    domain = environ.get("DOMAIN", "").strip()
+    if not domain or domain == "localhost":
+        return set()
+    return {f"https://{domain}", f"http://{domain}"}
 
-def validate_webapp_init_data(init_data_raw: str) -> dict[str, Any] | None:
-    """Validate Telegram WebApp initData and return the user dict, or None."""
+
+def validate_webapp_init_data(init_data_raw: str, *, enforce_freshness: bool = False) -> dict[str, Any] | None:
     token = _bot_token()
     if not init_data_raw or not token:
         return None
@@ -56,6 +49,13 @@ def validate_webapp_init_data(init_data_raw: str) -> dict[str, Any] | None:
         computed = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(computed, received_hash):
             return None
+        if enforce_freshness:
+            try:
+                auth_date = int(params.get("auth_date", "0"))
+            except ValueError:
+                return None
+            if auth_date and time.time() - auth_date > INIT_DATA_MAX_AGE:
+                return None
         user_str = params.get("user")
         if not user_str:
             return None
@@ -66,7 +66,6 @@ def validate_webapp_init_data(init_data_raw: str) -> dict[str, Any] | None:
 
 
 def validate_login_widget(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """Validate Telegram Login Widget payload and return the user dict, or None."""
     token = _bot_token()
     if not token or not isinstance(payload, dict):
         return None
@@ -90,8 +89,6 @@ def validate_login_widget(payload: dict[str, Any]) -> dict[str, Any] | None:
         logger.exception("validate_login_widget failed")
         return None
 
-
-# === Session token (HMAC-signed cookie) ===
 
 def _session_secret() -> bytes:
     return _bot_token().encode()
@@ -123,10 +120,6 @@ def parse_session_token(token: str) -> int | None:
 
 
 def set_session_cookie(response: web.StreamResponse, user_id: int) -> None:
-    # SameSite=None is required for Telegram WebApp (the bot's UI is loaded
-    # in a cross-site iframe on web.telegram.org, so Lax cookies are blocked
-    # in those fetches). None requires Secure=True, which prod has.
-    # In dev (no HTTPS) we fall back to Lax to keep cookies usable.
     secure = _is_secure_env()
     response.set_cookie(
         SESSION_COOKIE,
@@ -134,7 +127,7 @@ def set_session_cookie(response: web.StreamResponse, user_id: int) -> None:
         max_age=SESSION_MAX_AGE,
         httponly=True,
         secure=secure,
-        samesite="None" if secure else "Lax",
+        samesite="Lax",
     )
 
 
@@ -142,8 +135,24 @@ def clear_session_cookie(response: web.StreamResponse) -> None:
     response.del_cookie(SESSION_COOKIE)
 
 
+def _init_data_user_id(request: web.Request) -> int | None:
+    init_data = request.headers.get(INIT_DATA_HEADER, "")
+    if not init_data:
+        return None
+    user = validate_webapp_init_data(init_data, enforce_freshness=True)
+    if not user:
+        return None
+    try:
+        return int(user["id"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
 def session_user_id(request: web.Request) -> int | None:
-    return parse_session_token(request.cookies.get(SESSION_COOKIE, ""))
+    uid = parse_session_token(request.cookies.get(SESSION_COOKIE, ""))
+    if uid is not None:
+        return uid
+    return _init_data_user_id(request)
 
 
 def require_user(request: web.Request) -> int:
@@ -161,10 +170,6 @@ def require_admin(request: web.Request) -> int:
     return uid
 
 
-# === aiohttp middleware ===
-
-# Endpoints reachable without a session cookie. Everything else under /api/*
-# requires the cookie set by /api/auth/{webapp,widget}.
 PUBLIC_API_PATHS = {
     "/api/auth/config",
     "/api/auth/webapp",
@@ -173,19 +178,36 @@ PUBLIC_API_PATHS = {
     "/api/auth/logout",
 }
 
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _origin_allowed(request: web.Request) -> bool:
+    allowed = _allowed_origins()
+    if not allowed:
+        return True
+    raw = request.headers.get("Origin") or request.headers.get("Referer")
+    if not raw:
+        return False
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        return False
+    origin = f"{parts.scheme}://{parts.netloc}"
+    return origin in allowed
+
 
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     path = request.path
-    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
-        if session_user_id(request) is None:
-            return web.json_response({"error": "auth required"}, status=401)
+    if not path.startswith("/api/"):
+        return await handler(request)
+    if request.method not in SAFE_METHODS and not _origin_allowed(request):
+        return web.json_response({"error": "cross-origin blocked"}, status=403)
+    if path not in PUBLIC_API_PATHS and session_user_id(request) is None:
+        return web.json_response({"error": "auth required"}, status=401)
     return await handler(request)
 
 
 def ws_session_user(request: web.Request):
-    """Return (user_id, username) for a WS upgrade request if a valid session
-    cookie is present, else None. Used to skip the per-WS initData handshake."""
     uid = session_user_id(request)
     if uid is None:
         return None

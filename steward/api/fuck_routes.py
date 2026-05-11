@@ -281,6 +281,15 @@ async def handle_patch_asset(request: web.Request):
     return web.json_response(_serialize_asset(repository, asset, uid))
 
 
+_EXT_CONTENT_TYPE = {
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
+    "mov": "video/quicktime",
+}
+
+
 async def handle_get_asset_media(request: web.Request):
     repository: Repository = request.app["repository"]
     require_user(request)
@@ -290,10 +299,11 @@ async def handle_get_asset_media(request: web.Request):
     media, _ = _asset_paths(asset)
     if not media.exists():
         raise web.HTTPNotFound()
-    return web.FileResponse(
-        media,
-        headers={"Cache-Control": "private, max-age=300"},
-    )
+    headers = {"Cache-Control": "private, max-age=300"}
+    ct = _EXT_CONTENT_TYPE.get(asset.extension)
+    if ct:
+        headers["Content-Type"] = ct
+    return web.FileResponse(media, headers=headers)
 
 
 async def handle_get_asset_data(request: web.Request):

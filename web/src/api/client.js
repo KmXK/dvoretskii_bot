@@ -1,13 +1,4 @@
-/**
- * Shared API client. Always sends the session cookie (credentials: 'include')
- * so handlers protected by the auth middleware succeed in both miniapp and
- * web modes. Throws on non-2xx with a useful error message.
- *
- * Bodies are encoded based on type:
- *   - undefined / null  → no body, no Content-Type
- *   - FormData          → passed through, browser sets multipart Content-Type
- *   - everything else   → JSON-encoded with application/json
- */
+import WebApp from '@twa-dev/sdk'
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -28,30 +19,43 @@ async function parse(res) {
   return res.text()
 }
 
-const baseInit = { credentials: 'include' }
+function authHeaders() {
+  const initData = WebApp?.initData
+  return initData ? { 'X-Init-Data': initData } : {}
+}
+
+const baseInit = () => ({ credentials: 'include', headers: { ...authHeaders() } })
 
 function bodyInit(method, body) {
   if (body === undefined || body === null) {
-    return { ...baseInit, method }
+    return { ...baseInit(), method }
   }
   if (typeof FormData !== 'undefined' && body instanceof FormData) {
-    return { ...baseInit, method, body }
+    return { ...baseInit(), method, body }
   }
+  const base = baseInit()
   return {
-    ...baseInit,
+    ...base,
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...base.headers, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }
 }
 
 export const api = {
-  get: (path) => fetch(path, baseInit).then(parse),
+  get: (path) => fetch(path, baseInit()).then(parse),
   post: (path, body) => fetch(path, bodyInit('POST', body)).then(parse),
   put: (path, body) => fetch(path, bodyInit('PUT', body)).then(parse),
   patch: (path, body) => fetch(path, bodyInit('PATCH', body)).then(parse),
-  delete: (path) => fetch(path, { ...baseInit, method: 'DELETE' }).then(parse),
-  raw: (path, init = {}) => fetch(path, { ...baseInit, ...init }),
+  delete: (path) => fetch(path, { ...baseInit(), method: 'DELETE' }).then(parse),
+  raw: (path, init = {}) => {
+    const base = baseInit()
+    return fetch(path, {
+      ...base,
+      ...init,
+      headers: { ...base.headers, ...(init.headers || {}) },
+    })
+  },
 }
 
 export { ApiError }
