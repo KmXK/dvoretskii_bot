@@ -13,8 +13,8 @@
   .drop-zone.drag-over { border-color: #4a9eff; background: #1e2a3a; }
   .drop-zone .hint { color: #888; font-size: 11px; margin-top: 4px; }
 
-  .canvas-wrap { position: relative; background: #000; display: inline-block; max-width: 100%; }
-  canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; user-select: none; }
+  .canvas-wrap { position: relative; background: #000; display: flex; align-items: center; justify-content: center; max-width: 100%; max-height: 55vh; overflow: hidden; }
+  canvas { display: block; max-width: 100%; max-height: 55vh; width: auto; height: auto; cursor: crosshair; user-select: none; object-fit: contain; }
 
   .timeline { position: relative; height: 28px; background: #2a2a2a; margin-top: 8px; cursor: pointer; border-radius: 4px; user-select: none; }
   .timeline-bar { position: absolute; top: 0; bottom: 0; left: 0; background: #4a9eff; opacity: 0.18; pointer-events: none; }
@@ -221,20 +221,24 @@ class GifSource extends FrameArraySource {
 class WebpSource extends FrameArraySource {
   constructor(file) { super(file, 'webp'); }
   async load() {
-    if (typeof ImageDecoder === 'undefined') {
-      throw new Error('ImageDecoder API not supported — use Chrome 94+ or Safari 17+');
-    }
     const mime = this.file.type || 'image/webp';
-    if (!(await ImageDecoder.isTypeSupported(mime))) {
-      throw new Error('Browser cannot decode ' + mime);
+    if (typeof ImageDecoder !== 'undefined' && (await ImageDecoder.isTypeSupported(mime))) {
+      try {
+        await this._loadAnimated(mime);
+        return;
+      } catch (err) {
+        console.warn('animated webp decode failed, falling back to static:', err);
+      }
     }
+    await this._loadStatic();
+  }
+
+  async _loadAnimated(mime) {
     const decoder = new ImageDecoder({ data: this.file.stream(), type: mime });
     await decoder.completed;
-
     const track = decoder.tracks.selectedTrack;
     const frameCount = track ? track.frameCount : 1;
     if (!frameCount) throw new Error('WebP has no frames');
-
     this.frameData = [];
     let cumUs = 0;
     for (let i = 0; i < frameCount; i++) {
@@ -250,10 +254,32 @@ class WebpSource extends FrameArraySource {
     decoder.close();
     this._finalize();
     if (this.duration === 0) {
-      // static webp single-frame fallback
       this.duration = 1;
       this.frameData[0].delay = 1;
       this._finalize();
+    }
+  }
+
+  async _loadStatic() {
+    const url = URL.createObjectURL(this.file);
+    try {
+      const img = await new Promise((res, rej) => {
+        const el = new Image();
+        el.onload = () => res(el);
+        el.onerror = () => rej(new Error('failed to load webp as static image'));
+        el.src = url;
+      });
+      this.width = img.naturalWidth;
+      this.height = img.naturalHeight;
+      const bitmap = await createImageBitmap(img);
+      this.frameData = [{ bitmap, t: 0, delay: 1 }];
+      this._finalize();
+      if (!this.duration) {
+        this.duration = 1;
+        this.fps = 1;
+      }
+    } finally {
+      URL.revokeObjectURL(url);
     }
   }
 }

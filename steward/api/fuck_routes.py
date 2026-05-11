@@ -315,7 +315,7 @@ async def handle_get_asset_data(request: web.Request):
     _, ann = _asset_paths(asset)
     if not ann.exists():
         raise web.HTTPNotFound()
-    return web.FileResponse(ann)
+    return web.FileResponse(ann, headers={"Cache-Control": "no-cache"})
 
 
 # === Route registration ===
