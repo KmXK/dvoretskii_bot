@@ -176,12 +176,20 @@ async def handle_auth_webapp(request: web.Request):
     body = await request.json()
     user = validate_webapp_init_data(str(body.get("initData", "")))
     if not user:
+        logger.info("auth/webapp: invalid initData (origin=%s)", request.headers.get("Origin"))
         return web.json_response({"error": "invalid initData"}, status=403)
     uid = int(user["id"])
-    await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
-    await _capture_avatar_on_auth(request, "webapp", uid, user)
+    try:
+        await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
+    except Exception:
+        logger.exception("auth/webapp: ingest_user failed for %s — continuing", uid)
+    try:
+        await _capture_avatar_on_auth(request, "webapp", uid, user)
+    except Exception:
+        logger.exception("auth/webapp: avatar capture failed for %s — continuing", uid)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
+    logger.info("auth/webapp: ok uid=%s", uid)
     return resp
 
 
@@ -190,12 +198,24 @@ async def handle_auth_widget(request: web.Request):
     body = await request.json()
     user = validate_login_widget(body)
     if not user:
+        logger.info(
+            "auth/widget: invalid signature (origin=%s, keys=%s)",
+            request.headers.get("Origin"),
+            sorted(body.keys()) if isinstance(body, dict) else type(body).__name__,
+        )
         return web.json_response({"error": "invalid signature"}, status=403)
     uid = int(user["id"])
-    await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
-    await _capture_avatar_on_auth(request, "widget", uid, user)
+    try:
+        await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
+    except Exception:
+        logger.exception("auth/widget: ingest_user failed for %s — continuing", uid)
+    try:
+        await _capture_avatar_on_auth(request, "widget", uid, user)
+    except Exception:
+        logger.exception("auth/widget: avatar capture failed for %s — continuing", uid)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
+    logger.info("auth/widget: ok uid=%s", uid)
     return resp
 
 
