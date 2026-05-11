@@ -325,7 +325,11 @@ async def handle_get_asset_data(request: web.Request):
     _, ann = _asset_paths(asset)
     if not ann.exists():
         raise web.HTTPNotFound()
-    return web.FileResponse(ann, headers={"Cache-Control": "no-cache"})
+    return web.Response(
+        body=ann.read_bytes(),
+        headers={"Cache-Control": "no-cache"},
+        content_type="application/json",
+    )
 
 
 # === Route registration ===
