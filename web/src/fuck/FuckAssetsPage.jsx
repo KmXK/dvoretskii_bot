@@ -193,16 +193,20 @@ function AssetCard({ asset, onEdit, onDelete }) {
           {formatDate(asset.created_at)}
         </p>
 
-        <div className="mt-auto flex gap-2">
+        <div className="mt-auto flex flex-wrap gap-2">
           {asset.can_edit ? (
             <>
               <button
                 onClick={() => onEdit(asset)}
-                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-white/5 text-white hover:bg-white/10"
+                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium bg-white/5 text-white hover:bg-white/10"
               >Изменить</button>
+              <Link
+                to={`/fuck/assets/${asset.id}/edit`}
+                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium text-center bg-white/5 text-white hover:bg-white/10"
+              >Кейфреймы</Link>
               <button
                 onClick={() => onDelete(asset)}
-                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                className="flex-1 min-w-[80px] py-2.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-300 hover:bg-red-500/20"
               >Удалить</button>
             </>
           ) : (
