@@ -14,6 +14,7 @@ from steward.features.download import DownloadFeature
 from steward.features.everyone import EveryoneFeature
 from steward.features.exchange_rates import ExchangeRateFeature
 from steward.features.feature_request import FeatureRequestFeature
+from steward.features.fuck import FuckFeature
 from steward.features.google_drive import GoogleDriveFeature
 from steward.features.holidays import HolidaysFeature
 from steward.features.id import IdFeature
@@ -93,6 +94,7 @@ COMMANDS << [
     AIFeature,
     VoiceVideoFeature,
     MultiplyFeature,
+    FuckFeature,
     WatchFeature,
     DownloadFeature,
     GoogleDriveFeature,
