@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTelegram } from '../context/TelegramContext'
 import useCasinoSounds from '../hooks/useCasinoSounds'
+import { api } from '../api/client'
 
 const DAILY_BONUS = 50
 const INITIAL_BALANCE = 100
@@ -881,8 +882,7 @@ function RocketGame({ balance, onBalanceChange, onBack, onGameResult, sound }) {
     let cancelled = false
     const delay = new Promise(r => setTimeout(r, 1500))
     Promise.all([
-      fetch('/api/casino/rocket/init', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null),
+      api.get('/api/casino/rocket/init').catch(() => null),
       delay,
     ]).then(([data]) => {
       if (cancelled || !data) { if (!cancelled) setPhase('error'); return }
@@ -1261,7 +1261,7 @@ function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
     let cancelled = false
     const delay = new Promise(r => setTimeout(r, 1200))
     Promise.all([
-      fetch('/api/casino/race/init', { credentials: 'include' }).then(r => r.ok ? r.json() : null),
+      api.get('/api/casino/race/init').catch(() => null),
       delay,
     ]).then(([data]) => {
       if (cancelled || !data) { if (!cancelled) setPhase('error'); return }
@@ -1308,8 +1308,7 @@ function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
           const w = raceWinner(seed, rn)
           setWinner(w)
           finalsRef.current = raceFinals(seed, rn, w)
-          fetch('/api/casino/race/bets', { credentials: 'include' })
-            .then(r => r.ok ? r.json() : null)
+          api.get('/api/casino/race/bets')
             .then(d => { if (d) setBets(d.bets || []) })
             .catch(() => { })
         }
@@ -1358,8 +1357,7 @@ function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
   useEffect(() => {
     if (phase !== 'betting') return
     const fetchBets = () => {
-      fetch('/api/casino/race/bets', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : null)
+      api.get('/api/casino/race/bets')
         .then(d => { if (d) setBets(d.bets || []) })
         .catch(() => { })
     }
@@ -1372,11 +1370,8 @@ function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
     if (phaseRef.current !== 'betting' || selected < 0 || balance < bet || myBetRef.current) return
     onBalanceChange(-bet)
     sound('tick')
-    fetch('/api/casino/race/bet', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-      body: JSON.stringify({ monkeyIdx: selected, amount: bet }),
-    })
-      .then(r => { if (!r.ok) { onBalanceChange(bet); return null } return r.json() })
+    api.post('/api/casino/race/bet', { monkeyIdx: selected, amount: bet })
+      .catch(() => { onBalanceChange(bet); return null })
       .then(d => {
         if (d?.ok) {
           myBetRef.current = { monkey_idx: selected, amount: bet }
@@ -1896,12 +1891,8 @@ export default function CasinoPage() {
 
   useEffect(() => {
     if (!userId) { setLoading(false); return }
-    fetch('/api/casino/session', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ initData }),
-    })
-      .then(r => r.ok ? r.json() : null)
+    api.post('/api/casino/session', { initData })
+      .catch(() => null)
       .then(d => {
         if (d) {
           setBalance(d.monkeys)
@@ -1915,8 +1906,7 @@ export default function CasinoPage() {
 
   const fetchStats = useCallback(() => {
     if (!userId) return
-    fetch('/api/casino/stats', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
+    api.get('/api/casino/stats')
       .then(d => { if (d) setCasinoStats(d) })
       .catch(() => { })
   }, [userId])
@@ -1942,25 +1932,17 @@ export default function CasinoPage() {
   }, [claimable, lastBonusClaim])
 
   const handleGameResult = useCallback((gameId, bet, winAmount) => {
-    fetch('/api/casino/event', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ game: gameId, bet, win: winAmount, token: sessionTokenRef.current || '' }),
+    api.post('/api/casino/event', {
+      game: gameId, bet, win: winAmount, token: sessionTokenRef.current || '',
     })
-      .then(r => {
-        if (!r.ok) return fetch('/api/casino/balance', { credentials: 'include' }).then(r2 => r2.ok ? r2.json() : null)
-        return r.json()
-      })
+      .catch(() => api.get('/api/casino/balance').catch(() => null))
       .then(d => { if (d?.monkeys != null) setBalance(d.monkeys) })
-      .catch(() => { })
   }, [])
 
   const claimBonus = () => {
     if (!claimable) return
-    fetch('/api/casino/bonus', {
-      method: 'POST', credentials: 'include',
-    })
-      .then(r => r.ok ? r.json() : null)
+    api.post('/api/casino/bonus')
+      .catch(() => null)
       .then(d => {
         if (d) {
           setBalance(d.monkeys)
@@ -1999,7 +1981,7 @@ export default function CasinoPage() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-20 flex flex-col items-center">
+      className="px-4 pt-6 pb-4 flex flex-col items-center max-w-3xl mx-auto">
       <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-sm mb-5">
         <div className="rounded-xl px-4 py-2.5 flex items-center justify-center gap-2 relative"
           style={{ background: 'linear-gradient(135deg, #2d1b69 0%, #11998e 100%)' }}>

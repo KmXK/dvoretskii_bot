@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
 
@@ -126,7 +127,7 @@ function CompletedCard({ reminder }) {
   )
 }
 
-function CreateReminderDialog({ open, onOpenChange, chats, userId, onCreated }) {
+function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
   const [text, setText] = useState('')
   const [time, setTime] = useState('')
   const [chatId, setChatId] = useState('')
@@ -150,7 +151,6 @@ function CreateReminderDialog({ open, onOpenChange, chats, userId, onCreated }) 
     setError(null)
     try {
       const body = {
-        user_id: userId,
         chat_id: parseInt(chatId),
         text: text.trim(),
         time: time.trim(),
@@ -158,13 +158,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, userId, onCreated }) 
       if (repeat) body.repeat = repeat === '∞' ? '*' : repeat
       if (days.length > 0) body.days = days
 
-      const res = await fetch('/api/reminders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      const data = await api.post('/api/reminders', body)
       onCreated(data)
       setText('')
       setTime('')
@@ -307,8 +301,8 @@ export default function RemindersPage() {
   useEffect(() => {
     if (!userId) return
     Promise.all([
-      fetch(`/api/reminders/${userId}`).then(r => r.ok ? r.json() : { active: [], completed: [] }),
-      fetch(`/api/user/${userId}/chats`).then(r => r.ok ? r.json() : { chats: [] }),
+      api.get(`/api/reminders/${userId}`).catch(() => ({ active: [], completed: [] })),
+      api.get(`/api/user/${userId}/chats`).catch(() => ({ chats: [] })),
     ])
       .then(([remData, chatData]) => {
         setData(remData)
@@ -319,29 +313,24 @@ export default function RemindersPage() {
   }, [userId])
 
   const handleDelete = useCallback(async (id) => {
-    const res = await fetch(`/api/reminders/${id}?user_id=${userId}`, { method: 'DELETE' })
-    if (res.ok) {
+    try {
+      await api.delete(`/api/reminders/${id}`)
       setData(prev => ({
         ...prev,
         active: prev.active.filter(r => r.id !== id),
       }))
-    }
-  }, [userId])
+    } catch { /* noop */ }
+  }, [])
 
   const handleEdit = useCallback(async (id, newText) => {
-    const res = await fetch(`/api/reminders/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, text: newText }),
-    })
-    if (res.ok) {
-      const updated = await res.json()
+    try {
+      const updated = await api.patch(`/api/reminders/${id}`, { text: newText })
       setData(prev => ({
         ...prev,
         active: prev.active.map(r => r.id === id ? updated : r),
       }))
-    }
-  }, [userId])
+    } catch { /* noop */ }
+  }, [])
 
   const handleCreated = useCallback((newReminder) => {
     setData(prev => ({
@@ -377,7 +366,7 @@ export default function RemindersPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
 
@@ -454,7 +443,6 @@ export default function RemindersPage() {
         open={showCreate}
         onOpenChange={setShowCreate}
         chats={chats}
-        userId={userId}
         onCreated={handleCreated}
       />
     </motion.div>

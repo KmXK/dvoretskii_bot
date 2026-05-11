@@ -573,7 +573,7 @@ export default function BlackjackPage() {
   const leave = () => send({ type: 'leave_room' })
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-20">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-4 max-w-3xl mx-auto">
       {!connected && <p className="text-zinc-500 text-sm text-center py-6">Подключение...</p>}
       <button
         onClick={toggleMute}

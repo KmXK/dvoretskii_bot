@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import BackButton from '../components/BackButton'
+import { api } from '../api/client'
 
 function formatRemaining(seconds) {
   if (seconds <= 0) return null
@@ -85,11 +86,7 @@ export default function ArmyPage() {
   const [error, setError] = useState(null)
 
   const fetchArmy = useCallback(() => {
-    fetch('/api/army')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
+    api.get('/api/army')
       .then(data => { setArmy(data); setLoading(false) })
       .catch(err => { setError(err.message); setLoading(false) })
   }, [])
@@ -126,7 +123,7 @@ export default function ArmyPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
       <h1 className="text-2xl font-bold text-white mb-1">Армейка</h1>

@@ -3,9 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Link } from 'react-router-dom'
 import BackButton from '../components/BackButton'
-import { api } from './api'
-import { useAuth } from './useAuth'
-import LoginScreen from './LoginScreen'
+import { fuckApi as api } from './api'
+import { useAuth } from '../context/useAuth'
 
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov'])
 const formatDate = (ts) => ts
@@ -217,7 +216,7 @@ function AssetCard({ asset, onEdit, onDelete }) {
 
 
 export default function FuckAdminPage() {
-  const { me, loading: authLoading, loginWithWidget, logout } = useAuth()
+  const { me } = useAuth()
   const [assets, setAssets] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -238,17 +237,8 @@ export default function FuckAdminPage() {
 
   useEffect(() => { if (me) reload() }, [me, reload])
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-spotify-black">
-        <div className="text-spotify-text">…</div>
-      </div>
-    )
-  }
-  if (!me) return <LoginScreen onLogin={loginWithWidget} />
-
   return (
-    <div className="min-h-screen bg-spotify-black text-white pb-24">
+    <div className="bg-spotify-black text-white pb-24">
       <BackButton />
       <div className="max-w-5xl mx-auto px-4 pt-4">
         <header className="flex items-end justify-between gap-4 mb-6">
@@ -264,10 +254,6 @@ export default function FuckAdminPage() {
               to="/fuck/new"
               className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-spotify-green text-black hover:bg-spotify-green/90 transition"
             >+ Создать</Link>
-            <button
-              onClick={logout}
-              className="px-3 py-2.5 rounded-lg text-sm text-spotify-text hover:text-white hover:bg-white/5"
-            >Выйти</button>
           </div>
         </header>
 

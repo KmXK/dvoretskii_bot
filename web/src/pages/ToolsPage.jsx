@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
+import { api } from '../api/client'
 
 const TABS = [
   { id: 'exchange', label: '💱 Валюты', color: 'from-amber-500/20 to-amber-900/20' },
@@ -42,9 +43,7 @@ function ExchangeTool() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/exchange?from=${from}&to=${to}&amount=${amount}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      const data = await api.get(`/api/exchange?from=${from}&to=${to}&amount=${amount}`)
       setResult(data)
     } catch (e) {
       setError(e.message)
@@ -168,13 +167,11 @@ function TranslateTool() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/translate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.trim(), to: toLang, from: fromLang || undefined }),
+      const data = await api.post('/api/translate', {
+        text: text.trim(),
+        to: toLang,
+        from: fromLang || undefined,
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
       setResult(data)
     } catch (e) {
       setError(e.message)
@@ -282,23 +279,15 @@ function TimezoneTool() {
   const timerRef = useRef(null)
 
   useEffect(() => {
-    fetch('/api/timezone')
-      .then(r => r.json())
-      .then(setResult)
-      .catch(() => {})
-
-    fetch('/api/timezone/cities')
-      .then(r => r.json())
-      .then(setCities)
-      .catch(() => {})
+    api.get('/api/timezone').then(setResult).catch(() => {})
+    api.get('/api/timezone/cities').then(setCities).catch(() => {})
   }, [])
 
   useEffect(() => {
     if (!result) return
     timerRef.current = setInterval(() => {
       const q = query.trim()
-      fetch(`/api/timezone${q ? `?query=${encodeURIComponent(q)}` : ''}`)
-        .then(r => r.ok ? r.json() : null)
+      api.get(`/api/timezone${q ? `?query=${encodeURIComponent(q)}` : ''}`)
         .then(d => { if (d) setResult(d) })
         .catch(() => {})
     }, 1000)
@@ -309,9 +298,7 @@ function TimezoneTool() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/timezone?query=${encodeURIComponent(q || '')}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      const data = await api.get(`/api/timezone?query=${encodeURIComponent(q || '')}`)
       setResult(data)
     } catch (e) {
       setError(e.message)
@@ -403,7 +390,7 @@ export default function ToolsPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
       <h1 className="text-2xl font-bold text-white mb-4">Инструменты</h1>

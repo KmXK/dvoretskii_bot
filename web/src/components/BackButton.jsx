@@ -1,7 +1,11 @@
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/useAuth'
 
-export default function BackButton() {
+export default function BackButton({ force = false }) {
   const navigate = useNavigate()
+  const { mode } = useAuth()
+
+  if (mode !== 'miniapp' && !force) return null
 
   return (
     <button

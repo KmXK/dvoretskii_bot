@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -76,17 +77,21 @@ function computeBillDebts(bill) {
 // ── API client ────────────────────────────────────────────────────────────────
 
 function useApi() {
-  const { initData } = useTelegram()
-  const headers = useMemo(() => ({
-    'Content-Type': 'application/json',
-    'X-Telegram-Init-Data': initData || '',
-  }), [initData])
   return useCallback(async (path, opts = {}) => {
-    const res = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-    return data
-  }, [headers])
+    const method = (opts.method || 'GET').toUpperCase()
+    if (method === 'GET') return api.get(path)
+    if (method === 'DELETE') return api.delete(path)
+    let body
+    if (typeof opts.body === 'string') {
+      try { body = JSON.parse(opts.body) } catch { body = opts.body }
+    } else {
+      body = opts.body
+    }
+    if (method === 'POST') return api.post(path, body)
+    if (method === 'PUT') return api.put(path, body)
+    if (method === 'PATCH') return api.patch(path, body)
+    throw new Error(`Unsupported method ${method}`)
+  }, [])
 }
 
 // ── Components ────────────────────────────────────────────────────────────────
@@ -426,8 +431,8 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-4">
-      <button onClick={onBack} className="text-spotify-text text-sm mb-3">← Назад</button>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
+      <button onClick={onBack} className="text-spotify-text text-sm mb-3 hover:text-white transition-colors">← Назад</button>
       <div className="bg-spotify-dark rounded-xl p-4 mb-4">
         <div className="flex items-start justify-between">
           <div>
@@ -642,8 +647,7 @@ export default function BillsPage() {
 
   if (openBill) {
     return (
-      <>
-        <BackButton />
+      <div className="max-w-3xl mx-auto">
         <BillDetail
           bill={openBill}
           persons={persons}
@@ -652,14 +656,14 @@ export default function BillsPage() {
           onBack={() => { setOpenBillId(null); reload() }}
           onChange={reload}
         />
-      </>
+      </div>
     )
   }
 
   return (
-    <>
-      <BackButton />
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-4">
+    <div className="max-w-3xl mx-auto">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
+        <BackButton />
         <h1 className="text-2xl font-bold text-white mb-1">Счета</h1>
         <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
 
@@ -719,6 +723,6 @@ export default function BillsPage() {
           </div>
         )}
       </motion.div>
-    </>
+    </div>
   )
 }

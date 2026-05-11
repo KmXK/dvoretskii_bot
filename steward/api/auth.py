@@ -154,3 +154,37 @@ def require_admin(request: web.Request) -> int:
     if uid not in getattr(repository.db, "admin_ids", set()):
         raise web.HTTPForbidden(reason="admin only")
     return uid
+
+
+# === aiohttp middleware ===
+
+# Endpoints reachable without a session cookie. Everything else under /api/*
+# requires the cookie set by /api/auth/{webapp,widget}.
+PUBLIC_API_PATHS = {
+    "/api/auth/config",
+    "/api/auth/webapp",
+    "/api/auth/widget",
+    "/api/auth/me",
+    "/api/auth/logout",
+}
+
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler):
+    path = request.path
+    if path.startswith("/api/") and path not in PUBLIC_API_PATHS:
+        if session_user_id(request) is None:
+            return web.json_response({"error": "auth required"}, status=401)
+    return await handler(request)
+
+
+def ws_session_user(request: web.Request):
+    """Return (user_id, username) for a WS upgrade request if a valid session
+    cookie is present, else None. Used to skip the per-WS initData handshake."""
+    uid = session_user_id(request)
+    if uid is None:
+        return None
+    repository = request.app["repository"]
+    user = next((u for u in repository.db.users if u.id == uid), None)
+    username = (user.username if user else None) or "Player"
+    return uid, username[:30]
