@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api, ApiError } from '../api/client'
 
 const MONTHS = [
@@ -173,7 +173,7 @@ function CreateBirthdayDialog({ open, onOpenChange, chats, onCreated }) {
 }
 
 export default function BirthdaysPage() {
-  const { userId } = useTelegram()
+  const { userId } = useAuth()
   const [birthdays, setBirthdays] = useState([])
   const [chats, setChats] = useState([])
   const [selectedChat, setSelectedChat] = useState('')

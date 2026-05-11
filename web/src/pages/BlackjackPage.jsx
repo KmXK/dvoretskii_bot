@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import useCasinoSounds from '../hooks/useCasinoSounds'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠', '?': '•' }
@@ -484,7 +484,7 @@ function Table({ state, send, userId, onLeave, sound }) {
 }
 
 export default function BlackjackPage() {
-  const { userId, initData } = useTelegram()
+  const { userId, initData } = useAuth()
   const { sound, muted, toggleMute } = useCasinoSounds()
   const [view, setView] = useState('lobby')
   const [rooms, setRooms] = useState([])

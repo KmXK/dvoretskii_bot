@@ -2,7 +2,7 @@ import confetti from 'canvas-confetti'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import useCasinoSounds from '../hooks/useCasinoSounds'
 import { api } from '../api/client'
 
@@ -1235,7 +1235,7 @@ function RocketGame({ balance, onBalanceChange, onBack, onGameResult, sound }) {
 
 // ===== monkey race =====
 function MonkeyRace({ balance, onBalanceChange, onBack, sound }) {
-  const { userId } = useTelegram()
+  const { userId } = useAuth()
   const [phase, setPhase] = useState('loading')
   const [seed, setSeed] = useState(null)
   const [serverOff, setServerOff] = useState(0)
@@ -1874,7 +1874,7 @@ function GameCard({ game, onClick, index }) {
 
 // ===== main =====
 export default function CasinoPage() {
-  const { userId, username, firstName, initData } = useTelegram()
+  const { userId, username, firstName, initData } = useAuth()
   const userName = username || firstName || 'гость'
   const navigate = useNavigate()
   const { sound, muted, toggleMute } = useCasinoSounds()

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import BackButton from '../components/BackButton'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const PERIODS = [
@@ -109,7 +109,7 @@ function StatsSection({ section, color }) {
 }
 
 export default function StatsPage() {
-  const { userId } = useTelegram()
+  const { userId } = useAuth()
   const [chats, setChats] = useState([])
   const [selectedChat, setSelectedChat] = useState('')
   const [period, setPeriod] = useState('day')

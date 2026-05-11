@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
@@ -585,7 +585,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
 export default function BillsPage() {
   const api = useApi()
-  const { userId } = useTelegram()
+  const { userId } = useAuth()
   const [bills, setBills] = useState([])
   const [persons, setPersons] = useState([])
   const [tab, setTab] = useState('open')

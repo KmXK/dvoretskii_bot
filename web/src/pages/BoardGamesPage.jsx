@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CheckersBoard from '../components/boardgames/CheckersBoard'
 import ChessBoard from '../components/boardgames/ChessBoard'
-import { useTelegram } from '../context/TelegramContext'
+import { useAuth } from '../context/useAuth'
 import useCasinoSounds from '../hooks/useCasinoSounds'
 import { api } from '../api/client'
 
@@ -154,7 +154,7 @@ function InviteBlock({ room, userId }) {
 }
 
 export default function BoardGamesPage() {
-  const { userId, initData } = useTelegram()
+  const { userId, initData } = useAuth()
   const { sound } = useCasinoSounds()
   const wsRef = useRef(null)
   const reconnectRef = useRef(null)
