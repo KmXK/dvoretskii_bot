@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 const STATUS = { OPEN: 0, DONE: 1, DENIED: 2, IN_PROGRESS: 3, TESTING: 4 }
 
@@ -119,16 +120,9 @@ function FeatureCardModal({ feature, open, onClose, onSave }) {
     }
 
     try {
-      const res = await fetch(`/api/feature-requests/${feature.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        const updated = await res.json()
-        onSave(updated)
-      }
-    } finally {
+      const updated = await api.patch(`/api/feature-requests/${feature.id}`, body)
+      onSave(updated)
+    } catch { /* noop */ } finally {
       setSaving(false)
     }
   }
@@ -266,16 +260,9 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
     try {
       const payload = { text: text.trim() }
       if (authorName) payload.author_name = authorName
-      const res = await fetch('/api/feature-requests', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        const created = await res.json()
-        onCreate(created)
-      }
-    } finally {
+      const created = await api.post('/api/feature-requests', payload)
+      onCreate(created)
+    } catch { /* noop */ } finally {
       setSaving(false)
     }
   }
@@ -329,11 +316,7 @@ export default function FeaturesPage() {
   const [showCreate, setShowCreate] = useState(false)
 
   useEffect(() => {
-    fetch('/api/feature-requests')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
+    api.get('/api/feature-requests')
       .then(data => { setFeatures(data); setLoading(false) })
       .catch(err => { setError(err.message); setLoading(false) })
   }, [])
@@ -423,7 +406,7 @@ export default function FeaturesPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
       <div className="flex items-center justify-between mb-1">

@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { useTelegram } from '../context/TelegramContext'
+import { api, ApiError } from '../api/client'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -82,18 +83,12 @@ function CreateBirthdayDialog({ open, onOpenChange, chats, onCreated }) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/birthdays', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
-          day: parseInt(day),
-          month: parseInt(month),
-          chat_id: parseInt(chatId),
-        }),
+      const data = await api.post('/api/birthdays', {
+        name: name.trim(),
+        day: parseInt(day),
+        month: parseInt(month),
+        chat_id: parseInt(chatId),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
       onCreated(data)
       setName('')
       setDay('')
@@ -188,8 +183,7 @@ export default function BirthdaysPage() {
 
   useEffect(() => {
     if (!userId) return
-    fetch(`/api/user/${userId}/chats`)
-      .then(r => r.ok ? r.json() : { chats: [] })
+    api.get(`/api/user/${userId}/chats`)
       .then(data => {
         const ch = data.chats || []
         setChats(ch)
@@ -201,22 +195,23 @@ export default function BirthdaysPage() {
   useEffect(() => {
     if (!selectedChat) { setLoading(false); return }
     setLoading(true)
-    fetch(`/api/birthdays?chat_id=${selectedChat}`)
-      .then(r => r.ok ? r.json() : [])
+    api.get(`/api/birthdays?chat_id=${selectedChat}`)
       .then(data => setBirthdays(data))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [selectedChat])
 
   const handleDelete = useCallback(async (birthday) => {
-    const res = await fetch('/api/birthdays', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: birthday.name, chat_id: birthday.chat_id }),
-    })
-    if (res.ok) {
+    try {
+      await api.raw('/api/birthdays', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: birthday.name, chat_id: birthday.chat_id }),
+      }).then(r => {
+        if (!r.ok) throw new ApiError(r.status, 'delete failed')
+      })
       setBirthdays(prev => prev.filter(b => !(b.name === birthday.name && b.chat_id === birthday.chat_id)))
-    }
+    } catch { /* noop */ }
   }, [])
 
   const handleCreated = useCallback((newBirthday) => {
@@ -259,7 +254,7 @@ export default function BirthdaysPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
 

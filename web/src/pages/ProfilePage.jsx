@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 const PERIODS = [
   { key: 'day', label: 'День' },
@@ -47,8 +48,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!userId) return
-    fetch(`/api/profile/${userId}?period=day`)
-      .then(r => r.ok ? r.json() : null)
+    api.get(`/api/profile/${userId}?period=day`)
       .then(data => {
         if (!data) return
         setRewards(data.rewards)
@@ -61,8 +61,8 @@ export default function ProfilePage() {
     if (!userId) return
     setStatsLoading(true)
     Promise.all([
-      fetch(`/api/profile/${userId}?period=${period}`).then(r => r.ok ? r.json() : null),
-      fetch(`/api/profile/${userId}/history?period=${period}`).then(r => r.ok ? r.json() : null),
+      api.get(`/api/profile/${userId}?period=${period}`).catch(() => null),
+      api.get(`/api/profile/${userId}/history?period=${period}`).catch(() => null),
     ])
       .then(([profileData, historyData]) => {
         if (profileData) {
@@ -71,7 +71,6 @@ export default function ProfilePage() {
         }
         if (historyData) setHistory(historyData)
       })
-      .catch(e => console.error('Profile fetch error:', e))
       .finally(() => setStatsLoading(false))
   }, [userId, period])
 
@@ -97,7 +96,7 @@ export default function ProfilePage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       {/* Header */}
       <div className="flex items-center gap-4 mb-5">

@@ -232,6 +232,8 @@ async def _query_stats(metrics: MetricsEngine, user_id: str, range_str: str) -> 
 async def handle_profile(request: web.Request):
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
+    if int(request.match_info["user_id"]) != session_user_id(request):
+        return web.json_response({"error": "forbidden"}, status=403)
     user_id = request.match_info["user_id"]
     period = request.query.get("period", "day")
 
@@ -284,6 +286,8 @@ async def handle_profile(request: web.Request):
 
 async def handle_profile_history(request: web.Request):
     metrics: MetricsEngine = request.app["metrics"]
+    if int(request.match_info["user_id"]) != session_user_id(request):
+        return web.json_response({"error": "forbidden"}, status=403)
     user_id = request.match_info["user_id"]
     period = request.query.get("period", "day")
 
@@ -325,6 +329,8 @@ async def handle_profile_history(request: web.Request):
 
 async def handle_poker_stats(request: web.Request):
     metrics: MetricsEngine = request.app["metrics"]
+    if int(request.match_info["user_id"]) != session_user_id(request):
+        return web.json_response({"error": "forbidden"}, status=403)
     user_id = request.match_info["user_id"]
 
     try:
@@ -377,6 +383,8 @@ async def handle_poker_stats(request: web.Request):
 
 async def handle_user_chats(request: web.Request):
     repository: Repository = request.app["repository"]
+    if int(request.match_info["user_id"]) != session_user_id(request):
+        return web.json_response({"error": "forbidden"}, status=403)
     user_id = int(request.match_info["user_id"])
 
     user = next((u for u in repository.db.users if u.id == user_id), None)
@@ -517,29 +525,7 @@ _casino_sessions: dict[str, dict] = {}
 _casino_last_spin: dict[str, float] = {}
 
 
-def _validate_telegram_init_data(init_data_raw: str) -> dict | None:
-    bot_token = environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not init_data_raw or not bot_token:
-        return None
-    try:
-        params = dict(parse_qsl(init_data_raw, keep_blank_values=True))
-        received_hash = params.pop("hash", None)
-        if not received_hash:
-            return None
-        data_check_string = "\n".join(
-            f"{k}={v}" for k, v in sorted(params.items())
-        )
-        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-        computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(computed_hash, received_hash):
-            return None
-        user_str = params.get("user")
-        if user_str:
-            return _json.loads(user_str)
-        return None
-    except Exception:
-        logger.exception("initData validation error")
-        return None
+from steward.api.auth import session_user_id, require_user, validate_webapp_init_data
 
 
 def _casino_session_from_cookie(request: web.Request) -> dict | None:
@@ -570,15 +556,13 @@ def _get_or_create_user(repository: Repository, uid: int, username: str = ""):
 
 async def handle_casino_session(request: web.Request):
     try:
-        body = await request.json()
-        init_data_raw = str(body.get("initData", ""))
-
-        tg_user = _validate_telegram_init_data(init_data_raw)
-        if not tg_user:
-            return web.json_response({"error": "invalid initData"}, status=403)
-
-        user_id = str(tg_user["id"])
-        user_name = tg_user.get("username", "") or tg_user.get("first_name", "")
+        uid = session_user_id(request)
+        if uid is None:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        repository: Repository = request.app["repository"]
+        existing_user = _find_user(repository, uid)
+        user_id = str(uid)
+        user_name = (existing_user.username if existing_user else "") or ""
 
         old_sid = request.cookies.get("casino_sid")
         if old_sid:
@@ -588,8 +572,7 @@ async def handle_casino_session(request: web.Request):
         token = secrets.token_urlsafe(32)
         _casino_sessions[sid] = {"user_id": user_id, "user_name": user_name, "token": token, "ts": _time.time()}
 
-        repository: Repository = request.app["repository"]
-        user = _find_user(repository, int(user_id))
+        user = existing_user
         data = {
             "monkeys": user.monkeys if user else CASINO_INITIAL_BALANCE,
             "lastBonusClaim": user.casino_last_bonus if user else 0,
@@ -1300,6 +1283,8 @@ def _serialize_completed(r: CompletedReminder, chats_map: dict) -> dict:
 
 async def handle_reminders(request: web.Request):
     repository: Repository = request.app["repository"]
+    if int(request.match_info["user_id"]) != session_user_id(request):
+        return web.json_response({"error": "forbidden"}, status=403)
     user_id = int(request.match_info["user_id"])
     chats_map = {c.id: {"name": c.name} for c in repository.db.chats}
 
@@ -1327,7 +1312,7 @@ async def handle_reminder_create(request: web.Request):
     repository: Repository = request.app["repository"]
     body = await request.json()
 
-    user_id = int(body.get("user_id", 0))
+    user_id = session_user_id(request) or 0
     chat_id = int(body.get("chat_id", 0))
     text = str(body.get("text", "")).strip()
     time_str = str(body.get("time", "")).strip()
@@ -1423,7 +1408,7 @@ async def handle_reminder_create(request: web.Request):
 async def handle_reminder_delete(request: web.Request):
     repository: Repository = request.app["repository"]
     reminder_id = int(request.match_info["id"])
-    user_id = int(request.query.get("user_id", "0"))
+    user_id = session_user_id(request) or 0
 
     reminder = next(
         (a for a in repository.db.delayed_actions
@@ -1442,7 +1427,7 @@ async def handle_reminder_update(request: web.Request):
     repository: Repository = request.app["repository"]
     reminder_id = int(request.match_info["id"])
     body = await request.json()
-    user_id = int(body.get("user_id", 0))
+    user_id = session_user_id(request) or 0
     new_text = str(body.get("text", "")).strip()
 
     if not new_text:
@@ -1584,11 +1569,25 @@ async def handle_chat_stats(request: web.Request):
     })
 
 
+def _session_user_id(request: web.Request) -> int | None:
+    """Helper alias for handlers — middleware already enforces 401 if absent."""
+    return session_user_id(request)
+
+
 def _get_tg_user_from_request(request: web.Request) -> dict | None:
-    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("initData")
-    if init_data:
-        return _validate_telegram_init_data(init_data)
-    return None
+    """Build a tg_user-like dict from the session cookie. Looks up the username
+    in the repo so legacy handlers that read `tg_user.get("first_name")` /
+    `tg_user.get("username")` keep working."""
+    uid = session_user_id(request)
+    if uid is None:
+        return None
+    repository: Repository = request.app["repository"]
+    user = next((u for u in repository.db.users if u.id == uid), None)
+    return {
+        "id": uid,
+        "username": (user.username if user else None) or "",
+        "first_name": (user.username if user else "") or "",
+    }
 
 
 # ── /api/bills ──────────────────────────────────────────────────────────────────
@@ -2156,7 +2155,8 @@ async def handle_bills_diff_get(request: web.Request):
 
 
 async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None):
-    app = web.Application()
+    from steward.api.auth import auth_middleware
+    app = web.Application(middlewares=[auth_middleware])
     app["repository"] = repository
     app["metrics"] = metrics
     app["bot"] = bot

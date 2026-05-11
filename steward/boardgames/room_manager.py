@@ -721,6 +721,7 @@ async def _send_room_update(room: BoardRoom):
 
 
 async def boardgames_ws_handler(request: web.Request):
+    from steward.api.auth import ws_session_user
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -729,6 +730,13 @@ async def boardgames_ws_handler(request: web.Request):
     user_id: int | None = None
     user_name: str = "Player"
     current_room: BoardRoom | None = None
+
+    cookie_auth = ws_session_user(request)
+    if cookie_auth:
+        user_id, user_name = cookie_auth
+        _manager.lobby_connections[user_id] = ws
+        await ws.send_str(json.dumps({"type": "authed"}))
+        await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
 
     try:
         async for msg in ws:
@@ -743,6 +751,10 @@ async def boardgames_ws_handler(request: web.Request):
             t = data.get("type")
 
             if t == "auth":
+                if user_id is not None:
+                    await ws.send_str(json.dumps({"type": "authed"}))
+                    await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
+                    continue
                 if not _is_auth_payload(data):
                     await ws.send_str(json.dumps({"type": "error", "message": "Invalid auth payload"}))
                     continue

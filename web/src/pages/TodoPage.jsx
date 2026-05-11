@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import BackButton from '../components/BackButton'
+import { api } from '../api/client'
 
 function TodoItem({ todo, onToggle }) {
   const [toggling, setToggling] = useState(false)
@@ -8,12 +9,9 @@ function TodoItem({ todo, onToggle }) {
   const handleToggle = async () => {
     setToggling(true)
     try {
-      const res = await fetch(`/api/todos/${todo.id}`, { method: 'PATCH' })
-      if (res.ok) {
-        const updated = await res.json()
-        onToggle(updated)
-      }
-    } finally {
+      const updated = await api.patch(`/api/todos/${todo.id}`)
+      onToggle(updated)
+    } catch { /* noop */ } finally {
       setToggling(false)
     }
   }
@@ -61,11 +59,7 @@ export default function TodoPage() {
   const [showDone, setShowDone] = useState(false)
 
   useEffect(() => {
-    fetch('/api/todos')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
+    api.get('/api/todos')
       .then(data => { setTodos(data); setLoading(false) })
       .catch(err => { setError(err.message); setLoading(false) })
   }, [])
@@ -100,7 +94,7 @@ export default function TodoPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
       <h1 className="text-2xl font-bold text-white mb-1">Задачи</h1>

@@ -436,6 +436,7 @@ async def _delayed_leave(user_id: int, room: Room, repository: Repository | None
 
 
 async def blackjack_ws_handler(request: web.Request):
+    from steward.api.auth import ws_session_user
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -443,6 +444,28 @@ async def blackjack_ws_handler(request: web.Request):
     user_id: int | None = None
     user_name: str = "Player"
     current_room: Room | None = None
+
+    cookie_auth = ws_session_user(request)
+    if cookie_auth:
+        user_id, user_name = cookie_auth
+        if user_id in _manager.player_rooms:
+            rid = _manager.player_rooms[user_id]
+            room = _manager.get_room(rid)
+            if room:
+                _manager.cancel_disconnect_timer(user_id)
+                current_room = room
+                room.connections[user_id] = ws
+                pl = next((p for p in room.game.players if p.user_id == user_id), None)
+                if pl:
+                    pl.sitting_out = False
+                await ws.send_str(json.dumps({"type": "reconnected", "room": room.to_dict()}, ensure_ascii=False))
+                if room.started:
+                    state = room.game.state_for(user_id)
+                    state["readyPlayers"] = list(room.ready_players)
+                    await ws.send_str(json.dumps({"type": "game_state", "state": state}, ensure_ascii=False))
+        if not current_room:
+            _manager.lobby_connections[user_id] = ws
+            await ws.send_str(json.dumps({"type": "authed"}))
 
     try:
         async for msg in ws:
@@ -455,6 +478,9 @@ async def blackjack_ws_handler(request: web.Request):
             t = data.get("type")
 
             if t == "auth":
+                if user_id is not None:
+                    await ws.send_str(json.dumps({"type": "authed"}))
+                    continue
                 init_data_raw = str(data.get("initData", ""))
                 tg_user = _validate_telegram_init_data(init_data_raw)
                 if not tg_user or not tg_user.get("id"):

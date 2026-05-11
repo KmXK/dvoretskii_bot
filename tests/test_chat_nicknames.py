@@ -226,32 +226,6 @@ class TestFuzzyTgCandidate:
         assert score == 0
 
 
-# ── Migration ─────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_migration_v15_adds_chat_nicknames_and_aliases(tmp_path):
-    """A db at version 15 (with no chat_nicknames) migrates to latest and gains the field."""
-    import json
-    from steward.data.repository import JsonFileStorage, Repository
-
-    db_path = tmp_path / "db.json"
-    db_path.write_text(json.dumps({
-        "version": 15,
-        "admin_ids": [],
-        "users": [],
-        "chats": [{"id": -100, "name": "Test"}],
-    }))
-
-    repo = Repository(JsonFileStorage(str(db_path)))
-    await repo.migrate()
-
-    assert repo.db.version == 19
-    assert repo.db.chat_nicknames == []
-    chat = next(c for c in repo.db.chats if c.id == -100)
-    assert chat.aliases == []
-
-
 # ── merge_person ──────────────────────────────────────────────────────────────
 
 

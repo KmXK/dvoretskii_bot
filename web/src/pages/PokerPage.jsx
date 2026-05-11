@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
 const DIFFICULTY_OPTIONS = [
@@ -478,45 +479,36 @@ function InviteBlock({ room, userId }) {
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    fetch(`/api/user/${userId}/chats`)
-      .then(r => r.ok ? r.json() : { chats: [] })
+    api.get(`/api/user/${userId}/chats`)
       .then(d => setChats(d.chats || []))
       .catch(() => {})
   }, [userId])
 
   useEffect(() => {
     if (sent && room) {
-      fetch('/api/poker/invite/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          roomId: room.id,
-          roomName: room.name,
-          playerCount: room.playerCount,
-          maxPlayers: room.maxPlayers,
-        })
+      api.post('/api/poker/invite/update', {
+        roomId: room.id,
+        roomName: room.name,
+        playerCount: room.playerCount,
+        maxPlayers: room.maxPlayers,
       }).catch(() => {})
     }
-  }, [room?.playerCount, sent])
+  }, [room, sent])
 
   const sendInvites = async () => {
     if (selected.size === 0) return
     setSending(true)
     try {
-      await fetch('/api/poker/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatIds: [...selected],
-          roomName: room.name,
-          roomId: room.id,
-          playerCount: room.playerCount,
-          maxPlayers: room.maxPlayers,
-          creatorName: room.players?.[0]?.name || 'Кто-то',
-        })
+      await api.post('/api/poker/invite', {
+        chatIds: [...selected],
+        roomName: room.name,
+        roomId: room.id,
+        playerCount: room.playerCount,
+        maxPlayers: room.maxPlayers,
+        creatorName: room.players?.[0]?.name || 'Кто-то',
       })
       setSent(true)
-    } catch {}
+    } catch { /* noop */ }
     setSending(false)
   }
 
@@ -1318,8 +1310,7 @@ export default function PokerPage() {
 
   useEffect(() => {
     if (effectiveId && view === 'lobby') {
-      fetch(`/api/poker/stats/${effectiveId}`)
-        .then(r => r.ok ? r.json() : null)
+      api.get(`/api/poker/stats/${effectiveId}`)
         .then(data => { if (data) setPokerStats(data) })
         .catch(() => {})
     }
@@ -1415,11 +1406,7 @@ export default function PokerPage() {
 
   const handleLeave = () => {
     if (room?.id) {
-      fetch('/api/poker/invite/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: room.id })
-      }).catch(() => {})
+      api.post('/api/poker/invite/delete', { roomId: room.id }).catch(() => {})
     }
     send({ type: 'leave_room' })
   }
@@ -1429,7 +1416,7 @@ export default function PokerPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-20"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       {!connected && (
         <div className="text-center text-zinc-500 text-sm py-8">Подключение...</div>

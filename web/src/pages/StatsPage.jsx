@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import BackButton from '../components/BackButton'
 import { useTelegram } from '../context/TelegramContext'
+import { api } from '../api/client'
 
 const PERIODS = [
   { key: 'day', label: 'Сегодня' },
@@ -119,8 +120,7 @@ export default function StatsPage() {
 
   useEffect(() => {
     if (!userId) return
-    fetch(`/api/user/${userId}/chats`)
-      .then(r => r.ok ? r.json() : { chats: [] })
+    api.get(`/api/user/${userId}/chats`)
       .then(d => {
         const ch = d.chats || []
         setChats(ch)
@@ -136,9 +136,7 @@ export default function StatsPage() {
     try {
       const params = new URLSearchParams({ period, scope, top: '15' })
       if (selectedChat) params.set('chat_id', selectedChat)
-      const res = await fetch(`/api/chat-stats?${params}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const d = await res.json()
+      const d = await api.get(`/api/chat-stats?${params}`)
       setData(d)
     } catch (e) {
       setError(e.message)
@@ -168,7 +166,7 @@ export default function StatsPage() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="px-4 pt-6 pb-4"
+      className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
       <h1 className="text-2xl font-bold text-white mb-1">Статистика</h1>

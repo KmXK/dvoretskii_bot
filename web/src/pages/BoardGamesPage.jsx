@@ -5,6 +5,7 @@ import CheckersBoard from '../components/boardgames/CheckersBoard'
 import ChessBoard from '../components/boardgames/ChessBoard'
 import { useTelegram } from '../context/TelegramContext'
 import useCasinoSounds from '../hooks/useCasinoSounds'
+import { api } from '../api/client'
 
 function Lobby({ rooms, send, balance }) {
   const [gameType, setGameType] = useState('chess')
@@ -16,7 +17,6 @@ function Lobby({ rooms, send, balance }) {
 
   return (
     <div className="max-w-md mx-auto">
-      <button onClick={() => window.history.back()} className="text-zinc-400 text-sm mb-4">← Назад</button>
       <h1 className="text-2xl font-bold text-white mb-1">Шахматы и шашки</h1>
       <p className="text-zinc-400 text-sm mb-4">PvP, боты, зрители и ставки</p>
       <p className="text-zinc-400 text-xs mb-4">Баланс: {balance} 🐵</p>
@@ -83,24 +83,19 @@ function InviteBlock({ room, userId }) {
 
   useEffect(() => {
     if (!userId) return
-    fetch(`/api/user/${userId}/chats`)
-      .then(r => r.ok ? r.json() : { chats: [] })
+    api.get(`/api/user/${userId}/chats`)
       .then(d => setChats(d.chats || []))
       .catch(() => { })
   }, [userId])
 
   useEffect(() => {
     if (!sent || !room?.id) return
-    fetch('/api/boardgames/invite/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomId: room.id,
-        roomName: room.name,
-        gameType: room.gameType,
-        playerCount: room.playerCount,
-        spectatorCount: room.spectatorCount,
-      }),
+    api.post('/api/boardgames/invite/update', {
+      roomId: room.id,
+      roomName: room.name,
+      gameType: room.gameType,
+      playerCount: room.playerCount,
+      spectatorCount: room.spectatorCount,
     }).catch(() => { })
   }, [sent, room?.id, room?.name, room?.gameType, room?.playerCount, room?.spectatorCount])
 
@@ -115,18 +110,14 @@ function InviteBlock({ room, userId }) {
 
   const sendInvites = async () => {
     if (!room?.id || selected.size === 0) return
-    await fetch('/api/boardgames/invite', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        roomId: room.id,
-        roomName: room.name,
-        gameType: room.gameType,
-        playerCount: room.playerCount,
-        spectatorCount: room.spectatorCount,
-        creatorName: room.players?.find(p => p.id === room.creatorId)?.name || 'Игрок',
-        chatIds: [...selected],
-      }),
+    await api.post('/api/boardgames/invite', {
+      roomId: room.id,
+      roomName: room.name,
+      gameType: room.gameType,
+      playerCount: room.playerCount,
+      spectatorCount: room.spectatorCount,
+      creatorName: room.players?.find(p => p.id === room.creatorId)?.name || 'Игрок',
+      chatIds: [...selected],
     }).catch(() => { })
     setSent(true)
   }
@@ -181,15 +172,13 @@ export default function BoardGamesPage() {
   }, [])
 
   const fetchBalance = useCallback(() => {
-    fetch('/api/casino/balance', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
+    api.get('/api/casino/balance')
       .then(d => { if (d?.monkeys != null) setBalance(d.monkeys) })
       .catch(() => { })
   }, [])
 
   const fetchStats = useCallback(() => {
-    fetch('/api/casino/stats', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
+    api.get('/api/casino/stats')
       .then(d => setStats(d))
       .catch(() => { })
   }, [])
@@ -251,11 +240,7 @@ export default function BoardGamesPage() {
 
   useEffect(() => {
     if (!state?.room?.id || !state?.finished) return
-    fetch('/api/boardgames/invite/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: state.room.id }),
-    }).catch(() => { })
+    api.post('/api/boardgames/invite/delete', { roomId: state.room.id }).catch(() => { })
   }, [state?.room?.id, state?.finished])
 
   const myBet = useMemo(() => {
@@ -276,7 +261,7 @@ export default function BoardGamesPage() {
   }, [stats?.boardgames])
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-20">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-4 max-w-3xl mx-auto">
       {!connected && <p className="text-zinc-500 text-sm text-center py-6">Подключение...</p>}
       <AnimatePresence>
         {error && (

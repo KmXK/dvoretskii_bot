@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BackButton from '../components/BackButton'
-import { api } from './api'
-import { useAuth } from './useAuth'
-import LoginScreen from './LoginScreen'
+import { fuckApi as api } from './api'
 
 const ANNOTATOR_URL = '/fuck/annotator.html?embedded=1'
 
@@ -71,7 +69,6 @@ function NewAssetForm({ loaded, busy, error, name, setName, scope, setScope, onS
 
 
 export default function FuckCreatePage() {
-  const { me, loading: authLoading, loginWithWidget } = useAuth()
   const navigate = useNavigate()
 
   const iframeRef = useRef(null)
@@ -138,13 +135,8 @@ export default function FuckCreatePage() {
     }
   }
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center bg-spotify-black text-spotify-text">…</div>
-  }
-  if (!me) return <LoginScreen onLogin={loginWithWidget} />
-
   return (
-    <div className="min-h-screen bg-spotify-black text-white pb-24">
+    <div className="bg-spotify-black text-white pb-24">
       <BackButton />
       <div className="max-w-6xl mx-auto px-4 pt-4">
         <header className="mb-4">
