@@ -6,6 +6,7 @@ import logging
 import math
 import random
 import shutil
+import subprocess
 import tempfile
 import time
 import uuid
@@ -212,7 +213,7 @@ def _draw_avatar_circumscribed(
     frame.alpha_composite(a, (tx, ty))
 
 
-def _compose_gif(
+def _compose_mp4(
     source_path: Path,
     annotation: dict[str, Any],
     avatar_a: Image.Image,
@@ -225,7 +226,11 @@ def _compose_gif(
     keyframes_a = annotation.get("keyframes", {}).get("a", [])
     keyframes_b = annotation.get("keyframes", {}).get("b", [])
 
-    out_rgb: list[Image.Image] = []
+    # Avatar art rarely needs to be larger than the output. Resize once upfront.
+    avatar_a = _shrink_avatar(avatar_a)
+    avatar_b = _shrink_avatar(avatar_b)
+
+    composited: list[Image.Image] = []
     cum_ms = 0
     for i, frame in enumerate(frames):
         t = cum_ms / 1000.0
@@ -244,16 +249,50 @@ def _compose_gif(
 
         bg = Image.new("RGB", composite.size, (255, 255, 255))
         bg.paste(composite, mask=composite.split()[3])
-        out_rgb.append(bg)
+        composited.append(bg)
 
-    out_rgb[0].save(
-        str(output_path),
-        save_all=True,
-        append_images=out_rgb[1:],
-        duration=durations,
-        loop=0,
-        optimize=False,
-        disposal=2,
+    # libx264 needs even dimensions
+    w0, h0 = composited[0].size
+    even = (w0 - (w0 % 2), h0 - (h0 % 2))
+    if even != (w0, h0):
+        composited = [img.resize(even, Image.LANCZOS) for img in composited]
+    w, h = even
+
+    total_ms = sum(durations) or 1
+    # Exact fraction preserves the original timing without rounding drift.
+    fps_str = f"{len(durations) * 1000}/{total_ms}"
+
+    raw = b"".join(img.tobytes() for img in composited)
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo",
+            "-pixel_format", "rgb24",
+            "-video_size", f"{w}x{h}",
+            "-framerate", fps_str,
+            "-i", "-",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "26",
+            "-preset", "veryfast",
+            "-movflags", "+faststart",
+            str(output_path),
+        ],
+        input=raw,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode(errors='replace')[:500]}")
+
+
+def _shrink_avatar(img: Image.Image) -> Image.Image:
+    """Downscale avatar to at most MAX_OUTPUT_DIM on a side — bigger is wasted work."""
+    if max(img.size) <= MAX_OUTPUT_DIM:
+        return img
+    scale = MAX_OUTPUT_DIM / max(img.size)
+    return img.resize(
+        (int(img.width * scale), int(img.height * scale)),
+        Image.LANCZOS,
     )
 
 
@@ -327,9 +366,9 @@ class FuckFeature(Feature):
 
         try:
             with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
-                output_path = Path(tmp_dir) / "fuck.gif"
+                output_path = Path(tmp_dir) / "fuck.mp4"
                 await asyncio.to_thread(
-                    _compose_gif,
+                    _compose_mp4,
                     source_path,
                     annotation,
                     a_avatar,
@@ -339,7 +378,7 @@ class FuckFeature(Feature):
                 with output_path.open("rb") as f:
                     await self.bot.send_animation(
                         chat_id=ctx.chat_id,
-                        animation=InputFile(f, filename="fuck.gif"),
+                        animation=InputFile(f, filename="fuck.mp4"),
                     )
         except Exception as e:
             logger.exception("Failed to compose %s gif: %s", tag, e)
