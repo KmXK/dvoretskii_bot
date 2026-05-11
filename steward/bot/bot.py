@@ -119,6 +119,10 @@ class Bot:
             await self.repository.migrate()
             await self.hints_updater.start(application.bot)
 
+            from steward.features.fuck import migrate_legacy_fuck_assets
+            if migrate_legacy_fuck_assets(self.repository):
+                await self.repository.save()
+
             if ensure_dynamic_rewards_exist(self.repository):
                 await self.repository.save()
 

@@ -35,6 +35,7 @@ from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
+from .fuck_asset import FuckAsset
 from .reward import Reward, UserReward
 from .rule import Rule
 from .todo_item import TodoItem
@@ -77,8 +78,9 @@ class Database:
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
     user_facts: list[UserFact] = field(default_factory=list)
+    fuck_assets: list[FuckAsset] = field(default_factory=list)
 
-    version: int = 19
+    version: int = 20
 
 
 PARSE_CONFIG = Config(
