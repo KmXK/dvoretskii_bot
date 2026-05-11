@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { NAV_GROUPS } from './navigation'
@@ -29,14 +30,16 @@ function NavItem({ item, collapsed }) {
   )
 }
 
-function Avatar({ photoUrl, username, me, size = 'sm' }) {
+function Avatar({ photoUrl, username, firstName, me, size = 'sm' }) {
   const dim = size === 'sm' ? 'w-8 h-8 text-sm' : 'w-10 h-10 text-base'
-  const initial = (username?.[0] || me?.user_id?.toString()?.[0] || '?').toUpperCase()
-  if (photoUrl) {
+  const [broken, setBroken] = useState(false)
+  const initial = (firstName?.[0] || username?.[0] || me?.user_id?.toString()?.[0] || '?').toUpperCase()
+  if (photoUrl && !broken) {
     return (
       <img
         src={photoUrl}
         alt=""
+        onError={() => setBroken(true)}
         className={`${dim} rounded-full object-cover shrink-0 ring-1 ring-white/10`}
       />
     )
@@ -50,7 +53,7 @@ function Avatar({ photoUrl, username, me, size = 'sm' }) {
 
 export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
   const collapsed = !open && !isDrawer
-  const { me, username, photoUrl, logout } = useAuth()
+  const { me, username, firstName, photoUrl, logout } = useAuth()
 
   return (
     <aside
@@ -104,11 +107,11 @@ export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
             className="p-2 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"
             title={`${username ? '@' + username : 'Выйти'}`}
           >
-            <Avatar photoUrl={photoUrl} username={username} me={me} size="sm" />
+            <Avatar photoUrl={photoUrl} username={username} firstName={firstName} me={me} size="sm" />
           </button>
         ) : (
           <div className="flex items-center gap-2 min-w-0">
-            <Avatar photoUrl={photoUrl} username={username} me={me} size="sm" />
+            <Avatar photoUrl={photoUrl} username={username} firstName={firstName} me={me} size="sm" />
             <div className="min-w-0 flex-1">
               <div className="text-white text-sm truncate font-medium">
                 {username ? `@${username}` : me ? `id:${me.user_id}` : ''}

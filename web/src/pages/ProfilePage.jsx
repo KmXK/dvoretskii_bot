@@ -45,6 +45,7 @@ export default function ProfilePage() {
   const [statsLoading, setStatsLoading] = useState(true)
   const [activeChart, setActiveChart] = useState('messages')
   const [period, setPeriod] = useState('day')
+  const [photoBroken, setPhotoBroken] = useState(false)
 
   useEffect(() => {
     if (!userId) return
@@ -101,8 +102,8 @@ export default function ProfilePage() {
       {/* Header */}
       <div className="flex items-center gap-4 mb-5">
         <div className="w-16 h-16 rounded-full bg-gradient-to-br from-spotify-green to-emerald-700 flex items-center justify-center shrink-0 overflow-hidden">
-          {photoUrl ? (
-            <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+          {photoUrl && !photoBroken ? (
+            <img src={photoUrl} alt="" className="w-full h-full object-cover" onError={() => setPhotoBroken(true)} />
           ) : (
             <span className="text-2xl font-bold text-white">
               {(firstName?.[0] || username?.[0] || '?').toUpperCase()}

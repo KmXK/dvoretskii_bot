@@ -285,17 +285,17 @@ class FuckFeature(Feature):
 
     async def _run(self, ctx: FeatureContext, target_id: int, target_name: str | None):
         msg = ctx.message
-        author_name = None
         if msg is not None and msg.from_user is not None:
-            author_name = msg.from_user.first_name or msg.from_user.username
-        if not author_name:
-            author_name = self._username_from_repo(ctx.user_id)
+            self._remember_user(
+                msg.from_user.id, msg.from_user.username, msg.from_user.first_name
+            )
+        author_name = self._display_name(ctx.user_id)
         await self._compose_and_send(
             ctx,
             ctx.user_id,
             author_name,
             target_id,
-            target_name,
+            target_name or self._display_name(target_id),
             tag="/fuck",
         )
 
@@ -345,9 +345,33 @@ class FuckFeature(Feature):
             logger.exception("Failed to compose %s gif: %s", tag, e)
             await ctx.reply("Не получилось сгенерить, попробуй позже")
 
-    def _username_from_repo(self, user_id: int) -> str | None:
-        user = next((u for u in self.repository.db.users if u.id == user_id), None)
-        return user.username if user else None
+    def _user(self, user_id: int) -> User | None:
+        return next((u for u in self.repository.db.users if u.id == user_id), None)
+
+    def _display_name(self, user_id: int) -> str | None:
+        u = self._user(user_id)
+        if u is None:
+            return None
+        return u.first_name or u.username
+
+    def _remember_user(
+        self,
+        user_id: int,
+        username: str | None,
+        first_name: str | None,
+    ) -> bool:
+        u = self._user(user_id)
+        changed = False
+        if u is None:
+            self.users.add(User(user_id, username, [], first_name=first_name))
+            return True
+        if username and u.username != username:
+            u.username = username
+            changed = True
+        if first_name and u.first_name != first_name:
+            u.first_name = first_name
+            changed = True
+        return changed
 
     async def _resolve_target(
         self, ctx: FeatureContext, identifier: str | None
@@ -357,11 +381,15 @@ class FuckFeature(Feature):
             reply = msg.reply_to_message
             if reply is not None and reply.from_user is not None:
                 u = reply.from_user
-                return u.id, (u.first_name or u.username)
+                if self._remember_user(u.id, u.username, u.first_name):
+                    await self.users.save()
+                return u.id, self._display_name(u.id)
             for ent in (msg.entities or ()):
                 if ent.type == MessageEntity.TEXT_MENTION and ent.user is not None:
                     u = ent.user
-                    return u.id, (u.first_name or u.username)
+                    if self._remember_user(u.id, u.username, u.first_name):
+                        await self.users.save()
+                    return u.id, self._display_name(u.id)
         if not identifier:
             return None
         ident = identifier.lstrip("@")
@@ -370,14 +398,13 @@ class FuckFeature(Feature):
         except ValueError:
             target_id = None
         if target_id is not None:
-            name = self._username_from_repo(target_id)
-            return target_id, name
+            return target_id, self._display_name(target_id)
 
         user = self.users.find_one(
             lambda u: u.username and u.username.lower() == ident.lower()
         )
         if user is not None:
-            return user.id, user.username
+            return user.id, self._display_name(user.id)
 
         return await self._lookup_by_username(ident)
 
@@ -390,9 +417,7 @@ class FuckFeature(Feature):
         if getattr(chat, "type", None) != "private":
             return None
         target_id = int(chat.id)
-        name = chat.first_name or chat.username or username
-        if not self.users.find_one(lambda u: u.id == target_id):
-            self.users.add(User(target_id, chat.username, []))
+        if self._remember_user(target_id, chat.username, chat.first_name):
             await self.users.save()
         try:
             from steward.helpers.avatars import save_photo_from_file_id
@@ -402,7 +427,7 @@ class FuckFeature(Feature):
                 await save_photo_from_file_id(self.bot, target_id, file_id)
         except Exception as e:
             logger.info("/fuck: caching avatar for @%s failed: %s", username, e)
-        return target_id, name
+        return target_id, self._display_name(target_id)
 
 
 class SexFeature(FuckFeature):
@@ -441,12 +466,12 @@ class SexFeature(FuckFeature):
             return None
         try:
             uid = int(ident)
-            return uid, self._username_from_repo(uid)
+            return uid, self._display_name(uid)
         except ValueError:
             pass
         user = self.users.find_one(
             lambda u: u.username and u.username.lower() == ident.lower()
         )
         if user is not None:
-            return user.id, user.username
+            return user.id, self._display_name(user.id)
         return await self._lookup_by_username(ident)

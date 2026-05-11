@@ -58,10 +58,12 @@ function hitTest(box, x, y) {
   const rot = localToWorld(box, 0, -box.h / 2 - ROT_HANDLE_OFFSET)
   if (Math.hypot(x - rot.x, y - rot.y) < 10) return 'rotate'
   const lp = worldToLocal(box, x, y)
-  const s = 14
   const hw = box.w / 2, hh = box.h / 2
-  const nearX = (xx) => Math.abs(lp.x - xx) < s
-  const nearY = (yy) => Math.abs(lp.y - yy) < s
+  const sx = Math.max(3, Math.min(14, box.w / 3))
+  const sy = Math.max(3, Math.min(14, box.h / 3))
+  if (Math.abs(lp.x) < hw - sx && Math.abs(lp.y) < hh - sy) return 'move'
+  const nearX = (xx) => Math.abs(lp.x - xx) < sx
+  const nearY = (yy) => Math.abs(lp.y - yy) < sy
   if (nearX(-hw) && nearY(-hh)) return 'nw'
   if (nearX(hw) && nearY(-hh)) return 'ne'
   if (nearX(-hw) && nearY(hh)) return 'sw'
