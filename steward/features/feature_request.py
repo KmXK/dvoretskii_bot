@@ -1,5 +1,6 @@
 import datetime
 import re
+from dataclasses import dataclass
 from enum import Enum
 
 from telegram import ReactionTypeEmoji
@@ -92,6 +93,36 @@ _FILTER_OPTIONS = [
 ]
 
 
+@dataclass(frozen=True)
+class _ListState:
+    status: _Filter = _Filter.OPENED
+    sort_by_likes: bool = False
+    only_liked: bool = False
+
+    def encode(self) -> str:
+        return f"{self.status.value}:{'l' if self.sort_by_likes else 'p'}:{'l' if self.only_liked else 'a'}"
+
+    @classmethod
+    def decode(cls, s: str) -> "_ListState":
+        if not s:
+            return cls()
+        parts = s.split(":")
+        try:
+            status = _Filter(int(parts[0]))
+        except (ValueError, IndexError):
+            status = _Filter.OPENED
+        sort_by_likes = len(parts) > 1 and parts[1] == "l"
+        only_liked = len(parts) > 2 and parts[2] == "l"
+        return cls(status=status, sort_by_likes=sort_by_likes, only_liked=only_liked)
+
+    def replace(self, **kw) -> "_ListState":
+        return _ListState(
+            status=kw.get("status", self.status),
+            sort_by_likes=kw.get("sort_by_likes", self.sort_by_likes),
+            only_liked=kw.get("only_liked", self.only_liked),
+        )
+
+
 class FeatureRequestFeature(Feature):
     command = "fr"
     aliases = ("featurerequest",)
@@ -108,11 +139,11 @@ class FeatureRequestFeature(Feature):
 
     @subcommand("", description="Список открытых")
     async def list_default(self, ctx: FeatureContext):
-        await self.paginate(ctx, "frs", metadata=str(_Filter.OPENED.value))
+        await self.paginate(ctx, "frs", metadata=_ListState().encode())
 
     @subcommand("list", description="Список открытых")
     async def list_alias(self, ctx: FeatureContext):
-        await self.paginate(ctx, "frs", metadata=str(_Filter.OPENED.value))
+        await self.paginate(ctx, "frs", metadata=_ListState().encode())
 
     @subcommand("<fr_id:int> priority <p:int>", description="Сменить приоритет")
     async def set_priority(self, ctx: FeatureContext, fr_id: int, p: int):
@@ -204,11 +235,14 @@ class FeatureRequestFeature(Feature):
 
     @paginated("frs", per_page=15, header="Фича реквесты")
     def frs_page(self, ctx: FeatureContext, metadata: str):
-        filter_type = _Filter(int(metadata))
-        items = sorted(
-            filter(_STATUS_FILTERS[filter_type], self.feature_requests.all()),
-            key=lambda fr: fr.priority,
-        )
+        state = _ListState.decode(metadata)
+        items = [fr for fr in self.feature_requests.all() if _STATUS_FILTERS[state.status](fr)]
+        if state.only_liked:
+            items = [fr for fr in items if fr.votes]
+        if state.sort_by_likes:
+            items.sort(key=lambda fr: (-len(fr.votes), fr.priority))
+        else:
+            items.sort(key=lambda fr: fr.priority)
 
         def fmt(fr: FeatureRequest):
             author = escape_markdown(fr.author_name)
@@ -221,9 +255,23 @@ class FeatureRequestFeature(Feature):
         def render(batch):
             return format_lined_list(items=[(fr.id, fmt(fr)) for fr in batch], delimiter=". ")
 
-        extra = Keyboard.row(*[
-            self.page_button("frs", label, metadata=str(f.value), page=0)
-            for label, f in _FILTER_OPTIONS if f != filter_type
+        sort_label = "Сорт: ❤️ лайки" if state.sort_by_likes else "Сорт: 🎯 приоритет"
+        likes_label = "❤️ Только с лайками" if not state.only_liked else "📋 Все"
+        extra = Keyboard.row(
+            self.page_button(
+                "frs", sort_label,
+                metadata=state.replace(sort_by_likes=not state.sort_by_likes).encode(),
+                page=0,
+            ),
+            self.page_button(
+                "frs", likes_label,
+                metadata=state.replace(only_liked=not state.only_liked).encode(),
+                page=0,
+            ),
+        )
+        extra.append_row(*[
+            self.page_button("frs", label, metadata=state.replace(status=f).encode(), page=0)
+            for label, f in _FILTER_OPTIONS if f != state.status
         ])
         return items, render, extra
 
