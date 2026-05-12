@@ -139,6 +139,7 @@ async def execute_ai_request_streaming(
     handler_name: str,
     *,
     quick_call: Callable[[str], str | Awaitable[str]] | None = None,
+    placeholder_upgrade: Awaitable[str | None] | None = None,
 ):
     """Same shape as execute_ai_request, but streams tokens into the Telegram
     message as they arrive. When `quick_call` is given:
@@ -148,6 +149,10 @@ async def execute_ai_request_streaming(
         an extra system message into the main model's context.
       - After the reply, the user's latest message is quietly analysed in
         the background for new facts to remember.
+
+    `placeholder_upgrade` overrides the default contextual-placeholder task.
+    Pass it when the caller already knows what kind of phrase to show (e.g.
+    a "going online" hint when routing through web-search).
     Persists the final message the same way."""
     user_id = context.message.from_user.id
     user_name = context.message.from_user.full_name or context.message.from_user.username
@@ -162,7 +167,9 @@ async def execute_ai_request_streaming(
             messages = [("system", memory_block), *messages]
 
     upgrade_task: asyncio.Task[str | None] | None = None
-    if quick_call is not None:
+    if placeholder_upgrade is not None:
+        upgrade_task = asyncio.create_task(_await_awaitable(placeholder_upgrade))
+    elif quick_call is not None:
         upgrade_task = asyncio.create_task(
             try_contextual_placeholder(text, quick_call)
         )
@@ -197,6 +204,10 @@ async def execute_ai_request_streaming(
         )
         del context.repository.db.ai_messages[oldest]
     await context.repository.save()
+
+
+async def _await_awaitable(awaitable: Awaitable[str | None]) -> str | None:
+    return await awaitable
 
 
 async def _remember_facts_bg(
