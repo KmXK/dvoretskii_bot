@@ -50,6 +50,18 @@ def test_link_with_underscore_url():
     assert '<a href="https://example.com/path_to/thing">docs</a>' in out
 
 
+def test_citation_footnote():
+    """Grok :online emits citations as [[N]](url) — keep brackets in display."""
+    out = md_to_html("факт.[[1]](https://example.com/src)")
+    assert '<a href="https://example.com/src">[1]</a>' in out
+
+
+def test_multiple_citations():
+    out = md_to_html("[[1]](https://a.com) и [[2]](https://b.com)")
+    assert '<a href="https://a.com">[1]</a>' in out
+    assert '<a href="https://b.com">[2]</a>' in out
+
+
 def test_strike():
     assert md_to_html("~~old~~") == "<s>old</s>"
 
