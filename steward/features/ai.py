@@ -55,6 +55,14 @@ def _build_system_prompt() -> str:
     return GROK_SHORT_AGGRESSIVE.replace("{{USERS_DESCRIPTIONS}}", users)
 
 
+_ONLINE_STYLE_SUFFIX = """\
+Когда ссылаешься на источник из веб-поиска — оборачивай в Markdown-ссылку САМУ фразу из текста, к которой относится источник: [часть фразы](url). НЕ используй сноски, цифры в скобках, [[1]], [1], (1) и не приклеивай ссылки в конце предложения отдельно. Ссылка должна быть органичной частью предложения, без отдельных пометок «источник» или подобного. Если на одну фразу несколько источников — выбери самый релевантный, остальные не показывай."""
+
+
+def _build_online_system_prompt() -> str:
+    return _build_system_prompt() + "\n\n" + _ONLINE_STYLE_SUFFIX
+
+
 _ROUTER_PROMPT = """Решаешь, нужен ли веб-поиск чтобы ответить на запрос.
 
 Запрос: {query}
@@ -121,7 +129,7 @@ async def _online_stream(uid, msgs):
         uid,
         OpenRouterModel.GROK_4_FAST_ONLINE,
         msgs,
-        _build_system_prompt(),
+        _build_online_system_prompt(),
     )
 
 
@@ -137,7 +145,7 @@ async def _ai_call(uid, msgs):
             uid,
             OpenRouterModel.GROK_4_FAST_ONLINE,
             msgs,
-            _build_system_prompt(),
+            _build_online_system_prompt(),
         )
     return await make_text_query(uid, Model.SMART, msgs, _build_system_prompt())
 
