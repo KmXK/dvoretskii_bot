@@ -1,1 +1,33 @@
+.git
+.github
+venv
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+
+# runtime/data
 data
+db.json.bak.*
+db.json.local-backup
+victoria-metrics-data
+.telegram_bot_api_data
+.steward_session.session*
+
+# web (рантайм собирается отдельно, node_modules не нужен здесь)
+web/node_modules
+web/dist
+
+# IDE / OS
+.idea
+.vscode
+.cursor
+.DS_Store
+
+# local tunnel key
+scripts/tunnel-key
+
+# tests/junk
+junk
+tools/dev

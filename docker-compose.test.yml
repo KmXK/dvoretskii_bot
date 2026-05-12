@@ -3,6 +3,7 @@
 
 services:
   test:
+    image: dvoretskii_bot-test:latest
     build:
       context: .
       args:
