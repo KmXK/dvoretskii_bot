@@ -19,9 +19,17 @@ LOGIN_WIDGET_MAX_AGE = 60 * 60
 INIT_DATA_MAX_AGE = 60 * 60 * 24
 INIT_DATA_HEADER = "X-Init-Data"
 
+TELEGRAM_OIDC_ISSUER = "https://oauth.telegram.org"
+TELEGRAM_OIDC_JWKS_URL = "https://oauth.telegram.org/.well-known/jwks.json"
+
 
 def _bot_token() -> str:
     return environ.get("TELEGRAM_BOT_TOKEN", "")
+
+
+def login_client_id() -> str | None:
+    v = environ.get("TELEGRAM_LOGIN_CLIENT_ID", "").strip()
+    return v or None
 
 
 def _is_secure_env() -> bool:
@@ -63,6 +71,52 @@ def validate_webapp_init_data(init_data_raw: str, *, enforce_freshness: bool = F
     except Exception:
         logger.exception("validate_webapp_init_data failed")
         return None
+
+
+_jwks_client: Any | None = None
+
+
+def _get_jwks_client():
+    global _jwks_client
+    if _jwks_client is None:
+        import jwt
+        _jwks_client = jwt.PyJWKClient(TELEGRAM_OIDC_JWKS_URL, cache_keys=True)
+    return _jwks_client
+
+
+def validate_oidc_id_token(id_token: str) -> dict[str, Any] | None:
+    client_id = login_client_id()
+    if not client_id or not id_token:
+        return None
+    try:
+        import jwt
+        signing_key = _get_jwks_client().get_signing_key_from_jwt(id_token)
+        claims = jwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=client_id,
+            issuer=TELEGRAM_OIDC_ISSUER,
+        )
+    except Exception:
+        logger.exception("validate_oidc_id_token failed")
+        return None
+    raw_id = claims.get("id") or claims.get("sub")
+    if raw_id is None:
+        return None
+    try:
+        uid = int(raw_id)
+    except (TypeError, ValueError):
+        return None
+    name = claims.get("name") or ""
+    first_name, _, last_name = name.partition(" ")
+    return {
+        "id": uid,
+        "first_name": claims.get("given_name") or first_name,
+        "last_name": claims.get("family_name") or last_name,
+        "username": claims.get("preferred_username") or "",
+        "photo_url": claims.get("picture") or "",
+    }
 
 
 def validate_login_widget(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -174,6 +228,7 @@ PUBLIC_API_PATHS = {
     "/api/auth/config",
     "/api/auth/webapp",
     "/api/auth/widget",
+    "/api/auth/oidc",
     "/api/auth/me",
     "/api/auth/logout",
 }
