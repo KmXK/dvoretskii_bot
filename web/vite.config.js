@@ -7,6 +7,25 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'recharts': ['recharts'],
+          'framer-motion': ['framer-motion'],
+          'radix': [
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-tooltip',
+          ],
+          'table': ['@tanstack/react-table'],
+          'gifuct': ['gifuct-js'],
+        },
+      },
+    },
+  },
   server: {
     // HTTPS отключен, так как nginx обеспечивает HTTPS
     // Включайте только если запускаете Vite напрямую без nginx
