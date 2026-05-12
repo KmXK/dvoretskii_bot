@@ -61,6 +61,9 @@ class PrometheusMetricsEngine(MetricsEngine):
                         value = float(item.get("value", [0, "0"])[1])
                         results.append(MetricSample(labels=labels, value=value))
                     return results
+        except aiohttp.ClientConnectorError as e:
+            logger.warning("VM unreachable: %s", e)
+            return []
         except Exception as e:
             logger.exception("VM query error: %s", e)
             return []
