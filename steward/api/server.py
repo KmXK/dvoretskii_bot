@@ -165,14 +165,15 @@ async def handle_feature_request_vote(request: web.Request):
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
+    body = await request.json()
     fr = repository.db.feature_requests[fr_id - 1]
     if fr.votes is None:
         fr.votes = set()
 
-    if user_id in fr.votes:
-        fr.votes.discard(user_id)
-    else:
+    if bool(body.get("voted")):
         fr.votes.add(user_id)
+    else:
+        fr.votes.discard(user_id)
 
     await repository.save()
     return web.json_response(serialize_feature_request(fr, user_id))

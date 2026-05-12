@@ -219,19 +219,24 @@ class FeatureRequestFeature(Feature):
             return
         msg = ctx.message
         items = list(self.feature_requests)
-        self.feature_requests.add(
-            FeatureRequest(
-                id=len(items) + 1,
-                author_name=msg.from_user.name,
-                text=text,
-                author_id=msg.from_user.id,
-                message_id=msg.message_id,
-                chat_id=msg.chat_id,
-                creation_timestamp=datetime.datetime.now().timestamp(),
-            )
+        fr_id = len(items) + 1
+        fr = FeatureRequest(
+            id=fr_id,
+            author_name=msg.from_user.name,
+            text=text,
+            author_id=msg.from_user.id,
+            message_id=msg.message_id,
+            chat_id=msg.chat_id,
+            creation_timestamp=datetime.datetime.now().timestamp(),
         )
+        self.feature_requests.add(fr)
+        reply = await ctx.reply(
+            f"Фича-реквест #{fr_id} добавлен\n"
+            f"_Поставь ❤️ реакцию на это сообщение, чтобы лайкнуть_"
+        )
+        if reply is not None:
+            fr.message_id = reply.message_id
         await self.feature_requests.save()
-        await ctx.reply("Фича-реквест добавлен")
 
     @paginated("frs", per_page=15, header="Фича реквесты")
     def frs_page(self, ctx: FeatureContext, metadata: str):
