@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import re
 import time
 import uuid
@@ -16,6 +17,7 @@ from steward.framework import (
     subcommand,
 )
 from steward.helpers.ai import OpenRouterModel, make_openrouter_query
+from steward.helpers.tg_streaming import edit_with_animated_status
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,19 @@ MONTHS = [
 
 DATE_PATTERN = re.compile(
     r"^(?P<name>.+?)\s+(?P<day>\d{1,2})\.(?P<month>\d{1,2})(?:\.(?P<year>\d{4}))?$"
+)
+
+_LOOKUP_PHRASES = (
+    "Рою архивы знаменитостей",
+    "Сверяюсь с Википедией",
+    "Листаю IMDb",
+    "Опрашиваю фанатские форумы",
+    "Звоню агенту знаменитости",
+    "Тыкаю палкой в инет",
+    "Спрашиваю у тёти Гугл",
+    "Прошу у нейросети досье",
+    "Заглядываю в звёздный календарь",
+    "Сверяюсь с астрологом",
 )
 
 
@@ -153,56 +168,65 @@ class BirthdayFeature(Feature):
         await ctx.reply(f"Запомнил: {name} — {_format_date(day, month, year)}")
 
     async def _lookup_celebrity(self, ctx: FeatureContext, name: str):
-        await ctx.reply(f"🔎 Ищу ДР: {name}…")
-        try:
+        if ctx.message is None:
+            await ctx.reply("Не из чата — не получится показать поиск.")
+            return
+
+        async def _work():
             raw = await make_openrouter_query(
                 ctx.user_id,
                 OpenRouterModel.GROK_4_FAST_ONLINE,
                 [("user", _LOOKUP_PROMPT.format(name=name))],
                 timeout_seconds=90.0,
             )
-        except Exception as e:
-            logger.exception("birthday lookup failed for %s", name)
-            await ctx.reply(f"Не получилось спросить AI: {str(e)[:200]}")
-            return
+            return self._parse_lookup_response(raw)
 
-        data = self._parse_lookup_response(raw)
-        if "error" in data:
-            await ctx.reply(f"Не нашёл ДР для «{name}»: {data['error']}")
-            return
+        def _render(result):
+            if isinstance(result, Exception):
+                logger.exception("birthday lookup failed for %s: %s", name, result)
+                return (f"Не получилось спросить AI: {str(result)[:200]}", None, False)
+            if "error" in result:
+                return (f"Не нашёл ДР для «{name}»: {result['error']}", None, False)
 
-        token = uuid.uuid4().hex[:12]
-        self._pending[token] = {
-            "name": name,
-            "day": data["day"],
-            "month": data["month"],
-            "year": data["year"],
-            "description": data["description"],
-            "sources": data["sources"],
-            "chat_id": ctx.chat_id,
-            "created_at": time.time(),
-        }
-        self._evict_old_pending()
+            token = uuid.uuid4().hex[:12]
+            self._pending[token] = {
+                "name": name,
+                "day": result["day"],
+                "month": result["month"],
+                "year": result["year"],
+                "description": result["description"],
+                "sources": result["sources"],
+                "chat_id": ctx.chat_id,
+                "created_at": time.time(),
+            }
+            self._evict_old_pending()
 
-        age = self._age(data["year"])
-        age_str = f" ({age} лет)" if age is not None else ""
-        src_lines = "\n".join(f"• {url}" for url in data["sources"][:5]) or "—"
-        text = (
-            f"🎂 <b>{name}</b>\n"
-            f"📅 {_format_date(data['day'], data['month'], data['year'])}{age_str}\n\n"
-            f"{data['description']}\n\n"
-            f"📎 <b>Источники</b>:\n{src_lines}\n\n"
-            f"Сохранить в список?"
+            age = self._age(result["year"])
+            age_str = f" ({age} лет)" if age is not None else ""
+            src_lines = "\n".join(f"• {url}" for url in result["sources"][:5]) or "—"
+            text = (
+                f"🎂 <b>{name}</b>\n"
+                f"📅 {_format_date(result['day'], result['month'], result['year'])}{age_str}\n\n"
+                f"{result['description']}\n\n"
+                f"📎 <b>Источники</b>:\n{src_lines}\n\n"
+                f"Сохранить в список?"
+            )
+            kb = Keyboard.row(
+                self.cb("birthday:confirm").button(
+                    "✅ Сохранить", token=token, answer="yes", initiator=ctx.user_id,
+                ),
+                self.cb("birthday:confirm").button(
+                    "❌ Отмена", token=token, answer="no", initiator=ctx.user_id,
+                ),
+            )
+            return (text, kb, True)
+
+        await edit_with_animated_status(
+            ctx.message,
+            _work(),
+            _render,
+            placeholder=random.choice(_LOOKUP_PHRASES),
         )
-        kb = Keyboard.row(
-            self.cb("birthday:confirm").button(
-                "✅ Сохранить", token=token, answer="yes", initiator=ctx.user_id,
-            ),
-            self.cb("birthday:confirm").button(
-                "❌ Отмена", token=token, answer="no", initiator=ctx.user_id,
-            ),
-        )
-        await ctx.reply(text, keyboard=kb, html=True, disable_web_page_preview=True)
 
     @on_callback(
         "birthday:confirm",
