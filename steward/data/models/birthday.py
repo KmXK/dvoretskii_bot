@@ -7,3 +7,5 @@ class Birthday:
     day: int
     month: int
     chat_id: int
+    year: int | None = None
+    description: str = ""

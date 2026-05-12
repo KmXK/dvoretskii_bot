@@ -463,6 +463,13 @@ class Repository:
                 fr.setdefault("votes", [])
             data["version"] = 21
 
+        if data.get("version") == 21:
+            for b in data.get("birthdays", []):
+                if isinstance(b, dict):
+                    b.setdefault("year", None)
+                    b.setdefault("description", "")
+            data["version"] = 22
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -484,6 +491,11 @@ class Repository:
         for fr in data.get("feature_requests", []):
             if isinstance(fr, dict):
                 fr.setdefault("votes", [])
+
+        for b in data.get("birthdays", []):
+            if isinstance(b, dict):
+                b.setdefault("year", None)
+                b.setdefault("description", "")
 
         for p in data.get("bill_persons", []):
             p.setdefault("description", "")
