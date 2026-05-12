@@ -111,11 +111,13 @@ class TestCelebrityLookup:
     async def test_lookup_stores_pending_not_saved(self, monkeypatch):
         async def fake_query(*args, **kwargs):
             return json.dumps({
-                "day": 15,
-                "month": 3,
-                "year": 1990,
+                "candidates": [
+                    {
+                        "day": 15, "month": 3, "year": 1990,
+                        "sources": ["https://example.com/a", "https://example.com/b"],
+                    },
+                ],
                 "description": "Известен тем, что снимает кринж-видео",
-                "sources": ["https://example.com/a", "https://example.com/b"],
             })
 
         monkeypatch.setattr(
@@ -132,6 +134,43 @@ class TestCelebrityLookup:
         assert "Известен" in text
         assert "example.com" in text
         assert captured["keyboard"] is not None
+        assert len(repo.db.birthdays) == 0
+
+    async def test_lookup_conflict_shows_picker(self, monkeypatch):
+        async def fake_query(*args, **kwargs):
+            return json.dumps({
+                "candidates": [
+                    {
+                        "day": 15, "month": 3, "year": 1990,
+                        "sources": ["https://example.com/wiki"],
+                    },
+                    {
+                        "day": 14, "month": 3, "year": 1990,
+                        "sources": ["https://example.com/imdb"],
+                    },
+                ],
+                "description": "Шумный публичный персонаж",
+            })
+
+        monkeypatch.setattr(
+            "steward.features.birthday.make_openrouter_query", fake_query
+        )
+        captured = _patch_status_capture(monkeypatch)
+        repo = make_repository()
+        _, ok = await invoke(BirthdayFeature, "/birthday Спорный Человек", repo)
+        assert ok
+        text = captured["text"]
+        assert "расходятся" in text
+        assert "15 марта" in text
+        assert "14 марта" in text
+        assert "wiki" in text
+        assert "imdb" in text
+        kb = captured["keyboard"]
+        assert kb is not None
+        all_labels = [b.text for row in kb.rows for b in row]
+        assert any("15 марта" in label for label in all_labels)
+        assert any("14 марта" in label for label in all_labels)
+        assert any("Отмена" in label for label in all_labels)
         assert len(repo.db.birthdays) == 0
 
     async def test_lookup_ai_error(self, monkeypatch):
@@ -182,14 +221,49 @@ class TestCelebrityLookup:
 class TestParseLookupResponse:
     def test_valid(self):
         raw = json.dumps({
-            "day": 1, "month": 2, "year": 1990,
-            "description": "x", "sources": ["a", "b"],
+            "candidates": [
+                {"day": 1, "month": 2, "year": 1990, "sources": ["a", "b"]},
+            ],
+            "description": "x",
         })
         out = BirthdayFeature._parse_lookup_response(raw)
-        assert out["day"] == 1
-        assert out["month"] == 2
-        assert out["year"] == 1990
-        assert out["sources"] == ["a", "b"]
+        assert len(out["candidates"]) == 1
+        c = out["candidates"][0]
+        assert (c["day"], c["month"], c["year"]) == (1, 2, 1990)
+        assert c["sources"] == ["a", "b"]
+
+    def test_valid_conflict(self):
+        raw = json.dumps({
+            "candidates": [
+                {"day": 1, "month": 2, "year": 1990, "sources": ["a"]},
+                {"day": 2, "month": 2, "year": 1990, "sources": ["b"]},
+                {"day": 3, "month": 2, "year": 1990, "sources": ["c"]},
+            ],
+            "description": "x",
+        })
+        out = BirthdayFeature._parse_lookup_response(raw)
+        assert len(out["candidates"]) == 3
+        assert [c["day"] for c in out["candidates"]] == [1, 2, 3]
+
+    def test_dedupes_candidates(self):
+        raw = json.dumps({
+            "candidates": [
+                {"day": 1, "month": 2, "year": 1990, "sources": ["a"]},
+                {"day": 1, "month": 2, "year": 1990, "sources": ["b"]},
+            ],
+            "description": "x",
+        })
+        out = BirthdayFeature._parse_lookup_response(raw)
+        assert len(out["candidates"]) == 1
+
+    def test_legacy_flat_shape(self):
+        raw = json.dumps({
+            "day": 1, "month": 2, "year": 1990,
+            "description": "x", "sources": ["a"],
+        })
+        out = BirthdayFeature._parse_lookup_response(raw)
+        assert len(out["candidates"]) == 1
+        assert out["candidates"][0]["day"] == 1
 
     def test_error_passthrough(self):
         raw = json.dumps({"error": "не нашёл"})
@@ -197,14 +271,18 @@ class TestParseLookupResponse:
         assert out == {"error": "не нашёл"}
 
     def test_invalid_date(self):
-        raw = json.dumps({"day": 99, "month": 1, "year": 1990})
+        raw = json.dumps({
+            "candidates": [{"day": 99, "month": 1, "year": 1990, "sources": []}],
+        })
         out = BirthdayFeature._parse_lookup_response(raw)
         assert "error" in out
 
     def test_strips_fence(self):
         raw = "```json\n" + json.dumps({
-            "day": 1, "month": 2, "year": 1990,
-            "description": "x", "sources": [],
+            "candidates": [
+                {"day": 1, "month": 2, "year": 1990, "sources": []},
+            ],
+            "description": "x",
         }) + "\n```"
         out = BirthdayFeature._parse_lookup_response(raw)
-        assert out.get("day") == 1
+        assert out["candidates"][0]["day"] == 1
