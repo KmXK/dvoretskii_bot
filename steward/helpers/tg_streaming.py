@@ -18,7 +18,7 @@ import asyncio
 import html
 import logging
 import time
-from typing import AsyncIterator, Awaitable
+from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from telegram import Message
 from telegram.constants import ParseMode
@@ -26,6 +26,8 @@ from telegram.error import BadRequest, RetryAfter
 
 from steward.helpers.thinking import random_phrase
 from steward.helpers.tg_update_helpers import is_valid_markdown
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -213,4 +215,61 @@ async def stream_reply(
                 logger.warning("stream final edit failed: %s", e2)
         else:
             logger.warning("stream final edit failed: %s", e)
+    return bot_message
+
+
+async def edit_with_animated_status(
+    target: Message,
+    work: Awaitable[T],
+    renderer: Callable[[T | Exception], tuple[str, Any, bool]],
+    *,
+    placeholder: str | None = None,
+) -> Message:
+    """Send a placeholder reply with animated dots while `work` runs, then
+    edit that same message in place with whatever `renderer(result)` returns.
+
+    `renderer` is invoked with either the awaited value or the raised
+    Exception, and must return `(text, keyboard, is_html)`. `keyboard` may be
+    None or any object exposing `.to_markup()` (e.g. framework `Keyboard`).
+    """
+    if placeholder is None:
+        placeholder = random_phrase()
+    base = _strip_trailing_dots(placeholder) or placeholder
+    bot_message = await target.reply_text(
+        f"<i>{html.escape(base + '.')}</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    base_ref = [base]
+    stop_animation = asyncio.Event()
+    animation_task = asyncio.create_task(
+        _animate_placeholder(bot_message, base_ref, stop_animation)
+    )
+
+    result: T | Exception
+    try:
+        result = await work
+    except Exception as e:
+        result = e
+    finally:
+        stop_animation.set()
+        try:
+            await animation_task
+        except Exception as e:
+            logger.debug("animation task ended with: %s", e)
+
+    text, keyboard, is_html = renderer(result)
+    markup = keyboard.to_markup() if keyboard is not None else None
+    parse_mode = ParseMode.HTML if is_html else None
+    try:
+        await bot_message.edit_text(text, reply_markup=markup, parse_mode=parse_mode)
+    except RetryAfter as e:
+        await asyncio.sleep(float(e.retry_after))
+        try:
+            await bot_message.edit_text(text, reply_markup=markup, parse_mode=parse_mode)
+        except BadRequest as e2:
+            logger.warning("status edit retry failed: %s", e2)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.warning("status edit BadRequest: %s", e)
     return bot_message

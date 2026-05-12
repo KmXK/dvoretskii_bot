@@ -1,11 +1,35 @@
 """Tests for BirthdayFeature: view, manual add (with/without year), remove, AI lookup."""
 import json
+from unittest.mock import MagicMock
 
 from steward.data.models.birthday import Birthday
 from steward.features.birthday import BirthdayFeature
 from tests.conftest import invoke, make_repository
 
 CHAT_ID = -100123456789
+
+
+def _patch_status_capture(monkeypatch):
+    """Patch edit_with_animated_status to skip TG animation and capture the
+    renderer output. Returns the captured-dict and the patch helper sets a
+    'text', 'keyboard', 'html' key on first render."""
+    captured: dict = {}
+
+    async def fake_status(target, work, renderer, *, placeholder=None):
+        try:
+            result = await work
+        except Exception as e:
+            result = e
+        text, keyboard, is_html = renderer(result)
+        captured["text"] = text
+        captured["keyboard"] = keyboard
+        captured["html"] = is_html
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "steward.features.birthday.edit_with_animated_status", fake_status
+    )
+    return captured
 
 
 def _birthday(name: str, day: int, month: int, year: int | None = None) -> Birthday:
@@ -97,14 +121,17 @@ class TestCelebrityLookup:
         monkeypatch.setattr(
             "steward.features.birthday.make_openrouter_query", fake_query
         )
+        captured = _patch_status_capture(monkeypatch)
         repo = make_repository()
-        reply, ok = await invoke(BirthdayFeature, "/birthday Иван Золо", repo)
+        _, ok = await invoke(BirthdayFeature, "/birthday Иван Золо", repo)
         assert ok
-        assert "Сохранить" in reply
-        assert "15 марта" in reply
-        assert "1990" in reply
-        assert "Известен" in reply
-        assert "example.com" in reply
+        text = captured["text"]
+        assert "Сохранить" in text
+        assert "15 марта" in text
+        assert "1990" in text
+        assert "Известен" in text
+        assert "example.com" in text
+        assert captured["keyboard"] is not None
         assert len(repo.db.birthdays) == 0
 
     async def test_lookup_ai_error(self, monkeypatch):
@@ -114,10 +141,12 @@ class TestCelebrityLookup:
         monkeypatch.setattr(
             "steward.features.birthday.make_openrouter_query", fake_query
         )
+        captured = _patch_status_capture(monkeypatch)
         repo = make_repository()
-        reply, ok = await invoke(BirthdayFeature, "/birthday Кто-то Неизвестный", repo)
+        _, ok = await invoke(BirthdayFeature, "/birthday Кто-то Неизвестный", repo)
         assert ok
-        assert "Не нашёл" in reply
+        assert "Не нашёл" in captured["text"]
+        assert captured["keyboard"] is None
         assert len(repo.db.birthdays) == 0
 
     async def test_lookup_invalid_json(self, monkeypatch):
@@ -127,11 +156,27 @@ class TestCelebrityLookup:
         monkeypatch.setattr(
             "steward.features.birthday.make_openrouter_query", fake_query
         )
+        captured = _patch_status_capture(monkeypatch)
         repo = make_repository()
-        reply, ok = await invoke(BirthdayFeature, "/birthday Vasya", repo)
+        _, ok = await invoke(BirthdayFeature, "/birthday Vasya", repo)
         assert ok
-        assert "Не нашёл" in reply or "не понял" in reply
+        text = captured["text"]
+        assert "Не нашёл" in text or "не понял" in text
         assert len(repo.db.birthdays) == 0
+
+    async def test_lookup_query_exception(self, monkeypatch):
+        async def fake_query(*args, **kwargs):
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr(
+            "steward.features.birthday.make_openrouter_query", fake_query
+        )
+        captured = _patch_status_capture(monkeypatch)
+        repo = make_repository()
+        _, ok = await invoke(BirthdayFeature, "/birthday Vasya", repo)
+        assert ok
+        assert "Не получилось" in captured["text"]
+        assert "network down" in captured["text"]
 
 
 class TestParseLookupResponse:
