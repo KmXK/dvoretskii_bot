@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import inspect
 import logging
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
@@ -103,13 +104,18 @@ async def _upgrade_placeholder(
 
 async def stream_reply(
     target: Message,
-    chunks: AsyncIterator[str],
+    chunks: AsyncIterator[str] | Awaitable[AsyncIterator[str]],
     *,
     placeholder: str | None = None,
     placeholder_upgrade: Awaitable[str | None] | None = None,
     min_edit_interval: float = _DEFAULT_MIN_INTERVAL,
 ) -> Message:
     """Send a reply to `target` and progressively fill it with streamed text.
+
+    `chunks` can be either an AsyncIterator (ready to iterate) or an Awaitable
+    that resolves to one — in the latter case the placeholder is sent FIRST
+    and the resolution happens after, so the user gets immediate feedback even
+    when stream initialization is slow.
 
     If `placeholder_upgrade` is given, the random starter is shown immediately
     and replaced in-place once the awaitable resolves to a non-empty string
@@ -138,6 +144,19 @@ async def stream_reply(
                 bot_message, base_ref, placeholder_upgrade, stop_animation
             )
         )
+
+    if inspect.isawaitable(chunks):
+        try:
+            chunks = await chunks
+        except Exception:
+            stop_animation.set()
+            try:
+                await animation_task
+            except Exception:
+                pass
+            if upgrade_task is not None:
+                upgrade_task.cancel()
+            raise
 
     buffer: list[str] = []
     last_edit_at = 0.0
