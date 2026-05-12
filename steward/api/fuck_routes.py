@@ -29,11 +29,13 @@ from steward.data.models.user import User
 
 from steward.api.auth import (
     clear_session_cookie,
+    login_client_id,
     require_admin,
     require_user,
     session_user_id,
     set_session_cookie,
     validate_login_widget,
+    validate_oidc_id_token,
     validate_webapp_init_data,
 )
 from steward.data.repository import Repository
@@ -98,7 +100,10 @@ def _asset_paths(asset) -> tuple[Path, Path]:
 async def handle_auth_config(request: web.Request):
     bot = request.app.get("bot")
     bot_username = getattr(bot, "username", None) if bot else None
-    return web.json_response({"bot_username": bot_username})
+    return web.json_response({
+        "bot_username": bot_username,
+        "client_id": login_client_id(),
+    })
 
 
 async def _ingest_auth_user(
@@ -201,6 +206,29 @@ async def handle_auth_widget(request: web.Request):
         await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
     except Exception:
         logger.exception("auth/widget: avatar capture failed for %s — continuing", uid)
+    resp = web.json_response({"user_id": uid})
+    set_session_cookie(resp, uid)
+    return resp
+
+
+async def handle_auth_oidc(request: web.Request):
+    repository: Repository = request.app["repository"]
+    body = await request.json()
+    user = validate_oidc_id_token(str(body.get("id_token", "")))
+    if not user:
+        logger.info("auth/oidc: invalid id_token (origin=%s)", request.headers.get("Origin"))
+        return web.json_response({"error": "invalid id_token"}, status=403)
+    uid = int(user["id"])
+    try:
+        await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
+    except Exception:
+        logger.exception("auth/oidc: ingest_user failed for %s — continuing", uid)
+    photo_url = user.get("photo_url")
+    logger.info("auth/oidc: photo_url for %s = %s", uid, photo_url or "<empty>")
+    try:
+        await _capture_avatar_on_auth(request, uid, photo_url)
+    except Exception:
+        logger.exception("auth/oidc: avatar capture failed for %s — continuing", uid)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
     return resp
@@ -458,6 +486,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/auth/config", handle_auth_config)
     app.router.add_post("/api/auth/webapp", handle_auth_webapp)
     app.router.add_post("/api/auth/widget", handle_auth_widget)
+    app.router.add_post("/api/auth/oidc", handle_auth_oidc)
     app.router.add_get("/api/auth/me", handle_auth_me)
     app.router.add_post("/api/auth/logout", handle_auth_logout)
     app.router.add_get("/api/avatars/{user_id}", handle_get_avatar)

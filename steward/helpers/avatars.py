@@ -100,7 +100,9 @@ def _save_image_bytes(user_id: int, data: bytes, source: str) -> Optional[Path]:
             source, user_id, head[:40], len(data),
         )
         return None
-    return _save_bytes(user_id, data, ext)
+    path = _save_bytes(user_id, data, ext)
+    logger.info("avatar: cached for %s via %s (%d bytes, .%s)", user_id, source, len(data), ext)
+    return path
 
 
 async def save_photo_from_file_id(bot: ExtBot, user_id: int, file_id: str) -> Optional[Path]:

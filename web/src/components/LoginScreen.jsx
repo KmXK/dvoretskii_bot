@@ -8,22 +8,63 @@ const FEATURES = [
   { icon: '📊', label: 'Статистика чатов' },
 ]
 
-export default function LoginScreen({ onLogin }) {
+export default function LoginScreen({ onLoginWidget, onLoginOidc }) {
   const containerRef = useRef(null)
-  const [botUsername, setBotUsername] = useState(null)
+  const [config, setConfig] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     api.get('/api/auth/config')
-      .then((cfg) => setBotUsername(cfg.bot_username))
+      .then((cfg) => setConfig(cfg))
       .catch((e) => setError(e.message))
   }, [])
 
+  const useOidc = !!config?.client_id
+  const botUsername = config?.bot_username
+
   useEffect(() => {
-    if (!botUsername || !containerRef.current) return
+    if (!config || !containerRef.current) return
 
-    window.onTelegramAuth = (user) => onLogin(user)
+    containerRef.current.innerHTML = ''
 
+    if (useOidc) {
+      const initLib = () => {
+        if (!window.Telegram?.Login) return
+        window.Telegram.Login.init({
+          client_id: config.client_id,
+          request_access: 'write',
+        }, (result) => {
+          if (result?.id_token) {
+            onLoginOidc(result.id_token).catch((e) => setError(e.message))
+          } else if (result?.error && result.error !== 'popup_closed') {
+            setError(result.error)
+          }
+        })
+      }
+      if (window.Telegram?.Login) {
+        initLib()
+      } else {
+        let script = document.getElementById('tg-login-lib')
+        if (!script) {
+          script = document.createElement('script')
+          script.id = 'tg-login-lib'
+          script.async = true
+          script.src = 'https://telegram.org/js/telegram-login.js'
+          document.body.appendChild(script)
+        }
+        script.addEventListener('load', initLib, { once: true })
+      }
+
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'tg-auth-button'
+      btn.textContent = 'Войти через Telegram'
+      containerRef.current.appendChild(btn)
+      return
+    }
+
+    if (!botUsername) return
+    window.onTelegramAuth = (user) => onLoginWidget(user)
     const script = document.createElement('script')
     script.async = true
     script.src = 'https://telegram.org/js/telegram-widget.js?22'
@@ -32,10 +73,8 @@ export default function LoginScreen({ onLogin }) {
     script.setAttribute('data-radius', '8')
     script.setAttribute('data-onauth', 'onTelegramAuth(user)')
     script.setAttribute('data-request-access', 'write')
-
-    containerRef.current.innerHTML = ''
     containerRef.current.appendChild(script)
-  }, [botUsername, onLogin])
+  }, [config, useOidc, botUsername, onLoginWidget, onLoginOidc])
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-spotify-black text-white relative overflow-hidden">
@@ -73,7 +112,7 @@ export default function LoginScreen({ onLogin }) {
             {error}
           </div>
         )}
-        {!botUsername && !error && (
+        {!config && !error && (
           <p className="text-spotify-text text-sm mb-6">Загружаю конфигурацию…</p>
         )}
 

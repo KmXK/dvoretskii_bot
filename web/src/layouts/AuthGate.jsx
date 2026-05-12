@@ -2,7 +2,7 @@ import { useAuth } from '../context/useAuth'
 import LoginScreen from '../components/LoginScreen'
 
 export default function AuthGate({ children }) {
-  const { isAuthenticated, loading, loginWithWidget } = useAuth()
+  const { isAuthenticated, loading, loginWithWidget, loginWithOidc } = useAuth()
 
   if (loading) {
     return (
@@ -12,7 +12,9 @@ export default function AuthGate({ children }) {
     )
   }
 
-  if (!isAuthenticated) return <LoginScreen onLogin={loginWithWidget} />
+  if (!isAuthenticated) {
+    return <LoginScreen onLoginWidget={loginWithWidget} onLoginOidc={loginWithOidc} />
+  }
 
   return children
 }

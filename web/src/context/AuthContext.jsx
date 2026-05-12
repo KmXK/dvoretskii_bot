@@ -59,6 +59,20 @@ export function AuthProvider({ children }) {
     }
   }, [refresh])
 
+  const loginWithOidc = useCallback(async (idToken) => {
+    setLoading(true)
+    setError(null)
+    try {
+      await api.post('/api/auth/oidc', { id_token: idToken })
+      await refresh()
+    } catch (e) {
+      setError(e.message)
+      throw e
+    } finally {
+      setLoading(false)
+    }
+  }, [refresh])
+
   const logout = useCallback(async () => {
     await api.post('/api/auth/logout')
     setMe(null)
@@ -85,10 +99,11 @@ export function AuthProvider({ children }) {
       initData: WebApp?.initData ?? '',
       webApp: WebApp,
       loginWithWidget,
+      loginWithOidc,
       logout,
       refresh,
     }
-  }, [mode, me, loading, error, loginWithWidget, logout, refresh])
+  }, [mode, me, loading, error, loginWithWidget, loginWithOidc, logout, refresh])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
