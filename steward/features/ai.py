@@ -1,7 +1,12 @@
+import logging
+
 from steward.framework import Feature, FeatureContext, on_init, subcommand
 from steward.helpers.ai import (
     GROK_SHORT_AGGRESSIVE,
     Model,
+    OpenRouterModel,
+    make_openrouter_query,
+    make_openrouter_stream,
     make_text_query,
     make_text_stream,
 )
@@ -10,6 +15,8 @@ from steward.helpers.ai_context import (
     register_ai_handler,
 )
 from steward.helpers.thinking import ensure_cached as ensure_thinking_phrases
+
+logger = logging.getLogger(__name__)
 
 
 _REPO_HOLDER = {"repo": None}
@@ -34,12 +41,73 @@ def _build_system_prompt() -> str:
     return GROK_SHORT_AGGRESSIVE.replace("{{USERS_DESCRIPTIONS}}", users)
 
 
-def _ai_call(uid, msgs):
-    return make_text_query(uid, Model.SMART, msgs, _build_system_prompt())
+_ROUTER_PROMPT = """Решаешь, нужен ли веб-поиск чтобы ответить на запрос.
+
+Запрос: {query}
+
+Нужен веб (YES):
+- свежие новости, события, происшествия
+- актуальные цены, курсы, котировки, расписания, погода
+- проверка фактов, которые могут устаревать
+- слова "сегодня", "сейчас", "недавно", "последний", "новый"
+- что-то про конкретных людей/компании в настоящем времени (что делают, где, что нового)
+
+НЕ нужен веб (NO):
+- общие знания, история, факты из учебников
+- объяснения, определения
+- математика, код, логика
+- юмор, болтовня, шутки
+- творчество, написание текста
+- мнения, советы
+
+Ответь ровно одним словом: YES или NO. Без объяснений."""
 
 
-def _ai_stream(uid, msgs):
-    return make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
+async def _needs_web(text: str) -> bool:
+    snippet = (text or "").strip()
+    if not snippet:
+        return False
+    try:
+        result = await make_text_query(
+            0, Model.FAST, [("user", _ROUTER_PROMPT.format(query=snippet[:1000]))], ""
+        )
+    except Exception as e:
+        logger.warning("ai router classifier failed, defaulting to offline: %s", e)
+        return False
+    return "yes" in (result or "").strip().lower()[:8]
+
+
+def _last_user_text(msgs: list[tuple[str, str]]) -> str:
+    for role, content in reversed(msgs):
+        if role == "user":
+            return content
+    return ""
+
+
+async def _ai_call(uid, msgs):
+    user_text = _last_user_text(msgs)
+    if user_text and await _needs_web(user_text):
+        logger.info("ai router: routed to :online (non-stream)")
+        return await make_openrouter_query(
+            uid,
+            OpenRouterModel.GROK_4_FAST_ONLINE,
+            msgs,
+            _build_system_prompt(),
+        )
+    return await make_text_query(uid, Model.SMART, msgs, _build_system_prompt())
+
+
+async def _ai_stream(uid, msgs):
+    user_text = _last_user_text(msgs)
+    if user_text and await _needs_web(user_text):
+        logger.info("ai router: routed to :online (stream)")
+        return await make_openrouter_stream(
+            uid,
+            OpenRouterModel.GROK_4_FAST_ONLINE,
+            msgs,
+            _build_system_prompt(),
+        )
+    return await make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
 
 
 async def _quick_call(prompt: str) -> str:
