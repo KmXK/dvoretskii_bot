@@ -25,6 +25,7 @@ _BOLD_UNDER_RE = re.compile(r"(?<![a-zA-Z0-9_])__([^_\n]+?)__(?![a-zA-Z0-9_])")
 _ITALIC_STAR_RE = re.compile(r"(?<![a-zA-Z0-9*])\*([^*\n]+?)\*(?![a-zA-Z0-9])")
 _ITALIC_UNDER_RE = re.compile(r"(?<![a-zA-Z0-9_])_([^_\n]+?)_(?![a-zA-Z0-9_])")
 _STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
+_CITATION_RE = re.compile(r"\[\[([^\]\n]+?)\]\]\(([^)\s]+?)\)")
 _LINK_RE = re.compile(r"\[([^\]\n]+?)\]\(([^)\s]+?)\)")
 
 
@@ -55,7 +56,14 @@ def md_to_html(text: str) -> str:
     text = _ITALIC_STAR_RE.sub(r"<i>\1</i>", text)
     text = _ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
     text = _STRIKE_RE.sub(r"<s>\1</s>", text)
-    text = _LINK_RE.sub(lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>', text)
+    text = _CITATION_RE.sub(
+        lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">[{m.group(1)}]</a>',
+        text,
+    )
+    text = _LINK_RE.sub(
+        lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>',
+        text,
+    )
 
     def _restore(match: re.Match[str]) -> str:
         idx = int(match.group(1))
