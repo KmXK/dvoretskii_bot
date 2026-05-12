@@ -1,4 +1,6 @@
 import logging
+import random
+import traceback
 
 from steward.framework import Feature, FeatureContext, on_init, subcommand
 from steward.helpers.ai import (
@@ -14,12 +16,24 @@ from steward.helpers.ai_context import (
     execute_ai_request_streaming,
     register_ai_handler,
 )
-from steward.helpers.thinking import ensure_cached as ensure_thinking_phrases
+from steward.helpers.thinking import ensure_cached as ensure_thinking_phrases, try_contextual_placeholder
 
 logger = logging.getLogger(__name__)
 
 
 _REPO_HOLDER = {"repo": None}
+
+
+_ONLINE_PHRASES = (
+    "Лезу в инет",
+    "Пошёл гуглить",
+    "Открываю Хром",
+    "Ищу свежие пруфы",
+    "Зову тётю Гугл",
+    "Шарюсь по новостям",
+    "Сверяюсь с реальностью",
+    "Достаю из ВВВ",
+)
 
 
 def _build_users_descriptions_block() -> str:
@@ -84,6 +98,37 @@ def _last_user_text(msgs: list[tuple[str, str]]) -> str:
     return ""
 
 
+def _strip_command_prefix(text: str) -> str:
+    stripped = (text or "").lstrip()
+    if stripped.startswith("/ai"):
+        rest = stripped[3:]
+        if rest.startswith("@"):
+            space = rest.find(" ")
+            rest = rest[space + 1:] if space != -1 else ""
+        return rest.strip()
+    return stripped
+
+
+async def _online_aware_placeholder(text: str, needs_web: bool) -> str | None:
+    """Pick a fun phrase telling the user whether we're hitting the web."""
+    if needs_web:
+        return random.choice(_ONLINE_PHRASES)
+    return await try_contextual_placeholder(text, _quick_call)
+
+
+async def _online_stream(uid, msgs):
+    return await make_openrouter_stream(
+        uid,
+        OpenRouterModel.GROK_4_FAST_ONLINE,
+        msgs,
+        _build_system_prompt(),
+    )
+
+
+async def _offline_stream(uid, msgs):
+    return await make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
+
+
 async def _ai_call(uid, msgs):
     user_text = _last_user_text(msgs)
     if user_text and await _needs_web(user_text):
@@ -100,18 +145,36 @@ async def _ai_call(uid, msgs):
 async def _ai_stream(uid, msgs):
     user_text = _last_user_text(msgs)
     if user_text and await _needs_web(user_text):
-        logger.info("ai router: routed to :online (stream)")
-        return await make_openrouter_stream(
-            uid,
-            OpenRouterModel.GROK_4_FAST_ONLINE,
-            msgs,
-            _build_system_prompt(),
+        logger.info(
+            "ai router: routed to :online (stream) — caller stack:\n%s",
+            "".join(traceback.format_stack()[-6:-1]),
         )
-    return await make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
+        return await _online_stream(uid, msgs)
+    return await _offline_stream(uid, msgs)
 
 
 async def _quick_call(prompt: str) -> str:
     return await make_text_query(0, Model.FAST, [("user", prompt)], "")
+
+
+async def _ask_streaming(ctx: FeatureContext, full_text: str):
+    """Shared streaming entry for /ai. Classifies online/offline once, then
+    feeds the right stream call and a matching placeholder phrase."""
+    user_query = _strip_command_prefix(full_text)
+    needs_web = bool(user_query) and await _needs_web(user_query)
+    if needs_web:
+        logger.info("ai router: routed to :online (stream/pre)")
+
+    stream_call = _online_stream if needs_web else _offline_stream
+
+    await execute_ai_request_streaming(
+        ctx,
+        full_text,
+        stream_call,
+        "ai",
+        quick_call=_quick_call,
+        placeholder_upgrade=_online_aware_placeholder(full_text, needs_web),
+    )
 
 
 class AIFeature(Feature):
@@ -129,16 +192,8 @@ class AIFeature(Feature):
     @subcommand("<text:rest>", description="Запрос к ИИ", catchall=True)
     async def ask(self, ctx: FeatureContext, text: str):
         full_text = ctx.message.text if ctx.message else text
-        await execute_ai_request_streaming(
-            ctx, full_text, _ai_stream, "ai", quick_call=_quick_call
-        )
+        await _ask_streaming(ctx, full_text)
 
     @subcommand("", description="Без аргументов")
     async def empty(self, ctx: FeatureContext):
-        await execute_ai_request_streaming(
-            ctx,
-            ctx.message.text or "",
-            _ai_stream,
-            "ai",
-            quick_call=_quick_call,
-        )
+        await _ask_streaming(ctx, ctx.message.text or "")

@@ -24,8 +24,8 @@ from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
 
+from steward.helpers.md_to_html import md_to_html
 from steward.helpers.thinking import random_phrase
-from steward.helpers.tg_update_helpers import is_valid_markdown
 
 T = TypeVar("T")
 
@@ -194,27 +194,24 @@ async def stream_reply(
     if len(final_text) > _TG_TEXT_LIMIT:
         final_text = final_text[:_TG_TEXT_LIMIT]
 
-    parse_mode: ParseMode | None = (
-        ParseMode.MARKDOWN if is_valid_markdown(final_text) else None
-    )
-    if final_text == last_text and parse_mode is None:
-        return bot_message
+    html_text = md_to_html(final_text)
     try:
-        await bot_message.edit_text(final_text, parse_mode=parse_mode)
+        await bot_message.edit_text(html_text, parse_mode=ParseMode.HTML)
     except RetryAfter as e:
         await asyncio.sleep(float(e.retry_after))
-        await bot_message.edit_text(final_text, parse_mode=parse_mode)
+        try:
+            await bot_message.edit_text(html_text, parse_mode=ParseMode.HTML)
+        except BadRequest as e2:
+            logger.warning("stream final edit retry failed: %s", e2)
     except BadRequest as e:
         if "not modified" in str(e).lower():
             return bot_message
-        # Markdown parse failure — retry without parse_mode.
-        if parse_mode is not None:
-            try:
-                await bot_message.edit_text(final_text)
-            except BadRequest as e2:
-                logger.warning("stream final edit failed: %s", e2)
-        else:
-            logger.warning("stream final edit failed: %s", e)
+        logger.warning("stream HTML edit failed (%s); falling back to plain", e)
+        try:
+            await bot_message.edit_text(final_text)
+        except BadRequest as e2:
+            if "not modified" not in str(e2).lower():
+                logger.warning("stream plain edit also failed: %s", e2)
     return bot_message
 
 
