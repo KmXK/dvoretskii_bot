@@ -51,18 +51,16 @@ _LOOKUP_PROMPT = """Ты помогаешь найти дату рождения
 
 Правила:
 1. Используй веб-поиск. Сверь минимум 2 разных источника (Википедия на разных языках, IMDb, новостные статьи, официальные сайты или соцсети, базы вроде Famous Birthdays).
-2. Если источники расходятся в дате — верни {{"error": "источники расходятся"}}.
-3. Если ничего не нашёл или человек не публичный — верни {{"error": "не нашёл"}}.
+2. Если ничего не нашёл или человек не публичный — верни {{"error": "не нашёл"}}.
+3. candidates — список вариантов даты. Если все источники сходятся — верни ОДИН вариант. Если расходятся — 2-3 варианта (максимум 3), отсортированных от самого надёжного к наименее. Для каждого варианта sources должен содержать только URL, которые поддерживают именно эту дату (минимум 1 URL на вариант).
 4. description — 1-2 предложения по-русски о том, чем известен человек, с лёгкой иронией или забавным фактом.
-5. sources — реальные URL из веб-поиска (минимум 2), на которые ты опирался.
 
 Верни ТОЛЬКО валидный JSON без markdown-обёрток, без текста до или после:
 {{
-  "day": <число 1-31>,
-  "month": <число 1-12>,
-  "year": <год>,
-  "description": "<строка>",
-  "sources": ["<url1>", "<url2>"]
+  "candidates": [
+    {{"day": <1-31>, "month": <1-12>, "year": <год>, "sources": ["<url>", ...]}}
+  ],
+  "description": "<строка>"
 }}
 
 Или при ошибке:
@@ -188,31 +186,45 @@ class BirthdayFeature(Feature):
             if "error" in result:
                 return (f"Не нашёл ДР для «{name}»: {result['error']}", None, False)
 
+            candidates = result["candidates"]
+            description = result["description"]
             token = uuid.uuid4().hex[:12]
             self._pending[token] = {
                 "name": name,
-                "day": result["day"],
-                "month": result["month"],
-                "year": result["year"],
-                "description": result["description"],
-                "sources": result["sources"],
+                "description": description,
+                "candidates": candidates,
                 "chat_id": ctx.chat_id,
                 "created_at": time.time(),
             }
             self._evict_old_pending()
 
-            text = (
-                f"{self._format_details(result, name)}\n\n"
-                f"Сохранить в список?"
-            )
-            kb = Keyboard.row(
-                self.cb("birthday:confirm").button(
-                    "✅ Сохранить", token=token, answer="yes", initiator=ctx.user_id,
-                ),
-                self.cb("birthday:confirm").button(
-                    "❌ Отмена", token=token, answer="no", initiator=ctx.user_id,
-                ),
-            )
+            if len(candidates) == 1:
+                text = (
+                    f"{self._format_single_cut(name, description, candidates[0])}\n\n"
+                    f"Сохранить в список?"
+                )
+                kb = Keyboard.row(
+                    self.cb("birthday:pick").button(
+                        "✅ Сохранить", token=token, idx=0, initiator=ctx.user_id,
+                    ),
+                    self.cb("birthday:pick").button(
+                        "❌ Отмена", token=token, idx=-1, initiator=ctx.user_id,
+                    ),
+                )
+            else:
+                text = self._format_conflict_view(name, description, candidates)
+                pick_buttons = [
+                    self.cb("birthday:pick").button(
+                        f"📅 {_format_date(c['day'], c['month'], c['year'])}",
+                        token=token, idx=i, initiator=ctx.user_id,
+                    )
+                    for i, c in enumerate(candidates)
+                ]
+                kb = Keyboard.column(*pick_buttons).append_row(
+                    self.cb("birthday:pick").button(
+                        "❌ Отмена", token=token, idx=-1, initiator=ctx.user_id,
+                    )
+                )
             return (text, kb, True)
 
         await edit_with_animated_status(
@@ -223,59 +235,107 @@ class BirthdayFeature(Feature):
         )
 
     @on_callback(
-        "birthday:confirm",
-        schema="<token:str>|<answer:literal[yes|no]>|<initiator:int>",
+        "birthday:pick",
+        schema="<token:str>|<idx:int>|<initiator:int>",
         access=INITIATOR_ONLY,
     )
-    async def on_confirm(
-        self, ctx: FeatureContext, token: str, answer: str, initiator: int,
+    async def on_pick(
+        self, ctx: FeatureContext, token: str, idx: int, initiator: int,
     ):
         data = self._pending.pop(token, None)
         if data is None:
             await ctx.edit("Это подтверждение протухло. Запусти /birthday <имя> заново.")
             return
-        details = self._format_details(data, data["name"])
-        if answer == "no":
-            await ctx.edit(f"❌ Отменено\n\n{details}", html=True)
+        name = data["name"]
+        description = data["description"]
+        candidates: list[dict] = data["candidates"]
+        if idx == -1:
+            if len(candidates) == 1:
+                cut = self._format_single_cut(name, description, candidates[0])
+            else:
+                cut = self._format_conflict_cut(name, description, candidates)
+            await ctx.edit(f"❌ Отменено\n\n{cut}", html=True)
             return
-        existing = self.birthdays.find_by(name=data["name"], chat_id=data["chat_id"])
+        if idx < 0 or idx >= len(candidates):
+            await ctx.edit("Неизвестный вариант")
+            return
+        chosen = candidates[idx]
+        existing = self.birthdays.find_by(name=name, chat_id=data["chat_id"])
         if existing:
-            existing.day = data["day"]
-            existing.month = data["month"]
-            existing.year = data["year"]
-            existing.description = data["description"]
+            existing.day = chosen["day"]
+            existing.month = chosen["month"]
+            existing.year = chosen["year"]
+            existing.description = description
         else:
             self.birthdays.add(
                 Birthday(
-                    name=data["name"],
-                    day=data["day"],
-                    month=data["month"],
+                    name=name,
+                    day=chosen["day"],
+                    month=chosen["month"],
                     chat_id=data["chat_id"],
-                    year=data["year"],
-                    description=data["description"],
+                    year=chosen["year"],
+                    description=description,
                 )
             )
         await self.birthdays.save()
         summary = (
-            f"✅ Запомнил: {data['name']} — "
-            f"{_format_date(data['day'], data['month'], data['year'])}"
+            f"✅ Запомнил: {name} — "
+            f"{_format_date(chosen['day'], chosen['month'], chosen['year'])}"
         )
-        await ctx.edit(f"{summary}\n\n{details}", html=True)
+        cut = self._format_single_cut(name, description, chosen)
+        await ctx.edit(f"{summary}\n\n{cut}", html=True)
 
     @classmethod
-    def _format_details(cls, data: dict, name: str) -> str:
-        age = cls._age(data["year"])
+    def _format_single_cut(cls, name: str, description: str, candidate: dict) -> str:
+        age = cls._age(candidate["year"])
         age_str = f" ({age} лет)" if age is not None else ""
-        sources = data.get("sources") or []
+        sources = candidate.get("sources") or []
         src_lines = "\n".join(f"• {url}" for url in sources[:5]) or "—"
         return (
             f"<blockquote expandable>"
             f"🎂 <b>{name}</b>\n"
-            f"📅 {_format_date(data['day'], data['month'], data['year'])}{age_str}\n\n"
-            f"{data['description']}\n\n"
+            f"📅 {_format_date(candidate['day'], candidate['month'], candidate['year'])}{age_str}\n\n"
+            f"{description}\n\n"
             f"📎 <b>Источники</b>:\n{src_lines}"
             f"</blockquote>"
         )
+
+    @classmethod
+    def _format_conflict_body(
+        cls, name: str, description: str, candidates: list[dict],
+    ) -> str:
+        lines = [
+            f"🎂 <b>{name}</b>",
+            "",
+            description,
+            "",
+            "⚠️ Источники расходятся в дате:",
+        ]
+        for i, c in enumerate(candidates, 1):
+            age = cls._age(c["year"])
+            age_str = f" ({age} лет)" if age is not None else ""
+            srcs = c.get("sources") or []
+            lines.append("")
+            lines.append(
+                f"<b>{i}. {_format_date(c['day'], c['month'], c['year'])}{age_str}</b>"
+            )
+            for url in srcs[:3]:
+                lines.append(f"  • {url}")
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_conflict_view(
+        cls, name: str, description: str, candidates: list[dict],
+    ) -> str:
+        body = cls._format_conflict_body(name, description, candidates)
+        return f"{body}\n\nВыбери правильную дату:"
+
+    @classmethod
+    def _format_conflict_cut(
+        cls, name: str, description: str, candidates: list[dict],
+    ) -> str:
+        body = cls._format_conflict_body(name, description, candidates)
+        return f"<blockquote expandable>{body}</blockquote>"
 
     @staticmethod
     def _parse_lookup_response(raw: str) -> dict:
@@ -289,25 +349,39 @@ class BirthdayFeature(Feature):
             return {"error": "не понял ответ AI"}
         if "error" in data:
             return {"error": str(data["error"])[:200]}
-        try:
-            day = int(data["day"])
-            month = int(data["month"])
-            year = int(data["year"])
-        except (KeyError, TypeError, ValueError):
+        raw_candidates = data.get("candidates")
+        if raw_candidates is None and "day" in data:
+            raw_candidates = [data]
+        if not isinstance(raw_candidates, list) or not raw_candidates:
             return {"error": "не хватает полей в ответе"}
-        if not (1 <= day <= 31 and 1 <= month <= 12 and 1800 <= year <= 2100):
+        candidates: list[dict] = []
+        seen: set[tuple[int, int, int]] = set()
+        for entry in raw_candidates[:3]:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                day = int(entry["day"])
+                month = int(entry["month"])
+                year = int(entry["year"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (1 <= day <= 31 and 1 <= month <= 12 and 1800 <= year <= 2100):
+                continue
+            key = (day, month, year)
+            if key in seen:
+                continue
+            seen.add(key)
+            srcs_raw = entry.get("sources") or []
+            srcs = (
+                [str(s) for s in srcs_raw if isinstance(s, (str, int))]
+                if isinstance(srcs_raw, list) else []
+            )
+            candidates.append({"day": day, "month": month, "year": year, "sources": srcs})
+        if not candidates:
             return {"error": "невалидная дата"}
-        sources_raw = data.get("sources") or []
-        sources = (
-            [str(s) for s in sources_raw if isinstance(s, (str, int))]
-            if isinstance(sources_raw, list) else []
-        )
         return {
-            "day": day,
-            "month": month,
-            "year": year,
+            "candidates": candidates,
             "description": str(data.get("description", "")),
-            "sources": sources,
         }
 
     def _evict_old_pending(self):
