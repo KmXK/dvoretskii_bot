@@ -50,6 +50,8 @@ services:
     volumes:
       - tunnel-info:/shared
       - ./scripts/tunnel-key:/key:ro
+      - ./scripts/tunnel.sh:/tunnel.sh:ro
+      - ./scripts/healthcheck-tunnel.sh:/healthcheck-tunnel.sh:ro
     networks:
       - bot
     depends_on:
