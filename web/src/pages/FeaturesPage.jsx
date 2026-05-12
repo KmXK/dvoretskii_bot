@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
+import { useToast } from '../context/useToast'
 import { api } from '../api/client'
 
 const STATUS = { OPEN: 0, DONE: 1, DENIED: 2, IN_PROGRESS: 3, TESTING: 4 }
@@ -53,6 +54,124 @@ function formatDateTime(timestamp) {
   return new Date(timestamp * 1000).toLocaleString('ru-RU', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   })
+}
+
+function VoteButton({ voted, count, onClick, size = 'sm' }) {
+  const iconSize = size === 'sm' ? 'text-base' : 'text-xl'
+  const textSize = size === 'sm' ? 'text-xs' : 'text-sm'
+  const firstRender = useRef(true)
+  useEffect(() => { firstRender.current = false }, [])
+
+  const [particles, setParticles] = useState([])
+
+  const handleClick = (e) => {
+    e?.stopPropagation?.()
+    const emoji = voted ? '💀' : '❤️'
+    const seed = Date.now()
+    const batch = Array.from({ length: 5 }).map((_, i) => ({
+      id: `${seed}-${i}-${Math.random()}`,
+      emoji,
+      x: (Math.random() - 0.5) * 50,
+      y: 55 + Math.random() * 25,
+      duration: 0.9 + Math.random() * 0.4,
+      delay: i * 0.04,
+    }))
+    setParticles(prev => [...prev, ...batch])
+    onClick?.(e)
+  }
+
+  const removeParticle = (id) => setParticles(prev => prev.filter(p => p.id !== id))
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      data-no-card-press="true"
+      className={`relative inline-flex items-center gap-1.5 px-1 py-0.5 select-none transition-colors ${
+        voted ? 'text-pink-400 hover:text-pink-300' : 'text-spotify-text hover:text-pink-300'
+      }`}
+      title={voted ? 'Убрать лайк' : 'Лайкнуть'}
+    >
+      <span className="relative inline-block leading-none">
+        <motion.span
+          key={voted ? 'on' : 'off'}
+          initial={firstRender.current ? false : { scale: 0.5 }}
+          animate={{ scale: [1.4, 1] }}
+          transition={{ type: 'spring', stiffness: 500, damping: 14 }}
+          className={`inline-block ${iconSize}`}
+          style={{ transformOrigin: 'center' }}
+        >
+          {voted ? '❤️' : '🤍'}
+        </motion.span>
+        <AnimatePresence>
+          {particles.map(p => (
+            <motion.span
+              key={p.id}
+              initial={{ y: 0, x: 0, opacity: 0.9, scale: 0.7 }}
+              animate={{ y: -p.y, x: p.x, opacity: 0, scale: 1.4 }}
+              transition={{ duration: p.duration, delay: p.delay, ease: 'easeOut' }}
+              onAnimationComplete={() => removeParticle(p.id)}
+              className={`absolute left-1/2 top-0 -translate-x-1/2 pointer-events-none ${iconSize}`}
+            >
+              {p.emoji}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </span>
+      <span className={`tabular-nums ${textSize}`}>{count ?? 0}</span>
+    </button>
+  )
+}
+
+function FRListItem({ fr, onOpen, onVote }) {
+  const cfg = STATUS_CONFIG[fr.status] ?? STATUS_CONFIG[STATUS.OPEN]
+  const [pressed, setPressed] = useState(false)
+  const onPointerDown = (e) => {
+    if (e.target.closest('[data-no-card-press]')) return
+    setPressed(true)
+  }
+  const release = () => setPressed(false)
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, scale: pressed ? 0.98 : 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      onClick={onOpen}
+      onPointerDown={onPointerDown}
+      onPointerUp={release}
+      onPointerLeave={release}
+      onPointerCancel={release}
+      className="bg-spotify-dark rounded-xl p-4 cursor-pointer"
+    >
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-spotify-text text-xs font-mono shrink-0">#{fr.id}</span>
+          <span className="text-sm" title={`Приоритет ${fr.priority}`}>
+            {PRIORITY_EMOJI[fr.priority] ?? '⚪'}
+          </span>
+          <VoteButton
+            voted={fr.voted}
+            count={fr.votes_count}
+            onClick={(e) => { e.stopPropagation(); onVote() }}
+          />
+        </div>
+        <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${cfg.class}`}>
+          {cfg.label}
+        </span>
+      </div>
+      <p className="text-white text-sm leading-relaxed mb-2 line-clamp-2">{fr.text}</p>
+      <div className="flex items-center justify-between text-xs text-spotify-text">
+        <span>{fr.author_name}</span>
+        <div className="flex items-center gap-2">
+          {fr.notes && fr.notes.length > 0 && (
+            <span className="text-spotify-text/60" title="Есть примечания">📝 {fr.notes.length}</span>
+          )}
+          <span>{formatDate(fr.creation_timestamp)}</span>
+        </div>
+      </div>
+    </motion.div>
+  )
 }
 
 function StatusFilter({ selected, onChange }) {
@@ -144,18 +263,12 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
             <Dialog.Title className="text-white text-lg font-bold">
               Фича-реквест #{feature.id}
             </Dialog.Title>
-            <button
+            <VoteButton
+              voted={feature.voted}
+              count={feature.votes_count}
               onClick={() => onVote && onVote()}
-              className={`px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors shrink-0 ${
-                feature.voted
-                  ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
-                  : 'bg-white/5 text-spotify-text hover:bg-white/10'
-              }`}
-              title={feature.voted ? 'Убрать лайк' : 'Лайкнуть'}
-            >
-              <span>{feature.voted ? '❤️' : '🤍'}</span>
-              <span>{feature.votes_count ?? 0}</span>
-            </button>
+              size="md"
+            />
           </div>
 
           <p className="text-white text-sm leading-relaxed mb-4">{feature.text}</p>
@@ -320,11 +433,12 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
 
 export default function FeaturesPage() {
   const { firstName, lastName, username } = useAuth()
+  const toast = useToast()
   const authorName = username || [firstName, lastName].filter(Boolean).join(' ') || ''
 
-  const [features, setFeatures] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [features, setFeatures] = useState(null)
   const [error, setError] = useState(null)
+  const loading = features === null
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState(new Set([STATUS.OPEN, STATUS.IN_PROGRESS, STATUS.TESTING]))
   const [sort, setSort] = useState('priority')
@@ -332,11 +446,26 @@ export default function FeaturesPage() {
   const [selectedFeature, setSelectedFeature] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
 
-  useEffect(() => {
-    api.get('/api/feature-requests')
-      .then(data => { setFeatures(data); setLoading(false) })
-      .catch(err => { setError(err.message); setLoading(false) })
+  const refetch = useCallback(async () => {
+    try {
+      const data = await api.get('/api/feature-requests')
+      setFeatures(data)
+      setSelectedFeature(prev => prev ? data.find(f => f.id === prev.id) ?? null : null)
+    } catch (err) {
+      setError(err.message)
+    }
   }, [])
+
+  useEffect(() => {
+    refetch()
+    const onVisible = () => { if (document.visibilityState === 'visible') refetch() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', refetch)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', refetch)
+    }
+  }, [refetch])
 
   const handleSave = useCallback((updated) => {
     setFeatures(prev => prev.map(f => f.id === updated.id ? updated : f))
@@ -348,13 +477,30 @@ export default function FeaturesPage() {
     setShowCreate(false)
   }, [])
 
-  const handleVote = useCallback(async (id) => {
+  const handleVote = useCallback(async (id, voted) => {
+    const applyOptimistic = (f) => {
+      if (f.id !== id || f.voted === voted) return f
+      const delta = voted ? 1 : -1
+      return { ...f, voted, votes_count: Math.max(0, (f.votes_count ?? 0) + delta) }
+    }
+    setFeatures(prev => prev?.map(applyOptimistic) ?? prev)
+    setSelectedFeature(prev => prev && prev.id === id ? applyOptimistic(prev) : prev)
+
     try {
-      const updated = await api.post(`/api/feature-requests/${id}/vote`)
-      setFeatures(prev => prev.map(f => f.id === updated.id ? updated : f))
+      const updated = await api.post(`/api/feature-requests/${id}/vote`, { voted })
+      setFeatures(prev => prev?.map(f => f.id === updated.id ? updated : f) ?? prev)
       setSelectedFeature(prev => (prev && prev.id === updated.id ? updated : prev))
-    } catch { /* noop */ }
-  }, [])
+    } catch (err) {
+      const revert = (f) => {
+        if (f.id !== id || f.voted !== voted) return f
+        const delta = voted ? -1 : 1
+        return { ...f, voted: !voted, votes_count: Math.max(0, (f.votes_count ?? 0) + delta) }
+      }
+      setFeatures(prev => prev?.map(revert) ?? prev)
+      setSelectedFeature(prev => prev && prev.id === id ? revert(prev) : prev)
+      toast.error(`Не удалось ${voted ? 'поставить' : 'снять'} лайк: ${err?.message ?? 'ошибка сети'}`)
+    }
+  }, [toast])
 
   const sortFn = useCallback((items) => {
     const copy = [...items]
@@ -394,7 +540,7 @@ export default function FeaturesPage() {
   }, [sort])
 
   const filtered = useMemo(() => {
-    let items = features
+    let items = features ?? []
     if (statusFilter.size > 0) {
       items = items.filter(f => statusFilter.has(f.status))
     }
@@ -469,54 +615,14 @@ export default function FeaturesPage() {
 
       <div className="space-y-2">
         <AnimatePresence initial={false} mode="sync">
-          {pageItems.map((fr) => {
-            const cfg = STATUS_CONFIG[fr.status] ?? STATUS_CONFIG[STATUS.OPEN]
-            return (
-              <motion.div
-                key={fr.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
-                onClick={() => setSelectedFeature(fr)}
-                className="bg-spotify-dark rounded-xl p-4 cursor-pointer active:scale-[0.98] transition-transform"
-              >
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-spotify-text text-xs font-mono shrink-0">#{fr.id}</span>
-                    <span className="text-sm" title={`Приоритет ${fr.priority}`}>
-                      {PRIORITY_EMOJI[fr.priority] ?? '⚪'}
-                    </span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleVote(fr.id) }}
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 transition-colors ${
-                        fr.voted
-                          ? 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/30'
-                          : 'bg-white/5 text-spotify-text hover:bg-white/10'
-                      }`}
-                      title={fr.voted ? 'Убрать лайк' : 'Лайкнуть'}
-                    >
-                      <span>{fr.voted ? '❤️' : '🤍'}</span>
-                      <span>{fr.votes_count ?? 0}</span>
-                    </button>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${cfg.class}`}>
-                    {cfg.label}
-                  </span>
-                </div>
-                <p className="text-white text-sm leading-relaxed mb-2 line-clamp-2">{fr.text}</p>
-                <div className="flex items-center justify-between text-xs text-spotify-text">
-                  <span>{fr.author_name}</span>
-                  <div className="flex items-center gap-2">
-                    {fr.notes && fr.notes.length > 0 && (
-                      <span className="text-spotify-text/60" title="Есть примечания">📝 {fr.notes.length}</span>
-                    )}
-                    <span>{formatDate(fr.creation_timestamp)}</span>
-                  </div>
-                </div>
-              </motion.div>
-            )
-          })}
+          {pageItems.map((fr) => (
+            <FRListItem
+              key={fr.id}
+              fr={fr}
+              onOpen={() => setSelectedFeature(fr)}
+              onVote={() => handleVote(fr.id, !fr.voted)}
+            />
+          ))}
         </AnimatePresence>
 
         {pageItems.length === 0 && (
@@ -565,7 +671,7 @@ export default function FeaturesPage() {
         open={!!selectedFeature}
         onClose={() => setSelectedFeature(null)}
         onSave={handleSave}
-        onVote={() => selectedFeature && handleVote(selectedFeature.id)}
+        onVote={() => selectedFeature && handleVote(selectedFeature.id, !selectedFeature.voted)}
       />
 
       <CreateFeatureModal
