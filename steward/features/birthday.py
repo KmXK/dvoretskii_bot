@@ -201,14 +201,8 @@ class BirthdayFeature(Feature):
             }
             self._evict_old_pending()
 
-            age = self._age(result["year"])
-            age_str = f" ({age} лет)" if age is not None else ""
-            src_lines = "\n".join(f"• {url}" for url in result["sources"][:5]) or "—"
             text = (
-                f"🎂 <b>{name}</b>\n"
-                f"📅 {_format_date(result['day'], result['month'], result['year'])}{age_str}\n\n"
-                f"{result['description']}\n\n"
-                f"📎 <b>Источники</b>:\n{src_lines}\n\n"
+                f"{self._format_details(result, name)}\n\n"
                 f"Сохранить в список?"
             )
             kb = Keyboard.row(
@@ -240,8 +234,9 @@ class BirthdayFeature(Feature):
         if data is None:
             await ctx.edit("Это подтверждение протухло. Запусти /birthday <имя> заново.")
             return
+        details = self._format_details(data, data["name"])
         if answer == "no":
-            await ctx.edit("Отменено")
+            await ctx.edit(f"❌ Отменено\n\n{details}", html=True)
             return
         existing = self.birthdays.find_by(name=data["name"], chat_id=data["chat_id"])
         if existing:
@@ -261,9 +256,25 @@ class BirthdayFeature(Feature):
                 )
             )
         await self.birthdays.save()
-        await ctx.edit(
-            f"Запомнил: {data['name']} — "
+        summary = (
+            f"✅ Запомнил: {data['name']} — "
             f"{_format_date(data['day'], data['month'], data['year'])}"
+        )
+        await ctx.edit(f"{summary}\n\n{details}", html=True)
+
+    @classmethod
+    def _format_details(cls, data: dict, name: str) -> str:
+        age = cls._age(data["year"])
+        age_str = f" ({age} лет)" if age is not None else ""
+        sources = data.get("sources") or []
+        src_lines = "\n".join(f"• {url}" for url in sources[:5]) or "—"
+        return (
+            f"<blockquote expandable>"
+            f"🎂 <b>{name}</b>\n"
+            f"📅 {_format_date(data['day'], data['month'], data['year'])}{age_str}\n\n"
+            f"{data['description']}\n\n"
+            f"📎 <b>Источники</b>:\n{src_lines}"
+            f"</blockquote>"
         )
 
     @staticmethod
