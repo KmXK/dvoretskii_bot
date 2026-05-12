@@ -14,9 +14,17 @@
         reverse_proxy bot:8080
     }
 
+    handle /assets/* {
+        root * /srv/web
+        encode gzip zstd
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }
+
     handle {
         root * /srv/web
         encode gzip zstd
+        header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server
     }

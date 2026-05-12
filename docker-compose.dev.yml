@@ -37,6 +37,12 @@ services:
         - action: sync
           path: ./web/src
           target: /app/src
+        - action: sync+restart
+          path: ./web/vite.config.js
+          target: /app/vite.config.js
+        - action: sync+restart
+          path: ./web/index.html
+          target: /app/index.html
         - action: rebuild
           path: ./web/package.json
 
