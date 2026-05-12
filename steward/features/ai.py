@@ -90,8 +90,13 @@ async def _needs_web(text: str) -> bool:
     if not snippet:
         return False
     try:
-        result = await make_text_query(
-            0, Model.FAST, [("user", _ROUTER_PROMPT.format(query=snippet[:1000]))], ""
+        result = await make_openrouter_query(
+            0,
+            OpenRouterModel.FAST,
+            [("user", _ROUTER_PROMPT.format(query=snippet[:1000]))],
+            "",
+            max_tokens=4,
+            timeout_seconds=8.0,
         )
     except Exception as e:
         logger.warning("ai router classifier failed, defaulting to offline: %s", e)

@@ -176,9 +176,9 @@ async def execute_ai_request_streaming(
 
     try:
         stream = ai_stream_call(user_id, messages)
-        if isawaitable(stream):
-            stream = await stream
-
+        # If stream is an awaitable, let stream_reply resolve it AFTER sending
+        # the placeholder — this keeps the placeholder reply instant even when
+        # stream init (classifier, web search, etc.) takes seconds.
         bot_message = await stream_reply(
             context.message,
             stream,
