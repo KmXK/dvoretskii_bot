@@ -184,7 +184,16 @@ class BirthdayFeature(Feature):
                 logger.exception("birthday lookup failed for %s: %s", name, result)
                 return (f"Не получилось спросить AI: {str(result)[:200]}", None, False)
             if "error" in result:
-                return (f"Не нашёл ДР для «{name}»: {result['error']}", None, False)
+                code = result["error"]
+                logger.info("birthday lookup gave up for %r: %s", name, result)
+                if code == "not_found":
+                    msg = f"Не нашёл ДР для «{name}». Попробуй уточнить имя."
+                else:
+                    msg = (
+                        f"Не получилось разобрать ответ AI для «{name}». "
+                        f"Подробности в логах ({code})."
+                    )
+                return (msg, None, False)
 
             candidates = result["candidates"]
             description = result["description"]
@@ -343,29 +352,35 @@ class BirthdayFeature(Feature):
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            logger.warning("birthday lookup returned non-json: %s", raw[:500])
-            return {"error": "не понял ответ AI"}
+            logger.warning("birthday lookup: non-json response: %r", raw[:1000])
+            return {"error": "bad_json"}
         if not isinstance(data, dict):
-            return {"error": "не понял ответ AI"}
+            logger.warning("birthday lookup: non-dict response: %r", raw[:1000])
+            return {"error": "bad_shape"}
         if "error" in data:
-            return {"error": str(data["error"])[:200]}
+            return {"error": "not_found", "ai_reason": str(data["error"])[:200]}
         raw_candidates = data.get("candidates")
         if raw_candidates is None and "day" in data:
             raw_candidates = [data]
         if not isinstance(raw_candidates, list) or not raw_candidates:
-            return {"error": "не хватает полей в ответе"}
+            logger.warning("birthday lookup: missing candidates: %r", raw[:1000])
+            return {"error": "missing_candidates"}
         candidates: list[dict] = []
         seen: set[tuple[int, int, int]] = set()
+        rejected: list[dict] = []
         for entry in raw_candidates[:3]:
             if not isinstance(entry, dict):
+                rejected.append({"reason": "not_dict", "entry": str(entry)[:200]})
                 continue
             try:
                 day = int(entry["day"])
                 month = int(entry["month"])
                 year = int(entry["year"])
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError) as e:
+                rejected.append({"reason": f"parse:{e}", "entry": str(entry)[:200]})
                 continue
             if not (1 <= day <= 31 and 1 <= month <= 12 and 1800 <= year <= 2100):
+                rejected.append({"reason": "out_of_range", "day": day, "month": month, "year": year})
                 continue
             key = (day, month, year)
             if key in seen:
@@ -378,7 +393,11 @@ class BirthdayFeature(Feature):
             )
             candidates.append({"day": day, "month": month, "year": year, "sources": srcs})
         if not candidates:
-            return {"error": "невалидная дата"}
+            logger.warning(
+                "birthday lookup: all %d candidates rejected (%s); raw=%r",
+                len(raw_candidates), rejected, raw[:1000],
+            )
+            return {"error": "invalid_date"}
         return {
             "candidates": candidates,
             "description": str(data.get("description", "")),

@@ -200,7 +200,8 @@ class TestCelebrityLookup:
         _, ok = await invoke(BirthdayFeature, "/birthday Vasya", repo)
         assert ok
         text = captured["text"]
-        assert "Не нашёл" in text or "не понял" in text
+        assert "разобрать ответ AI" in text
+        assert "bad_json" in text
         assert len(repo.db.birthdays) == 0
 
     async def test_lookup_query_exception(self, monkeypatch):
@@ -268,14 +269,15 @@ class TestParseLookupResponse:
     def test_error_passthrough(self):
         raw = json.dumps({"error": "не нашёл"})
         out = BirthdayFeature._parse_lookup_response(raw)
-        assert out == {"error": "не нашёл"}
+        assert out["error"] == "not_found"
+        assert out["ai_reason"] == "не нашёл"
 
     def test_invalid_date(self):
         raw = json.dumps({
             "candidates": [{"day": 99, "month": 1, "year": 1990, "sources": []}],
         })
         out = BirthdayFeature._parse_lookup_response(raw)
-        assert "error" in out
+        assert out["error"] == "invalid_date"
 
     def test_strips_fence(self):
         raw = "```json\n" + json.dumps({

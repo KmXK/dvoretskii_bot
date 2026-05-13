@@ -22,7 +22,7 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from telegram import Message
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, RetryAfter
 
 from steward.helpers.md_to_html import md_to_html
@@ -32,55 +32,49 @@ T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MIN_INTERVAL = 1.2  # seconds between edits
-_ANIMATION_INTERVAL = 1.3  # seconds between dot-animation frames
+_DEFAULT_MIN_INTERVAL = 1.5  # seconds between edits during streaming
+_TYPING_REFRESH = 4.0  # seconds between chat-action pings (TG expires after ~5s)
 _TG_TEXT_LIMIT = 4096
+_PLACEHOLDER_SUFFIX = "…"
 
 
 def _strip_trailing_dots(text: str) -> str:
     return text.rstrip("…").rstrip(".").rstrip()
 
 
-async def _animate_placeholder(
-    bot_message: Message,
-    base_ref: list[str],
-    stop: asyncio.Event,
-) -> None:
-    """Cycle the trailing dots on `bot_message` (1 → 2 → 3) until `stop` is set.
+async def _typing_progress(bot_message: Message, stop: asyncio.Event) -> None:
+    """Keep a 'typing…' chat action alive until `stop` is set.
 
-    `base_ref` is a single-element list so the caller can hot-swap the base
-    phrase (e.g. when a contextual placeholder arrives late).
+    Telegram's chat-action API is the canonical way to signal a long-running
+    operation: each call expires after ~5s, so we refresh every 4s. Unlike
+    `editMessageText`, it's not subject to per-message flood limits.
     """
-    n = 1
+    bot = bot_message.get_bot()
+    chat_id = bot_message.chat_id
     while not stop.is_set():
         try:
-            await asyncio.wait_for(stop.wait(), timeout=_ANIMATION_INTERVAL)
-            return
-        except asyncio.TimeoutError:
-            pass
-        n = n % 3 + 1
-        text = f"<i>{html.escape(base_ref[0] + '.' * n)}</i>"
-        try:
-            await bot_message.edit_text(text, parse_mode=ParseMode.HTML)
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         except RetryAfter as e:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=float(e.retry_after))
                 return
             except asyncio.TimeoutError:
                 continue
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                logger.debug("placeholder animation BadRequest: %s", e)
+        except Exception as e:
+            logger.debug("typing chat action failed: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=_TYPING_REFRESH)
+            return
+        except asyncio.TimeoutError:
+            pass
 
 
 async def _upgrade_placeholder(
     bot_message: Message,
-    base_ref: list[str],
     upgrade: Awaitable[str | None],
     stop: asyncio.Event,
 ) -> None:
-    """Wait for a better placeholder; when it arrives, swap `base_ref[0]` and
-    render it immediately (with one dot, to keep the animation in sync)."""
+    """Wait for a contextual placeholder; on arrival, edit the message once."""
     try:
         new_phrase = await upgrade
     except Exception as e:
@@ -89,10 +83,9 @@ async def _upgrade_placeholder(
     if not new_phrase or stop.is_set():
         return
     new_base = _strip_trailing_dots(new_phrase) or new_phrase
-    base_ref[0] = new_base
     try:
         await bot_message.edit_text(
-            f"<i>{html.escape(new_base + '.')}</i>",
+            f"<i>{html.escape(new_base + _PLACEHOLDER_SUFFIX)}</i>",
             parse_mode=ParseMode.HTML,
         )
     except RetryAfter:
@@ -127,22 +120,19 @@ async def stream_reply(
         placeholder = random_phrase()
     base = _strip_trailing_dots(placeholder) or placeholder
     bot_message = await target.reply_text(
-        f"<i>{html.escape(base + '.')}</i>",
+        f"<i>{html.escape(base + _PLACEHOLDER_SUFFIX)}</i>",
         parse_mode=ParseMode.HTML,
     )
 
-    base_ref = [base]
     stop_animation = asyncio.Event()
     animation_task = asyncio.create_task(
-        _animate_placeholder(bot_message, base_ref, stop_animation)
+        _typing_progress(bot_message, stop_animation)
     )
 
     upgrade_task: asyncio.Task | None = None
     if placeholder_upgrade is not None:
         upgrade_task = asyncio.create_task(
-            _upgrade_placeholder(
-                bot_message, base_ref, placeholder_upgrade, stop_animation
-            )
+            _upgrade_placeholder(bot_message, placeholder_upgrade, stop_animation)
         )
 
     if inspect.isawaitable(chunks):
@@ -252,14 +242,13 @@ async def edit_with_animated_status(
         placeholder = random_phrase()
     base = _strip_trailing_dots(placeholder) or placeholder
     bot_message = await target.reply_text(
-        f"<i>{html.escape(base + '.')}</i>",
+        f"<i>{html.escape(base + _PLACEHOLDER_SUFFIX)}</i>",
         parse_mode=ParseMode.HTML,
     )
 
-    base_ref = [base]
     stop_animation = asyncio.Event()
     animation_task = asyncio.create_task(
-        _animate_placeholder(bot_message, base_ref, stop_animation)
+        _typing_progress(bot_message, stop_animation)
     )
 
     result: T | Exception
