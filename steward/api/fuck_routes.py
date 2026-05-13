@@ -21,7 +21,9 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
+import aiohttp
 from aiohttp import web
 
 from steward.data.models.fuck_asset import FuckAsset
@@ -284,6 +286,78 @@ async def handle_list_assets(request: web.Request):
     return web.json_response(out)
 
 
+_CT_TO_EXT = {
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+}
+
+
+def _detect_ext_from_url_or_ct(url: str, content_type: str) -> str | None:
+    path = urlparse(url).path
+    if "." in path:
+        cand = path.rsplit(".", 1)[-1].lower()
+        if cand in ALLOWED_EXTENSIONS:
+            return cand
+    return _CT_TO_EXT.get(content_type)
+
+
+async def handle_fetch_url(request: web.Request):
+    require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    url = str(body.get("url") or "").strip()
+    if not url:
+        return web.json_response({"error": "missing url"}, status=400)
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return web.json_response({"error": "url must be http(s)"}, status=400)
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return web.json_response({"error": f"HTTP {resp.status}"}, status=400)
+                if resp.content_length is not None and resp.content_length > MAX_FILE_BYTES:
+                    return web.json_response({"error": "file too large"}, status=413)
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+                    if len(buf) > MAX_FILE_BYTES:
+                        return web.json_response({"error": "file too large"}, status=413)
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                final_url = str(resp.url)
+    except aiohttp.ClientError as e:
+        return web.json_response({"error": f"fetch failed: {e}"}, status=400)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "fetch timeout"}, status=504)
+
+    ext = _detect_ext_from_url_or_ct(final_url, content_type)
+    if ext not in ALLOWED_EXTENSIONS:
+        return web.json_response(
+            {"error": f"unsupported media type: {content_type or 'unknown'}"},
+            status=400,
+        )
+
+    stem = (urlparse(final_url).path.rsplit("/", 1)[-1] or "download").rsplit(".", 1)[0]
+    filename = f"{stem or 'download'}.{ext}"
+    logger.info("/fuck fetch-url: %s bytes from %s (ext=%s)", len(buf), final_url, ext)
+    return web.Response(
+        body=bytes(buf),
+        headers={
+            "Content-Type": _EXT_CONTENT_TYPE.get(ext, "application/octet-stream"),
+            "X-Filename": filename,
+            "Access-Control-Expose-Headers": "X-Filename",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 async def handle_create_asset(request: web.Request):
     repository: Repository = request.app["repository"]
     uid = require_user(request)
@@ -492,6 +566,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/avatars/{user_id}", handle_get_avatar)
     app.router.add_get("/api/fuck/assets", handle_list_assets)
     app.router.add_post("/api/fuck/assets", handle_create_asset)
+    app.router.add_post("/api/fuck/fetch-url", handle_fetch_url)
     app.router.add_delete("/api/fuck/assets/{id}", handle_delete_asset)
     app.router.add_patch("/api/fuck/assets/{id}", handle_patch_asset)
     app.router.add_get("/api/fuck/assets/{id}/media", handle_get_asset_media)

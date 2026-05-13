@@ -7,8 +7,13 @@ import Annotator from './annotator/Annotator'
 
 const ACCEPT = 'video/*,image/gif,image/webp'
 
-function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, onSave, onCancel, onPickFile, hasLocalFile }) {
+function AssetForm({
+  mode, loaded, busy, error, name, setName, scope, setScope,
+  onSave, onCancel, onPickFile, hasLocalFile,
+  urlInput, setUrlInput, urlBusy, onFetchUrl,
+}) {
   const isEdit = mode === 'edit'
+  const fetchDisabled = busy || urlBusy || !urlInput.trim()
   return (
     <div className="bg-spotify-dark rounded-2xl p-4 mb-4">
       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
@@ -44,18 +49,6 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
         </div>
 
         <div className="flex gap-2 items-center">
-          {!isEdit && (
-            <label className="px-4 py-2.5 rounded-lg text-sm bg-white/5 text-white hover:bg-white/10 cursor-pointer">
-              {hasLocalFile ? 'Заменить файл' : 'Файл'}
-              <input
-                type="file"
-                accept={ACCEPT}
-                className="hidden"
-                disabled={busy}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = '' }}
-              />
-            </label>
-          )}
           <button
             onClick={onCancel}
             disabled={busy}
@@ -68,6 +61,38 @@ function AssetForm({ mode, loaded, busy, error, name, setName, scope, setScope, 
           >{busy ? 'Сохраняю…' : isEdit ? 'Сохранить' : 'Создать'}</button>
         </div>
       </div>
+
+      {!isEdit && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="px-4 py-2.5 rounded-lg text-sm bg-white/5 text-white hover:bg-white/10 cursor-pointer whitespace-nowrap">
+            {hasLocalFile ? 'Заменить файл' : 'Файл'}
+            <input
+              type="file"
+              accept={ACCEPT}
+              className="hidden"
+              disabled={busy || urlBusy}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = '' }}
+            />
+          </label>
+          <span className="text-spotify-text/60 text-xs">или</span>
+          <div className="flex flex-1 min-w-[200px] gap-1.5">
+            <input
+              type="url"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !fetchDisabled) { e.preventDefault(); onFetchUrl() } }}
+              placeholder="ссылка на гиф/видео"
+              disabled={busy || urlBusy}
+              className="flex-1 bg-black/40 text-white text-sm rounded-lg px-3 py-2.5 border border-white/10 focus:border-spotify-green focus:outline-none disabled:opacity-50"
+            />
+            <button
+              onClick={onFetchUrl}
+              disabled={fetchDisabled}
+              className="px-4 py-2.5 rounded-lg text-sm bg-white/5 text-white hover:bg-white/10 disabled:opacity-40 whitespace-nowrap"
+            >{urlBusy ? 'Качаю…' : 'Загрузить'}</button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mt-3 bg-red-500/15 text-red-300 text-sm rounded-lg px-3 py-2">{error}</div>
@@ -92,6 +117,8 @@ export default function FuckCreatePage() {
   const [error, setError] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [hasLocalFile, setHasLocalFile] = useState(false)
+  const [urlInput, setUrlInput] = useState('')
+  const [urlBusy, setUrlBusy] = useState(false)
 
   useEffect(() => { initDataRef.current = initData }, [initData])
 
@@ -140,6 +167,22 @@ export default function FuckCreatePage() {
       setLoaded(false)
     }
   }, [name])
+
+  const onFetchUrl = useCallback(async () => {
+    const url = urlInput.trim()
+    if (!url) return
+    setError(null)
+    setUrlBusy(true)
+    try {
+      const file = await api.fetchFromUrl(url)
+      await onPickFile(file)
+      setUrlInput('')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setUrlBusy(false)
+    }
+  }, [urlInput, onPickFile])
 
   const save = async () => {
     setError(null)
@@ -198,6 +241,10 @@ export default function FuckCreatePage() {
           onCancel={() => navigate('/fuck/assets')}
           onPickFile={onPickFile}
           hasLocalFile={hasLocalFile}
+          urlInput={urlInput}
+          setUrlInput={setUrlInput}
+          urlBusy={urlBusy}
+          onFetchUrl={onFetchUrl}
         />
 
         <div className="bg-spotify-dark rounded-2xl p-3">
