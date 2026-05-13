@@ -13,4 +13,22 @@ export const fuckApi = {
   },
   deleteAsset: (id) => api.delete(`/api/fuck/assets/${id}`),
   patchAsset: (id, patch) => api.patch(`/api/fuck/assets/${id}`, patch),
+  fetchFromUrl: async (url) => {
+    const res = await api.raw('/api/fuck/fetch-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    })
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`
+      try {
+        const body = await res.json()
+        if (body?.error) msg = body.error
+      } catch { /* noop */ }
+      throw new Error(msg)
+    }
+    const blob = await res.blob()
+    const filename = res.headers.get('X-Filename') || 'download'
+    return new File([blob], filename, { type: blob.type })
+  },
 }
