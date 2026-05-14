@@ -478,6 +478,15 @@ class Repository:
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
         data.setdefault("tennis_sessions", [])
+        for ts in data.get("tennis_sessions", []):
+            if not isinstance(ts, dict):
+                continue
+            ts.setdefault("current_score_a", 0)
+            ts.setdefault("current_score_b", 0)
+            ts.setdefault("points_log", [])
+            ts.setdefault("first_server", "a")
+            ts.setdefault("set_size", 0)
+            ts.setdefault("sets_announced", 0)
         data.setdefault("bill_persons", [])
         data.setdefault("bills_v2", [])
         data.setdefault("bill_payments_v2", [])

@@ -27,3 +27,10 @@ class TennisSession:
     closed_reason: str = ""  # "manual" | "timeout" | "" пока активна
     note: str = ""
     initiator_id: int = 0
+    # Лайв-состояние текущей (незаконченной) партии — для подачи и точечного учёта
+    current_score_a: int = 0
+    current_score_b: int = 0
+    points_log: list[str] = field(default_factory=list)  # 'a'|'b' по поинтам текущей партии
+    first_server: str = "a"   # кто подавал первым в текущей партии
+    set_size: int = 0          # размер сета в партиях, 0 = без сетов
+    sets_announced: int = 0    # сколько границ сета уже озвучено

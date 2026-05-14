@@ -234,6 +234,8 @@ class TennisFeature(Feature):
         "/tennis — список последних сессий",
         "/tennis start — открыть live-табло с оппонентом",
         "/tennis start @ivan — запустить против конкретного игрока",
+        "/tennis serve — переключить первую подачу",
+        "/tennis set 5 — сет = 5 партий (0 = выключить)",
         "/tennis close — закрыть мою активную сессию",
         "/tennis add — записать прошедший день (агрегат или построчно)",
         "/tennis stats — моя статистика",
@@ -290,6 +292,9 @@ class TennisFeature(Feature):
         self,
         ctx: FeatureContext,
         opponent_id: int,
+        *,
+        first_server: str = SIDE_A,
+        set_size: int = 0,
     ) -> TennisSession | None:
         existing = self._active_session_for(ctx.user_id, ctx.chat_id)
         if existing is not None:
@@ -308,6 +313,8 @@ class TennisFeature(Feature):
             started_at=now,
             last_activity_at=now,
             initiator_id=ctx.user_id,
+            first_server=first_server,
+            set_size=set_size,
         ))
         await self.sessions.save()
 
@@ -351,6 +358,45 @@ class TennisFeature(Feature):
             await ctx.reply("Сам с собой играть не интересно.")
             return
         await self._open_session(ctx, user.id)
+
+    @subcommand("serve", description="Переключить первую подачу в активной сессии")
+    async def serve_toggle(self, ctx: FeatureContext):
+        session = self._active_session_for(ctx.user_id, ctx.chat_id)
+        if session is None:
+            await ctx.reply("Нет активной сессии в этом чате.")
+            return
+        session.first_server = SIDE_B if session.first_server == SIDE_A else SIDE_A
+        await self.sessions.save()
+        room = get_manager().attach(session, self.repository)
+        await room.broadcast()
+        server_player_id = (
+            session.player_a_id if session.first_server == SIDE_A else session.player_b_id
+        )
+        await ctx.reply(
+            f"🏓 Первую подачу пометил за {_format_user(self.users, server_player_id)}."
+        )
+
+    @subcommand("set <size:int>", description="Размер сета (0 = без сетов)")
+    async def set_size_cmd(self, ctx: FeatureContext, size: int):
+        session = self._active_session_for(ctx.user_id, ctx.chat_id)
+        if session is None:
+            await ctx.reply("Нет активной сессии в этом чате.")
+            return
+        size = max(0, int(size))
+        session.set_size = size
+        # пересчитаем сколько сетов уже завершено
+        if size > 0:
+            completed = len(session.matches) // size
+            session.sets_announced = min(session.sets_announced, completed)
+        else:
+            session.sets_announced = 0
+        await self.sessions.save()
+        room = get_manager().attach(session, self.repository)
+        await room.broadcast()
+        if size == 0:
+            await ctx.reply("Сеты отключены.")
+        else:
+            await ctx.reply(f"Сет = {size} парт.")
 
     @subcommand("close", description="Закрыть твою активную сессию")
     async def close_(self, ctx: FeatureContext):
@@ -441,12 +487,39 @@ class TennisFeature(Feature):
             "С кем играешь? Пришли @username или id оппонента.",
             validator=validate_message_text([try_get(lambda t: t.strip(), "Пустой ввод")]),
         ),
+        choice(
+            "first_server",
+            "Кто подаёт первым?",
+            [
+                ("Я", SIDE_A),
+                ("Оппонент", SIDE_B),
+            ],
+        ),
+        ask(
+            "set_size",
+            "Размер сета (партий в одном сете). 0 — без сетов.",
+            validator=validate_message_text([
+                try_get(lambda t: max(0, int(t.strip())), "Введи число от 0"),
+            ]),
+        ),
         confirm(
             "confirmed",
-            lambda state: f"Запустить сессию против {state.get('opponent_raw', '?')}?",
+            lambda state: (
+                f"Запустить сессию против {state.get('opponent_raw', '?')}? "
+                f"Подаёт {'ты' if state.get('first_server') == SIDE_A else 'оппонент'}"
+                f"{', сетов нет' if not state.get('set_size') else f', сет = {state.get('set_size')} парт.'}."
+            ),
         ),
     )
-    async def _on_start_done(self, ctx: FeatureContext, opponent_raw: str, confirmed: bool, **_):
+    async def _on_start_done(
+        self,
+        ctx: FeatureContext,
+        opponent_raw: str,
+        first_server: str,
+        set_size: int,
+        confirmed: bool,
+        **_,
+    ):
         if not confirmed:
             await ctx.reply("Окей, не запускаем.")
             return
@@ -457,7 +530,12 @@ class TennisFeature(Feature):
         if user.id == ctx.user_id:
             await ctx.reply("Сам с собой играть не интересно.")
             return
-        await self._open_session(ctx, user.id)
+        await self._open_session(
+            ctx,
+            user.id,
+            first_server=first_server,
+            set_size=int(set_size or 0),
+        )
 
     # ── wizard: add (история) ────────────────────────────────────────────────
 
