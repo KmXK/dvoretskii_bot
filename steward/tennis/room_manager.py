@@ -94,6 +94,8 @@ class TennisRoom:
             "chat_id": self.session.chat_id,
             "player_a_id": self.session.player_a_id,
             "player_b_id": self.session.player_b_id,
+            "player_a_name": self.manager._spoken_name(self.session.player_a_id, "игрок А"),
+            "player_b_name": self.manager._spoken_name(self.session.player_b_id, "игрок Б"),
             "started_at": self.session.started_at.isoformat(),
             "ended_at": self.session.ended_at.isoformat() if self.session.ended_at else None,
             "last_activity_at": self.session.last_activity_at.isoformat(),

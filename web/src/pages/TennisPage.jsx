@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import WebApp from '@twa-dev/sdk'
 import { useAuth } from '../context/useAuth'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const SHORT_GAP_MS = 800
+const MUTE_KEY = 'tennis:muted'
 
 function fmtClock(seconds) {
   const s = Math.max(0, Math.floor(seconds))
@@ -15,36 +17,83 @@ function fmtClock(seconds) {
   return h > 0 ? `${h}:${mm}:${sec}` : `${mm}:${sec}`
 }
 
-function ScorePicker({ side, onPick, onSkip, onClose, opponentName }) {
+function buildMatchAnnouncement(match, state) {
+  const winnerName = match.winner === 'a' ? state.player_a_name : state.player_b_name
+  if (match.score_a == null || match.score_b == null) {
+    return `Партия! Победил ${winnerName}.`
+  }
+  const winnerScore = match.winner === 'a' ? match.score_a : match.score_b
+  const loserScore = match.winner === 'a' ? match.score_b : match.score_a
+  return `Партия! Победил ${winnerName}. Счёт ${winnerScore} на ${loserScore}.`
+}
+
+function buildSessionEndAnnouncement(state) {
+  const [a, b] = state.wins
+  if (a === b) return `Сессия завершена. Ничья: ${a} на ${b}.`
+  if (a > b) return `Сессия завершена. Победил ${state.player_a_name} со счётом ${a} на ${b}.`
+  return `Сессия завершена. Победил ${state.player_b_name} со счётом ${b} на ${a}.`
+}
+
+function speak(text, { rate = 1.0 } = {}) {
+  if (typeof window === 'undefined') return
+  const synth = window.speechSynthesis
+  if (!synth) return
+  try {
+    synth.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'ru-RU'
+    u.rate = rate
+    // Prefer a Russian voice if the device exposes one
+    const voices = synth.getVoices?.() || []
+    const ruVoice = voices.find((v) => (v.lang || '').toLowerCase().startsWith('ru'))
+    if (ruVoice) u.voice = ruVoice
+    synth.speak(u)
+  } catch {
+    /* unsupported / blocked — silently no-op */
+  }
+}
+
+function ScorePicker({ side, onPick, onSkip, onClose, opponentName, winnerName }) {
   const QUICK = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   return (
     <motion.div
-      initial={{ y: 200, opacity: 0 }}
+      initial={{ y: 400, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      exit={{ y: 200, opacity: 0 }}
-      transition={{ type: 'spring', damping: 22, stiffness: 280 }}
-      className="absolute bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 rounded-t-2xl p-5 shadow-2xl"
+      exit={{ y: 400, opacity: 0 }}
+      transition={{ type: 'spring', damping: 24, stiffness: 300 }}
+      className="absolute bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 rounded-t-2xl shadow-2xl overflow-y-auto"
+      style={{
+        paddingTop: '14px',
+        paddingLeft: '14px',
+        paddingRight: '14px',
+        paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)',
+        maxHeight: '85svh',
+      }}
     >
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <p className="text-zinc-400 text-xs uppercase tracking-wider">Победил {side === 'a' ? 'A' : 'B'}</p>
-          <p className="text-white font-semibold text-lg">Сколько очков у {opponentName}?</p>
+      <div className="flex items-center justify-between mb-3">
+        <div className="min-w-0">
+          <p className="text-zinc-400 text-[11px] uppercase tracking-wider truncate">
+            Победил {winnerName}
+          </p>
+          <p className="text-white font-semibold text-base truncate">
+            Очки у {opponentName}?
+          </p>
         </div>
         <button
           onClick={onClose}
-          className="text-zinc-500 hover:text-zinc-300 text-2xl leading-none px-2"
+          className="text-zinc-500 hover:text-zinc-300 text-3xl leading-none px-2 shrink-0"
           aria-label="Закрыть"
         >
           ×
         </button>
       </div>
-      <div className="grid grid-cols-5 gap-2 mb-3">
+      <div className="grid grid-cols-5 gap-2 mb-2">
         {QUICK.map((n) => (
           <motion.button
             key={n}
             whileTap={{ scale: 0.9 }}
             onClick={() => onPick(n)}
-            className="bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white font-bold text-2xl py-4 rounded-xl"
+            className="bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white font-bold text-xl py-3 rounded-xl"
           >
             {n}
           </motion.button>
@@ -52,9 +101,9 @@ function ScorePicker({ side, onPick, onSkip, onClose, opponentName }) {
       </div>
       <button
         onClick={onSkip}
-        className="w-full bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 py-3 rounded-xl font-medium"
+        className="w-full bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 py-3 rounded-xl font-medium text-sm"
       >
-        Пропустить (не вводить счёт)
+        Пропустить (без счёта)
       </button>
     </motion.div>
   )
@@ -63,7 +112,7 @@ function ScorePicker({ side, onPick, onSkip, onClose, opponentName }) {
 function PlayerPanel({ label, wins, color, accentText, canEdit, onPlus, onMinus, isLeft }) {
   return (
     <div className={`flex-1 flex flex-col items-center justify-center bg-gradient-to-br ${color} relative ${isLeft ? '' : ''}`}>
-      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} text-xs uppercase tracking-wider ${accentText} opacity-70`}>
+      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} text-xs uppercase tracking-wider ${accentText} opacity-70 max-w-[60%] truncate`}>
         {label}
       </div>
       <motion.div
@@ -112,12 +161,20 @@ export default function TennisPage() {
   const [errorBanner, setErrorBanner] = useState(null)
   const [picker, setPicker] = useState(null)      // {side: 'a'|'b'}
   const [now, setNow] = useState(Date.now())
+  const [muted, setMuted] = useState(() => {
+    try { return window.localStorage?.getItem(MUTE_KEY) === '1' } catch { return false }
+  })
 
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
   const reconnectAttempt = useRef(0)
   const lastActivityTap = useRef(0)
   const closedRef = useRef(false)
+  const initializedRef = useRef(false)
+  const prevMatchesCount = useRef(0)
+  const mutedRef = useRef(muted)
+
+  useEffect(() => { mutedRef.current = muted }, [muted])
 
   const send = useCallback((msg) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -125,6 +182,22 @@ export default function TennisPage() {
       return true
     }
     return false
+  }, [])
+
+  // Telegram: expand the WebApp to full height — иначе пикер режется внизу
+  useEffect(() => {
+    try { WebApp?.expand?.() } catch { /* noop */ }
+    try { WebApp?.disableVerticalSwipes?.() } catch { /* noop */ }
+  }, [])
+
+  // Pre-load voices (some browsers populate the list async)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    const synth = window.speechSynthesis
+    synth.getVoices()
+    const onVoices = () => synth.getVoices()
+    synth.addEventListener?.('voiceschanged', onVoices)
+    return () => synth.removeEventListener?.('voiceschanged', onVoices)
   }, [])
 
   const connect = useCallback(() => {
@@ -143,15 +216,33 @@ export default function TennisPage() {
       let data
       try { data = JSON.parse(e.data) } catch { return }
       switch (data.type) {
-        case 'state':
-          setState(data.state)
+        case 'state': {
+          const incoming = data.state
+          const newCount = incoming.matches?.length ?? 0
+          // На первый state не озвучиваем (могут быть старые партии после реконнекта)
+          if (initializedRef.current && !mutedRef.current && newCount > prevMatchesCount.current) {
+            const last = incoming.matches[newCount - 1]
+            speak(buildMatchAnnouncement(last, incoming))
+          }
+          initializedRef.current = true
+          prevMatchesCount.current = newCount
+          setState(incoming)
           setStatus('connected')
           break
-        case 'closed':
-          setState(data.state)
+        }
+        case 'closed': {
+          const incoming = data.state
+          if (incoming) {
+            prevMatchesCount.current = incoming.matches?.length ?? 0
+            setState(incoming)
+            if (!mutedRef.current && data.reason !== 'timeout' && !incoming.is_aggregate_only) {
+              speak(buildSessionEndAnnouncement(incoming))
+            }
+          }
           setCloseReason(data.reason || '')
           setStatus('closed')
           break
+        }
         case 'no_active':
           setStatus('no_active')
           break
@@ -263,6 +354,17 @@ export default function TennisPage() {
     send({ type: 'close' })
   }
 
+  const toggleMute = () => {
+    setMuted((prev) => {
+      const next = !prev
+      try { window.localStorage?.setItem(MUTE_KEY, next ? '1' : '0') } catch { /* noop */ }
+      if (next) {
+        try { window.speechSynthesis?.cancel() } catch { /* noop */ }
+      }
+      return next
+    })
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   if (status === 'no_active') {
@@ -287,11 +389,12 @@ export default function TennisPage() {
     )
   }
 
+  const nameA = state.player_a_name || 'Игрок A'
+  const nameB = state.player_b_name || 'Игрок B'
   const youSideA = userId && state.player_a_id === userId
-  const labelA = youSideA ? 'Ты (A)' : `Игрок A`
-  const labelB = youSideA ? 'Игрок B' : (userId === state.player_b_id ? 'Ты (B)' : 'Игрок B')
-  const opponentNameA = labelB
-  const opponentNameB = labelA
+  const youSideB = userId && state.player_b_id === userId
+  const labelA = youSideA ? `${nameA} (ты)` : nameA
+  const labelB = youSideB ? `${nameB} (ты)` : nameB
 
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
@@ -320,6 +423,14 @@ export default function TennisPage() {
       {/* Top bar */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-b-2xl px-4 py-1.5 text-white text-sm font-mono z-10">
         <span>⏱ {fmtClock(elapsedSec)}</span>
+        <button
+          onClick={toggleMute}
+          className="ml-1 text-base leading-none px-1.5 py-0.5 rounded hover:bg-white/10"
+          aria-label={muted ? 'Включить озвучку' : 'Выключить озвучку'}
+          title={muted ? 'Включить озвучку' : 'Выключить озвучку'}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
         {status === 'reconnecting' && (
           <span className="text-amber-300 text-xs animate-pulse">· реконнект</span>
         )}
@@ -329,7 +440,10 @@ export default function TennisPage() {
       </div>
 
       {/* Bottom action bar */}
-      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-2 z-10 pb-2">
+      <div
+        className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 z-10"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 8px)' }}
+      >
         {!isClosed && canEdit && (
           <button
             onClick={handleClose}
@@ -359,7 +473,8 @@ export default function TennisPage() {
         {picker && (
           <ScorePicker
             side={picker.side}
-            opponentName={picker.side === 'a' ? opponentNameA : opponentNameB}
+            winnerName={picker.side === 'a' ? nameA : nameB}
+            opponentName={picker.side === 'a' ? nameB : nameA}
             onPick={(n) => submitScore(n, true)}
             onSkip={() => submitScore(null, false)}
             onClose={() => setPicker(null)}
