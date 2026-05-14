@@ -7,6 +7,8 @@ WebSocket-хендлер и фоновая корутина TTL. Сама фич
 from __future__ import annotations
 
 import os
+import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -73,6 +75,124 @@ def _parse_detailed_matches(text: str) -> list[tuple[int, int]]:
 def _parse_date(text: str) -> datetime:
     text = text.strip()
     return datetime.fromisoformat(text)
+
+
+_DATE_LINE_RE = re.compile(
+    r"^\s*(?P<date>\d{4}-\d{2}-\d{2})"          # ISO дата
+    r"\s+(?P<opponent>\S+(?:\s+\S+)*?)"         # имя/юзернейм/id (не жадно)
+    r"(?:\s+(?P<a>\d+)\s*[:\-/x]\s*(?P<b>\d+))?"  # опциональный агрегатный счёт
+    r"\s*$",
+    re.UNICODE,
+)
+
+
+@dataclass
+class _BulkEntry:
+    line_no: int
+    date: datetime
+    opponent_raw: str
+    mode: str  # "aggregate" | "detailed"
+    wins_a: int | None = None
+    wins_b: int | None = None
+    score_pairs: list[tuple[int, int]] = field(default_factory=list)
+
+
+def _parse_score_pair(line: str) -> tuple[int, int]:
+    nums = re.findall(r"\d+", line)
+    if len(nums) != 2:
+        raise ValueError(f"«{line}» — не похоже на счёт партии (нужны два числа)")
+    return int(nums[0]), int(nums[1])
+
+
+def _parse_bulk_history(text: str) -> list[_BulkEntry]:
+    """Парсит мульти-дневной payload. Каждый блок — день.
+
+    Формат:
+      «<дата> <оппонент> <a:b>» — агрегатный день (одна строка)
+      «<дата> <оппонент>» затем строки «<a>:<b>» — день с партиями построчно.
+
+    Дата в ISO ГГГГ-ММ-ДД, оппонент — @username или числовой id. Пустые строки
+    разрешены и игнорируются. Бросает ValueError при первой проблеме.
+    """
+    entries: list[_BulkEntry] = []
+    current: _BulkEntry | None = None
+
+    def _finalize():
+        nonlocal current
+        if current is None:
+            return
+        if current.mode == "detailed" and not current.score_pairs:
+            raise ValueError(
+                f"строка {current.line_no}: «detailed» день без партий — "
+                f"добавь хотя бы одну строку «11:7» или впиши счёт сразу: «{current.date.date()} ... 5:3»"
+            )
+        entries.append(current)
+        current = None
+
+    for idx, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+
+        m = _DATE_LINE_RE.match(line)
+        if m:
+            _finalize()
+            date_str = m.group("date")
+            opponent = m.group("opponent").strip()
+            try:
+                date = datetime.fromisoformat(date_str)
+            except ValueError:
+                raise ValueError(f"строка {idx}: не понимаю дату «{date_str}»")
+
+            agg_a = m.group("a")
+            agg_b = m.group("b")
+            if agg_a is not None:
+                a, b = int(agg_a), int(agg_b)
+                if a < 0 or b < 0:
+                    raise ValueError(f"строка {idx}: отрицательный счёт")
+                if a == 0 and b == 0:
+                    raise ValueError(f"строка {idx}: нужна хотя бы одна победа")
+                current = _BulkEntry(
+                    line_no=idx,
+                    date=date,
+                    opponent_raw=opponent,
+                    mode="aggregate",
+                    wins_a=a,
+                    wins_b=b,
+                )
+                _finalize()  # агрегатный — одной строкой
+            else:
+                current = _BulkEntry(
+                    line_no=idx,
+                    date=date,
+                    opponent_raw=opponent,
+                    mode="detailed",
+                )
+            continue
+
+        # не дата — значит, счёт партии для текущего блока
+        if current is None:
+            raise ValueError(
+                f"строка {idx}: партия «{line}» без даты выше. "
+                f"Каждый день начинается со строки «ГГГГ-ММ-ДД @оппонент»."
+            )
+        if current.mode == "aggregate":
+            raise ValueError(
+                f"строка {idx}: после агрегатного дня партии не нужны. "
+                f"Если хочешь детально — убери счёт из строки с датой."
+            )
+        a, b = _parse_score_pair(line)
+        if not is_valid_party_score(a, b):
+            raise ValueError(
+                f"строка {idx}: «{line}» не похоже на партию (правило 11 + разница ≥2)"
+            )
+        current.score_pairs.append((a, b))
+
+    _finalize()
+
+    if not entries:
+        raise ValueError("Пустой ввод — ничего не распознал")
+    return entries
 
 
 def _format_user(users_collection, user_id: int) -> str:
@@ -253,6 +373,10 @@ class TennisFeature(Feature):
     async def add_(self, ctx: FeatureContext):
         await self.start_wizard("tennis:add", ctx)
 
+    @subcommand("bulk", description="Массовый импорт истории одним сообщением")
+    async def bulk(self, ctx: FeatureContext):
+        await self.start_wizard("tennis:bulk", ctx)
+
     @subcommand("stats", description="Твоя статистика")
     async def stats_self(self, ctx: FeatureContext):
         await self._render_stats(ctx, ctx.user_id)
@@ -430,4 +554,133 @@ class TennisFeature(Feature):
             f"✅ Записано: сессия #{session.id} от {date.strftime('%Y-%m-%d')}.\n"
             f"{name_a} {wins_a} : {wins_b} {name_b} · "
             f"{'агрегат' if is_aggregate else f'{len(matches)} парт.'}"
+        )
+
+    # ── wizard: bulk (массовый импорт) ───────────────────────────────────────
+
+    _BULK_HELP = (
+        "Пришли историю одним сообщением. Формат построчный:\n"
+        "\n"
+        "  ГГГГ-ММ-ДД @оппонент          — день с партиями построчно ниже\n"
+        "  ГГГГ-ММ-ДД @оппонент 5:3      — агрегатный день, одной строкой\n"
+        "\n"
+        "Пример (можешь сразу скопировать):\n"
+        "\n"
+        "  2024-05-10 @ivan 5:3\n"
+        "  2024-05-12 @ivan 7:2\n"
+        "  2024-05-15 @ivan\n"
+        "  11:7\n"
+        "  11:9\n"
+        "  9:11\n"
+        "  12:10\n"
+        "  2024-05-20 @ivan 4:6\n"
+        "  2024-05-22 @ivan\n"
+        "  11:5\n"
+        "  9:11\n"
+        "  11:8\n"
+        "  2024-05-25 @ivan 3:4\n"
+        "\n"
+        "Пустые строки игнорятся. Оппонент задаётся отдельно для каждого дня — "
+        "удобно если играл с разными людьми."
+    )
+
+    @wizard(
+        "tennis:bulk",
+        ask(
+            "payload",
+            lambda _: TennisFeature._BULK_HELP,
+            validator=validate_message_text([try_get(lambda t: t, "Пустой ввод")]),
+        ),
+    )
+    async def _on_bulk_done(self, ctx: FeatureContext, payload: str, **_):
+        try:
+            entries = _parse_bulk_history(payload)
+        except ValueError as e:
+            await ctx.reply(
+                f"❌ Не получилось распарсить:\n{e}\n\n"
+                f"Пришли /tennis bulk ещё раз с исправленным текстом."
+            )
+            return
+
+        # 1) Резолвим всех оппонентов заранее — чтобы не создавать половину
+        resolved: list[tuple[_BulkEntry, int]] = []
+        for entry in entries:
+            user = self._resolve_user(entry.opponent_raw)
+            if user is None:
+                await ctx.reply(
+                    f"❌ Строка {entry.line_no}: не нашёл оппонента «{entry.opponent_raw}». "
+                    f"Используй @username или числовой id. Импорт отменён."
+                )
+                return
+            if user.id == ctx.user_id:
+                await ctx.reply(
+                    f"❌ Строка {entry.line_no}: сам с собой играть не получится. Импорт отменён."
+                )
+                return
+            resolved.append((entry, user.id))
+
+        # 2) Все валидные — создаём сессии и сохраняем одной транзакцией
+        created_lines: list[str] = []
+        for entry, opp_id in resolved:
+            session = self._build_session_from_entry(entry, opp_id, ctx)
+            self.sessions.add(session)
+            wins_a, wins_b = session_wins(session)
+            tag = "агрегат" if session.is_aggregate_only else f"{len(session.matches)} парт."
+            created_lines.append(
+                f"#{session.id} {entry.date.strftime('%Y-%m-%d')} · "
+                f"{wins_a}:{wins_b} · {tag}"
+            )
+        await self.sessions.save()
+
+        await ctx.reply(
+            f"✅ Импортировано {len(resolved)} сессий:\n" + "\n".join(created_lines)
+        )
+
+    def _build_session_from_entry(
+        self,
+        entry: _BulkEntry,
+        opponent_id: int,
+        ctx: FeatureContext,
+    ) -> TennisSession:
+        if entry.mode == "aggregate":
+            matches = aggregate_session_matches(entry.date, entry.wins_a or 0, entry.wins_b or 0)
+            return TennisSession(
+                id=0,
+                chat_id=ctx.chat_id,
+                player_a_id=ctx.user_id,
+                player_b_id=opponent_id,
+                started_at=entry.date,
+                ended_at=entry.date,
+                last_activity_at=entry.date,
+                matches=matches,
+                is_aggregate_only=True,
+                closed_reason="manual",
+                initiator_id=ctx.user_id,
+            )
+        # detailed
+        cur = entry.date
+        matches: list[TennisMatch] = []
+        for sa, sb in entry.score_pairs:
+            ended = cur
+            winner = SIDE_A if sa > sb else SIDE_B
+            matches.append(TennisMatch(
+                started_at=cur,
+                ended_at=ended,
+                winner=winner,
+                score_a=sa,
+                score_b=sb,
+            ))
+            cur = ended
+        return TennisSession(
+            id=0,
+            chat_id=ctx.chat_id,
+            player_a_id=ctx.user_id,
+            player_b_id=opponent_id,
+            started_at=entry.date,
+            ended_at=cur,
+            last_activity_at=entry.date,
+            matches=matches,
+            is_aggregate_only=False,
+            closed_reason="manual",
+            initiator_id=ctx.user_id,
         )

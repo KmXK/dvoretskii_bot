@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from os import environ
-from typing import Awaitable, Callable
+from typing import Callable
 from urllib.parse import parse_qsl
 
 from aiohttp import web
@@ -26,6 +26,11 @@ from steward.tennis.engine import (
     SIDE_B,
     is_valid_party_score,
     session_wins,
+)
+from steward.tennis.tts import (
+    match_announcement_text,
+    session_end_announcement_text,
+    synthesize,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,12 +70,11 @@ class TennisRoom:
     обновляют last_activity_at и рассылают новое состояние.
     """
 
-    def __init__(self, session: TennisSession, repository: Repository):
+    def __init__(self, session: TennisSession, repository: Repository, manager: "TennisRoomManager"):
         self.session = session
         self.repository = repository
+        self.manager = manager
         self.connections: dict[int, web.WebSocketResponse] = {}
-        self.on_match_recorded: Callable[[TennisMatch, TennisSession], Awaitable[None]] | None = None
-        self.on_session_closed: Callable[[TennisSession, str], Awaitable[None]] | None = None
 
     # ── permissions ──────────────────────────────────────────────────────────
 
@@ -148,11 +152,8 @@ class TennisRoom:
         self.session.last_activity_at = now
         await self.repository.save()
 
-        if self.on_match_recorded is not None:
-            try:
-                await self.on_match_recorded(match, self.session)
-            except Exception:
-                logger.exception("on_match_recorded hook failed")
+        # TTS-озвучка в фоне — не блокирует ответ WS
+        asyncio.create_task(self.manager._announce_match(self.session, match))
 
         return True, ""
 
@@ -174,11 +175,7 @@ class TennisRoom:
         self.session.last_activity_at = now
         self.session.closed_reason = reason
         await self.repository.save()
-        if self.on_session_closed is not None:
-            try:
-                await self.on_session_closed(self.session, reason)
-            except Exception:
-                logger.exception("on_session_closed hook failed")
+        asyncio.create_task(self.manager._announce_session_end(self.session, reason))
 
     def _latest_match_end(self) -> datetime | None:
         latest: datetime | None = None
@@ -221,7 +218,7 @@ class TennisRoomManager:
         if existing is not None:
             existing.session = session  # на случай горячей перезагрузки модели
             return existing
-        room = TennisRoom(session, repository)
+        room = TennisRoom(session, repository, self)
         self.rooms[session.id] = room
         return room
 
@@ -278,8 +275,8 @@ class TennisRoomManager:
         if self._bot is None:
             return
         wins_a, wins_b = session_wins(session)
-        name_a = self._user_display(session.player_a_id) if self._user_display else str(session.player_a_id)
-        name_b = self._user_display(session.player_b_id) if self._user_display else str(session.player_b_id)
+        name_a = self._display(session.player_a_id)
+        name_b = self._display(session.player_b_id)
         text = (
             f"⏱ Сессия тенниса #{session.id} закрыта по таймауту.\n"
             f"Итог: {name_a} {wins_a} : {wins_b} {name_b}"
@@ -288,6 +285,60 @@ class TennisRoomManager:
             await self._bot.send_message(chat_id=session.chat_id, text=text)
         except Exception:
             logger.exception("tennis timeout notification failed for session=%s", session.id)
+
+    def _display(self, user_id: int) -> str:
+        if self._user_display is None:
+            return str(user_id)
+        try:
+            return self._user_display(user_id)
+        except Exception:
+            return str(user_id)
+
+    def _spoken_name(self, user_id: int, fallback: str) -> str:
+        raw = self._display(user_id)
+        if not raw or raw.startswith("id"):
+            return fallback
+        return raw.lstrip("@")
+
+    async def _announce_match(self, session: TennisSession, match: TennisMatch) -> None:
+        if self._bot is None:
+            return
+        try:
+            winner_id = session.player_a_id if match.winner == SIDE_A else session.player_b_id
+            fallback = "игрок А" if match.winner == SIDE_A else "игрок Б"
+            name = self._spoken_name(winner_id, fallback)
+            text = match_announcement_text(match, name)
+            audio = await synthesize(text)
+            if not audio:
+                return
+            await self._bot.send_voice(
+                chat_id=session.chat_id,
+                voice=audio,
+                caption=text,
+            )
+        except Exception:
+            logger.exception("tennis match announce failed for session=%s", session.id)
+
+    async def _announce_session_end(self, session: TennisSession, reason: str) -> None:
+        if self._bot is None:
+            return
+        # Аггрегатные импорты и таймаут без активности — без голоса
+        if session.is_aggregate_only or reason == "timeout":
+            return
+        try:
+            name_a = self._spoken_name(session.player_a_id, "игрок А")
+            name_b = self._spoken_name(session.player_b_id, "игрок Б")
+            text = session_end_announcement_text(session, name_a, name_b)
+            audio = await synthesize(text)
+            if not audio:
+                return
+            await self._bot.send_voice(
+                chat_id=session.chat_id,
+                voice=audio,
+                caption=text,
+            )
+        except Exception:
+            logger.exception("tennis session-end announce failed for session=%s", session.id)
 
 
 _manager = TennisRoomManager()
