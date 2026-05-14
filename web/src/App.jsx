@@ -14,6 +14,7 @@ const CasinoPage = lazy(() => import('./pages/CasinoPage'))
 const PokerPage = lazy(() => import('./pages/PokerPage'))
 const BlackjackPage = lazy(() => import('./pages/BlackjackPage'))
 const BoardGamesPage = lazy(() => import('./pages/BoardGamesPage'))
+const TennisPage = lazy(() => import('./pages/TennisPage'))
 const FeaturesPage = lazy(() => import('./pages/FeaturesPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const RemindersPage = lazy(() => import('./pages/RemindersPage'))
@@ -46,6 +47,7 @@ export default function App() {
                     <Route path="/poker" element={<PokerPage />} />
                     <Route path="/blackjack" element={<BlackjackPage />} />
                     <Route path="/boardgames" element={<BoardGamesPage />} />
+                    <Route path="/tennis" element={<TennisPage />} />
                     <Route path="/profile" element={<ProfilePage />} />
                     <Route path="/casino" element={<CasinoPage />} />
                     <Route path="/features" element={<FeaturesPage />} />

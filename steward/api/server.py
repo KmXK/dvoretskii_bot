@@ -17,6 +17,7 @@ from steward.metrics.base import MetricsEngine
 from steward.poker.room_manager import poker_ws_handler, _manager as poker_manager
 from steward.blackjack.room_manager import blackjack_ws_handler
 from steward.boardgames.room_manager import boardgames_ws_handler
+from steward.tennis.room_manager import tennis_ws_handler
 
 logger = logging.getLogger(__name__)
 
@@ -2260,6 +2261,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/ws/poker", poker_ws_handler)
     app.router.add_get("/ws/blackjack", blackjack_ws_handler)
     app.router.add_get("/ws/boardgames", boardgames_ws_handler)
+    app.router.add_get("/ws/tennis", tennis_ws_handler)
 
     from steward.api.fuck_routes import register_routes as register_fuck_routes
     register_fuck_routes(app)

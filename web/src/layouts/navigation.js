@@ -13,6 +13,7 @@ export const NAV_GROUPS = [
       { to: '/poker', label: 'Покер', icon: '🃏' },
       { to: '/blackjack', label: 'Блэкджек', icon: '♠️' },
       { to: '/boardgames', label: 'Настолки', icon: '♟️' },
+      { to: '/tennis', label: 'Теннис', icon: '🏓', home: { desc: 'Live-табло настольного тенниса', color: 'from-amber-500/20 to-amber-900/20' } },
     ],
   },
   {

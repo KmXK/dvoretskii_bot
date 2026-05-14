@@ -37,6 +37,7 @@ from steward.features.stands import StandsFeature
 from steward.features.stats import StatsFeature
 from steward.features.subscribe import SubscribeFeature
 from steward.features.tarot import TarotFeature
+from steward.features.tennis import TennisFeature
 from steward.features.timezone import TimezoneFeature
 from steward.features.todo import TodoFeature
 from steward.features.translate import TranslateFeature
@@ -82,6 +83,7 @@ COMMANDS << [
     SubscribeFeature,
     TranslateFeature,
     TarotFeature,
+    TennisFeature,
     ExchangeRateFeature,
     LinkFeature,
     RemindFeature,
