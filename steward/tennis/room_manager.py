@@ -449,6 +449,8 @@ async def tennis_ws_handler(request: web.Request):
       server → {"type": "error", "message": "..."}
       server → {"type": "no_active"}                    — нет активной сессии для юзера
     """
+    from steward.api.auth import ws_session_user
+
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -461,6 +463,24 @@ async def tennis_ws_handler(request: web.Request):
             await ws.send_str(json.dumps(payload, ensure_ascii=False))
         except Exception:
             pass
+
+    async def _attach_for(uid: int) -> None:
+        """Связать соединение с активной сессией пользователя (если есть)."""
+        nonlocal current_room
+        room = _manager.find_active_for_user(repository, uid)
+        if room is None:
+            await _send({"type": "no_active"})
+            return
+        current_room = room
+        room.connections[uid] = ws
+        await _send({"type": "state", "state": room.to_state(uid)})
+
+    # 1) Cookie/header-аутентификация (выставляется AuthContext через /api/auth/webapp).
+    #    Работает и в браузере, и в Telegram WebApp после первой инициализации.
+    cookie_auth = ws_session_user(request)
+    if cookie_auth:
+        user_id = cookie_auth[0]
+        await _attach_for(user_id)
 
     try:
         async for msg in ws:
@@ -476,22 +496,17 @@ async def tennis_ws_handler(request: web.Request):
             t = data.get("type")
 
             if t == "hello":
+                # Если cookie-сессия уже сработала — игнорируем повторную авторизацию
+                if user_id is not None:
+                    await _send({"type": "ok"})
+                    continue
                 init_data_raw = str(data.get("init_data", ""))
                 tg_user = _validate_telegram_init_data(init_data_raw)
                 if not tg_user or not tg_user.get("id"):
                     await _send({"type": "error", "message": "Invalid Telegram auth"})
                     continue
                 user_id = int(tg_user["id"])
-
-                # ищем активную сессию пользователя; если есть — подключаемся
-                room = _manager.find_active_for_user(repository, user_id)
-                if room is None:
-                    await _send({"type": "no_active"})
-                    continue
-
-                current_room = room
-                room.connections[user_id] = ws
-                await _send({"type": "state", "state": room.to_state(user_id)})
+                await _attach_for(user_id)
 
             elif t == "point":
                 if current_room is None or user_id is None:
