@@ -38,6 +38,7 @@ from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
 from .reward import Reward, UserReward
 from .rule import Rule
+from .tennis import TennisMatch, TennisSession
 from .todo_item import TodoItem
 from .user import User
 from .user_fact import UserFact
@@ -79,8 +80,9 @@ class Database:
     birthdays: list[Birthday] = field(default_factory=list)
     user_facts: list[UserFact] = field(default_factory=list)
     fuck_assets: list[FuckAsset] = field(default_factory=list)
+    tennis_sessions: list[TennisSession] = field(default_factory=list)
 
-    version: int = 22
+    version: int = 23
 
 
 PARSE_CONFIG = Config(

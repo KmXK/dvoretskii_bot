@@ -470,9 +470,14 @@ class Repository:
                     b.setdefault("description", "")
             data["version"] = 22
 
+        if data.get("version") == 22:
+            data.setdefault("tennis_sessions", [])
+            data["version"] = 23
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
+        data.setdefault("tennis_sessions", [])
         data.setdefault("bill_persons", [])
         data.setdefault("bills_v2", [])
         data.setdefault("bill_payments_v2", [])
