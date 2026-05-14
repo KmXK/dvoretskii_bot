@@ -227,3 +227,104 @@ def test_player_stats_empty_input():
     assert stats.win_rate == 0.0
     assert stats.median_matches_per_session is None
     assert stats.longest_win_streak == 0
+
+
+# ── bulk import parser ────────────────────────────────────────────────────────
+
+from steward.features.tennis import _parse_bulk_history, _parse_score_pair
+
+
+def test_parse_score_pair_various_separators():
+    assert _parse_score_pair("11:7") == (11, 7)
+    assert _parse_score_pair("11-7") == (11, 7)
+    assert _parse_score_pair("11 7") == (11, 7)
+    assert _parse_score_pair("  11   :  7 ") == (11, 7)
+
+
+def test_parse_score_pair_rejects_bad_input():
+    with pytest.raises(ValueError):
+        _parse_score_pair("11")
+    with pytest.raises(ValueError):
+        _parse_score_pair("11:7:5")
+
+
+def test_parse_bulk_mixed_aggregate_and_detailed():
+    text = """
+2024-05-10 @ivan 5:3
+2024-05-12 @ivan 7:2
+
+2024-05-15 @ivan
+11:7
+11:9
+9:11
+12:10
+
+2024-05-20 @ivan 4:6
+2024-05-22 @ivan
+11:5
+9:11
+11:8
+2024-05-25 @ivan 3:4
+"""
+    entries = _parse_bulk_history(text)
+    assert len(entries) == 6
+
+    assert entries[0].mode == "aggregate"
+    assert (entries[0].wins_a, entries[0].wins_b) == (5, 3)
+    assert entries[0].date == datetime(2024, 5, 10)
+    assert entries[0].opponent_raw == "@ivan"
+
+    assert entries[2].mode == "detailed"
+    assert entries[2].score_pairs == [(11, 7), (11, 9), (9, 11), (12, 10)]
+
+    assert entries[4].mode == "detailed"
+    assert entries[4].score_pairs == [(11, 5), (9, 11), (11, 8)]
+
+    assert entries[5].mode == "aggregate"
+    assert (entries[5].wins_a, entries[5].wins_b) == (3, 4)
+
+
+def test_parse_bulk_rejects_party_without_date():
+    with pytest.raises(ValueError, match="без даты"):
+        _parse_bulk_history("11:7")
+
+
+def test_parse_bulk_rejects_party_after_aggregate():
+    # агрегатная строка финализируется сразу — следующая «11:7» уже «без даты»
+    with pytest.raises(ValueError, match="без даты"):
+        _parse_bulk_history("2024-05-10 @ivan 5:3\n11:7")
+
+
+def test_parse_bulk_rejects_detailed_without_matches():
+    with pytest.raises(ValueError, match="без партий"):
+        _parse_bulk_history("2024-05-10 @ivan\n2024-05-12 @ivan 5:3")
+
+
+def test_parse_bulk_rejects_invalid_party_score():
+    with pytest.raises(ValueError, match="не похоже на партию"):
+        _parse_bulk_history("2024-05-10 @ivan\n11:10")  # deuce не разошёлся
+
+
+def test_parse_bulk_rejects_bad_date():
+    with pytest.raises(ValueError, match="не понимаю дату"):
+        _parse_bulk_history("2024-13-10 @ivan 5:3")
+
+
+def test_parse_bulk_empty_input():
+    with pytest.raises(ValueError, match="Пустой"):
+        _parse_bulk_history("")
+    with pytest.raises(ValueError, match="Пустой"):
+        _parse_bulk_history("   \n  \n")
+
+
+def test_parse_bulk_supports_dash_and_x_separators():
+    text = "2024-05-10 @ivan 5-3\n2024-05-11 @ivan 7x2"
+    entries = _parse_bulk_history(text)
+    assert (entries[0].wins_a, entries[0].wins_b) == (5, 3)
+    assert (entries[1].wins_a, entries[1].wins_b) == (7, 2)
+
+
+def test_parse_bulk_supports_id_as_opponent():
+    text = "2024-05-10 123456 5:3"
+    entries = _parse_bulk_history(text)
+    assert entries[0].opponent_raw == "123456"
