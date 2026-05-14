@@ -12,6 +12,8 @@ from steward.tennis.engine import (
     is_valid_party_score,
     match_durations,
     player_stats,
+    server_for_next_point,
+    server_progress,
     session_wins,
 )
 
@@ -328,3 +330,195 @@ def test_parse_bulk_supports_id_as_opponent():
     text = "2024-05-10 123456 5:3"
     entries = _parse_bulk_history(text)
     assert entries[0].opponent_raw == "123456"
+
+
+# ── server rotation ───────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "score_a,score_b,expected",
+    [
+        # Парная пре-deuce ротация (first_server=a)
+        (0, 0, "a"),    # пара 0 → a
+        (1, 0, "a"),    # 2-я подача в паре 0 → a
+        (2, 0, "b"),    # пара 1 → b
+        (1, 1, "b"),    # пара 1 → b
+        (2, 1, "b"),    # 2-я подача в паре 1 → b
+        (2, 2, "a"),    # пара 2 → a
+        (5, 4, "a"),    # 9 поинтов сыграно, пара 4 → a (10-й поинт тоже за a)
+        # На границе 10:10 → deuce
+        (10, 10, "a"),  # 20 поинтов, 10 пар, чётное → a
+        (11, 10, "b"),  # deuce_points=1, нечётное → other(a)=b
+        (11, 11, "a"),  # deuce_points=2 → a
+        (12, 11, "b"),  # deuce_points=3 → b
+        (15, 13, "a"),  # deuce_points=8 → чётное → a
+    ],
+)
+def test_server_for_next_point_first_a(score_a: int, score_b: int, expected: str):
+    assert server_for_next_point("a", score_a, score_b) == expected
+
+
+def test_server_for_next_point_first_b_mirrors():
+    # Если первая подача у B — всё ровно зеркально
+    assert server_for_next_point("b", 0, 0) == "b"
+    assert server_for_next_point("b", 2, 0) == "a"
+    assert server_for_next_point("b", 10, 10) == "b"
+    assert server_for_next_point("b", 11, 10) == "a"
+
+
+def test_server_progress_within_pair():
+    # 0:0 → first server, подача 1 из 2
+    assert server_progress("a", 0, 0) == ("a", 1, 2)
+    # 1:0 → тот же server, подача 2 из 2
+    assert server_progress("a", 1, 0) == ("a", 2, 2)
+    # 2:0 → переход, подача 1 из 2 у другого
+    assert server_progress("a", 2, 0) == ("b", 1, 2)
+
+
+def test_server_progress_in_deuce_is_one_of_one():
+    server, n, total = server_progress("a", 11, 10)
+    assert n == 1 and total == 1
+    assert server == "b"
+
+
+# ── TennisRoom integration (record_point / undo_point) ────────────────────────
+
+import asyncio
+
+from steward.tennis.room_manager import TennisRoom
+
+
+class _FakeRepository:
+    """Mock repo: save() — no-op; никаких I/O."""
+    async def save(self):
+        pass
+
+
+class _FakeManager:
+    """Заглушка: не публикуем озвучки, ничего не шлём."""
+    async def _announce_match(self, *args, **kwargs):
+        pass
+
+    async def _announce_set_end(self, *args, **kwargs):
+        pass
+
+
+def _live_session(**overrides) -> TennisSession:
+    base = TennisSession(
+        id=1,
+        chat_id=-100,
+        player_a_id=1001,
+        player_b_id=2002,
+        started_at=datetime(2026, 5, 14, 18, 0),
+    )
+    for k, v in overrides.items():
+        setattr(base, k, v)
+    return base
+
+
+def _make_room(session: TennisSession) -> TennisRoom:
+    return TennisRoom(session, _FakeRepository(), _FakeManager())
+
+
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.run(coro)
+
+
+def test_record_point_increments_current_score():
+    s = _live_session()
+    room = _make_room(s)
+    ok, _err, info = _run(room.record_point("a"))
+    assert ok and info["match_completed"] is False
+    assert (s.current_score_a, s.current_score_b) == (1, 0)
+    assert s.points_log == ["a"]
+
+
+def test_record_point_completes_party_and_rotates_server():
+    s = _live_session(first_server="a")
+    room = _make_room(s)
+    # 11 поинтов подряд за A — партия закончена с 11:0
+    for _ in range(11):
+        _run(room.record_point("a"))
+    assert len(s.matches) == 1
+    assert s.matches[0].score_a == 11 and s.matches[0].score_b == 0
+    assert s.matches[0].winner == "a"
+    # live сбросилось
+    assert (s.current_score_a, s.current_score_b) == (0, 0)
+    assert s.points_log == []
+    # подача переключилась
+    assert s.first_server == "b"
+
+
+def test_record_point_respects_deuce_rule():
+    s = _live_session()
+    room = _make_room(s)
+    # доводим до 10:10
+    for _ in range(10):
+        _run(room.record_point("a"))
+    for _ in range(10):
+        _run(room.record_point("b"))
+    assert len(s.matches) == 0  # ещё не закончили
+    # 11:10 — не закончили (deuce)
+    _run(room.record_point("a"))
+    assert len(s.matches) == 0
+    # 11:11 — продолжаем
+    _run(room.record_point("b"))
+    assert len(s.matches) == 0
+    # 12:11 — продолжаем
+    _run(room.record_point("a"))
+    assert len(s.matches) == 0
+    # 13:11 — финиш
+    _run(room.record_point("a"))
+    assert len(s.matches) == 1
+    assert (s.matches[0].score_a, s.matches[0].score_b) == (13, 11)
+
+
+def test_undo_point_within_party_decrements():
+    s = _live_session()
+    room = _make_room(s)
+    _run(room.record_point("a"))
+    _run(room.record_point("b"))
+    _run(room.record_point("a"))
+    _run(room.undo_point())
+    assert (s.current_score_a, s.current_score_b) == (1, 1)
+    assert s.points_log == ["a", "b"]
+
+
+def test_undo_point_when_empty_rolls_back_last_party():
+    s = _live_session(first_server="a")
+    room = _make_room(s)
+    for _ in range(11):
+        _run(room.record_point("a"))
+    assert len(s.matches) == 1
+    assert s.first_server == "b"
+    _run(room.undo_point())
+    assert len(s.matches) == 0
+    # first_server откатился
+    assert s.first_server == "a"
+    # current/log непустой — можно пересохранить партию
+    assert (s.current_score_a + s.current_score_b) > 0
+
+
+def test_set_boundary_marked_after_n_partii():
+    s = _live_session(set_size=3, first_server="a")
+    room = _make_room(s)
+    # сыграть 3 партии 11:0 — должно зафиксироваться set
+    for partia in range(3):
+        for _ in range(11):
+            side = "a" if partia % 2 == 0 else "b"
+            _run(room.record_point(side))
+    assert len(s.matches) == 3
+    assert s.sets_announced == 1
+    # ещё 3 партии — второй сет
+    for partia in range(3):
+        for _ in range(11):
+            side = "a" if partia % 2 == 0 else "b"
+            _run(room.record_point(side))
+    assert s.sets_announced == 2
+
+
+def test_set_size_zero_never_announces_set():
+    s = _live_session(set_size=0)
+    room = _make_room(s)
+    for _ in range(11):
+        _run(room.record_point("a"))
+    assert s.sets_announced == 0

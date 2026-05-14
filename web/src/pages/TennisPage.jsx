@@ -4,7 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import { useAuth } from '../context/useAuth'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
-const SHORT_GAP_MS = 800
+const SHORT_GAP_MS = 250
 const MUTE_KEY = 'tennis:muted'
 
 function fmtClock(seconds) {
@@ -27,6 +27,11 @@ function buildMatchAnnouncement(match, state) {
   return `Партия! Победил ${winnerName}. Счёт ${winnerScore} на ${loserScore}.`
 }
 
+function buildSetEndAnnouncement(state, setNum) {
+  const [a, b] = state.wins
+  return `Конец сета ${setNum}. ${state.player_a_name} ${a} партий, ${state.player_b_name} ${b}.`
+}
+
 function buildSessionEndAnnouncement(state) {
   const [a, b] = state.wins
   if (a === b) return `Сессия завершена. Ничья: ${a} на ${b}.`
@@ -43,88 +48,65 @@ function speak(text, { rate = 1.0 } = {}) {
     const u = new SpeechSynthesisUtterance(text)
     u.lang = 'ru-RU'
     u.rate = rate
-    // Prefer a Russian voice if the device exposes one
     const voices = synth.getVoices?.() || []
     const ruVoice = voices.find((v) => (v.lang || '').toLowerCase().startsWith('ru'))
     if (ruVoice) u.voice = ruVoice
     synth.speak(u)
-  } catch {
-    /* unsupported / blocked — silently no-op */
-  }
+  } catch { /* unsupported */ }
 }
 
-function ScorePicker({ side, onPick, onSkip, onClose, opponentName, winnerName }) {
-  const QUICK = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+function PlayerPanel({
+  name,
+  isYou,
+  currentScore,
+  partyWins,
+  isServing,
+  serverProgress,    // [n, total] либо null
+  color,
+  accentText,
+  canEdit,
+  onPlus,
+  onMinus,
+  isLeft,
+}) {
   return (
-    <motion.div
-      initial={{ y: 400, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: 400, opacity: 0 }}
-      transition={{ type: 'spring', damping: 24, stiffness: 300 }}
-      className="absolute bottom-0 left-0 right-0 bg-zinc-900 border-t border-zinc-700 rounded-t-2xl shadow-2xl overflow-y-auto"
-      style={{
-        paddingTop: '14px',
-        paddingLeft: '14px',
-        paddingRight: '14px',
-        paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)',
-        maxHeight: '85svh',
-      }}
+    <div
+      className={`flex-1 flex flex-col items-center justify-center bg-gradient-to-br ${color} relative select-none`}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="flex items-center justify-between mb-3">
-        <div className="min-w-0">
-          <p className="text-zinc-400 text-[11px] uppercase tracking-wider truncate">
-            Победил {winnerName}
-          </p>
-          <p className="text-white font-semibold text-base truncate">
-            Очки у {opponentName}?
-          </p>
-        </div>
-        <button
-          onClick={onClose}
-          className="text-zinc-500 hover:text-zinc-300 text-3xl leading-none px-2 shrink-0"
-          aria-label="Закрыть"
-        >
-          ×
-        </button>
-      </div>
-      <div className="grid grid-cols-5 gap-2 mb-2">
-        {QUICK.map((n) => (
-          <motion.button
-            key={n}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => onPick(n)}
-            className="bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white font-bold text-xl py-3 rounded-xl"
-          >
-            {n}
-          </motion.button>
-        ))}
-      </div>
-      <button
-        onClick={onSkip}
-        className="w-full bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 py-3 rounded-xl font-medium text-sm"
+      <div
+        className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} flex items-center gap-1.5 max-w-[60%] truncate`}
       >
-        Пропустить (без счёта)
-      </button>
-    </motion.div>
-  )
-}
-
-function PlayerPanel({ label, wins, color, accentText, canEdit, onPlus, onMinus, isLeft }) {
-  return (
-    <div className={`flex-1 flex flex-col items-center justify-center bg-gradient-to-br ${color} relative ${isLeft ? '' : ''}`}>
-      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} text-xs uppercase tracking-wider ${accentText} opacity-70 max-w-[60%] truncate`}>
-        {label}
+        {isServing && (
+          <motion.span
+            animate={{ scale: [1, 1.18, 1] }}
+            transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+            className="text-base"
+            title={serverProgress ? `Подача ${serverProgress[0]}/${serverProgress[1]}` : 'Подача'}
+          >
+            🏓
+          </motion.span>
+        )}
+        <span className={`text-[11px] uppercase tracking-wider ${accentText} opacity-80 truncate`}>
+          {name}{isYou ? ' (ты)' : ''}
+        </span>
       </div>
+
+      <div className={`absolute ${isLeft ? 'top-3 right-3' : 'top-3 left-3'} text-zinc-300/70 text-xs font-mono`}>
+        партий: {partyWins}
+      </div>
+
       <motion.div
-        key={wins}
-        initial={{ scale: 0.7, opacity: 0 }}
+        key={currentScore}
+        initial={{ scale: 0.78, opacity: 0.4 }}
         animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: 'spring', damping: 14, stiffness: 220 }}
+        transition={{ type: 'spring', damping: 14, stiffness: 240 }}
         className="text-white font-black tabular-nums leading-none"
         style={{ fontSize: 'clamp(80px, 22vw, 200px)' }}
       >
-        {wins}
+        {currentScore}
       </motion.div>
+
       <div className="flex gap-3 mt-6">
         <motion.button
           whileTap={canEdit ? { scale: 0.85 } : {}}
@@ -133,7 +115,7 @@ function PlayerPanel({ label, wins, color, accentText, canEdit, onPlus, onMinus,
           className={`w-20 h-20 rounded-full text-4xl font-bold text-white shadow-lg ${
             canEdit ? 'bg-white/20 hover:bg-white/30 active:bg-white/40' : 'bg-white/5 opacity-40'
           }`}
-          aria-label="Добавить победу"
+          aria-label="Очко"
         >
           +
         </motion.button>
@@ -155,11 +137,10 @@ function PlayerPanel({ label, wins, color, accentText, canEdit, onPlus, onMinus,
 
 export default function TennisPage() {
   const { userId, initData } = useAuth()
-  const [state, setState] = useState(null)        // server-pushed session state
+  const [state, setState] = useState(null)
   const [status, setStatus] = useState('connecting')  // connecting | connected | reconnecting | no_active | closed
   const [closeReason, setCloseReason] = useState('')
   const [errorBanner, setErrorBanner] = useState(null)
-  const [picker, setPicker] = useState(null)      // {side: 'a'|'b'}
   const [now, setNow] = useState(Date.now())
   const [muted, setMuted] = useState(() => {
     try { return window.localStorage?.getItem(MUTE_KEY) === '1' } catch { return false }
@@ -172,6 +153,7 @@ export default function TennisPage() {
   const closedRef = useRef(false)
   const initializedRef = useRef(false)
   const prevMatchesCount = useRef(0)
+  const prevSetsAnnounced = useRef(0)
   const mutedRef = useRef(muted)
 
   useEffect(() => { mutedRef.current = muted }, [muted])
@@ -184,13 +166,11 @@ export default function TennisPage() {
     return false
   }, [])
 
-  // Telegram: expand the WebApp to full height — иначе пикер режется внизу
   useEffect(() => {
     try { WebApp?.expand?.() } catch { /* noop */ }
     try { WebApp?.disableVerticalSwipes?.() } catch { /* noop */ }
   }, [])
 
-  // Pre-load voices (some browsers populate the list async)
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return
     const synth = window.speechSynthesis
@@ -198,6 +178,31 @@ export default function TennisPage() {
     const onVoices = () => synth.getVoices()
     synth.addEventListener?.('voiceschanged', onVoices)
     return () => synth.removeEventListener?.('voiceschanged', onVoices)
+  }, [])
+
+  const handleIncomingState = useCallback((incoming, options = {}) => {
+    const newMatches = incoming.matches?.length ?? 0
+    const newSetsAnnounced = computeSetsCompleted(incoming)
+    if (initializedRef.current && !mutedRef.current) {
+      // Только новые партии после первой синхронизации
+      if (newMatches > prevMatchesCount.current) {
+        const last = incoming.matches[newMatches - 1]
+        speak(buildMatchAnnouncement(last, incoming))
+      }
+      // Конец сета — спустя короткую паузу после партии
+      if (incoming.set_size > 0 && newSetsAnnounced > prevSetsAnnounced.current) {
+        const setNum = newSetsAnnounced
+        window.setTimeout(() => speak(buildSetEndAnnouncement(incoming, setNum)), 1500)
+      }
+      if (options.sessionEnd) {
+        const text = buildSessionEndAnnouncement(incoming)
+        window.setTimeout(() => speak(text), newMatches > prevMatchesCount.current ? 2500 : 0)
+      }
+    }
+    initializedRef.current = true
+    prevMatchesCount.current = newMatches
+    prevSetsAnnounced.current = newSetsAnnounced
+    setState(incoming)
   }, [])
 
   const connect = useCallback(() => {
@@ -216,33 +221,19 @@ export default function TennisPage() {
       let data
       try { data = JSON.parse(e.data) } catch { return }
       switch (data.type) {
-        case 'state': {
-          const incoming = data.state
-          const newCount = incoming.matches?.length ?? 0
-          // На первый state не озвучиваем (могут быть старые партии после реконнекта)
-          if (initializedRef.current && !mutedRef.current && newCount > prevMatchesCount.current) {
-            const last = incoming.matches[newCount - 1]
-            speak(buildMatchAnnouncement(last, incoming))
-          }
-          initializedRef.current = true
-          prevMatchesCount.current = newCount
-          setState(incoming)
+        case 'state':
+          handleIncomingState(data.state)
           setStatus('connected')
           break
-        }
-        case 'closed': {
-          const incoming = data.state
-          if (incoming) {
-            prevMatchesCount.current = incoming.matches?.length ?? 0
-            setState(incoming)
-            if (!mutedRef.current && data.reason !== 'timeout' && !incoming.is_aggregate_only) {
-              speak(buildSessionEndAnnouncement(incoming))
-            }
+        case 'closed':
+          if (data.state) {
+            handleIncomingState(data.state, {
+              sessionEnd: data.reason !== 'timeout' && !data.state.is_aggregate_only,
+            })
           }
           setCloseReason(data.reason || '')
           setStatus('closed')
           break
-        }
         case 'no_active':
           setStatus('no_active')
           break
@@ -265,7 +256,7 @@ export default function TennisPage() {
     }
 
     ws.onerror = () => { try { ws.close() } catch { /* noop */ } }
-  }, [initData])
+  }, [initData, handleIncomingState])
 
   useEffect(() => {
     closedRef.current = false
@@ -277,7 +268,6 @@ export default function TennisPage() {
     }
   }, [connect])
 
-  // Force reconnect when tab regains focus (phone unlock case)
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
@@ -292,7 +282,6 @@ export default function TennisPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [connect])
 
-  // Local clock tick (1 Hz)
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
@@ -307,45 +296,23 @@ export default function TennisPage() {
   }, [state, now])
 
   const canEdit = Boolean(state?.permissions?.can_edit) && status === 'connected'
-  const wins = state?.wins ?? [0, 0]
   const isClosed = status === 'closed' || Boolean(state?.ended_at)
 
   const handlePlus = (side) => {
     if (!canEdit || isClosed) return
     const t = Date.now()
-    if (t - lastActivityTap.current < SHORT_GAP_MS) return // дабл-тап защита
+    if (t - lastActivityTap.current < SHORT_GAP_MS) return
     lastActivityTap.current = t
     try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('medium') } catch { /* noop */ }
-    setPicker({ side })
+    send({ type: 'point', side })
   }
 
   const handleMinus = (side) => {
+    // side не используется на сервере — просто откат последнего поинта / партии
+    void side
     if (!canEdit || isClosed) return
-    const last = state?.matches?.[state.matches.length - 1]
-    if (!last || last.winner !== side) {
-      setErrorBanner('Последняя партия была не за этого игрока')
-      window.setTimeout(() => setErrorBanner(null), 2500)
-      return
-    }
     try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
     send({ type: 'undo' })
-  }
-
-  const submitScore = (loserScore, withScore = true) => {
-    if (!picker) return
-    const { side } = picker
-    if (withScore) {
-      const winnerScore = 11
-      send({
-        type: 'win',
-        side,
-        score_a: side === 'a' ? winnerScore : loserScore,
-        score_b: side === 'b' ? winnerScore : loserScore,
-      })
-    } else {
-      send({ type: 'win', side, score_a: null, score_b: null })
-    }
-    setPicker(null)
   }
 
   const handleClose = () => {
@@ -393,15 +360,24 @@ export default function TennisPage() {
   const nameB = state.player_b_name || 'Игрок B'
   const youSideA = userId && state.player_a_id === userId
   const youSideB = userId && state.player_b_id === userId
-  const labelA = youSideA ? `${nameA} (ты)` : nameA
-  const labelB = youSideB ? `${nameB} (ты)` : nameB
+  const [winsA, winsB] = state.wins ?? [0, 0]
+  const [curA, curB] = state.current_score ?? [0, 0]
+  const server = state.server || 'a'
+  const setSize = state.set_size ?? 0
+  const setsCompleted = computeSetsCompleted(state)
+  const partyIndex = state.matches?.length ?? 0
+  const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
 
   return (
     <div className="fixed inset-0 bg-black overflow-hidden">
       <div className="absolute inset-0 flex flex-col landscape:flex-row md:flex-row">
         <PlayerPanel
-          label={labelA}
-          wins={wins[0]}
+          name={nameA}
+          isYou={youSideA}
+          currentScore={curA}
+          partyWins={winsA}
+          isServing={server === 'a'}
+          serverProgress={state.server_progress}
           color="from-rose-700/40 to-rose-950"
           accentText="text-rose-200"
           canEdit={canEdit}
@@ -410,8 +386,12 @@ export default function TennisPage() {
           isLeft
         />
         <PlayerPanel
-          label={labelB}
-          wins={wins[1]}
+          name={nameB}
+          isYou={youSideB}
+          currentScore={curB}
+          partyWins={winsB}
+          isServing={server === 'b'}
+          serverProgress={state.server_progress}
           color="from-sky-700/40 to-sky-950"
           accentText="text-sky-200"
           canEdit={canEdit}
@@ -423,6 +403,10 @@ export default function TennisPage() {
       {/* Top bar */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-b-2xl px-4 py-1.5 text-white text-sm font-mono z-10">
         <span>⏱ {fmtClock(elapsedSec)}</span>
+        <span className="text-zinc-400 text-xs">· партия {currentPartyNumber}</span>
+        {setSize > 0 && (
+          <span className="text-zinc-400 text-xs">· сет {setsCompleted + 1} ({(partyIndex % setSize)}/{setSize})</span>
+        )}
         <button
           onClick={toggleMute}
           className="ml-1 text-base leading-none px-1.5 py-0.5 rounded hover:bg-white/10"
@@ -467,20 +451,12 @@ export default function TennisPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Score picker modal */}
-      <AnimatePresence>
-        {picker && (
-          <ScorePicker
-            side={picker.side}
-            winnerName={picker.side === 'a' ? nameA : nameB}
-            opponentName={picker.side === 'a' ? nameB : nameA}
-            onPick={(n) => submitScore(n, true)}
-            onSkip={() => submitScore(null, false)}
-            onClose={() => setPicker(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   )
+}
+
+function computeSetsCompleted(state) {
+  const size = state?.set_size ?? 0
+  if (!size) return 0
+  return Math.floor((state.matches?.length ?? 0) / size)
 }
