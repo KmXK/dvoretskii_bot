@@ -42,6 +42,16 @@ TTL_CHECK_INTERVAL = 60              # пробуждаемся раз в мин
 SIDES = (SIDE_A, SIDE_B)
 
 
+def _iso_utc(dt: datetime | None) -> str | None:
+    """Серверные timestamps — naive UTC (Docker UTC). Добавляем Z, чтобы браузер
+    не парсил ISO-строку как локальное время (что давало бы офсет в часах)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.isoformat() + "Z"
+    return dt.isoformat()
+
+
 def _validate_telegram_init_data(init_data_raw: str) -> dict | None:
     bot_token = environ.get("TELEGRAM_BOT_TOKEN", "")
     if not init_data_raw or not bot_token:
@@ -103,9 +113,9 @@ class TennisRoom:
             "player_b_id": self.session.player_b_id,
             "player_a_name": self.manager._spoken_name(self.session.player_a_id, "игрок А"),
             "player_b_name": self.manager._spoken_name(self.session.player_b_id, "игрок Б"),
-            "started_at": self.session.started_at.isoformat(),
-            "ended_at": self.session.ended_at.isoformat() if self.session.ended_at else None,
-            "last_activity_at": self.session.last_activity_at.isoformat(),
+            "started_at": _iso_utc(self.session.started_at),
+            "ended_at": _iso_utc(self.session.ended_at),
+            "last_activity_at": _iso_utc(self.session.last_activity_at),
             "is_aggregate_only": self.session.is_aggregate_only,
             "closed_reason": self.session.closed_reason,
             "note": self.session.note,
@@ -117,8 +127,8 @@ class TennisRoom:
             "set_size": self.session.set_size,
             "matches": [
                 {
-                    "started_at": m.started_at.isoformat(),
-                    "ended_at": m.ended_at.isoformat() if m.ended_at else None,
+                    "started_at": _iso_utc(m.started_at),
+                    "ended_at": _iso_utc(m.ended_at),
                     "winner": m.winner,
                     "score_a": m.score_a,
                     "score_b": m.score_b,

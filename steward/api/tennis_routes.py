@@ -23,7 +23,7 @@ from steward.tennis.engine import (
     session_wins,
 )
 from steward.tennis.import_parser import BulkEntry, parse_bulk_history
-from steward.tennis.room_manager import get_manager
+from steward.tennis.room_manager import _iso_utc, get_manager
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,8 @@ def _spoken_name(repository: Repository, user_id: int, fallback: str) -> str:
 
 def _serialize_match(m: TennisMatch) -> dict:
     return {
-        "started_at": m.started_at.isoformat(),
-        "ended_at": m.ended_at.isoformat() if m.ended_at else None,
+        "started_at": _iso_utc(m.started_at),
+        "ended_at": _iso_utc(m.ended_at),
         "winner": m.winner,
         "score_a": m.score_a,
         "score_b": m.score_b,
@@ -73,9 +73,9 @@ def _serialize_session(
         "player_b_id": s.player_b_id,
         "player_a_name": _spoken_name(repository, s.player_a_id, "игрок А"),
         "player_b_name": _spoken_name(repository, s.player_b_id, "игрок Б"),
-        "started_at": s.started_at.isoformat(),
-        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-        "last_activity_at": s.last_activity_at.isoformat(),
+        "started_at": _iso_utc(s.started_at),
+        "ended_at": _iso_utc(s.ended_at),
+        "last_activity_at": _iso_utc(s.last_activity_at),
         "is_aggregate_only": s.is_aggregate_only,
         "closed_reason": s.closed_reason,
         "note": s.note,
