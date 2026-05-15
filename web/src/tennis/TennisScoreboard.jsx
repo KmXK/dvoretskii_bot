@@ -40,7 +40,7 @@ function buildSessionEndAnnouncement(state) {
   return `Сессия завершена. Победил ${state.player_b_name} со счётом ${b} на ${a}.`
 }
 
-function speak(text) {
+function speakBrowser(text) {
   if (typeof window === 'undefined') return
   const synth = window.speechSynthesis
   if (!synth) return
@@ -53,6 +53,37 @@ function speak(text) {
     if (ruVoice) u.voice = ruVoice
     synth.speak(u)
   } catch { /* noop */ }
+}
+
+// Кэш OGG-блобов от Yandex SpeechKit — повторные фразы играем мгновенно
+const ttsCache = new Map()
+const ttsAudioRef = { current: null }
+
+async function speakServer(text) {
+  let blob = ttsCache.get(text)
+  if (!blob) {
+    blob = await tennisApi.tts(text)
+    if (!blob) return false
+    if (ttsCache.size > 64) {
+      ttsCache.delete(ttsCache.keys().next().value)
+    }
+    ttsCache.set(text, blob)
+  }
+  try { ttsAudioRef.current?.pause?.() } catch { /* noop */ }
+  const url = URL.createObjectURL(blob)
+  const audio = new Audio(url)
+  ttsAudioRef.current = audio
+  audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
+  await audio.play().catch(() => { /* autoplay blocked or other */ })
+  return true
+}
+
+async function speak(text) {
+  try {
+    const ok = await speakServer(text)
+    if (ok) return
+  } catch { /* fall through */ }
+  speakBrowser(text)
 }
 
 function computeSetsCompleted(state) {
@@ -430,16 +461,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
       {/* Top bar */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-b-2xl px-3 py-1.5 text-white text-sm font-mono z-10">
-        {onBackToLobby && (
-          <button
-            onClick={onBackToLobby}
-            className="text-zinc-300 hover:text-white text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
-            aria-label="В лобби"
-            title="В лобби"
-          >
-            ←
-          </button>
-        )}
         <button
           onClick={() => setHistoryOpen(true)}
           className="hover:bg-white/10 rounded px-1.5 py-0.5"
