@@ -24,6 +24,7 @@ from steward.tennis.engine import (
 )
 from steward.tennis.import_parser import BulkEntry, parse_bulk_history
 from steward.tennis.room_manager import _iso_utc, get_manager
+from steward.tennis.tts import synthesize as tts_synthesize
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +511,31 @@ async def serve_toggle(request: web.Request) -> web.Response:
     return web.json_response(_serialize_session(repository, session, detailed=True))
 
 
+async def tts(request: web.Request) -> web.Response:
+    """POST /api/tennis/tts {text} → audio/ogg (OGG/Opus от Yandex SpeechKit).
+
+    Возвращает 204 если TTS не сконфигурирован — фронт упадёт на browser-TTS.
+    """
+    require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return web.json_response({"error": "empty text"}, status=400)
+    if len(text) > 500:
+        text = text[:500]
+    audio = await tts_synthesize(text)
+    if not audio:
+        return web.Response(status=204)
+    return web.Response(
+        body=audio,
+        content_type="audio/ogg",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
 def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/tennis/sessions", list_sessions)
     app.router.add_post("/api/tennis/sessions", create_session)
@@ -523,3 +549,4 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/tennis/opponents", list_opponents)
     app.router.add_post("/api/tennis/import/parse", parse_import)
     app.router.add_post("/api/tennis/import", commit_import)
+    app.router.add_post("/api/tennis/tts", tts)

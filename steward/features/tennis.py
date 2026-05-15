@@ -91,6 +91,24 @@ def _format_user(users_collection, user_id: int) -> str:
     return name or f"id{user_id}"
 
 
+def _spoken_user_name(users_collection, user_id: int) -> str:
+    """Имя для произношения и отображения на табло.
+
+    Приоритет: stand_name → first_name → username → fallback.
+    @-handle не годится — TTS читает «собака» дословно.
+    """
+    user = users_collection.find_by(id=user_id)
+    if user is None:
+        return f"id{user_id}"
+    if getattr(user, "stand_name", None):
+        return user.stand_name
+    if getattr(user, "first_name", None):
+        return user.first_name
+    if getattr(user, "username", None):
+        return user.username
+    return f"id{user_id}"
+
+
 def _format_session_line(session: TennisSession, users) -> str:
     wins_a, wins_b = session_wins(session)
     date = session.started_at.strftime("%Y-%m-%d")
@@ -139,7 +157,7 @@ class TennisFeature(Feature):
         manager = get_manager()
         manager.configure_notifications(
             self.bot,
-            user_display=lambda uid: _format_user(self.users, uid),
+            user_display=lambda uid: _spoken_user_name(self.users, uid),
         )
         manager.start_ttl_watcher(self.repository)
 

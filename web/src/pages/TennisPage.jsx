@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { useAuth } from '../context/useAuth'
 import TennisScoreboard from '../tennis/TennisScoreboard'
@@ -15,24 +15,22 @@ export default function TennisPage() {
   const { userId } = useAuth()
   // view: 'lobby' | 'live'
   const [view, setView] = useState('lobby')
-  const [hasActive, setHasActive] = useState(null)  // null = ещё не проверили
   const [modal, setModal] = useState(null)  // 'new' | 'import' | 'stats' | {type:'session', id}
   const [refreshTick, setRefreshTick] = useState(0)
+  const autoRoutedRef = useRef(false)
 
-  // На первом маунте определяем — есть ли активная сессия. Если есть — сразу в табло.
+  // Auto-route один раз на маунт: если есть live-сессия — открываем табло.
+  // Дальше всё навигируется явными действиями пользователя.
   useEffect(() => {
+    if (autoRoutedRef.current) return
+    autoRoutedRef.current = true
     tennisApi.listSessions(20)
       .then((d) => {
         const live = (d.sessions || []).find((s) => !s.ended_at)
-        if (live) {
-          setHasActive(true)
-          setView('live')
-        } else {
-          setHasActive(false)
-        }
+        if (live) setView('live')
       })
-      .catch(() => setHasActive(false))
-  }, [refreshTick])
+      .catch(() => {})
+  }, [])
 
   const goToLobby = useCallback(() => {
     setView('lobby')
@@ -41,7 +39,6 @@ export default function TennisPage() {
 
   const onSessionCreated = useCallback(() => {
     setModal(null)
-    setHasActive(true)
     setView('live')
   }, [])
 

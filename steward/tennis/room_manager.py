@@ -368,14 +368,36 @@ class TennisRoomManager:
             return str(user_id)
 
     def _spoken_name(self, user_id: int, fallback: str) -> str:
-        raw = self._display(user_id)
+        """Имя, пригодное для произношения. Логику диктует feature через
+        configure_notifications(user_display=...). По умолчанию — фоллбек."""
+        if self._user_display is None:
+            return fallback
+        try:
+            raw = (self._user_display(user_id) or "").strip()
+        except Exception:
+            return fallback
         if not raw or raw.startswith("id"):
             return fallback
         return raw.lstrip("@")
 
+    def _anyone_in_webapp(self, session: TennisSession) -> bool:
+        """Подключён ли кто-то из игроков прямо сейчас к WS-комнате.
+
+        Если да — озвучку в чат не дублируем: они и так услышат её в вебаппе.
+        """
+        room = self.rooms.get(session.id)
+        if room is None or not room.connections:
+            return False
+        for uid in room.connections:
+            if uid in (session.player_a_id, session.player_b_id, session.initiator_id):
+                return True
+        return False
+
     async def _announce_match(self, session: TennisSession, match: TennisMatch) -> None:
         if self._bot is None:
             return
+        if self._anyone_in_webapp(session):
+            return  # игроки в вебаппе — пусть слушают там, не дублируем в чат
         try:
             winner_id = session.player_a_id if match.winner == SIDE_A else session.player_b_id
             fallback = "игрок А" if match.winner == SIDE_A else "игрок Б"
@@ -394,6 +416,8 @@ class TennisRoomManager:
 
     async def _announce_set_end(self, session: TennisSession) -> None:
         if self._bot is None or session.set_size <= 0:
+            return
+        if self._anyone_in_webapp(session):
             return
         try:
             wins_a, wins_b = session_wins(session)
