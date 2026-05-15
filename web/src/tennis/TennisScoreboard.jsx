@@ -180,14 +180,13 @@ function FinishPartySheet({ state, onSubmit, onClose }) {
   const [winnerSide, setWinnerSide] = useState('a')
   const [loserScore, setLoserScore] = useState(7)
 
+  const winnerScoreDisplay = loserScore < 10 ? 11 : loserScore + 2
+
   const handleConfirm = () => {
-    const winnerScore = loserScore < 10 ? 11 : loserScore + 2
-    const a = winnerSide === 'a' ? winnerScore : loserScore
-    const b = winnerSide === 'b' ? winnerScore : loserScore
+    const a = winnerSide === 'a' ? winnerScoreDisplay : loserScore
+    const b = winnerSide === 'b' ? winnerScoreDisplay : loserScore
     onSubmit(a, b)
   }
-
-  const winnerScoreDisplay = loserScore < 10 ? 11 : loserScore + 2
 
   return (
     <motion.div
@@ -234,7 +233,7 @@ function FinishPartySheet({ state, onSubmit, onClose }) {
           <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
             Счёт партии — {winnerScoreDisplay}:{loserScore}
           </div>
-          <div className="grid grid-cols-6 gap-1.5 mb-2">
+          <div className="grid grid-cols-5 gap-1.5 mb-3">
             {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
               <button
                 key={n}
@@ -246,27 +245,40 @@ function FinishPartySheet({ state, onSubmit, onClose }) {
                 {n}
               </button>
             ))}
-            {[10, 11, 12].map((n) => (
-              <button
-                key={n}
-                onClick={() => setLoserScore(n)}
-                className={`py-3 rounded-lg text-xl font-bold ${
-                  loserScore === n ? 'bg-zinc-600 text-white' : 'bg-zinc-800 text-zinc-300'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
           </div>
+
+          {/* Большой счёт проигравшего (deuce): incrementer */}
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              onClick={() => setLoserScore((n) => Math.max(0, n - 1))}
+              className="w-12 h-12 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold"
+              aria-label="-1"
+            >
+              −
+            </button>
+            <div className="flex-1 bg-zinc-800 rounded-lg py-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">проиграл</div>
+              <div className="text-3xl font-bold text-white tabular-nums">{loserScore}</div>
+            </div>
+            <button
+              onClick={() => setLoserScore((n) => Math.min(50, n + 1))}
+              className="w-12 h-12 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold"
+              aria-label="+1"
+            >
+              +
+            </button>
+          </div>
+
           <p className="text-zinc-500 text-[11px] mb-4">
-            Победитель получает {loserScore < 10 ? '11' : `${loserScore + 2}`} (deuce).
+            Победитель получает {winnerScoreDisplay}
+            {loserScore >= 10 && ' (deuce — победа с разницей в 2)'}
           </p>
 
           <button
             onClick={handleConfirm}
             className="w-full bg-gradient-to-br from-emerald-600 to-emerald-800 text-white py-3 rounded-xl font-semibold"
           >
-            Записать партию
+            Записать партию {winnerScoreDisplay}:{loserScore}
           </button>
         </div>
       </motion.div>

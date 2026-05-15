@@ -176,6 +176,41 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
 
 // ── ImportSheet ───────────────────────────────────────────────────────────────
 
+// Позиция каретки в пикселях внутри textarea. Стандартный приём: клонируем
+// стили в скрытый div, кладём в него текст до каретки + маркер-span, читаем
+// его offsetTop/offsetLeft.
+const _MIRROR_PROPS = [
+  'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderStyle',
+  'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize', 'fontSizeAdjust',
+  'lineHeight', 'fontFamily', 'textAlign', 'textTransform', 'textIndent',
+  'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize',
+]
+
+function getCaretCoordinates(el, position) {
+  const div = document.createElement('div')
+  const computed = window.getComputedStyle(el)
+  const s = div.style
+  s.whiteSpace = 'pre-wrap'
+  s.wordWrap = 'break-word'
+  s.position = 'absolute'
+  s.visibility = 'hidden'
+  s.top = '0'
+  s.left = '-9999px'
+  for (const p of _MIRROR_PROPS) s[p] = computed[p]
+  document.body.appendChild(div)
+  div.textContent = el.value.slice(0, position)
+  const marker = document.createElement('span')
+  marker.textContent = el.value.slice(position) || '.'
+  div.appendChild(marker)
+  const top = marker.offsetTop + parseInt(computed.borderTopWidth || '0', 10)
+  const left = marker.offsetLeft + parseInt(computed.borderLeftWidth || '0', 10)
+  const lineHeight = parseInt(computed.lineHeight || '0', 10) || parseInt(computed.fontSize, 10) * 1.2
+  document.body.removeChild(div)
+  return { top, left, lineHeight }
+}
+
 const IMPORT_EXAMPLE = `2024-05-10 @ivan 5:3
 2024-05-12 @ivan 7:2
 2024-05-15 @ivan
@@ -211,22 +246,38 @@ export function ImportSheet({ open, onClose, onImported }) {
 
   // Парсим состояние «пишет @-handle» — ищем последний @ перед кареткой
   const updateSuggest = (newText, caret) => {
-    // ищем @-токен который пересекает позицию каретки
     let i = caret - 1
     while (i >= 0 && /[\w_]/.test(newText[i])) i--
     if (i < 0 || newText[i] !== '@') {
       setSuggest(null)
       return
     }
-    const start = i  // позиция @
-    const end = caret  // позиция каретки (всё что после @ до неё — query)
-    // проверяем что перед @ либо начало строки, либо пробел/перенос
+    const start = i
+    const end = caret
     if (start > 0 && !/\s/.test(newText[start - 1])) {
       setSuggest(null)
       return
     }
     const query = newText.slice(start + 1, end).toLowerCase()
-    setSuggest({ start, end, query, highlighted: 0 })
+    const ta = textareaRef.current
+    let coords = null
+    if (ta) {
+      try {
+        const c = getCaretCoordinates(ta, end)
+        coords = {
+          top: c.top + c.lineHeight - ta.scrollTop,
+          left: c.left - ta.scrollLeft,
+          lineHeight: c.lineHeight,
+        }
+      } catch { /* ignore */ }
+    }
+    setSuggest((prev) => ({
+      start,
+      end,
+      query,
+      coords,
+      highlighted: prev && prev.start === start ? prev.highlighted : 0,
+    }))
   }
 
   const filteredOpponents = useMemo(() => {
@@ -349,6 +400,7 @@ export function ImportSheet({ open, onClose, onImported }) {
             onKeyDown={handleTextareaKeyDown}
             onSelect={handleTextareaSelect}
             onClick={handleTextareaSelect}
+            onScroll={(e) => { if (suggest) updateSuggest(text, e.target.selectionStart ?? text.length) }}
             onBlur={() => window.setTimeout(() => setSuggest(null), 150)}
             placeholder={IMPORT_EXAMPLE}
             rows={10}
@@ -356,9 +408,16 @@ export function ImportSheet({ open, onClose, onImported }) {
             style={{ minHeight: 220 }}
           />
           {suggest && filteredOpponents.length > 0 && (
-            <div className="absolute left-0 right-0 -bottom-1 translate-y-full z-10 bg-zinc-950 border border-zinc-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+            <div
+              className="absolute z-20 bg-zinc-950 border border-zinc-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto min-w-[220px]"
+              style={
+                suggest.coords
+                  ? { top: suggest.coords.top + 2, left: Math.max(4, suggest.coords.left - 8) }
+                  : { left: 0, bottom: -4, transform: 'translateY(100%)' }
+              }
+            >
               <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800 bg-zinc-900">
-                @{suggest.query || '…'} — известные тебе игроки
+                @{suggest.query || '…'}
               </div>
               {filteredOpponents.map((o, idx) => (
                 <button
