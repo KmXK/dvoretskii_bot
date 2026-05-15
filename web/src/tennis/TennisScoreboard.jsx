@@ -4,6 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
 import { createVoiceController, parseVoiceCommand } from './voice'
+import { useConfirmDialog } from './ConfirmDialog'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const SHORT_GAP_MS = 250
@@ -380,6 +381,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const [muted, setMuted] = useState(() => {
     try { return window.localStorage?.getItem(MUTE_KEY) === '1' } catch { return false }
   })
+  const { confirm, element: confirmEl } = useConfirmDialog()
 
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
@@ -604,9 +606,15 @@ export default function TennisScoreboard({ onBackToLobby }) {
     try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
     send({ type: 'undo' })
   }
-  const handleClose = () => {
+  const handleClose = async () => {
     if (!canEdit || isClosed) return
-    if (!window.confirm('Закрыть сессию?')) return
+    const ok = await confirm({
+      title: 'Закрыть сессию?',
+      description: 'Сессия закроется и попадёт в историю — больше очки в ней не добавить.',
+      confirmLabel: 'Закрыть',
+      destructive: true,
+    })
+    if (!ok) return
     send({ type: 'close' })
   }
   const handleServeToggle = async () => {
@@ -808,6 +816,8 @@ export default function TennisScoreboard({ onBackToLobby }) {
           />
         )}
       </AnimatePresence>
+
+      {confirmEl}
     </div>
   )
 }

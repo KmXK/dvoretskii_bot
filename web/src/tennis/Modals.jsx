@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { tennisApi } from './api'
+import { useConfirmDialog } from './ConfirmDialog'
 
 function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
   return (
@@ -190,14 +191,97 @@ export function ImportSheet({ open, onClose, onImported }) {
   const [parsing, setParsing] = useState(false)
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [opponents, setOpponents] = useState([])
+  const [suggest, setSuggest] = useState(null)   // {start, end, query, highlighted}
+  const textareaRef = useRef(null)
 
   useEffect(() => {
     if (!open) {
       setText('')
       setPreview(null)
       setError(null)
+      setSuggest(null)
+      return
     }
+    // тянем кандидатов для @-автокомплита
+    tennisApi.listOpponents()
+      .then((d) => setOpponents(d.opponents || []))
+      .catch(() => setOpponents([]))
   }, [open])
+
+  // Парсим состояние «пишет @-handle» — ищем последний @ перед кареткой
+  const updateSuggest = (newText, caret) => {
+    // ищем @-токен который пересекает позицию каретки
+    let i = caret - 1
+    while (i >= 0 && /[\w_]/.test(newText[i])) i--
+    if (i < 0 || newText[i] !== '@') {
+      setSuggest(null)
+      return
+    }
+    const start = i  // позиция @
+    const end = caret  // позиция каретки (всё что после @ до неё — query)
+    // проверяем что перед @ либо начало строки, либо пробел/перенос
+    if (start > 0 && !/\s/.test(newText[start - 1])) {
+      setSuggest(null)
+      return
+    }
+    const query = newText.slice(start + 1, end).toLowerCase()
+    setSuggest({ start, end, query, highlighted: 0 })
+  }
+
+  const filteredOpponents = useMemo(() => {
+    if (!suggest) return []
+    const q = suggest.query
+    return opponents
+      .filter((o) => o.username && o.username.toLowerCase().includes(q))
+      .slice(0, 6)
+  }, [opponents, suggest])
+
+  const applySuggestion = (opp) => {
+    if (!suggest || !opp?.username) return
+    const before = text.slice(0, suggest.start)
+    const after = text.slice(suggest.end)
+    const insert = `@${opp.username}`
+    const newText = before + insert + after
+    const newCaret = before.length + insert.length
+    setText(newText)
+    setSuggest(null)
+    // вернём фокус и каретку
+    window.setTimeout(() => {
+      const ta = textareaRef.current
+      if (ta) {
+        ta.focus()
+        ta.setSelectionRange(newCaret, newCaret)
+      }
+    }, 0)
+  }
+
+  const handleTextareaKeyDown = (e) => {
+    if (!suggest || filteredOpponents.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setSuggest((s) => ({ ...s, highlighted: (s.highlighted + 1) % filteredOpponents.length }))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setSuggest((s) => ({ ...s, highlighted: (s.highlighted - 1 + filteredOpponents.length) % filteredOpponents.length }))
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      applySuggestion(filteredOpponents[suggest.highlighted])
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setSuggest(null)
+    }
+  }
+
+  const handleTextareaChange = (e) => {
+    const v = e.target.value
+    setText(v)
+    updateSuggest(v, e.target.selectionStart ?? v.length)
+  }
+
+  const handleTextareaSelect = (e) => {
+    updateSuggest(text, e.target.selectionStart ?? text.length)
+  }
 
   // Live parsing (debounced)
   useEffect(() => {
@@ -257,14 +341,47 @@ export function ImportSheet({ open, onClose, onImported }) {
           Формат: «ГГГГ-ММ-ДД @opp» (потом партии 11:7), либо «ГГГГ-ММ-ДД @opp 5:3» для агрегата.
           Пустые строки игнорятся.
         </p>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={IMPORT_EXAMPLE}
-          rows={10}
-          className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 font-mono"
-          style={{ minHeight: 220 }}
-        />
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={handleTextareaChange}
+            onKeyDown={handleTextareaKeyDown}
+            onSelect={handleTextareaSelect}
+            onClick={handleTextareaSelect}
+            onBlur={() => window.setTimeout(() => setSuggest(null), 150)}
+            placeholder={IMPORT_EXAMPLE}
+            rows={10}
+            className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 font-mono"
+            style={{ minHeight: 220 }}
+          />
+          {suggest && filteredOpponents.length > 0 && (
+            <div className="absolute left-0 right-0 -bottom-1 translate-y-full z-10 bg-zinc-950 border border-zinc-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto">
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800 bg-zinc-900">
+                @{suggest.query || '…'} — известные тебе игроки
+              </div>
+              {filteredOpponents.map((o, idx) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applySuggestion(o)}
+                  className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${
+                    idx === suggest.highlighted ? 'bg-zinc-800' : 'hover:bg-zinc-900'
+                  }`}
+                >
+                  <span className="font-mono text-rose-300">@{o.username}</span>
+                  {o.name && o.name !== o.username && (
+                    <span className="text-zinc-400 text-xs truncate">{o.name}</span>
+                  )}
+                  {o.played_against > 0 && (
+                    <span className="ml-auto text-[10px] text-zinc-500">·{o.played_against}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="mt-3 mb-2 text-xs uppercase tracking-wider text-zinc-500 flex items-center justify-between">
           <span>Превью</span>
@@ -313,6 +430,7 @@ export function ImportSheet({ open, onClose, onImported }) {
 export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, onDeleted }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const { confirm, element: confirmEl } = useConfirmDialog()
 
   useEffect(() => {
     if (!open || !sessionId) return
@@ -323,7 +441,13 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
   }, [open, sessionId])
 
   const handleDeleteMatch = async (idx) => {
-    if (!window.confirm(`Удалить партию #${idx + 1}?`)) return
+    const ok = await confirm({
+      title: `Удалить партию #${idx + 1}?`,
+      description: 'Партия исчезнет из сессии и статистики.',
+      confirmLabel: 'Удалить',
+      destructive: true,
+    })
+    if (!ok) return
     try {
       const updated = await tennisApi.deleteMatch(sessionId, idx)
       setData(updated)
@@ -333,7 +457,13 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
   }
 
   const handleDeleteSession = async () => {
-    if (!window.confirm('Удалить сессию целиком (необратимо)?')) return
+    const ok = await confirm({
+      title: 'Удалить сессию?',
+      description: 'Удалим целиком вместе со всеми партиями. Это нельзя отменить.',
+      confirmLabel: 'Удалить',
+      destructive: true,
+    })
+    if (!ok) return
     try {
       await tennisApi.deleteSession(sessionId)
       onDeleted()
@@ -407,6 +537,7 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
             )}
           </>
         )}
+        {confirmEl}
       </SheetShell>
     </AnimatePresence>
   )
