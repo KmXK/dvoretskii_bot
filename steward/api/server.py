@@ -2266,6 +2266,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     from steward.api.fuck_routes import register_routes as register_fuck_routes
     register_fuck_routes(app)
 
+    from steward.api.tennis_routes import register_routes as register_tennis_routes
+    register_tennis_routes(app)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)

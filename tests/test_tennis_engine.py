@@ -233,7 +233,10 @@ def test_player_stats_empty_input():
 
 # ── bulk import parser ────────────────────────────────────────────────────────
 
-from steward.features.tennis import _parse_bulk_history, _parse_score_pair
+from steward.tennis.import_parser import (
+    parse_bulk_history as _parse_bulk_history,
+    parse_score_pair as _parse_score_pair,
+)
 
 
 def test_parse_score_pair_various_separators():
