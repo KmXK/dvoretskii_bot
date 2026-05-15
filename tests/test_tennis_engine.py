@@ -525,3 +525,31 @@ def test_set_size_zero_never_announces_set():
     for _ in range(11):
         _run(room.record_point("a"))
     assert s.sets_announced == 0
+
+
+def test_record_match_with_score_completes_and_rotates():
+    s = _live_session(first_server="a")
+    room = _make_room(s)
+    ok, _err, info = _run(room.record_match_with_score(11, 7))
+    assert ok and info["match_completed"]
+    assert len(s.matches) == 1
+    assert s.matches[0].winner == "a"
+    assert s.matches[0].score_a == 11 and s.matches[0].score_b == 7
+    assert s.first_server == "b"
+    assert s.current_score_a == 0 and s.current_score_b == 0
+
+
+def test_record_match_with_score_rejects_bad_score():
+    s = _live_session()
+    room = _make_room(s)
+    ok, _err, _ = _run(room.record_match_with_score(11, 10))  # deuce не разошёлся
+    assert not ok
+    assert len(s.matches) == 0
+
+
+def test_record_match_with_score_works_with_set_size():
+    s = _live_session(set_size=2)
+    room = _make_room(s)
+    _run(room.record_match_with_score(11, 7))   # партия 1
+    _run(room.record_match_with_score(7, 11))   # партия 2 — конец сета
+    assert s.sets_announced == 1
