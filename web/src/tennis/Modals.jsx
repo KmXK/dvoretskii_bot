@@ -1,0 +1,474 @@
+import { useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { tennisApi } from './api'
+
+function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex items-end justify-center"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+        className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl overflow-y-auto"
+        style={{
+          maxHeight,
+          paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-zinc-900 z-10 flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+          <h2 className="text-white font-semibold">{title}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">×</button>
+        </div>
+        <div className="px-4 py-3">{children}</div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── NewSessionSheet ───────────────────────────────────────────────────────────
+
+export function NewSessionSheet({ open, onClose, onCreated }) {
+  const [opponents, setOpponents] = useState([])
+  const [selectedId, setSelectedId] = useState(null)
+  const [customRaw, setCustomRaw] = useState('')
+  const [firstServer, setFirstServer] = useState('a')
+  const [setSize, setSetSize] = useState(0)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!open) return
+    setError(null)
+    tennisApi.listOpponents()
+      .then((d) => setOpponents(d.opponents || []))
+      .catch((e) => setError(e.message || 'Не вышло загрузить кандидатов'))
+  }, [open])
+
+  const submit = async () => {
+    setError(null)
+    const opponent = selectedId != null ? selectedId : customRaw.trim()
+    if (!opponent && opponent !== 0) {
+      setError('Выбери оппонента или впиши @username')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const created = await tennisApi.createSession({
+        opponent,
+        first_server: firstServer,
+        set_size: setSize,
+      })
+      onCreated(created)
+    } catch (e) {
+      let msg = e.message || 'Ошибка'
+      // распарсим JSON-ошибку aiohttp
+      try {
+        const parsed = JSON.parse(msg)
+        if (parsed?.error) msg = parsed.error
+      } catch { /* not json */ }
+      setError(msg)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return null
+  return (
+    <AnimatePresence>
+      <SheetShell title="Новая сессия" onClose={onClose}>
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Оппонент</div>
+        {opponents.length === 0 ? (
+          <p className="text-zinc-500 text-sm mb-3">Кандидатов из общих чатов не нашлось — впиши @username вручную.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {opponents.slice(0, 12).map((o) => (
+              <button
+                key={o.id}
+                onClick={() => { setSelectedId(o.id); setCustomRaw('') }}
+                className={`px-3 py-1.5 rounded-full text-sm border ${
+                  selectedId === o.id
+                    ? 'bg-rose-700 border-rose-500 text-white'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:border-zinc-500'
+                }`}
+              >
+                {o.name}
+                {o.played_against > 0 && (
+                  <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        <input
+          type="text"
+          value={customRaw}
+          onChange={(e) => { setCustomRaw(e.target.value); setSelectedId(null) }}
+          placeholder="@username или id"
+          className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 mb-4"
+        />
+
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Кто подаёт первым</div>
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <button
+            onClick={() => setFirstServer('a')}
+            className={`py-2.5 rounded-lg text-sm font-medium ${
+              firstServer === 'a' ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+            }`}
+          >
+            🏓 Я
+          </button>
+          <button
+            onClick={() => setFirstServer('b')}
+            className={`py-2.5 rounded-lg text-sm font-medium ${
+              firstServer === 'b' ? 'bg-sky-700 text-white' : 'bg-zinc-800 text-zinc-300'
+            }`}
+          >
+            🏓 Оппонент
+          </button>
+        </div>
+
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Размер сета (партий)</div>
+        <div className="flex items-center gap-2 mb-4">
+          {[0, 3, 5, 7].map((n) => (
+            <button
+              key={n}
+              onClick={() => setSetSize(n)}
+              className={`px-3 py-1.5 rounded-lg text-sm ${
+                setSize === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+              }`}
+            >
+              {n === 0 ? 'нет' : n}
+            </button>
+          ))}
+          <input
+            type="number"
+            min={0}
+            value={setSize}
+            onChange={(e) => setSetSize(Math.max(0, parseInt(e.target.value || '0', 10)))}
+            className="w-16 bg-zinc-800 text-white text-sm px-2 py-1.5 rounded-lg border border-zinc-700 ml-auto"
+          />
+        </div>
+
+        {error && (
+          <p className="text-red-400 text-sm mb-3">{error}</p>
+        )}
+
+        <button
+          onClick={submit}
+          disabled={submitting}
+          className="w-full bg-gradient-to-br from-rose-600 to-rose-800 text-white py-3 rounded-xl font-semibold text-lg disabled:opacity-50"
+        >
+          {submitting ? 'Создаём…' : 'Начать'}
+        </button>
+      </SheetShell>
+    </AnimatePresence>
+  )
+}
+
+// ── ImportSheet ───────────────────────────────────────────────────────────────
+
+const IMPORT_EXAMPLE = `2024-05-10 @ivan 5:3
+2024-05-12 @ivan 7:2
+2024-05-15 @ivan
+11:7
+11:9
+9:11
+12:10
+2024-05-20 @ivan 4:6`
+
+export function ImportSheet({ open, onClose, onImported }) {
+  const [text, setText] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [parsing, setParsing] = useState(false)
+  const [error, setError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setText('')
+      setPreview(null)
+      setError(null)
+    }
+  }, [open])
+
+  // Live parsing (debounced)
+  useEffect(() => {
+    if (!open) return
+    if (!text.trim()) { setPreview(null); setError(null); return }
+    const id = window.setTimeout(async () => {
+      setParsing(true)
+      try {
+        const d = await tennisApi.parseImport(text)
+        setPreview(d.entries || [])
+        setError(null)
+      } catch (e) {
+        let msg = e.message || 'Ошибка'
+        try {
+          const parsed = JSON.parse(msg)
+          if (parsed?.error) msg = parsed.error
+        } catch { /* */ }
+        setError(msg)
+        setPreview(null)
+      } finally {
+        setParsing(false)
+      }
+    }, 400)
+    return () => window.clearTimeout(id)
+  }, [text, open])
+
+  const unresolved = useMemo(
+    () => preview ? preview.filter((e) => !e.opponent_id) : [],
+    [preview]
+  )
+  const canSubmit = preview && preview.length > 0 && unresolved.length === 0
+
+  const submit = async () => {
+    if (!canSubmit) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const d = await tennisApi.commitImport(text)
+      onImported(d.created || [])
+    } catch (e) {
+      let msg = e.message || 'Ошибка'
+      try {
+        const parsed = JSON.parse(msg)
+        if (parsed?.error) msg = parsed.error
+      } catch { /* */ }
+      setError(msg)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return null
+  return (
+    <AnimatePresence>
+      <SheetShell title="Импорт истории" onClose={onClose}>
+        <p className="text-zinc-400 text-xs mb-2">
+          Формат: «ГГГГ-ММ-ДД @opp» (потом партии 11:7), либо «ГГГГ-ММ-ДД @opp 5:3» для агрегата.
+          Пустые строки игнорятся.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={IMPORT_EXAMPLE}
+          rows={10}
+          className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 font-mono"
+          style={{ minHeight: 220 }}
+        />
+
+        <div className="mt-3 mb-2 text-xs uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+          <span>Превью</span>
+          {parsing && <span className="text-amber-400 normal-case tracking-normal">парсим…</span>}
+        </div>
+        {error && (
+          <p className="text-red-400 text-sm mb-3">{error}</p>
+        )}
+        {preview && preview.length > 0 && (
+          <ul className="space-y-1 mb-3 text-sm">
+            {preview.map((e) => (
+              <li key={e.line_no} className={`px-2 py-1.5 rounded ${e.opponent_id ? 'bg-zinc-800/50' : 'bg-red-900/40'}`}>
+                <span className="font-mono text-zinc-400 text-xs mr-2">L{e.line_no}</span>
+                <span className="font-mono text-zinc-300 text-xs mr-2">{e.date.slice(0, 10)}</span>
+                <span className="text-zinc-200 mr-2">{e.opponent_id ? e.opponent_name : `❓ ${e.opponent_raw}`}</span>
+                {e.mode === 'aggregate' ? (
+                  <span className="text-zinc-400 text-xs">агрегат {e.wins_a}:{e.wins_b}</span>
+                ) : (
+                  <span className="text-zinc-400 text-xs">{e.score_pairs.length} парт.</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {unresolved.length > 0 && (
+          <p className="text-amber-400 text-sm mb-3">
+            ⚠ {unresolved.length} оппонент(ов) не распознано — поправь @username и пробуй снова.
+          </p>
+        )}
+
+        <button
+          onClick={submit}
+          disabled={!canSubmit || submitting}
+          className="w-full bg-gradient-to-br from-emerald-600 to-emerald-800 text-white py-3 rounded-xl font-semibold disabled:opacity-40"
+        >
+          {submitting ? 'Импортируем…' : `Импортировать ${preview?.length ? `(${preview.length})` : ''}`}
+        </button>
+      </SheetShell>
+    </AnimatePresence>
+  )
+}
+
+// ── SessionDetailsSheet ───────────────────────────────────────────────────────
+
+export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, onDeleted }) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!open || !sessionId) return
+    setError(null)
+    tennisApi.getSession(sessionId)
+      .then(setData)
+      .catch((e) => setError(e.message || 'Не загрузилось'))
+  }, [open, sessionId])
+
+  const handleDeleteMatch = async (idx) => {
+    if (!window.confirm(`Удалить партию #${idx + 1}?`)) return
+    try {
+      const updated = await tennisApi.deleteMatch(sessionId, idx)
+      setData(updated)
+    } catch (e) {
+      setError(e.message || 'Ошибка')
+    }
+  }
+
+  const handleDeleteSession = async () => {
+    if (!window.confirm('Удалить сессию целиком (необратимо)?')) return
+    try {
+      await tennisApi.deleteSession(sessionId)
+      onDeleted()
+    } catch (e) {
+      let msg = e.message || 'Ошибка'
+      try {
+        const parsed = JSON.parse(msg)
+        if (parsed?.error) msg = parsed.error
+      } catch { /* */ }
+      setError(msg)
+    }
+  }
+
+  if (!open) return null
+
+  return (
+    <AnimatePresence>
+      <SheetShell title={data ? `Сессия #${data.id}` : 'Сессия'} onClose={onClose}>
+        {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+        {!data && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
+        {data && (
+          <>
+            <div className="text-zinc-300 text-sm mb-1">
+              {new Date(data.started_at).toLocaleString('ru-RU')}
+            </div>
+            <div className="text-white text-lg font-semibold mb-2">
+              {data.player_a_name}{' '}
+              <span className="font-mono">{data.wins[0]}:{data.wins[1]}</span>{' '}
+              {data.player_b_name}
+            </div>
+            <div className="text-zinc-400 text-xs mb-4">
+              {data.is_aggregate_only ? 'агрегатный импорт' : `${data.matches?.length ?? 0} партий`}
+              {data.duration_seconds != null && ` · ${Math.round(data.duration_seconds / 60)} мин`}
+              {data.closed_reason && ` · ${data.closed_reason}`}
+            </div>
+
+            {data.matches?.length > 0 && (
+              <>
+                <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партии</div>
+                <ol className="space-y-1 mb-4">
+                  {data.matches.map((m, i) => {
+                    const score = (m.score_a != null && m.score_b != null)
+                      ? `${m.score_a}:${m.score_b}` : '—'
+                    const winnerName = m.winner === 'a' ? data.player_a_name : data.player_b_name
+                    return (
+                      <li key={i} className="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2 text-sm">
+                        <span className="text-zinc-500 w-6">#{i + 1}</span>
+                        <span className="font-mono text-zinc-100 w-16">{score}</span>
+                        <span className="text-zinc-400 text-xs flex-1 truncate ml-2">{winnerName}</span>
+                        <button
+                          onClick={() => handleDeleteMatch(i)}
+                          className="text-red-400 hover:text-red-300 ml-2 text-xs"
+                          title="Удалить партию"
+                        >
+                          🗑
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </>
+            )}
+
+            {data.initiator_id === currentUserId && (
+              <button
+                onClick={handleDeleteSession}
+                className="w-full bg-red-900/60 hover:bg-red-900 text-red-100 py-2.5 rounded-xl text-sm"
+              >
+                🗑 Удалить сессию целиком
+              </button>
+            )}
+          </>
+        )}
+      </SheetShell>
+    </AnimatePresence>
+  )
+}
+
+// ── StatsSheet ────────────────────────────────────────────────────────────────
+
+function fmtDuration(s) {
+  if (s == null) return '—'
+  if (s < 60) return `${Math.round(s)}с`
+  if (s < 3600) return `${Math.round(s / 60)} мин`
+  return `${(s / 3600).toFixed(1)} ч`
+}
+
+export function StatsSheet({ open, onClose }) {
+  const [stats, setStats] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!open) return
+    setError(null)
+    tennisApi.getStats()
+      .then(setStats)
+      .catch((e) => setError(e.message || 'Не загрузилось'))
+  }, [open])
+
+  if (!open) return null
+  return (
+    <AnimatePresence>
+      <SheetShell title="Моя статистика" onClose={onClose}>
+        {error && <p className="text-red-400 text-sm">{error}</p>}
+        {!stats && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
+        {stats && (
+          <div className="space-y-3">
+            {stats.matches === 0 ? (
+              <p className="text-zinc-400 text-sm">Партий пока нет.</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <StatCard label="Сессий" value={stats.sessions} />
+                  <StatCard label="Партий" value={stats.matches} />
+                  <StatCard label="Победы / Поражения" value={`${stats.wins} / ${stats.losses}`} />
+                  <StatCard label="Win-rate" value={`${Math.round(stats.win_rate * 100)}%`} accent />
+                  <StatCard label="Серия побед (max)" value={stats.longest_win_streak} />
+                  <StatCard label="Партий за сессию (медиана)" value={stats.median_matches_per_session ?? '—'} />
+                  <StatCard label="Разница очков (медиана)" value={stats.median_point_diff ?? '—'} />
+                  <StatCard label="Партия (медиана)" value={fmtDuration(stats.median_match_duration_s)} />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </SheetShell>
+    </AnimatePresence>
+  )
+}
+
+function StatCard({ label, value, accent = false }) {
+  return (
+    <div className={`bg-zinc-800/60 rounded-xl px-3 py-3 border ${accent ? 'border-rose-700' : 'border-zinc-800'}`}>
+      <div className="text-zinc-400 text-[10px] uppercase tracking-wider">{label}</div>
+      <div className="text-white text-xl font-semibold mt-1 tabular-nums">{value}</div>
+    </div>
+  )
+}
