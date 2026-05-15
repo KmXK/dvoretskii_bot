@@ -197,6 +197,47 @@ class TennisRoom:
 
         return True, "", info
 
+    async def record_match_with_score(
+        self, score_a: int, score_b: int
+    ) -> tuple[bool, str, dict]:
+        """Записать партию готовым счётом (быстрый финиш без point-by-point)."""
+        if self.session.ended_at is not None:
+            return False, "Сессия уже закрыта", {}
+        if not is_valid_party_score(score_a, score_b):
+            return False, "Невалидный счёт партии (11 + разница ≥2)", {}
+
+        now = datetime.now()
+        prev_end = self._latest_match_end() or self.session.started_at
+        winner = SIDE_A if score_a > score_b else SIDE_B
+        match = TennisMatch(
+            started_at=prev_end,
+            ended_at=now,
+            winner=winner,
+            score_a=score_a,
+            score_b=score_b,
+        )
+        self.session.matches.append(match)
+        self.session.current_score_a = 0
+        self.session.current_score_b = 0
+        self.session.points_log = []
+        self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
+
+        info = {"match_completed": True, "set_completed": False}
+        if self.session.set_size > 0:
+            completed = len(self.session.matches) // self.session.set_size
+            if completed > self.session.sets_announced:
+                self.session.sets_announced = completed
+                info["set_completed"] = True
+
+        self.session.last_activity_at = datetime.now()
+        await self.repository.save()
+
+        asyncio.create_task(self.manager._announce_match(self.session, match))
+        if info["set_completed"]:
+            asyncio.create_task(self.manager._announce_set_end(self.session))
+
+        return True, "", info
+
     async def undo_point(self) -> tuple[bool, str]:
         """Откат: если есть поинты в текущей партии — убираем последний.
         Если текущая 0:0 и есть записанные партии — откатываем последнюю партию.
@@ -476,6 +517,7 @@ async def tennis_ws_handler(request: web.Request):
     Протокол:
       client → {"type": "hello", "init_data": "..."}    — авторизация
       client → {"type": "point", "side": "a"|"b"}       — поинт; партия закроется автоматически
+      client → {"type": "finish_party", "score_a": int, "score_b": int} — быстрый финиш счётом
       client → {"type": "undo"}                          — откат поинта; если 0:0 — откат партии
       client → {"type": "close"}
       server → {"type": "state", "state": {...}}        — на любое изменение
@@ -551,6 +593,24 @@ async def tennis_ws_handler(request: web.Request):
                     continue
                 side = str(data.get("side", ""))
                 ok, err, _info = await current_room.record_point(side)
+                if not ok:
+                    await _send({"type": "error", "message": err})
+                    continue
+                await current_room.broadcast()
+
+            elif t == "finish_party":
+                if current_room is None or user_id is None:
+                    await _send({"type": "error", "message": "Not authed"})
+                    continue
+                if not current_room.can_edit(user_id):
+                    await _send({"type": "error", "message": "Только игроки могут писать счёт"})
+                    continue
+                raw_a = data.get("score_a")
+                raw_b = data.get("score_b")
+                if not isinstance(raw_a, (int, float)) or not isinstance(raw_b, (int, float)):
+                    await _send({"type": "error", "message": "Нужны оба числа"})
+                    continue
+                ok, err, _info = await current_room.record_match_with_score(int(raw_a), int(raw_b))
                 if not ok:
                     await _send({"type": "error", "message": err})
                     continue

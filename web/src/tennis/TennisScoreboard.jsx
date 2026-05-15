@@ -3,10 +3,12 @@ import { AnimatePresence, motion } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
 import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
+import { createVoiceController, parseVoiceCommand } from './voice'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const SHORT_GAP_MS = 250
 const MUTE_KEY = 'tennis:muted'
+const SERVE_REMINDER_MS = 2000
 
 function fmtClock(seconds) {
   const s = Math.max(0, Math.floor(seconds))
@@ -16,6 +18,13 @@ function fmtClock(seconds) {
   const mm = String(m).padStart(2, '0')
   const sec = String(ss).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${sec}` : `${mm}:${sec}`
+}
+
+function fmtDuration(seconds) {
+  if (seconds == null || !isFinite(seconds)) return '—'
+  if (seconds < 60) return `${Math.round(seconds)}с`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} мин`
+  return `${(seconds / 3600).toFixed(1)} ч`
 }
 
 function buildMatchAnnouncement(match, state) {
@@ -55,7 +64,6 @@ function speakBrowser(text) {
   } catch { /* noop */ }
 }
 
-// Кэш OGG-блобов от Yandex SpeechKit — повторные фразы играем мгновенно
 const ttsCache = new Map()
 const ttsAudioRef = { current: null }
 
@@ -64,9 +72,7 @@ async function speakServer(text) {
   if (!blob) {
     blob = await tennisApi.tts(text)
     if (!blob) return false
-    if (ttsCache.size > 64) {
-      ttsCache.delete(ttsCache.keys().next().value)
-    }
+    if (ttsCache.size > 64) ttsCache.delete(ttsCache.keys().next().value)
     ttsCache.set(text, blob)
   }
   try { ttsAudioRef.current?.pause?.() } catch { /* noop */ }
@@ -74,7 +80,7 @@ async function speakServer(text) {
   const audio = new Audio(url)
   ttsAudioRef.current = audio
   audio.addEventListener('ended', () => URL.revokeObjectURL(url), { once: true })
-  await audio.play().catch(() => { /* autoplay blocked or other */ })
+  await audio.play().catch(() => {})
   return true
 }
 
@@ -82,7 +88,7 @@ async function speak(text) {
   try {
     const ok = await speakServer(text)
     if (ok) return
-  } catch { /* fall through */ }
+  } catch { /* fallthrough */ }
   speakBrowser(text)
 }
 
@@ -108,10 +114,10 @@ function PlayerPanel({
 }) {
   return (
     <div
-      className={`flex-1 flex flex-col items-center justify-center bg-gradient-to-br ${color} relative select-none`}
+      className={`flex-1 flex flex-col bg-gradient-to-br ${color} relative select-none overflow-hidden`}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} flex items-center gap-1.5 max-w-[60%] truncate`}>
+      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} flex items-center gap-1.5 max-w-[55%] truncate z-10`}>
         {isServing && (
           <motion.span
             animate={{ scale: [1, 1.18, 1] }}
@@ -126,74 +132,229 @@ function PlayerPanel({
           {name}{isYou ? ' (ты)' : ''}
         </span>
       </div>
-      <div className={`absolute ${isLeft ? 'top-3 right-3' : 'top-3 left-3'} text-zinc-300/70 text-xs font-mono`}>
+      <div className={`absolute ${isLeft ? 'top-3 right-3' : 'top-3 left-3'} text-zinc-300/70 text-xs font-mono z-10`}>
         партий: {partyWins}
       </div>
-      <motion.div
-        key={currentScore}
-        initial={{ scale: 0.78, opacity: 0.4 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: 'spring', damping: 14, stiffness: 240 }}
-        className="text-white font-black tabular-nums leading-none"
-        style={{ fontSize: 'clamp(80px, 22vw, 200px)' }}
+
+      {/* Большая зона +1: занимает весь центр + низ */}
+      <motion.button
+        whileTap={canEdit ? { scale: 0.97 } : {}}
+        disabled={!canEdit}
+        onClick={onPlus}
+        className={`flex-1 flex flex-col items-center justify-center w-full ${canEdit ? 'active:bg-white/5' : 'opacity-90'}`}
+        aria-label="Добавить очко"
       >
-        {currentScore}
-      </motion.div>
-      <div className="flex gap-3 mt-6">
-        <motion.button
-          whileTap={canEdit ? { scale: 0.85 } : {}}
-          disabled={!canEdit}
-          onClick={onPlus}
-          className={`w-20 h-20 rounded-full text-4xl font-bold text-white shadow-lg ${
-            canEdit ? 'bg-white/20 hover:bg-white/30 active:bg-white/40' : 'bg-white/5 opacity-40'
-          }`}
-          aria-label="Очко"
+        <motion.div
+          key={currentScore}
+          initial={{ scale: 0.78, opacity: 0.4 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', damping: 14, stiffness: 240 }}
+          className="text-white font-black tabular-nums leading-none"
+          style={{ fontSize: 'clamp(120px, 30vw, 280px)' }}
         >
-          +
-        </motion.button>
-        <motion.button
-          whileTap={canEdit ? { scale: 0.85 } : {}}
-          disabled={!canEdit}
-          onClick={onMinus}
-          className={`w-20 h-20 rounded-full text-4xl font-bold text-white shadow-lg ${
-            canEdit ? 'bg-white/10 hover:bg-white/20 active:bg-white/30' : 'bg-white/5 opacity-40'
-          }`}
-          aria-label="Отменить"
-        >
-          −
-        </motion.button>
-      </div>
+          {currentScore}
+        </motion.div>
+        <span className="text-white/30 text-xs mt-3 uppercase tracking-wider">тап = +1</span>
+      </motion.button>
+
+      {/* Маленький undo внизу */}
+      <button
+        disabled={!canEdit}
+        onClick={onMinus}
+        className={`absolute ${isLeft ? 'bottom-3 right-3' : 'bottom-3 left-3'} w-12 h-12 rounded-full text-2xl font-bold text-white shadow-lg z-10 ${
+          canEdit ? 'bg-white/10 hover:bg-white/20 active:bg-white/30' : 'bg-white/5 opacity-30'
+        }`}
+        aria-label="Отменить последний поинт"
+        title="Отменить"
+      >
+        −
+      </button>
     </div>
   )
 }
 
-function HistoryPanel({ state, onClose }) {
+// ── Sheet быстрого финиша ─────────────────────────────────────────────────────
+
+function FinishPartySheet({ state, onSubmit, onClose }) {
+  const [winnerSide, setWinnerSide] = useState('a')
+  const [loserScore, setLoserScore] = useState(7)
+
+  const handleConfirm = () => {
+    const winnerScore = loserScore < 10 ? 11 : loserScore + 2
+    const a = winnerSide === 'a' ? winnerScore : loserScore
+    const b = winnerSide === 'b' ? winnerScore : loserScore
+    onSubmit(a, b)
+  }
+
+  const winnerScoreDisplay = loserScore < 10 ? 11 : loserScore + 2
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex items-end justify-center"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+        className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+          <h2 className="text-white font-semibold">Записать партию счётом</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">×</button>
+        </div>
+        <div className="px-4 py-3">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Победил</div>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <button
+              onClick={() => setWinnerSide('a')}
+              className={`py-3 rounded-lg font-medium ${
+                winnerSide === 'a' ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+              }`}
+            >
+              {state.player_a_name}
+            </button>
+            <button
+              onClick={() => setWinnerSide('b')}
+              className={`py-3 rounded-lg font-medium ${
+                winnerSide === 'b' ? 'bg-sky-700 text-white' : 'bg-zinc-800 text-zinc-300'
+              }`}
+            >
+              {state.player_b_name}
+            </button>
+          </div>
+
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
+            Счёт партии — {winnerScoreDisplay}:{loserScore}
+          </div>
+          <div className="grid grid-cols-6 gap-1.5 mb-2">
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+              <button
+                key={n}
+                onClick={() => setLoserScore(n)}
+                className={`py-3 rounded-lg text-xl font-bold ${
+                  loserScore === n ? 'bg-zinc-600 text-white' : 'bg-zinc-800 text-zinc-300'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+            {[10, 11, 12].map((n) => (
+              <button
+                key={n}
+                onClick={() => setLoserScore(n)}
+                className={`py-3 rounded-lg text-xl font-bold ${
+                  loserScore === n ? 'bg-zinc-600 text-white' : 'bg-zinc-800 text-zinc-300'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <p className="text-zinc-500 text-[11px] mb-4">
+            Победитель получает {loserScore < 10 ? '11' : `${loserScore + 2}`} (deuce).
+          </p>
+
+          <button
+            onClick={handleConfirm}
+            className="w-full bg-gradient-to-br from-emerald-600 to-emerald-800 text-white py-3 rounded-xl font-semibold"
+          >
+            Записать партию
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── HistoryPanel со сводкой ───────────────────────────────────────────────────
+
+function HistoryPanel({ state, elapsedSec, onClose }) {
   const matches = state.matches || []
+  const [winsA, winsB] = state.wins ?? [0, 0]
+  const totalMatches = matches.length
+
+  const durations = matches
+    .map((m) => (m.ended_at && m.started_at)
+      ? (Date.parse(m.ended_at) - Date.parse(m.started_at)) / 1000
+      : null)
+    .filter((x) => x != null)
+  const avgMatchSec = durations.length
+    ? durations.reduce((a, b) => a + b, 0) / durations.length
+    : null
+
+  const scoredMatches = matches.filter((m) => m.score_a != null && m.score_b != null)
+  const avgDiff = scoredMatches.length
+    ? scoredMatches.reduce((a, m) => a + Math.abs((m.score_a ?? 0) - (m.score_b ?? 0)), 0) / scoredMatches.length
+    : null
+
   return (
     <motion.div
       initial={{ x: '100%' }}
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
       transition={{ type: 'tween', duration: 0.25 }}
-      className="absolute right-0 top-0 bottom-0 w-72 max-w-[80vw] bg-zinc-900/95 backdrop-blur-md border-l border-zinc-700 z-20 overflow-y-auto"
+      className="absolute right-0 top-0 bottom-0 w-80 max-w-[85vw] bg-zinc-900/95 backdrop-blur-md border-l border-zinc-700 z-20 overflow-y-auto"
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12px)' }}
     >
       <div className="flex items-center justify-between px-4 pb-3 border-b border-zinc-800">
-        <h3 className="text-white font-semibold">Партии</h3>
+        <h3 className="text-white font-semibold">Сводка сессии</h3>
         <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">×</button>
       </div>
+
+      <div className="px-4 py-3 border-b border-zinc-800 space-y-2 text-sm">
+        <div className="flex justify-between">
+          <span className="text-zinc-400">Длительность</span>
+          <span className="text-white font-mono">{fmtClock(elapsedSec)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-zinc-400">Партий</span>
+          <span className="text-white font-mono">{totalMatches}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-zinc-400">Счёт</span>
+          <span className="text-white font-mono tabular-nums">
+            {winsA} : {winsB}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-zinc-400">Среднее партии</span>
+          <span className="text-white font-mono">{fmtDuration(avgMatchSec)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-zinc-400">Средняя разница</span>
+          <span className="text-white font-mono">{avgDiff != null ? avgDiff.toFixed(1) : '—'}</span>
+        </div>
+        {state.set_size > 0 && (
+          <div className="flex justify-between">
+            <span className="text-zinc-400">Сетов сыграно</span>
+            <span className="text-white font-mono">{computeSetsCompleted(state)}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="px-4 py-2 text-xs uppercase tracking-wider text-zinc-500">Партии</div>
       {matches.length === 0 ? (
-        <p className="px-4 py-6 text-zinc-500 text-sm">Партий пока нет</p>
+        <p className="px-4 py-3 text-zinc-500 text-sm">Партий пока нет</p>
       ) : (
         <ol className="divide-y divide-zinc-800 text-sm">
           {matches.map((m, i) => {
             const winnerName = m.winner === 'a' ? state.player_a_name : state.player_b_name
             const score = (m.score_a != null && m.score_b != null) ? `${m.score_a}:${m.score_b}` : '—'
+            const dur = (m.ended_at && m.started_at)
+              ? (Date.parse(m.ended_at) - Date.parse(m.started_at)) / 1000 : null
             return (
               <li key={i} className="px-4 py-2 flex items-center justify-between gap-2">
-                <span className="text-zinc-300">#{i + 1}</span>
-                <span className="text-zinc-100 font-mono">{score}</span>
-                <span className="text-zinc-500 text-xs truncate flex-1 text-right">{winnerName}</span>
+                <span className="text-zinc-500 w-7">#{i + 1}</span>
+                <span className="text-zinc-100 font-mono w-14">{score}</span>
+                <span className="text-zinc-400 text-xs truncate flex-1">{winnerName}</span>
+                {dur != null && <span className="text-zinc-500 text-xs font-mono">{fmtDuration(dur)}</span>}
               </li>
             )
           })}
@@ -203,6 +364,8 @@ function HistoryPanel({ state, onClose }) {
   )
 }
 
+// ── Main ──────────────────────────────────────────────────────────────────────
+
 export default function TennisScoreboard({ onBackToLobby }) {
   const { userId, initData } = useAuth()
   const [state, setState] = useState(null)
@@ -211,6 +374,9 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const [errorBanner, setErrorBanner] = useState(null)
   const [now, setNow] = useState(Date.now())
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [finishOpen, setFinishOpen] = useState(false)
+  const [voiceActive, setVoiceActive] = useState(false)
+  const [voiceHint, setVoiceHint] = useState(null)
   const [muted, setMuted] = useState(() => {
     try { return window.localStorage?.getItem(MUTE_KEY) === '1' } catch { return false }
   })
@@ -224,8 +390,13 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const prevMatchesCount = useRef(0)
   const prevSetsAnnounced = useRef(0)
   const mutedRef = useRef(muted)
+  const serveReminderTimer = useRef(null)
+  const lastServeHash = useRef(null)
+  const voiceCtrlRef = useRef(null)
+  const stateRef = useRef(null)
 
   useEffect(() => { mutedRef.current = muted }, [muted])
+  useEffect(() => { stateRef.current = state }, [state])
 
   const send = useCallback((msg) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -283,7 +454,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
       setStatus('connected')
       ws.send(JSON.stringify({ type: 'hello', init_data: initData || '' }))
     }
-
     ws.onmessage = (e) => {
       let data
       try { data = JSON.parse(e.data) } catch { return }
@@ -313,7 +483,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
           break
       }
     }
-
     ws.onclose = () => {
       if (closedRef.current) return
       const attempt = reconnectAttempt.current
@@ -322,7 +491,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
       if (attempt >= 2) setStatus('reconnecting')
       reconnectTimer.current = window.setTimeout(connect, delay)
     }
-
     ws.onerror = () => { try { ws.close() } catch { /* noop */ } }
   }, [initData, handleIncomingState, onBackToLobby])
 
@@ -354,6 +522,63 @@ export default function TennisScoreboard({ onBackToLobby }) {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
+
+  // TTS-напоминалка о подаче: через 2с после последнего изменения state.
+  // Один раз на уникальное состояние (server + current_score + matches_len).
+  useEffect(() => {
+    if (!state || muted) return
+    if (state.ended_at || status !== 'connected') return
+    if (serveReminderTimer.current) window.clearTimeout(serveReminderTimer.current)
+    serveReminderTimer.current = window.setTimeout(() => {
+      const [a, b] = state.current_score ?? [0, 0]
+      if (a === 0 && b === 0) return  // только что началась партия — без напоминалки
+      const hash = `${state.server}|${a}|${b}|${state.matches?.length ?? 0}`
+      if (lastServeHash.current === hash) return
+      lastServeHash.current = hash
+      const serverName = state.server === 'a' ? state.player_a_name : state.player_b_name
+      speak(`Подаёт ${serverName}.`)
+    }, SERVE_REMINDER_MS)
+    return () => { if (serveReminderTimer.current) window.clearTimeout(serveReminderTimer.current) }
+  }, [state, muted, status])
+
+  // Voice control — continuous listening + парсер команд
+  useEffect(() => {
+    if (!voiceActive) {
+      if (voiceCtrlRef.current) voiceCtrlRef.current.stop()
+      return
+    }
+    if (!voiceCtrlRef.current) {
+      voiceCtrlRef.current = createVoiceController({
+        onTranscript: (t) => {
+          setVoiceHint(t)
+          window.setTimeout(() => setVoiceHint(null), 2500)
+        },
+        onCommand: (text) => {
+          const cur = stateRef.current
+          if (!cur || cur.ended_at) return
+          const cmd = parseVoiceCommand(text, cur)
+          if (!cmd) return
+          try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
+          send(cmd)
+        },
+        onError: (err) => {
+          if (err === 'not-allowed' || err === 'service-not-allowed') {
+            setVoiceActive(false)
+            setErrorBanner('Микрофон не разрешён')
+            window.setTimeout(() => setErrorBanner(null), 3000)
+          }
+        },
+      })
+    }
+    if (!voiceCtrlRef.current.supported) {
+      setVoiceActive(false)
+      setErrorBanner('Голос не поддерживается в этом браузере')
+      window.setTimeout(() => setErrorBanner(null), 3000)
+      return
+    }
+    voiceCtrlRef.current.start()
+    return () => { voiceCtrlRef.current?.stop?.() }
+  }, [voiceActive, send])
 
   const elapsedSec = useMemo(() => {
     if (!state?.started_at) return 0
@@ -392,6 +617,10 @@ export default function TennisScoreboard({ onBackToLobby }) {
       setErrorBanner(e.message || 'Не получилось переключить подачу')
       window.setTimeout(() => setErrorBanner(null), 2500)
     }
+  }
+  const handleFinishParty = (a, b) => {
+    setFinishOpen(false)
+    send({ type: 'finish_party', score_a: a, score_b: b })
   }
 
   const toggleMute = () => {
@@ -460,42 +689,73 @@ export default function TennisScoreboard({ onBackToLobby }) {
       </div>
 
       {/* Top bar */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-b-2xl px-3 py-1.5 text-white text-sm font-mono z-10">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm rounded-b-2xl px-3 py-1.5 text-white text-sm font-mono z-10 flex-wrap max-w-[96vw] justify-center">
         <button
           onClick={() => setHistoryOpen(true)}
           className="hover:bg-white/10 rounded px-1.5 py-0.5"
-          title="История партий"
+          title="Сводка сессии"
         >
           ⏱ {fmtClock(elapsedSec)}
         </button>
-        <span className="text-zinc-400 text-xs">· партия {currentPartyNumber}</span>
+        <span className="text-zinc-400 text-xs">партия {currentPartyNumber}</span>
         {setSize > 0 && (
-          <span className="text-zinc-400 text-xs">· сет {setsCompleted + 1} ({partyIndex % setSize}/{setSize})</span>
+          <span className="text-zinc-400 text-xs">сет {setsCompleted + 1} ({partyIndex % setSize}/{setSize})</span>
         )}
         {!isClosed && canEdit && (
-          <button
-            onClick={handleServeToggle}
-            className="ml-1 text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
-            title="Переключить первую подачу"
-          >
-            ↻🏓
-          </button>
+          <>
+            <button
+              onClick={() => setFinishOpen(true)}
+              className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+              title="Записать партию счётом"
+            >
+              📝
+            </button>
+            <button
+              onClick={handleServeToggle}
+              className="text-xs px-1.5 py-0.5 rounded hover:bg-white/10"
+              title="Переключить первую подачу"
+            >
+              ↻🏓
+            </button>
+            <button
+              onClick={() => setVoiceActive((v) => !v)}
+              className={`text-base leading-none px-1.5 py-0.5 rounded ${voiceActive ? 'bg-rose-700' : 'hover:bg-white/10'}`}
+              aria-label={voiceActive ? 'Выключить голос' : 'Голосовое управление'}
+              title={voiceActive ? 'Голос активен — тапни чтобы выключить' : 'Голосовое управление'}
+            >
+              🎤
+            </button>
+          </>
         )}
         <button
           onClick={toggleMute}
-          className="ml-1 text-base leading-none px-1.5 py-0.5 rounded hover:bg-white/10"
+          className="text-base leading-none px-1.5 py-0.5 rounded hover:bg-white/10"
           aria-label={muted ? 'Включить озвучку' : 'Выключить озвучку'}
           title={muted ? 'Включить озвучку' : 'Выключить озвучку'}
         >
           {muted ? '🔇' : '🔊'}
         </button>
         {status === 'reconnecting' && (
-          <span className="text-amber-300 text-xs animate-pulse">· реконнект</span>
+          <span className="text-amber-300 text-xs animate-pulse">реконнект</span>
         )}
         {isClosed && (
-          <span className="text-zinc-300 text-xs">· закрыта {closeReason === 'timeout' ? '(таймаут)' : ''}</span>
+          <span className="text-zinc-300 text-xs">закрыта {closeReason === 'timeout' ? '(таймаут)' : ''}</span>
         )}
       </div>
+
+      {/* Voice hint */}
+      <AnimatePresence>
+        {voiceActive && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="absolute top-14 left-1/2 -translate-x-1/2 bg-rose-700/90 text-white text-xs px-3 py-1.5 rounded-full z-10 max-w-[80vw] truncate"
+          >
+            🎤 {voiceHint || 'слушаю…'}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Bottom bar */}
       <div
@@ -507,7 +767,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
             onClick={handleClose}
             className="bg-zinc-900/80 backdrop-blur-sm text-zinc-200 hover:text-white text-xs px-4 py-2 rounded-full border border-zinc-700"
           >
-            Завершить
+            Завершить сессию
           </button>
         )}
         {isClosed && onBackToLobby && (
@@ -535,7 +795,17 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
       <AnimatePresence>
         {historyOpen && (
-          <HistoryPanel state={state} onClose={() => setHistoryOpen(false)} />
+          <HistoryPanel state={state} elapsedSec={elapsedSec} onClose={() => setHistoryOpen(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {finishOpen && (
+          <FinishPartySheet
+            state={state}
+            onClose={() => setFinishOpen(false)}
+            onSubmit={handleFinishParty}
+          />
         )}
       </AnimatePresence>
     </div>
