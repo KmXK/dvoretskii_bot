@@ -19,11 +19,11 @@ from steward.tennis.engine import (
     SIDE_B,
     aggregate_session_matches,
     player_stats,
-    server_progress,
     session_wins,
 )
+from steward.tennis.engine import is_valid_party_score
 from steward.tennis.import_parser import BulkEntry, parse_bulk_history
-from steward.tennis.room_manager import _iso_utc, get_manager
+from steward.tennis.room_manager import _iso_utc, can_edit_matches, get_manager
 from steward.tennis.tts import synthesize as tts_synthesize
 
 logger = logging.getLogger(__name__)
@@ -64,9 +64,6 @@ def _serialize_session(
     detailed: bool = False,
 ) -> dict:
     wins_a, wins_b = session_wins(s)
-    server, srv_n, srv_total = server_progress(
-        s.first_server, s.current_score_a, s.current_score_b
-    )
     payload = {
         "id": s.id,
         "chat_id": s.chat_id,
@@ -84,10 +81,8 @@ def _serialize_session(
         "wins": [wins_a, wins_b],
         "matches_count": len(s.matches),
         "first_server": s.first_server,
-        "server": server,
-        "server_progress": [srv_n, srv_total],
         "set_size": s.set_size,
-        "current_score": [s.current_score_a, s.current_score_b],
+        "can_edit_matches": can_edit_matches(s),
         "duration_seconds": (
             (s.ended_at - s.started_at).total_seconds() if s.ended_at else None
         ),
@@ -257,10 +252,14 @@ async def delete_match(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     if not _user_can_modify(session, user_id):
         return web.json_response({"error": "forbidden"}, status=403)
+    if not can_edit_matches(session):
+        return web.json_response(
+            {"error": "окно редактирования закрыто (более часа после конца сессии)"},
+            status=409,
+        )
     if idx < 0 or idx >= len(session.matches):
         return web.json_response({"error": "bad index"}, status=400)
     session.matches.pop(idx)
-    # обновим sets_announced если стало меньше
     if session.set_size > 0:
         session.sets_announced = min(
             session.sets_announced,
@@ -268,7 +267,52 @@ async def delete_match(request: web.Request) -> web.Response:
         )
     session.last_activity_at = datetime.now()
     await repository.save()
-    # Если активная live-комната — пушнём обновлённый state
+    room = get_manager().get_room(sid)
+    if room is not None and session.ended_at is None:
+        await room.broadcast()
+    return web.json_response(_serialize_session(repository, session, detailed=True))
+
+
+async def update_match(request: web.Request) -> web.Response:
+    """PATCH /api/tennis/sessions/{id}/matches/{idx} {score_a, score_b} — поправить счёт."""
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    try:
+        sid = int(request.match_info["id"])
+        idx = int(request.match_info["idx"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad params"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    try:
+        score_a = int(body.get("score_a"))
+        score_b = int(body.get("score_b"))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "нужны оба score"}, status=400)
+
+    session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
+    if session is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if not _user_can_modify(session, user_id):
+        return web.json_response({"error": "forbidden"}, status=403)
+    if not can_edit_matches(session):
+        return web.json_response(
+            {"error": "окно редактирования закрыто (более часа после конца сессии)"},
+            status=409,
+        )
+    if idx < 0 or idx >= len(session.matches):
+        return web.json_response({"error": "bad index"}, status=400)
+    if not is_valid_party_score(score_a, score_b):
+        return web.json_response({"error": "невалидный счёт партии (11 + разница ≥2)"}, status=400)
+
+    m = session.matches[idx]
+    m.score_a = score_a
+    m.score_b = score_b
+    m.winner = SIDE_A if score_a > score_b else SIDE_B
+    session.last_activity_at = datetime.now()
+    await repository.save()
     room = get_manager().get_room(sid)
     if room is not None and session.ended_at is None:
         await room.broadcast()
@@ -544,6 +588,9 @@ def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/tennis/sessions/{id}/serve", serve_toggle)
     app.router.add_delete(
         "/api/tennis/sessions/{id}/matches/{idx}", delete_match
+    )
+    app.router.add_patch(
+        "/api/tennis/sessions/{id}/matches/{idx}", update_match
     )
     app.router.add_get("/api/tennis/stats", get_stats)
     app.router.add_get("/api/tennis/opponents", list_opponents)

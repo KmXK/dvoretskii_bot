@@ -4,6 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
+import { EditMatchSheet } from './Modals'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const MUTE_KEY = 'tennis:muted'
@@ -30,17 +31,6 @@ function isValidPartyScore(a, b) {
   const hi = Math.max(a, b)
   const lo = Math.min(a, b)
   return hi >= 11 && hi - lo >= 2
-}
-
-function serverForNextPoint(firstServer, a, b) {
-  const total = a + b
-  const other = (s) => (s === 'a' ? 'b' : 'a')
-  if (a >= 10 && b >= 10) {
-    const deucePoints = total - 20
-    return deucePoints % 2 === 0 ? firstServer : other(firstServer)
-  }
-  const pair = Math.floor(total / 2)
-  return pair % 2 === 0 ? firstServer : other(firstServer)
 }
 
 function buildMatchAnnouncement(match, state) {
@@ -112,73 +102,114 @@ function computeSetsCompleted(state) {
   return Math.floor((state.matches?.length ?? 0) / size)
 }
 
-// ── PlayerHalf: тап = +1 в локальный entry ────────────────────────────────────
+// ── FinishPartySheet: ввод итогового счёта ────────────────────────────────────
 
-function PlayerHalf({ name, isYou, entry, partyWins, isServing, color, accentText, canEdit, onTap, onUndo, isLeft }) {
+function FinishPartySheet({ state, defaultWinnerSide, onSubmit, onClose }) {
+  const [winnerSide, setWinnerSide] = useState(defaultWinnerSide || 'a')
+  const [loserScore, setLoserScore] = useState(7)
+  const winnerScore = loserScore < 10 ? 11 : loserScore + 2
+
+  const scoreA = winnerSide === 'a' ? winnerScore : loserScore
+  const scoreB = winnerSide === 'b' ? winnerScore : loserScore
+
   return (
-    <div
-      className={`flex-1 flex flex-col bg-gradient-to-br ${color} relative select-none overflow-hidden`}
-      onContextMenu={(e) => e.preventDefault()}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[55] bg-black/70 backdrop-blur-sm flex items-end justify-center"
+      onClick={onClose}
     >
-      {/* Header */}
-      <div className={`absolute ${isLeft ? 'top-3 left-3' : 'top-3 right-3'} z-10 flex items-center gap-1.5 max-w-[70%]`}>
-        {isServing && (
-          <motion.span
-            animate={{ scale: [1, 1.18, 1] }}
-            transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-            className="text-base"
-          >🏓</motion.span>
-        )}
-        <span className={`text-xs uppercase tracking-wider ${accentText} opacity-90 truncate font-semibold`}>
-          {name}{isYou ? ' · ты' : ''}
-        </span>
-      </div>
-      <div className={`absolute ${isLeft ? 'top-3 right-3' : 'top-3 left-3'} z-10 text-zinc-300/70 text-xs font-mono`}>
-        партий: {partyWins}
-      </div>
-
-      {/* Огромная тап-зона = +1 */}
-      <motion.button
-        whileTap={canEdit ? { scale: 0.97 } : {}}
-        disabled={!canEdit}
-        onClick={onTap}
-        className={`flex-1 flex flex-col items-center justify-center w-full ${canEdit ? 'active:bg-white/5' : 'opacity-90'}`}
-        aria-label={`Очко ${name}`}
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+        className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)' }}
+        onClick={(e) => e.stopPropagation()}
       >
-        <motion.div
-          key={entry}
-          initial={{ scale: 0.78, opacity: 0.4 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', damping: 14, stiffness: 240 }}
-          className="text-white font-black tabular-nums leading-none"
-          style={{ fontSize: 'clamp(140px, 36vw, 320px)' }}
-        >
-          {entry}
-        </motion.div>
-      </motion.button>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+          <h2 className="text-white font-bold text-lg">Записать партию</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-3xl leading-none px-2">×</button>
+        </div>
+        <div className="px-4 py-3">
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Победил</div>
+          <div className="grid grid-cols-2 gap-2 mb-5">
+            <button
+              onClick={() => setWinnerSide('a')}
+              className={`py-4 rounded-xl text-base font-bold ${
+                winnerSide === 'a' ? 'bg-rose-600 text-white' : 'bg-zinc-800 text-zinc-300'
+              }`}
+            >
+              {state.player_a_name}
+            </button>
+            <button
+              onClick={() => setWinnerSide('b')}
+              className={`py-4 rounded-xl text-base font-bold ${
+                winnerSide === 'b' ? 'bg-sky-600 text-white' : 'bg-zinc-800 text-zinc-300'
+              }`}
+            >
+              {state.player_b_name}
+            </button>
+          </div>
 
-      {/* Undo — крупная кнопка в углу */}
-      <button
-        disabled={!canEdit || entry === 0}
-        onClick={onUndo}
-        className={`absolute ${isLeft ? 'bottom-4 right-4' : 'bottom-4 left-4'} w-16 h-16 rounded-full text-3xl font-bold text-white shadow-lg z-10 ${
-          canEdit && entry > 0
-            ? 'bg-white/15 hover:bg-white/25 active:bg-white/35'
-            : 'bg-white/5 opacity-30'
-        }`}
-        aria-label="Отменить очко"
-      >
-        −
-      </button>
-    </div>
+          <div className="flex items-center justify-center mb-4 gap-3">
+            <span className="text-5xl font-black text-white tabular-nums">{winnerScore}</span>
+            <span className="text-3xl text-zinc-500">:</span>
+            <span className="text-5xl font-black text-white tabular-nums">{loserScore}</span>
+          </div>
+
+          <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2 text-center">
+            Очков у проигравшего
+          </div>
+          <div className="grid grid-cols-5 gap-2 mb-3">
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+              <button
+                key={n}
+                onClick={() => setLoserScore(n)}
+                className={`py-4 rounded-xl text-2xl font-bold ${
+                  loserScore === n ? 'bg-zinc-500 text-white' : 'bg-zinc-800 text-zinc-300'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          {/* Deuce — инкрементер */}
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              onClick={() => setLoserScore((n) => Math.max(0, n - 1))}
+              className="w-14 h-14 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-3xl font-bold"
+            >−</button>
+            <div className="flex-1 bg-zinc-800 rounded-xl py-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">deuce / любое число</div>
+              <div className="text-3xl font-bold text-white tabular-nums">{loserScore}</div>
+            </div>
+            <button
+              onClick={() => setLoserScore((n) => Math.min(50, n + 1))}
+              className="w-14 h-14 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-3xl font-bold"
+            >+</button>
+          </div>
+
+          <button
+            onClick={() => onSubmit(scoreA, scoreB)}
+            className="w-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white py-5 rounded-2xl font-bold text-xl shadow-lg active:scale-[0.98] transition-transform"
+          >
+            ✓ Записать {scoreA}:{scoreB}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }
 
 // ── HistoryPanel ──────────────────────────────────────────────────────────────
 
-function HistoryPanel({ state, elapsedSec, onClose }) {
+function HistoryPanel({ state, elapsedSec, onClose, onEditMatch }) {
   const matches = state.matches || []
   const [winsA, winsB] = state.wins ?? [0, 0]
+  const canEditMatches = state.can_edit_matches !== false  // по дефолту в live-state считаем что можно
   const durations = matches
     .map((m) => (m.ended_at && m.started_at) ? (Date.parse(m.ended_at) - Date.parse(m.started_at)) / 1000 : null)
     .filter((x) => x != null)
@@ -198,10 +229,9 @@ function HistoryPanel({ state, elapsedSec, onClose }) {
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 12px)' }}
     >
       <div className="flex items-center justify-between px-4 pb-3 border-b border-zinc-800">
-        <h3 className="text-white font-semibold">Сводка сессии</h3>
+        <h3 className="text-white font-bold">Сводка</h3>
         <button onClick={onClose} className="text-zinc-400 hover:text-white text-3xl leading-none px-2">×</button>
       </div>
-
       <div className="px-4 py-3 border-b border-zinc-800 space-y-2 text-sm">
         <div className="flex justify-between"><span className="text-zinc-400">Длительность</span><span className="text-white font-mono">{fmtClock(elapsedSec)}</span></div>
         <div className="flex justify-between"><span className="text-zinc-400">Партий</span><span className="text-white font-mono">{matches.length}</span></div>
@@ -212,7 +242,6 @@ function HistoryPanel({ state, elapsedSec, onClose }) {
           <div className="flex justify-between"><span className="text-zinc-400">Сетов сыграно</span><span className="text-white font-mono">{computeSetsCompleted(state)}</span></div>
         )}
       </div>
-
       <div className="px-4 py-2 text-xs uppercase tracking-wider text-zinc-500">Партии</div>
       {matches.length === 0 ? (
         <p className="px-4 py-3 text-zinc-500 text-sm">Партий пока нет</p>
@@ -223,11 +252,20 @@ function HistoryPanel({ state, elapsedSec, onClose }) {
             const score = (m.score_a != null && m.score_b != null) ? `${m.score_a}:${m.score_b}` : '—'
             const dur = (m.ended_at && m.started_at) ? (Date.parse(m.ended_at) - Date.parse(m.started_at)) / 1000 : null
             return (
-              <li key={i} className="px-4 py-2 flex items-center justify-between gap-2">
+              <li key={i} className="px-4 py-2.5 flex items-center justify-between gap-2">
                 <span className="text-zinc-500 w-7">#{i + 1}</span>
                 <span className="text-zinc-100 font-mono w-14">{score}</span>
                 <span className="text-zinc-400 text-xs truncate flex-1">{winnerName}</span>
                 {dur != null && <span className="text-zinc-500 text-xs font-mono">{fmtDuration(dur)}</span>}
+                {canEditMatches && m.score_a != null && (
+                  <button
+                    onClick={() => onEditMatch(i)}
+                    className="text-amber-300 hover:text-amber-200 text-base px-1"
+                    title="Поправить счёт"
+                  >
+                    ✏️
+                  </button>
+                )}
               </li>
             )
           })}
@@ -240,22 +278,19 @@ function HistoryPanel({ state, elapsedSec, onClose }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TennisScoreboard({ onBackToLobby }) {
-  const { userId, initData } = useAuth()
+  const { initData } = useAuth()
   const [state, setState] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [closeReason, setCloseReason] = useState('')
   const [errorBanner, setErrorBanner] = useState(null)
   const [now, setNow] = useState(Date.now())
   const [historyOpen, setHistoryOpen] = useState(false)
-
-  // ВАЖНО: основной флоу — локальный entry (счёт идущей партии). На submit шлём finish_party.
-  const [entryA, setEntryA] = useState(0)
-  const [entryB, setEntryB] = useState(0)
-  const [lastScored, setLastScored] = useState([])  // история «кто получил очко» для undo
-
+  const [finishOpen, setFinishOpen] = useState(false)
+  const [editIdx, setEditIdx] = useState(null)
   const [muted, setMuted] = useState(() => {
     try { return window.localStorage?.getItem(MUTE_KEY) === '1' } catch { return false }
   })
+  const { confirm, element: confirmEl } = useConfirmDialog()
 
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
@@ -265,8 +300,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const prevMatchesCount = useRef(0)
   const prevSetsAnnounced = useRef(0)
   const mutedRef = useRef(muted)
-  const { confirm, element: confirmEl } = useConfirmDialog()
-
   useEffect(() => { mutedRef.current = muted }, [muted])
 
   const send = useCallback((msg) => {
@@ -307,10 +340,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
         const text = buildSessionEndAnnouncement(incoming)
         window.setTimeout(() => speak(text), newMatches > prevMatchesCount.current ? 2500 : 0)
       }
-    }
-    // После записи партии — сбрасываем локальный entry
-    if (newMatches > prevMatchesCount.current) {
-      setEntryA(0); setEntryB(0); setLastScored([])
     }
     initializedRef.current = true
     prevMatchesCount.current = newMatches
@@ -408,41 +437,40 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const canEdit = Boolean(state?.permissions?.can_edit) && status === 'connected'
   const isClosed = status === 'closed' || Boolean(state?.ended_at)
 
-  const handleTap = (side) => {
-    if (!canEdit || isClosed) return
-    try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('medium') } catch { /* noop */ }
-    if (side === 'a') setEntryA((n) => n + 1)
-    else setEntryB((n) => n + 1)
-    setLastScored((arr) => [...arr, side])
-  }
-
-  const handleUndo = (side) => {
-    if (!canEdit || isClosed) return
-    try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
-    if (side === 'a' && entryA > 0) {
-      setEntryA((n) => n - 1)
-    } else if (side === 'b' && entryB > 0) {
-      setEntryB((n) => n - 1)
+  const handleSubmit = (a, b) => {
+    if (!isValidPartyScore(a, b)) {
+      setErrorBanner('Невалидный счёт')
+      window.setTimeout(() => setErrorBanner(null), 2500)
+      return
     }
-    setLastScored((arr) => arr.filter((s, i) => !(i === arr.length - 1 && s === side)).length === arr.length
-      ? arr.slice(0, -1)  // если последний — другой бок, просто срежем хвост на всякий
-      : arr.filter((s, i, all) => !(i === all.length - 1 && s === side)))
+    try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('success') } catch { /* noop */ }
+    send({ type: 'finish_party', score_a: a, score_b: b })
+    setFinishOpen(false)
   }
 
-  const canSubmit = isValidPartyScore(entryA, entryB) && canEdit && !isClosed
+  const handleEditSubmit = (a, b) => {
+    if (editIdx == null) return
+    send({ type: 'edit_match', idx: editIdx, score_a: a, score_b: b })
+    setEditIdx(null)
+  }
 
-  const handleSubmit = () => {
-    if (!canSubmit) return
-    try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred?.('success') } catch { /* noop */ }
-    send({ type: 'finish_party', score_a: entryA, score_b: entryB })
-    // entry сбросится когда придёт state с новой партией
+  const handleUndo = async () => {
+    if (!canEdit || isClosed) return
+    const ok = await confirm({
+      title: 'Отменить последнюю партию?',
+      description: 'Партия удалится из истории, подача вернётся обратно.',
+      confirmLabel: 'Отменить',
+      destructive: true,
+    })
+    if (!ok) return
+    send({ type: 'undo' })
   }
 
   const handleClose = async () => {
     if (!canEdit || isClosed) return
     const ok = await confirm({
       title: 'Закрыть сессию?',
-      description: 'Сессия закроется и попадёт в историю.',
+      description: 'Сессия попадёт в историю.',
       confirmLabel: 'Закрыть',
       destructive: true,
     })
@@ -480,57 +508,38 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
   const nameA = state.player_a_name || 'Игрок A'
   const nameB = state.player_b_name || 'Игрок B'
-  const youSideA = userId && state.player_a_id === userId
-  const youSideB = userId && state.player_b_id === userId
   const [winsA, winsB] = state.wins ?? [0, 0]
   const setSize = state.set_size ?? 0
   const setsCompleted = computeSetsCompleted(state)
   const partyIndex = state.matches?.length ?? 0
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
-
-  // Подача: для отображения вычисляем на основе локального entry
-  const currentServer = serverForNextPoint(state.first_server || 'a', entryA, entryB)
-
-  const submitLabel = canSubmit
-    ? `✓ Записать партию ${entryA}:${entryB}`
-    : entryA === 0 && entryB === 0
-      ? 'Тапай по цифре чтобы добавить очки'
-      : `${entryA}:${entryB} — нужно 11+ при разнице ≥2`
+  const firstServerName = state.first_server === 'a' ? nameA : nameB
 
   return (
-    <div className="fixed inset-0 z-50 bg-black overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-950 to-black overflow-hidden flex flex-col">
       {/* Top bar */}
       <div
         className="shrink-0 flex items-center justify-between gap-2 px-3 bg-black/80 backdrop-blur-sm border-b border-zinc-800 text-white text-sm font-mono"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)', paddingBottom: '6px' }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <button
-            onClick={() => setHistoryOpen(true)}
-            className="hover:bg-white/10 rounded px-2 py-1 flex items-center gap-1.5"
-            title="Сводка"
-          >
-            <span>⏱ {fmtClock(elapsedSec)}</span>
-          </button>
-          <span className="text-zinc-400 text-xs hidden sm:inline">партия {currentPartyNumber}</span>
-          {setSize > 0 && (
-            <span className="text-zinc-400 text-xs hidden sm:inline">сет {setsCompleted + 1}</span>
-          )}
-        </div>
+        <button
+          onClick={() => setHistoryOpen(true)}
+          className="hover:bg-white/10 active:bg-white/20 rounded-lg px-2 py-1 flex items-center gap-1.5"
+          title="Сводка"
+        >
+          <span>⏱ {fmtClock(elapsedSec)}</span>
+        </button>
         <div className="flex items-center gap-1">
           {!isClosed && canEdit && (
             <button
               onClick={handleServeToggle}
-              className="text-xs px-2 py-1 rounded hover:bg-white/10"
+              className="text-base px-2 py-1 rounded hover:bg-white/10"
               title="Переключить первую подачу"
-            >
-              ↻🏓
-            </button>
+            >↻🏓</button>
           )}
           <button
             onClick={toggleMute}
             className="text-base leading-none px-2 py-1 rounded hover:bg-white/10"
-            aria-label={muted ? 'Включить озвучку' : 'Выключить'}
           >
             {muted ? '🔇' : '🔊'}
           </button>
@@ -539,59 +548,75 @@ export default function TennisScoreboard({ onBackToLobby }) {
         </div>
       </div>
 
-      {/* Player halves */}
-      <div className="flex-1 flex flex-col landscape:flex-row min-h-0">
-        <PlayerHalf
-          name={nameA}
-          isYou={youSideA}
-          entry={entryA}
-          partyWins={winsA}
-          isServing={currentServer === 'a'}
-          color="from-rose-700/40 to-rose-950"
-          accentText="text-rose-200"
-          canEdit={canEdit}
-          onTap={() => handleTap('a')}
-          onUndo={() => handleUndo('a')}
-          isLeft
-        />
-        <PlayerHalf
-          name={nameB}
-          isYou={youSideB}
-          entry={entryB}
-          partyWins={winsB}
-          isServing={currentServer === 'b'}
-          color="from-sky-700/40 to-sky-950"
-          accentText="text-sky-200"
-          canEdit={canEdit}
-          onTap={() => handleTap('b')}
-          onUndo={() => handleUndo('b')}
-        />
+      {/* Центр: счёт партий + контекст */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 min-h-0">
+        <div className="flex items-end justify-center gap-4 w-full max-w-md">
+          <div className="flex-1 text-center">
+            <div className="text-rose-300/80 text-xs uppercase tracking-wider mb-2 truncate font-semibold">
+              {state.first_server === 'a' && <span>🏓 </span>}{nameA}
+            </div>
+            <motion.div
+              key={`a-${winsA}`}
+              initial={{ scale: 0.7, opacity: 0.4 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', damping: 14, stiffness: 240 }}
+              className="text-white font-black tabular-nums leading-none"
+              style={{ fontSize: 'clamp(80px, 22vw, 180px)' }}
+            >
+              {winsA}
+            </motion.div>
+          </div>
+          <div className="text-5xl text-zinc-700 font-light pb-3">:</div>
+          <div className="flex-1 text-center">
+            <div className="text-sky-300/80 text-xs uppercase tracking-wider mb-2 truncate font-semibold">
+              {state.first_server === 'b' && <span>🏓 </span>}{nameB}
+            </div>
+            <motion.div
+              key={`b-${winsB}`}
+              initial={{ scale: 0.7, opacity: 0.4 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', damping: 14, stiffness: 240 }}
+              className="text-white font-black tabular-nums leading-none"
+              style={{ fontSize: 'clamp(80px, 22vw, 180px)' }}
+            >
+              {winsB}
+            </motion.div>
+          </div>
+        </div>
+
+        <div className="text-zinc-400 text-sm mt-6">
+          Партия <span className="text-white font-semibold">{currentPartyNumber}</span>
+          {setSize > 0 && <> · сет <span className="text-white font-semibold">{setsCompleted + 1}</span></>}
+        </div>
+        {!isClosed && (
+          <div className="text-zinc-500 text-xs mt-2">🏓 первая подача — {firstServerName}</div>
+        )}
       </div>
 
-      {/* Submit + close — большая кнопка снизу */}
+      {/* Нижняя зона: главная кнопка + действия */}
       <div
         className="shrink-0 bg-black/80 backdrop-blur-sm border-t border-zinc-800 px-3 pt-3"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
       >
-        {!isClosed && (
+        {!isClosed && canEdit && (
           <motion.button
-            whileTap={canSubmit ? { scale: 0.97 } : {}}
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className={`w-full rounded-2xl py-5 text-lg font-bold transition-colors ${
-              canSubmit
-                ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-lg'
-                : 'bg-zinc-800 text-zinc-500'
-            }`}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setFinishOpen(true)}
+            className="w-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white py-5 rounded-2xl font-bold text-xl shadow-lg"
           >
-            {submitLabel}
+            + Записать партию
           </motion.button>
         )}
         <div className="flex items-center justify-between gap-2 mt-2">
-          <div className="text-zinc-400 text-xs flex-1 truncate">
-            🏓 Подаёт {currentServer === 'a' ? nameA : nameB}
-            {(entryA > 0 || entryB > 0) && <span className="text-zinc-500"> · текущая партия</span>}
-          </div>
+          {!isClosed && canEdit && partyIndex > 0 && (
+            <button
+              onClick={handleUndo}
+              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
+            >
+              ↶ отменить последнюю
+            </button>
+          )}
+          <div className="flex-1" />
           {!isClosed && canEdit && (
             <button
               onClick={handleClose}
@@ -611,7 +636,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
         </div>
       </div>
 
-      {/* Error toast */}
       <AnimatePresence>
         {errorBanner && (
           <motion.div
@@ -627,7 +651,36 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
       <AnimatePresence>
         {historyOpen && (
-          <HistoryPanel state={state} elapsedSec={elapsedSec} onClose={() => setHistoryOpen(false)} />
+          <HistoryPanel
+            state={state}
+            elapsedSec={elapsedSec}
+            onClose={() => setHistoryOpen(false)}
+            onEditMatch={(i) => { setHistoryOpen(false); setEditIdx(i) }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {finishOpen && (
+          <FinishPartySheet
+            state={state}
+            onSubmit={handleSubmit}
+            onClose={() => setFinishOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {editIdx != null && state.matches?.[editIdx] && (
+          <EditMatchSheet
+            open
+            nameA={nameA}
+            nameB={nameB}
+            initialScoreA={state.matches[editIdx].score_a}
+            initialScoreB={state.matches[editIdx].score_b}
+            onSave={handleEditSubmit}
+            onClose={() => setEditIdx(null)}
+          />
         )}
       </AnimatePresence>
 

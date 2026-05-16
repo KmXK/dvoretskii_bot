@@ -6,6 +6,8 @@ export const tennisApi = {
   createSession: (body) => api.post('/api/tennis/sessions', body),
   deleteSession: (id) => api.delete(`/api/tennis/sessions/${id}`),
   deleteMatch: (id, idx) => api.delete(`/api/tennis/sessions/${id}/matches/${idx}`),
+  updateMatch: (id, idx, score_a, score_b) =>
+    api.patch(`/api/tennis/sessions/${id}/matches/${idx}`, { score_a, score_b }),
   toggleServe: (id) => api.post(`/api/tennis/sessions/${id}/serve`),
   getStats: (userId) => api.get(`/api/tennis/stats${userId ? `?user_id=${userId}` : ''}`),
   listOpponents: () => api.get('/api/tennis/opponents'),
