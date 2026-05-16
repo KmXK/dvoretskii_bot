@@ -101,11 +101,16 @@ class TennisRoom:
     # ── permissions ──────────────────────────────────────────────────────────
 
     def can_edit(self, user_id: int) -> bool:
+        """Кто может закрыть сессию / делать административные действия."""
         return user_id in (
             self.session.player_a_id,
             self.session.player_b_id,
             self.session.initiator_id,
         )
+
+    def is_player(self, user_id: int) -> bool:
+        """Кто может писать/править счёт партий — только участники игры."""
+        return user_id in (self.session.player_a_id, self.session.player_b_id)
 
     # ── state serialization for frontend ─────────────────────────────────────
 
@@ -526,8 +531,8 @@ async def tennis_ws_handler(request: web.Request):
                 if current_room is None or user_id is None:
                     await _send({"type": "error", "message": "Not authed"})
                     continue
-                if not current_room.can_edit(user_id):
-                    await _send({"type": "error", "message": "Только игроки могут писать счёт"})
+                if not current_room.is_player(user_id):
+                    await _send({"type": "error", "message": "Только участники игры могут писать счёт"})
                     continue
                 raw_a = data.get("score_a")
                 raw_b = data.get("score_b")
@@ -544,8 +549,8 @@ async def tennis_ws_handler(request: web.Request):
                 if current_room is None or user_id is None:
                     await _send({"type": "error", "message": "Not authed"})
                     continue
-                if not current_room.can_edit(user_id):
-                    await _send({"type": "error", "message": "Только игроки могут править счёт"})
+                if not current_room.is_player(user_id):
+                    await _send({"type": "error", "message": "Править счёт могут только участники игры"})
                     continue
                 try:
                     idx = int(data.get("idx"))
@@ -564,8 +569,8 @@ async def tennis_ws_handler(request: web.Request):
                 if current_room is None or user_id is None:
                     await _send({"type": "error", "message": "Not authed"})
                     continue
-                if not current_room.can_edit(user_id):
-                    await _send({"type": "error", "message": "Только игроки могут отменять"})
+                if not current_room.is_player(user_id):
+                    await _send({"type": "error", "message": "Отменять может только участник игры"})
                     continue
                 ok, err = await current_room.undo_last_match()
                 if not ok:
