@@ -287,6 +287,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const closedRef = useRef(false)
   const initializedRef = useRef(false)
   const prevMatchesCount = useRef(0)
+  const prevCommentarySeq = useRef(0)
   const mutedRef = useRef(muted)
   useEffect(() => { mutedRef.current = muted }, [muted])
 
@@ -314,18 +315,26 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
   const handleIncomingState = useCallback((incoming, options = {}) => {
     const newMatches = incoming.matches?.length ?? 0
+    const seq = incoming.last_commentary_seq ?? 0
     if (initializedRef.current && !mutedRef.current) {
-      if (newMatches > prevMatchesCount.current) {
+      // Озвучиваем партию: предпочитаем AI-комментарий (если успел сгенериться),
+      // fallback — стандартная фраза. Триггер — увеличение matches.length ИЛИ
+      // увеличение commentary_seq (если AI пришёл позже первого state)
+      const newPartyArrived = newMatches > prevMatchesCount.current
+      const lateCommentary = seq > prevCommentarySeq.current && newMatches === prevMatchesCount.current
+      if (newPartyArrived || lateCommentary) {
         const last = incoming.matches[newMatches - 1]
-        speak(buildMatchAnnouncement(last, incoming))
+        const text = incoming.last_commentary || (last ? buildMatchAnnouncement(last, incoming) : null)
+        if (text) speak(text)
       }
       if (options.sessionEnd) {
         const text = buildSessionEndAnnouncement(incoming)
-        window.setTimeout(() => speak(text), newMatches > prevMatchesCount.current ? 2500 : 0)
+        window.setTimeout(() => speak(text), newPartyArrived ? 2500 : 0)
       }
     }
     initializedRef.current = true
     prevMatchesCount.current = newMatches
+    prevCommentarySeq.current = seq
     setState(incoming)
   }, [])
 
@@ -569,6 +578,16 @@ export default function TennisScoreboard({ onBackToLobby }) {
         </div>
         {!isClosed && (
           <div className="text-zinc-500 text-xs mt-2">🏓 первая подача — {firstServerName}</div>
+        )}
+        {state.last_commentary && (
+          <motion.div
+            key={state.last_commentary_seq}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 text-zinc-300 text-sm max-w-md text-center italic px-4 leading-snug"
+          >
+            “{state.last_commentary}”
+          </motion.div>
         )}
       </div>
 
