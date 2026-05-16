@@ -14,9 +14,14 @@ from steward.helpers.limiter import Duration, check_limit
 logger = logging.getLogger(__name__)
 
 
-_LANG_REGEX = r"((?P<from_lang>[a-zA-Z]+)/)?(?P<to_lang>[a-zA-Z]+)"
+_LANG = r"[a-zA-Z]{2,3}"
+_LANG_PAIR = rf"((?P<from_lang>{_LANG}) )?(?P<to_lang>{_LANG})"
+_LANG_REGEX = (
+    rf"((?P<from_lang>{_LANG}) (?={_LANG}(\s|$)))?"
+    rf"(?P<to_lang>{_LANG})"
+)
 _COMMAND_RE = re.compile(_LANG_REGEX + r"( (?P<text>.+))?")
-_BRACKET_RE = re.compile(r"\[" + _LANG_REGEX + r"\]( (?P<text>.+))?")
+_BRACKET_RE = re.compile(r"\[" + _LANG_PAIR + r"\]( (?P<text>.+))?")
 
 
 class TranslateFeature(Feature):
@@ -24,11 +29,11 @@ class TranslateFeature(Feature):
     description = "Перевод текста"
     help_examples = [
         "«переведи на английский привет мир» → /translate en привет мир",
-        "«переведи с немецкого на русский Guten Tag» → /translate de/ru Guten Tag",
+        "«переведи с немецкого на русский Guten Tag» → /translate de ru Guten Tag",
         "«переведи на японский доброе утро» → /translate ja доброе утро",
     ]
 
-    @subcommand(_COMMAND_RE, description="Перевести текст")
+    @subcommand(_COMMAND_RE, description="[<из>] <в> [<текст>]")
     async def translate_cmd(self, ctx: FeatureContext, **kw):
         await self._dispatch(ctx, kw)
 
