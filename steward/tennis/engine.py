@@ -15,40 +15,6 @@ SIDE_A = "a"
 SIDE_B = "b"
 
 
-def _other(side: str) -> str:
-    return SIDE_B if side == SIDE_A else SIDE_A
-
-
-def server_for_next_point(first_server: str, score_a: int, score_b: int) -> str:
-    """Кто подаёт следующий поинт.
-
-    Правило: до 10:10 серверы меняются каждые 2 поинта (по парам).
-    После 10:10 (в deuce) — каждый поинт.
-    """
-    total = score_a + score_b
-    if score_a >= 10 and score_b >= 10:
-        # В deuce 20 первых поинтов уже сыграно (по парам — 10 переключений = чётное →
-        # сервер вернулся к first_server). Дальше каждый поинт меняет.
-        deuce_points = total - 20
-        base = first_server
-        return base if deuce_points % 2 == 0 else _other(base)
-    pair_index = total // 2     # 0,1,2,...
-    return first_server if pair_index % 2 == 0 else _other(first_server)
-
-
-def server_progress(first_server: str, score_a: int, score_b: int) -> tuple[str, int, int]:
-    """Возвращает (server, n, total) — server даёт n-ю подачу из total в текущем «окне».
-
-    Вне deuce: окно 2 подачи. В deuce — окно 1 подача.
-    """
-    server = server_for_next_point(first_server, score_a, score_b)
-    total = score_a + score_b
-    if score_a >= 10 and score_b >= 10:
-        return server, 1, 1
-    in_pair = total % 2
-    return server, in_pair + 1, 2
-
-
 def is_valid_party_score(score_a: int, score_b: int) -> bool:
     """11 очков у победителя минимум, разница ≥2.
 

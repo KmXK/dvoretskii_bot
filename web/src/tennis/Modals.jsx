@@ -3,6 +3,97 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 
+function isValidPartyScore(a, b) {
+  if (a === b) return false
+  const hi = Math.max(a, b), lo = Math.min(a, b)
+  return hi >= 11 && hi - lo >= 2
+}
+
+// Универсальная модалка редактирования счёта партии — используется и при
+// исправлении ошибочно записанной партии в активной сессии, и в истории.
+export function EditMatchSheet({ open, nameA, nameB, initialScoreA, initialScoreB, onSave, onClose }) {
+  const [a, setA] = useState(initialScoreA ?? 11)
+  const [b, setB] = useState(initialScoreB ?? 7)
+  useEffect(() => {
+    if (open) {
+      setA(initialScoreA ?? 11)
+      setB(initialScoreB ?? 7)
+    }
+  }, [open, initialScoreA, initialScoreB])
+
+  if (!open) return null
+  const valid = isValidPartyScore(a, b)
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[55] bg-black/70 backdrop-blur-sm flex items-end justify-center"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+        className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+          <h2 className="text-white font-bold text-lg">Поправить счёт партии</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-3xl leading-none px-2">×</button>
+        </div>
+        <div className="px-4 py-3">
+          {/* Текущий счёт */}
+          <div className="flex items-center justify-center mb-4 gap-3">
+            <div className="flex-1 text-right">
+              <div className="text-rose-300/80 text-xs uppercase tracking-wider mb-1 truncate">{nameA}</div>
+              <div className="text-5xl font-black text-white tabular-nums">{a}</div>
+            </div>
+            <span className="text-3xl text-zinc-500 pb-2">:</span>
+            <div className="flex-1">
+              <div className="text-sky-300/80 text-xs uppercase tracking-wider mb-1 truncate">{nameB}</div>
+              <div className="text-5xl font-black text-white tabular-nums">{b}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setA((n) => Math.max(0, n - 1))}
+                className="w-12 h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold">−</button>
+              <div className="flex-1 bg-zinc-800 rounded-xl py-2 text-center text-white text-xl font-bold">{a}</div>
+              <button onClick={() => setA((n) => Math.min(50, n + 1))}
+                className="w-12 h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold">+</button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setB((n) => Math.max(0, n - 1))}
+                className="w-12 h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold">−</button>
+              <div className="flex-1 bg-zinc-800 rounded-xl py-2 text-center text-white text-xl font-bold">{b}</div>
+              <button onClick={() => setB((n) => Math.min(50, n + 1))}
+                className="w-12 h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-2xl font-bold">+</button>
+            </div>
+          </div>
+
+          <p className="text-zinc-500 text-[11px] mb-3 text-center">
+            Правило: 11+ у победителя, разница ≥2.
+          </p>
+
+          <button
+            onClick={() => valid && onSave(a, b)}
+            disabled={!valid}
+            className={`w-full rounded-2xl py-4 font-bold text-lg ${
+              valid ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-lg' : 'bg-zinc-800 text-zinc-500'
+            }`}
+          >
+            {valid ? `✓ Сохранить ${a}:${b}` : `${a}:${b} — нужен валидный счёт`}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
   return (
     <motion.div
@@ -492,6 +583,7 @@ export function ImportSheet({ open, onClose, onImported }) {
 export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, onDeleted }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const [editIdx, setEditIdx] = useState(null)
   const { confirm, element: confirmEl } = useConfirmDialog()
 
   useEffect(() => {
@@ -515,6 +607,19 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
       setData(updated)
     } catch (e) {
       setError(e.message || 'Ошибка')
+    }
+  }
+
+  const handleEditMatch = async (a, b) => {
+    if (editIdx == null) return
+    try {
+      const updated = await tennisApi.updateMatch(sessionId, editIdx, a, b)
+      setData(updated)
+      setEditIdx(null)
+    } catch (e) {
+      let msg = e.message || 'Ошибка'
+      try { const p = JSON.parse(msg); if (p?.error) msg = p.error } catch { /* */ }
+      setError(msg)
     }
   }
 
@@ -564,24 +669,41 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
 
             {data.matches?.length > 0 && (
               <>
-                <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партии</div>
+                <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2 flex items-center justify-between">
+                  <span>Партии</span>
+                  {!data.can_edit_matches && data.ended_at && (
+                    <span className="text-[10px] normal-case text-zinc-600">окно правки закрыто</span>
+                  )}
+                </div>
                 <ol className="space-y-1 mb-4">
                   {data.matches.map((m, i) => {
                     const score = (m.score_a != null && m.score_b != null)
                       ? `${m.score_a}:${m.score_b}` : '—'
                     const winnerName = m.winner === 'a' ? data.player_a_name : data.player_b_name
+                    const canEdit = data.can_edit_matches
                     return (
-                      <li key={i} className="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2 text-sm">
+                      <li key={i} className="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2.5 text-sm">
                         <span className="text-zinc-500 w-6">#{i + 1}</span>
                         <span className="font-mono text-zinc-100 w-16">{score}</span>
                         <span className="text-zinc-400 text-xs flex-1 truncate ml-2">{winnerName}</span>
-                        <button
-                          onClick={() => handleDeleteMatch(i)}
-                          className="text-red-400 hover:text-red-300 ml-2 text-xs"
-                          title="Удалить партию"
-                        >
-                          🗑
-                        </button>
+                        {canEdit && m.score_a != null && (
+                          <button
+                            onClick={() => setEditIdx(i)}
+                            className="text-amber-300 hover:text-amber-200 ml-2 text-base px-1"
+                            title="Поправить счёт"
+                          >
+                            ✏️
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            onClick={() => handleDeleteMatch(i)}
+                            className="text-red-400 hover:text-red-300 ml-2 text-base px-1"
+                            title="Удалить партию"
+                          >
+                            🗑
+                          </button>
+                        )}
                       </li>
                     )
                   })}
@@ -600,6 +722,19 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
           </>
         )}
         {confirmEl}
+        <AnimatePresence>
+          {editIdx != null && data?.matches?.[editIdx] && (
+            <EditMatchSheet
+              open
+              nameA={data.player_a_name}
+              nameB={data.player_b_name}
+              initialScoreA={data.matches[editIdx].score_a}
+              initialScoreB={data.matches[editIdx].score_b}
+              onSave={handleEditMatch}
+              onClose={() => setEditIdx(null)}
+            />
+          )}
+        </AnimatePresence>
       </SheetShell>
     </AnimatePresence>
   )
