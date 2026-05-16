@@ -43,11 +43,6 @@ function buildMatchAnnouncement(match, state) {
   return `Партия! Победил ${winnerName}. Счёт ${winnerScore} на ${loserScore}.`
 }
 
-function buildSetEndAnnouncement(state, setNum) {
-  const [a, b] = state.wins
-  return `Конец сета ${setNum}. ${state.player_a_name} ${a} партий, ${state.player_b_name} ${b}.`
-}
-
 function buildSessionEndAnnouncement(state) {
   const [a, b] = state.wins
   if (a === b) return `Сессия завершена. Ничья: ${a} на ${b}.`
@@ -94,12 +89,6 @@ async function speak(text) {
     if (ok) return
   } catch { /* fall through */ }
   speakBrowser(text)
-}
-
-function computeSetsCompleted(state) {
-  const size = state?.set_size ?? 0
-  if (!size) return 0
-  return Math.floor((state.matches?.length ?? 0) / size)
 }
 
 // ── FinishPartySheet: ввод итогового счёта ────────────────────────────────────
@@ -238,8 +227,8 @@ function HistoryPanel({ state, elapsedSec, onClose, onEditMatch }) {
         <div className="flex justify-between"><span className="text-zinc-400">Счёт</span><span className="text-white font-mono tabular-nums">{winsA} : {winsB}</span></div>
         <div className="flex justify-between"><span className="text-zinc-400">Среднее партии</span><span className="text-white font-mono">{fmtDuration(avgMatchSec)}</span></div>
         <div className="flex justify-between"><span className="text-zinc-400">Средняя разница</span><span className="text-white font-mono">{avgDiff != null ? avgDiff.toFixed(1) : '—'}</span></div>
-        {state.set_size > 0 && (
-          <div className="flex justify-between"><span className="text-zinc-400">Сетов сыграно</span><span className="text-white font-mono">{computeSetsCompleted(state)}</span></div>
+        {state.serve_streak > 0 && (
+          <div className="flex justify-between"><span className="text-zinc-400">Партий за подачу</span><span className="text-white font-mono">{state.serve_streak}</span></div>
         )}
       </div>
       <div className="px-4 py-2 text-xs uppercase tracking-wider text-zinc-500">Партии</div>
@@ -298,7 +287,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const closedRef = useRef(false)
   const initializedRef = useRef(false)
   const prevMatchesCount = useRef(0)
-  const prevSetsAnnounced = useRef(0)
   const mutedRef = useRef(muted)
   useEffect(() => { mutedRef.current = muted }, [muted])
 
@@ -326,15 +314,10 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
   const handleIncomingState = useCallback((incoming, options = {}) => {
     const newMatches = incoming.matches?.length ?? 0
-    const newSetsAnnounced = computeSetsCompleted(incoming)
     if (initializedRef.current && !mutedRef.current) {
       if (newMatches > prevMatchesCount.current) {
         const last = incoming.matches[newMatches - 1]
         speak(buildMatchAnnouncement(last, incoming))
-      }
-      if (incoming.set_size > 0 && newSetsAnnounced > prevSetsAnnounced.current) {
-        const setNum = newSetsAnnounced
-        window.setTimeout(() => speak(buildSetEndAnnouncement(incoming, setNum)), 1500)
       }
       if (options.sessionEnd) {
         const text = buildSessionEndAnnouncement(incoming)
@@ -343,7 +326,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
     }
     initializedRef.current = true
     prevMatchesCount.current = newMatches
-    prevSetsAnnounced.current = newSetsAnnounced
     setState(incoming)
   }, [])
 
@@ -509,8 +491,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const nameA = state.player_a_name || 'Игрок A'
   const nameB = state.player_b_name || 'Игрок B'
   const [winsA, winsB] = state.wins ?? [0, 0]
-  const setSize = state.set_size ?? 0
-  const setsCompleted = computeSetsCompleted(state)
   const partyIndex = state.matches?.length ?? 0
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
   const firstServerName = state.first_server === 'a' ? nameA : nameB
@@ -586,7 +566,6 @@ export default function TennisScoreboard({ onBackToLobby }) {
 
         <div className="text-zinc-400 text-sm mt-6">
           Партия <span className="text-white font-semibold">{currentPartyNumber}</span>
-          {setSize > 0 && <> · сет <span className="text-white font-semibold">{setsCompleted + 1}</span></>}
         </div>
         {!isClosed && (
           <div className="text-zinc-500 text-xs mt-2">🏓 первая подача — {firstServerName}</div>

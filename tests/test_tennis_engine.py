@@ -375,7 +375,7 @@ def _run(coro):
 
 
 def test_record_match_with_score_completes_and_rotates():
-    s = _live_session(first_server="a")
+    s = _live_session(first_server="a", serve_streak=1)
     room = _make_room(s)
     ok, _err, info = _run(room.record_match_with_score(11, 7))
     assert ok and info["match_completed"]
@@ -393,16 +393,42 @@ def test_record_match_with_score_rejects_bad_score():
     assert len(s.matches) == 0
 
 
-def test_record_match_with_score_works_with_set_size():
-    s = _live_session(set_size=2)
+def test_serve_streak_rotates_every_n_partii():
+    # serve_streak=2: 1-я и 2-я партии — first=a; 3-я и 4-я — first=b
+    s = _live_session(first_server="a", serve_streak=2)
+    room = _make_room(s)
+    _run(room.record_match_with_score(11, 7))  # партия 1 — пока не переходим
+    assert s.first_server == "a"
+    _run(room.record_match_with_score(11, 7))  # партия 2 — переход
+    assert s.first_server == "b"
+    _run(room.record_match_with_score(11, 7))  # партия 3 — не переходим
+    assert s.first_server == "b"
+    _run(room.record_match_with_score(11, 7))  # партия 4 — переход
+    assert s.first_server == "a"
+
+
+def test_serve_streak_one_means_alternate_every_party():
+    s = _live_session(first_server="a", serve_streak=1)
     room = _make_room(s)
     _run(room.record_match_with_score(11, 7))
-    _run(room.record_match_with_score(7, 11))
-    assert s.sets_announced == 1
+    assert s.first_server == "b"
+    _run(room.record_match_with_score(11, 7))
+    assert s.first_server == "a"
+
+
+def test_undo_revives_first_server_on_streak_boundary():
+    s = _live_session(first_server="a", serve_streak=2)
+    room = _make_room(s)
+    _run(room.record_match_with_score(11, 7))   # 1: first=a (нет перехода)
+    _run(room.record_match_with_score(11, 7))   # 2: first=b (был переход)
+    assert s.first_server == "b"
+    _run(room.undo_last_match())                # откатываем 2-ю — переход тоже откатывается
+    assert s.first_server == "a"
+    assert len(s.matches) == 1
 
 
 def test_undo_last_match_rolls_back_one_party():
-    s = _live_session(first_server="a")
+    s = _live_session(first_server="a", serve_streak=1)
     room = _make_room(s)
     _run(room.record_match_with_score(11, 7))
     assert s.first_server == "b"

@@ -485,6 +485,7 @@ class Repository:
             ts.setdefault("current_score_b", 0)
             ts.setdefault("points_log", [])
             ts.setdefault("first_server", "a")
+            ts.setdefault("serve_streak", 2)
             ts.setdefault("set_size", 0)
             ts.setdefault("sets_announced", 0)
         data.setdefault("bill_persons", [])
