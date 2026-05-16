@@ -81,7 +81,7 @@ def _serialize_session(
         "wins": [wins_a, wins_b],
         "matches_count": len(s.matches),
         "first_server": s.first_server,
-        "set_size": s.set_size,
+        "serve_streak": s.serve_streak,
         "can_edit_matches": can_edit_matches(s),
         "duration_seconds": (
             (s.ended_at - s.started_at).total_seconds() if s.ended_at else None
@@ -160,7 +160,7 @@ async def get_session(request: web.Request) -> web.Response:
 
 async def create_session(request: web.Request) -> web.Response:
     """POST /api/tennis/sessions
-    {opponent: @username|id, first_server: 'a'|'b', set_size: int, chat_id?: int}
+    {opponent: @username|id, first_server: 'a'|'b', serve_streak: int, chat_id?: int}
     """
     user_id = require_user(request)
     repository: Repository = request.app["repository"]
@@ -181,7 +181,7 @@ async def create_session(request: web.Request) -> web.Response:
     first_server = str(body.get("first_server", "a")).lower()
     if first_server not in (SIDE_A, SIDE_B):
         first_server = SIDE_A
-    set_size = max(0, int(body.get("set_size", 0) or 0))
+    serve_streak = max(1, int(body.get("serve_streak", 2) or 2))
 
     # Один активный сеанс на пользователя в чате
     chat_id = int(body.get("chat_id") or user_id)
@@ -214,7 +214,7 @@ async def create_session(request: web.Request) -> web.Response:
         last_activity_at=now,
         initiator_id=user_id,
         first_server=first_server,
-        set_size=set_size,
+        serve_streak=serve_streak,
     )
     repository.db.tennis_sessions.append(session)
     await repository.save()
@@ -266,11 +266,6 @@ async def delete_match(request: web.Request) -> web.Response:
     if idx < 0 or idx >= len(session.matches):
         return web.json_response({"error": "bad index"}, status=400)
     session.matches.pop(idx)
-    if session.set_size > 0:
-        session.sets_announced = min(
-            session.sets_announced,
-            len(session.matches) // session.set_size,
-        )
     session.last_activity_at = datetime.now()
     await repository.save()
     room = get_manager().get_room(sid)

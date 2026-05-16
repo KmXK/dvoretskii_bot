@@ -31,6 +31,11 @@ class TennisSession:
     current_score_a: int = 0
     current_score_b: int = 0
     points_log: list[str] = field(default_factory=list)  # 'a'|'b' по поинтам текущей партии
-    first_server: str = "a"   # кто подавал первым в текущей партии
-    set_size: int = 0          # размер сета в партиях, 0 = без сетов
-    sets_announced: int = 0    # сколько границ сета уже озвучено
+    first_server: str = "a"   # кто подаёт первым в следующей партии
+    # Каждые N партий первая подача переходит к другому игроку. По правилам
+    # настольного тенниса обычно 2 партии «свои подачи» подряд → дефолт 2.
+    serve_streak: int = 2
+    # Legacy: использовалось для «сетов» (N партий = 1 сет) — убрано из UI,
+    # поля остаются для совместимости со старыми записями в db.json.
+    set_size: int = 0
+    sets_announced: int = 0

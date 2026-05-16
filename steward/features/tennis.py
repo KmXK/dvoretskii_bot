@@ -139,7 +139,7 @@ class TennisFeature(Feature):
         "/tennis start — открыть live-табло с оппонентом",
         "/tennis start @ivan — запустить против конкретного игрока",
         "/tennis serve — переключить первую подачу",
-        "/tennis set 5 — сет = 5 партий (0 = выключить)",
+        "/tennis streak 2 — каждые N партий первая подача переходит (по умолчанию 2)",
         "/tennis close — закрыть мою активную сессию",
         "/tennis add — записать прошедший день (агрегат или построчно)",
         "/tennis stats — моя статистика",
@@ -198,7 +198,7 @@ class TennisFeature(Feature):
         opponent_id: int,
         *,
         first_server: str = SIDE_A,
-        set_size: int = 0,
+        serve_streak: int = 2,
     ) -> TennisSession | None:
         existing = self._active_session_for(ctx.user_id, ctx.chat_id)
         if existing is not None:
@@ -218,7 +218,7 @@ class TennisFeature(Feature):
             last_activity_at=now,
             initiator_id=ctx.user_id,
             first_server=first_server,
-            set_size=set_size,
+            serve_streak=max(1, int(serve_streak or 2)),
         ))
         await self.sessions.save()
 
@@ -280,27 +280,18 @@ class TennisFeature(Feature):
             f"🏓 Первую подачу пометил за {_format_user(self.users, server_player_id)}."
         )
 
-    @subcommand("set <size:int>", description="Размер сета (0 = без сетов)")
-    async def set_size_cmd(self, ctx: FeatureContext, size: int):
+    @subcommand("streak <n:int>", description="Сколько партий держится первая подача (по умолчанию 2)")
+    async def streak_cmd(self, ctx: FeatureContext, n: int):
         session = self._active_session_for(ctx.user_id, ctx.chat_id)
         if session is None:
             await ctx.reply("Нет активной сессии в этом чате.")
             return
-        size = max(0, int(size))
-        session.set_size = size
-        # пересчитаем сколько сетов уже завершено
-        if size > 0:
-            completed = len(session.matches) // size
-            session.sets_announced = min(session.sets_announced, completed)
-        else:
-            session.sets_announced = 0
+        n = max(1, int(n))
+        session.serve_streak = n
         await self.sessions.save()
         room = get_manager().attach(session, self.repository)
         await room.broadcast()
-        if size == 0:
-            await ctx.reply("Сеты отключены.")
-        else:
-            await ctx.reply(f"Сет = {size} парт.")
+        await ctx.reply(f"Первая подача переходит каждые {n} парт.")
 
     @subcommand("close", description="Закрыть твою активную сессию")
     async def close_(self, ctx: FeatureContext):
@@ -400,18 +391,18 @@ class TennisFeature(Feature):
             ],
         ),
         ask(
-            "set_size",
-            "Размер сета (партий в одном сете). 0 — без сетов.",
+            "serve_streak",
+            "Сколько партий держится одна подача? (по умолчанию 2)",
             validator=validate_message_text([
-                try_get(lambda t: max(0, int(t.strip())), "Введи число от 0"),
+                try_get(lambda t: max(1, int(t.strip() or "2")), "Введи число ≥ 1"),
             ]),
         ),
         confirm(
             "confirmed",
             lambda state: (
                 f"Запустить сессию против {state.get('opponent_raw', '?')}? "
-                f"Подаёт {'ты' if state.get('first_server') == SIDE_A else 'оппонент'}"
-                f"{', сетов нет' if not state.get('set_size') else f', сет = {state.get('set_size')} парт.'}."
+                f"Подаёт {'ты' if state.get('first_server') == SIDE_A else 'оппонент'}, "
+                f"подача переходит каждые {state.get('serve_streak', 2)} парт."
             ),
         ),
     )
@@ -420,7 +411,7 @@ class TennisFeature(Feature):
         ctx: FeatureContext,
         opponent_raw: str,
         first_server: str,
-        set_size: int,
+        serve_streak: int,
         confirmed: bool,
         **_,
     ):
@@ -438,7 +429,7 @@ class TennisFeature(Feature):
             ctx,
             user.id,
             first_server=first_server,
-            set_size=int(set_size or 0),
+            serve_streak=int(serve_streak or 2),
         )
 
     # ── wizard: add (история) ────────────────────────────────────────────────

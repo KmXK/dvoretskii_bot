@@ -135,7 +135,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
   const [selectedId, setSelectedId] = useState(null)
   const [customRaw, setCustomRaw] = useState('')
   const [firstServer, setFirstServer] = useState('a')
-  const [setSize, setSetSize] = useState(0)
+  const [serveStreak, setServeStreak] = useState(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
@@ -159,7 +159,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
       const created = await tennisApi.createSession({
         opponent,
         first_server: firstServer,
-        set_size: setSize,
+        serve_streak: serveStreak,
       })
       onCreated(created)
     } catch (e) {
@@ -230,24 +230,27 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           </button>
         </div>
 
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Размер сета (партий)</div>
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партий за одну подачу</div>
+        <p className="text-zinc-500 text-[11px] mb-2">
+          Каждые N партий первая подача переходит к другому игроку.
+        </p>
         <div className="flex items-center gap-2 mb-4">
-          {[0, 3, 5, 7].map((n) => (
+          {[1, 2, 5].map((n) => (
             <button
               key={n}
-              onClick={() => setSetSize(n)}
-              className={`px-3 py-1.5 rounded-lg text-sm ${
-                setSize === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+              onClick={() => setServeStreak(n)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                serveStreak === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
               }`}
             >
-              {n === 0 ? 'нет' : n}
+              {n}
             </button>
           ))}
           <input
             type="number"
-            min={0}
-            value={setSize}
-            onChange={(e) => setSetSize(Math.max(0, parseInt(e.target.value || '0', 10)))}
+            min={1}
+            value={serveStreak}
+            onChange={(e) => setServeStreak(Math.max(1, parseInt(e.target.value || '1', 10)))}
             className="w-16 bg-zinc-800 text-white text-sm px-2 py-1.5 rounded-lg border border-zinc-700 ml-auto"
           />
         </div>

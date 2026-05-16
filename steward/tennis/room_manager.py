@@ -131,7 +131,7 @@ class TennisRoom:
             "note": self.session.note,
             "wins": [wins_a, wins_b],
             "first_server": self.session.first_server,
-            "set_size": self.session.set_size,
+            "serve_streak": self.session.serve_streak,
             "matches": [
                 {
                     "started_at": _iso_utc(m.started_at),
@@ -169,22 +169,16 @@ class TennisRoom:
             score_b=score_b,
         )
         self.session.matches.append(match)
-        self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
+        # Первая подача переключается каждые serve_streak партий
+        streak = max(1, self.session.serve_streak or 2)
+        if len(self.session.matches) % streak == 0:
+            self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
 
-        info = {"match_completed": True, "set_completed": False}
-        if self.session.set_size > 0:
-            completed = len(self.session.matches) // self.session.set_size
-            if completed > self.session.sets_announced:
-                self.session.sets_announced = completed
-                info["set_completed"] = True
-
+        info = {"match_completed": True}
         self.session.last_activity_at = datetime.now()
         await self.repository.save()
 
         asyncio.create_task(self.manager._announce_match(self.session, match))
-        if info["set_completed"]:
-            asyncio.create_task(self.manager._announce_set_end(self.session))
-
         return True, "", info
 
     async def update_match(
@@ -208,18 +202,17 @@ class TennisRoom:
         return True, ""
 
     async def undo_last_match(self) -> tuple[bool, str]:
-        """Откат последней записанной партии. Возвращает first_server."""
+        """Откат последней записанной партии. Возвращает first_server обратно
+        если по правилу serve_streak подача переключилась после неё."""
         if self.session.ended_at is not None:
             return False, "Сессия уже закрыта"
         if not self.session.matches:
             return False, "Нечего отменять"
+        # До отката: матчей было N → подача переключилась если N % streak == 0
+        streak = max(1, self.session.serve_streak or 2)
+        if len(self.session.matches) % streak == 0:
+            self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
         self.session.matches.pop()
-        self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
-        if self.session.set_size > 0:
-            self.session.sets_announced = min(
-                self.session.sets_announced,
-                len(self.session.matches) // self.session.set_size,
-            )
         self.session.last_activity_at = datetime.now()
         await self.repository.save()
         return True, ""
@@ -397,31 +390,6 @@ class TennisRoomManager:
             )
         except Exception:
             logger.exception("tennis match announce failed for session=%s", session.id)
-
-    async def _announce_set_end(self, session: TennisSession) -> None:
-        if self._bot is None or session.set_size <= 0:
-            return
-        if self._anyone_in_webapp(session):
-            return
-        try:
-            wins_a, wins_b = session_wins(session)
-            name_a = self._spoken_name(session.player_a_id, "игрок А")
-            name_b = self._spoken_name(session.player_b_id, "игрок Б")
-            set_num = session.sets_announced
-            text = (
-                f"Конец сета {set_num}. "
-                f"{name_a} — {wins_a} партий, {name_b} — {wins_b} партий."
-            )
-            audio = await synthesize(text)
-            if not audio:
-                return
-            await self._bot.send_voice(
-                chat_id=session.chat_id,
-                voice=audio,
-                caption=text,
-            )
-        except Exception:
-            logger.exception("tennis set-end announce failed for session=%s", session.id)
 
     async def _announce_session_end(self, session: TennisSession, reason: str) -> None:
         if self._bot is None:
