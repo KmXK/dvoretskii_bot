@@ -116,7 +116,13 @@ def _resolve_user(repository: Repository, identifier: Any) -> int | None:
 
 
 def _user_can_modify(session: TennisSession, user_id: int) -> bool:
+    """Кто может администрировать сессию (закрыть, удалить и т.п.)."""
     return user_id in (session.player_a_id, session.player_b_id, session.initiator_id)
+
+
+def _is_player(session: TennisSession, user_id: int) -> bool:
+    """Кто может писать/править счёт партий — только игроки."""
+    return user_id in (session.player_a_id, session.player_b_id)
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
@@ -250,8 +256,8 @@ async def delete_match(request: web.Request) -> web.Response:
     session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
     if session is None:
         return web.json_response({"error": "not found"}, status=404)
-    if not _user_can_modify(session, user_id):
-        return web.json_response({"error": "forbidden"}, status=403)
+    if not _is_player(session, user_id):
+        return web.json_response({"error": "only players can edit matches"}, status=403)
     if not can_edit_matches(session):
         return web.json_response(
             {"error": "окно редактирования закрыто (более часа после конца сессии)"},
@@ -295,8 +301,8 @@ async def update_match(request: web.Request) -> web.Response:
     session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
     if session is None:
         return web.json_response({"error": "not found"}, status=404)
-    if not _user_can_modify(session, user_id):
-        return web.json_response({"error": "forbidden"}, status=403)
+    if not _is_player(session, user_id):
+        return web.json_response({"error": "only players can edit matches"}, status=403)
     if not can_edit_matches(session):
         return web.json_response(
             {"error": "окно редактирования закрыто (более часа после конца сессии)"},
@@ -542,8 +548,8 @@ async def serve_toggle(request: web.Request) -> web.Response:
     session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
     if session is None:
         return web.json_response({"error": "not found"}, status=404)
-    if not _user_can_modify(session, user_id):
-        return web.json_response({"error": "forbidden"}, status=403)
+    if not _is_player(session, user_id):
+        return web.json_response({"error": "only players can change serve"}, status=403)
     if session.ended_at is not None:
         return web.json_response({"error": "session closed"}, status=409)
     session.first_server = SIDE_B if session.first_server == SIDE_A else SIDE_A
