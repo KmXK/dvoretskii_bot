@@ -9,7 +9,8 @@ function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex items-end justify-center"
+      // z-50: поверх BottomNav (z-40), иначе нижняя кнопка модалки залезет под мобильную навигацию
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end justify-center"
       onClick={onClose}
     >
       <motion.div
@@ -20,7 +21,9 @@ function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
         className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl overflow-y-auto"
         style={{
           maxHeight,
-          paddingBottom: 'calc(env(safe-area-inset-bottom) + 14px)',
+          // 14px (зазор) + safe-area-inset-bottom + 56px (высота BottomNav h-14)
+          // чтобы submit-кнопки внутри sheet не закрывались мобильным навбаром
+          paddingBottom: 'calc(env(safe-area-inset-bottom) + 70px)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
