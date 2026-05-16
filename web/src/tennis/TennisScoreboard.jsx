@@ -67,7 +67,7 @@ function speakBrowser(text) {
 
 const ttsCache = new Map()
 const ttsAudioRef = { current: null }
-async function speakServer(text) {
+async function speakServer(text, { noCancel = false } = {}) {
   let blob = ttsCache.get(text)
   if (!blob) {
     blob = await tennisApi.tts(text)
@@ -75,7 +75,9 @@ async function speakServer(text) {
     if (ttsCache.size > 64) ttsCache.delete(ttsCache.keys().next().value)
     ttsCache.set(text, blob)
   }
-  try { ttsAudioRef.current?.pause?.() } catch { /* noop */ }
+  if (!noCancel) {
+    try { ttsAudioRef.current?.pause?.() } catch { /* noop */ }
+  }
   const url = URL.createObjectURL(blob)
   const audio = new Audio(url)
   ttsAudioRef.current = audio
@@ -83,9 +85,19 @@ async function speakServer(text) {
   await audio.play().catch(() => {})
   return true
 }
-async function speak(text) {
+async function speak(text, { waitForCurrent = false } = {}) {
+  if (waitForCurrent) {
+    const current = ttsAudioRef.current
+    if (current && !current.paused && !current.ended) {
+      await new Promise((resolve) => {
+        current.addEventListener('ended', resolve, { once: true })
+        current.addEventListener('error', resolve, { once: true })
+        window.setTimeout(resolve, 8000) // safety cap
+      })
+    }
+  }
   try {
-    const ok = await speakServer(text)
+    const ok = await speakServer(text, { noCancel: waitForCurrent })
     if (ok) return
   } catch { /* fall through */ }
   speakBrowser(text)
@@ -317,15 +329,20 @@ export default function TennisScoreboard({ onBackToLobby }) {
     const newMatches = incoming.matches?.length ?? 0
     const seq = incoming.last_commentary_seq ?? 0
     if (initializedRef.current && !mutedRef.current) {
-      // Озвучиваем партию: предпочитаем AI-комментарий (если успел сгенериться),
-      // fallback — стандартная фраза. Триггер — увеличение matches.length ИЛИ
-      // увеличение commentary_seq (если AI пришёл позже первого state)
       const newPartyArrived = newMatches > prevMatchesCount.current
+      // AI-комментарий пришёл позже, когда счёт уже был обновлён
       const lateCommentary = seq > prevCommentarySeq.current && newMatches === prevMatchesCount.current
-      if (newPartyArrived || lateCommentary) {
+
+      if (newPartyArrived) {
+        // Стандартная озвучка: счёт партии, сразу
         const last = incoming.matches[newMatches - 1]
-        const text = incoming.last_commentary || (last ? buildMatchAnnouncement(last, incoming) : null)
+        const text = last ? buildMatchAnnouncement(last, incoming) : null
         if (text) speak(text)
+      }
+      if (lateCommentary && incoming.last_commentary) {
+        // Комментарий: ждём пока закончится текущая озвучка, потом воспроизводим
+        const text = incoming.last_commentary
+        ;(async () => { await speak(text, { waitForCurrent: true }) })()
       }
       if (options.sessionEnd) {
         const text = buildSessionEndAnnouncement(incoming)

@@ -27,7 +27,7 @@ from steward.tennis.engine import (
     is_valid_party_score,
     session_wins,
 )
-from steward.tennis.commentator import generate_match_commentary
+from steward.tennis.commentator import generate_match_commentary, should_generate_commentary
 from steward.tennis.tts import (
     match_announcement_text,
     session_end_announcement_text,
@@ -186,6 +186,11 @@ class TennisRoom:
         self.session.last_activity_at = datetime.now()
         await self.repository.save()
 
+        # Сразу бродкастим: счёт появляется на табло, стандартная озвучка играет
+        self.last_commentary = ""
+        await self.broadcast()
+
+        # AI-комментарий — отдельный таск, придёт позже как late-broadcast
         asyncio.create_task(self.manager._announce_match(self.session, match))
         return True, "", info
 
@@ -379,44 +384,44 @@ class TennisRoomManager:
         return False
 
     async def _announce_match(self, session: TennisSession, match: TennisMatch) -> None:
-        """После записанной партии: генерим живой комментарий (AI),
-        кладём в room.last_commentary (фронт играет в вебе), и шлём voice
-        в чат если в вебе никого нет.
-        """
+        """Стандартная озвучка идёт в чат (если игроки не в вебе); AI-комментарий
+        отправляется как второй broadcast только для заметных партий."""
         name_a = self._spoken_name(session.player_a_id, "игрок А")
         name_b = self._spoken_name(session.player_b_id, "игрок Б")
+        winner_name = name_a if match.winner == SIDE_A else name_b
+        standard_text = match_announcement_text(match, winner_name)
+
+        # Голос в чат — стандартная фраза, только если никого нет в вебе
+        if self._bot is not None and not self._anyone_in_webapp(session):
+            try:
+                audio = await synthesize(standard_text)
+                if audio:
+                    await self._bot.send_voice(
+                        chat_id=session.chat_id,
+                        voice=audio,
+                        caption=standard_text,
+                    )
+            except Exception:
+                logger.exception("tennis match announce failed for session=%s", session.id)
+
+        # AI-комментарий — только для заметных моментов
+        if not should_generate_commentary(session, match):
+            return
 
         commentary = await generate_match_commentary(
             session, match, name_a=name_a, name_b=name_b
         )
-        winner_name = name_a if match.winner == SIDE_A else name_b
-        text = commentary or match_announcement_text(match, winner_name)
+        if not commentary:
+            return
 
-        # Обновим in-memory state и разошлём
         room = self.rooms.get(session.id)
         if room is not None:
-            room.last_commentary = text
+            room.last_commentary = commentary
             room.last_commentary_seq += 1
             try:
                 await room.broadcast()
             except Exception:
                 logger.exception("tennis broadcast after commentary failed")
-
-        if self._bot is None:
-            return
-        if self._anyone_in_webapp(session):
-            return  # игроки в вебе — пусть слушают коммент там, не дублируем в чат
-        try:
-            audio = await synthesize(text)
-            if not audio:
-                return
-            await self._bot.send_voice(
-                chat_id=session.chat_id,
-                voice=audio,
-                caption=text,
-            )
-        except Exception:
-            logger.exception("tennis match announce failed for session=%s", session.id)
 
     async def _announce_session_end(self, session: TennisSession, reason: str) -> None:
         if self._bot is None:

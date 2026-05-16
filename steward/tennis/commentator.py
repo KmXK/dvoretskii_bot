@@ -13,6 +13,8 @@ from steward.data.models.tennis import TennisMatch, TennisSession
 from steward.helpers.ai import OpenRouterModel, make_openrouter_query
 from steward.tennis.engine import SIDE_A, SIDE_B, session_wins
 
+__all__ = ["generate_match_commentary", "should_generate_commentary"]
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,6 +52,37 @@ def _recent_summary(matches: Sequence[TennisMatch], n: int = 5) -> str:
         else:
             parts.append(f"{m.score_a}:{m.score_b} ({'A' if m.winner == SIDE_A else 'B'})")
     return " · ".join(parts) if parts else "—"
+
+
+def should_generate_commentary(session: TennisSession, match: TennisMatch) -> bool:
+    """Стоит ли генерировать AI-комментарий для этой партии?
+
+    Комментируем только заметные моменты, не каждую партию.
+    """
+    matches = session.matches  # новая партия уже добавлена
+    n = len(matches)
+
+    # Deuce-завершение: у проигравшего ≥10 очков
+    if match.score_a is not None and match.score_b is not None:
+        lo = min(match.score_a, match.score_b)
+        if lo >= 10:
+            return True
+
+    # Серия 3+ побед подряд у одного игрока
+    _, streak = _current_win_streak(matches)
+    if streak >= 3:
+        return True
+
+    # Отыгрыш: счёт сессии сравнялся после отставания ≥2
+    wins_a, wins_b = session_wins(session)
+    if wins_a == wins_b and n >= 4:
+        return True
+
+    # Каждые 5 партий — чтобы не молчать совсем
+    if n >= 5 and n % 5 == 0:
+        return True
+
+    return False
 
 
 async def generate_match_commentary(
