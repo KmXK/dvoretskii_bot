@@ -163,34 +163,41 @@ async def stream_reply(
                 except Exception as e:
                     logger.debug("background task ended with: %s", e)
 
-    async for chunk in chunks:
-        if not chunk:
-            continue
+    try:
+        async for chunk in chunks:
+            if not chunk:
+                continue
+            if not got_anything:
+                await _stop_animation()
+            buffer.append(chunk)
+            got_anything = True
+            text = "".join(buffer)
+            if len(text) > _TG_TEXT_LIMIT:
+                text = text[:_TG_TEXT_LIMIT]
+            now = time.monotonic()
+            if now - last_edit_at < min_edit_interval:
+                continue
+            if text == last_text:
+                continue
+            try:
+                await bot_message.edit_text(text)
+                last_edit_at = now
+                last_text = text
+            except RetryAfter as e:
+                await asyncio.sleep(float(e.retry_after))
+            except BadRequest as e:
+                if "not modified" not in str(e).lower():
+                    logger.warning("stream edit BadRequest: %s", e)
+    except Exception as stream_err:
+        logger.warning("stream_reply: stream raised: %s", stream_err)
         if not got_anything:
-            await _stop_animation()
-        buffer.append(chunk)
-        got_anything = True
-        text = "".join(buffer)
-        if len(text) > _TG_TEXT_LIMIT:
-            text = text[:_TG_TEXT_LIMIT]
-        now = time.monotonic()
-        if now - last_edit_at < min_edit_interval:
-            continue
-        if text == last_text:
-            continue
-        try:
-            await bot_message.edit_text(text)
-            last_edit_at = now
-            last_text = text
-        except RetryAfter as e:
-            await asyncio.sleep(float(e.retry_after))
-        except BadRequest as e:
-            # "Message is not modified" is safe to ignore; other errors we log
-            # but keep accumulating so the final edit still applies.
-            if "not modified" not in str(e).lower():
-                logger.warning("stream edit BadRequest: %s", e)
-
-    await _stop_animation()
+            try:
+                await bot_message.edit_text("⚠️ Что-то пошло не так, попробуй ещё раз")
+            except Exception:
+                pass
+        raise
+    finally:
+        await _stop_animation()
 
     final_text = "".join(buffer) if got_anything else ""
     if not final_text:
