@@ -21,8 +21,8 @@ class YandexModelTypes:
 
 
 class OpenRouterModel:
-    GROK_4_FAST = "x-ai/grok-4-fast"
-    GROK_4_FAST_ONLINE = "x-ai/grok-4-fast:online"
+    GROK_4_FAST = "x-ai/grok-4.3"
+    GROK_4_FAST_ONLINE = "x-ai/grok-4.3:online"
     GROK_3_BETA = "x-ai/grok-3-beta"
     GEMINI_25_FLASH = "google/gemini-2.5-flash"
     AUTO = "openrouter/auto"
