@@ -27,6 +27,7 @@ from steward.tennis.engine import (
     is_valid_party_score,
     session_wins,
 )
+from steward.tennis.commentator import generate_match_commentary
 from steward.tennis.tts import (
     match_announcement_text,
     session_end_announcement_text,
@@ -97,6 +98,11 @@ class TennisRoom:
         self.repository = repository
         self.manager = manager
         self.connections: dict[int, web.WebSocketResponse] = {}
+        # Текст последней озвучки/коммента — фронт играет его через speak()
+        # вместо стандартной «Партия! Победил X. Счёт 11:7». In-memory, не
+        # сохраняется в БД.
+        self.last_commentary: str = ""
+        self.last_commentary_seq: int = 0  # счётчик для фронта чтобы не повторять
 
     # ── permissions ──────────────────────────────────────────────────────────
 
@@ -132,6 +138,8 @@ class TennisRoom:
             "wins": [wins_a, wins_b],
             "first_server": self.session.first_server,
             "serve_streak": self.session.serve_streak,
+            "last_commentary": self.last_commentary,
+            "last_commentary_seq": self.last_commentary_seq,
             "matches": [
                 {
                     "started_at": _iso_utc(m.started_at),
@@ -371,15 +379,34 @@ class TennisRoomManager:
         return False
 
     async def _announce_match(self, session: TennisSession, match: TennisMatch) -> None:
+        """После записанной партии: генерим живой комментарий (AI),
+        кладём в room.last_commentary (фронт играет в вебе), и шлём voice
+        в чат если в вебе никого нет.
+        """
+        name_a = self._spoken_name(session.player_a_id, "игрок А")
+        name_b = self._spoken_name(session.player_b_id, "игрок Б")
+
+        commentary = await generate_match_commentary(
+            session, match, name_a=name_a, name_b=name_b
+        )
+        winner_name = name_a if match.winner == SIDE_A else name_b
+        text = commentary or match_announcement_text(match, winner_name)
+
+        # Обновим in-memory state и разошлём
+        room = self.rooms.get(session.id)
+        if room is not None:
+            room.last_commentary = text
+            room.last_commentary_seq += 1
+            try:
+                await room.broadcast()
+            except Exception:
+                logger.exception("tennis broadcast after commentary failed")
+
         if self._bot is None:
             return
         if self._anyone_in_webapp(session):
-            return  # игроки в вебаппе — пусть слушают там, не дублируем в чат
+            return  # игроки в вебе — пусть слушают коммент там, не дублируем в чат
         try:
-            winner_id = session.player_a_id if match.winner == SIDE_A else session.player_b_id
-            fallback = "игрок А" if match.winner == SIDE_A else "игрок Б"
-            name = self._spoken_name(winner_id, fallback)
-            text = match_announcement_text(match, name)
             audio = await synthesize(text)
             if not audio:
                 return
