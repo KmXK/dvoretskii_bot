@@ -23,6 +23,11 @@ class Handler:
         """Chat message handler"""
         return False
 
+    async def message_edited(self, context: ChatBotContext) -> bool:
+        """Called when an existing message in the chat is edited.
+        Context's message is the new (edited) version. Return True if handled."""
+        return False
+
     async def callback(self, context: CallbackBotContext) -> bool:
         """Callback handler"""
         return False
