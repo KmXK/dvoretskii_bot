@@ -18,6 +18,7 @@ from steward.features.fuck import FuckFeature, SexFeature
 from steward.features.google_drive import GoogleDriveFeature
 from steward.features.holidays import HolidaysFeature
 from steward.features.id import IdFeature
+from steward.features.incident import IncidentFeature
 from steward.features.link import LinkFeature
 from steward.features.me import MeFeature
 from steward.features.message_info import MessageInfoFeature
@@ -75,6 +76,7 @@ COMMANDS << [
     StandsFeature,
     RewardFeature,
     TodoFeature,
+    IncidentFeature,
     CurseFeature,
     IdFeature,
     PrettyTimeFeature,
