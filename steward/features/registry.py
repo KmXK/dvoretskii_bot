@@ -19,6 +19,7 @@ from steward.features.google_drive import GoogleDriveFeature
 from steward.features.holidays import HolidaysFeature
 from steward.features.id import IdFeature
 from steward.features.incident import IncidentFeature
+from steward.features.lang import LangFeature
 from steward.features.link import LinkFeature
 from steward.features.me import MeFeature
 from steward.features.message_info import MessageInfoFeature
@@ -67,6 +68,7 @@ EARLY << [
 COMMANDS = bucket("commands")
 COMMANDS << [
     AdminFeature,
+    LangFeature,
     ArmyFeature,
     BillsFeature,
     BirthdayFeature,

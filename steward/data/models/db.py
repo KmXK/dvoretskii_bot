@@ -83,8 +83,9 @@ class Database:
     fuck_assets: list[FuckAsset] = field(default_factory=list)
     tennis_sessions: list[TennisSession] = field(default_factory=list)
     incidents: list[Incident] = field(default_factory=list)
+    user_languages: dict[str, str] = field(default_factory=dict)
 
-    version: int = 24
+    version: int = 25
 
 
 PARSE_CONFIG = Config(
