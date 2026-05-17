@@ -8,6 +8,7 @@ from pathlib import Path
 from steward.bot.context import ChatBotContext
 from steward.features.voice_video.conversion import create_video_reply
 from steward.features.voice_video.transcription import (
+    build_speaker_name,
     create_transcription_reply,
     transcribe_voice,
 )
@@ -47,6 +48,26 @@ def _voice_prompt_phrase() -> str:
 
 
 _REQUEST_MAX_DURATION_SEC = 15
+
+_DVORETSKII_TRIGGERS = ("дворецк", "уважаем")
+
+
+def _detect_dvoretskii_prefix(text: str) -> str | None:
+    """Если расшифровка начинается с «Дворецкий»/«Уважаемый» (опционально
+    после «Имя:» из диаризации), возвращает текст для роутера, иначе None."""
+    if not text:
+        return None
+    s = text.strip()
+    # Убираем метку говорящего «Имя: ...» если присутствует
+    if ":" in s[:60]:
+        head, _, rest = s.partition(":")
+        if len(head) <= 40 and "\n" not in head:
+            s = rest.strip()
+    low = s.lower()
+    for trig in _DVORETSKII_TRIGGERS:
+        if low.startswith(trig):
+            return s
+    return None
 
 
 @dataclasses.dataclass
@@ -216,6 +237,23 @@ class VoiceVideoFeature(Feature):
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
 
+            speaker_name = build_speaker_name(
+                self.repository,
+                pending.speaker_user_id,
+                pending.speaker_username,
+                pending.speaker_fallback_name,
+            )
+            transcription = await transcribe_voice(audio_path, speaker_name)
+
+            ai_text = _detect_dvoretskii_prefix(transcription) if transcription else None
+            if ai_text:
+                handled = await self._route_voice_to_ai(
+                    ctx, initiator, bot_message, ai_text
+                )
+                if handled:
+                    pending.request_clicked = True
+                    return
+
             def reply_markup_provider():
                 kb = self._build_actions_keyboard(request_id, pending)
                 return kb.to_markup() if kb is not None else None
@@ -231,6 +269,7 @@ class VoiceVideoFeature(Feature):
                 video_path=audio_path if pending.is_video_note else None,
                 edit_message=bot_message,
                 reply_markup_provider=reply_markup_provider,
+                pretranscribed=transcription,
             )
         except Exception as e:
             logger.exception("Auto-transcription failed: %s", e)
@@ -241,6 +280,45 @@ class VoiceVideoFeature(Feature):
         finally:
             if pending.request_clicked or not pending.request_allowed:
                 self._pending.pop(request_id, None)
+
+    async def _route_voice_to_ai(
+        self,
+        ctx: FeatureContext,
+        initiator,
+        bot_message,
+        text: str,
+    ) -> bool:
+        """Передать расшифровку в AiRouterHandler как обычный запрос «Дворецкий, ...»"""
+        # Убираем плейсхолдер «Слушаю...» — роутер сам ответит на исходное голосовое
+        try:
+            await bot_message.delete()
+        except Exception:
+            try:
+                await bot_message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+        router_message = _RouterMessageProxy(initiator, initiator.from_user, text)
+        chat_context = ChatBotContext(
+            ctx.repository,
+            ctx.bot,
+            ctx.client,
+            ctx.update,
+            ctx.tg_context,
+            ctx.metrics,
+            router_message,
+        )
+        all_handlers = getattr(self, "_all_handlers", [])
+        for handler in all_handlers:
+            if handler.__class__.__name__ != "AiRouterHandler":
+                continue
+            try:
+                handled = await handler.chat(chat_context)
+            except Exception as e:
+                logger.exception("voice → AI route failed: %s", e)
+                return False
+            return bool(handled)
+        return False
 
     @on_callback(
         "voice:action",

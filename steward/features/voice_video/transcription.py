@@ -250,6 +250,7 @@ async def create_transcription_reply(
     video_path: Path | None = None,
     edit_message=None,
     reply_markup_provider: Callable[[], Any] | None = None,
+    pretranscribed: str | None = None,
 ):
     speaker_name = build_speaker_name(
         repository,
@@ -264,12 +265,14 @@ async def create_transcription_reply(
         speaker_fallback_name,
     )
 
-    voice_task = asyncio.create_task(transcribe_voice(audio_path, speaker_name))
     visual_task = (
         asyncio.create_task(describe_video(video_path)) if video_path is not None else None
     )
 
-    transcription = await voice_task
+    if pretranscribed is not None:
+        transcription: str | None = pretranscribed
+    else:
+        transcription = await transcribe_voice(audio_path, speaker_name)
     if not transcription:
         if visual_task is not None:
             visual_task.cancel()
