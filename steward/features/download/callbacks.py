@@ -113,12 +113,14 @@ async def download_and_send_medias(
                 disable_notification=True,
                 reply_markup=reply_markup,
                 caption=caption,
+                parse_mode="HTML" if caption else None,
             )
         else:
             if caption and medias:
                 first = medias[0]
                 if isinstance(first, (InputMediaPhoto, InputMediaVideo)):
                     first.caption = caption
+                    first.parse_mode = "HTML"
             for i in range(0, len(medias), 10):
                 retry = 0
                 while retry < retries_count:
