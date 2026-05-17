@@ -333,7 +333,9 @@ class VoiceVideoFeature(Feature):
         message = callback_query.message
         pending = self._pending.get(request_id)
         if pending is None:
-            await callback_query.answer("Запрос устарел")
+            await callback_query.answer(
+                "Голосовое уже не активно — отправь новое",
+            )
             return
 
         if action == "nothing":
@@ -351,12 +353,12 @@ class VoiceVideoFeature(Feature):
 
         if action == "transcribe":
             if pending.transcribe_clicked:
-                await callback_query.answer("Кнопка уже нажата")
+                await callback_query.answer()  # тихо игнорируем повторный клик
                 return
             pending.transcribe_clicked = True
         elif action == "request":
             if pending.request_clicked:
-                await callback_query.answer("Кнопка уже нажата")
+                await callback_query.answer()  # тихо игнорируем повторный клик
                 return
             pending.request_clicked = True
 
@@ -393,7 +395,12 @@ class VoiceVideoFeature(Feature):
                 self._pending.pop(request_id, None)
         except Exception as e:
             logger.exception("Error processing voice callback: %s", e)
-            await message.reply_text("Ошибка при обработке сообщения")
+            try:
+                await message.reply_text(
+                    f"Не получилось обработать {'расшифровку' if action == 'transcribe' else 'запрос'}, попробуй ещё раз"
+                )
+            except Exception:
+                pass
 
     async def _resolve_audio_path(self, ctx: FeatureContext, file_id: str) -> Path:
         tg_file = await ctx.bot.get_file(file_id)

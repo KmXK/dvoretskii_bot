@@ -244,7 +244,8 @@ class Feature(Handler):
 
     async def _deny_access(self, ctx: FeatureContext, message: str) -> None:
         if ctx.is_callback:
-            await ctx.toast(message, alert=True)
+            # Без alert=True — обычный тост наверху экрана, без модалки
+            await ctx.toast(message)
         else:
             await ctx.reply(message)
 

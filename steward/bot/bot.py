@@ -241,7 +241,15 @@ class Bot:
         If the bot's message has `reply_to_message`, only the user it replied to
         may press inline buttons on it. Returns False if the callback should be
         dropped (also answers the query with an alert).
+
+        Exception: pagination callbacks (suffix `:_pg|...`) are always allowed —
+        просмотр списка по своей сути общий, нет смысла его ограничивать.
         """
+        # Пагинация — открытая для всех. Префикс задаётся в feature.py
+        # как `<command>:_pg`, поэтому ищем сегмент `:_pg|` в callback_data.
+        data = cq.data or ""
+        if ":_pg|" in data:
+            return True
         msg = cq.message
         if msg is None:
             return True

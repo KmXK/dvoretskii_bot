@@ -36,7 +36,9 @@ class ReactFeature(Feature):
         if n < 1 or n > MAX_REACT_COUNT:
             await ctx.reply(f"Укажите число от 1 до {MAX_REACT_COUNT}")
             return
-        reply = await ctx.message.reply_text("Поставь реакцию на это сообщение")
+        reply = await ctx.message.reply_text(
+            f"Поставь реакцию на это сообщение — продублирую её на последние {n} сообщений"
+        )
         chat_id = ctx.chat_id
         user_id = ctx.user_id
         self._pending[(chat_id, user_id)] = _PendingReact(
@@ -62,13 +64,8 @@ class ReactFeature(Feature):
             return False
         del self._pending[(chat_id, user_id)]
 
-        try:
-            await ctx.bot.delete_message(chat_id=chat_id, message_id=pending.bot_msg_id)
-        except Exception:
-            pass
-
         raw = new_reactions[0]
-        reaction = None
+        reaction: ReactionTypeEmoji | None = None
         if isinstance(raw, ReactionTypeCustomEmoji):
             try:
                 stickers = await ctx.bot.get_custom_emoji_stickers([raw.custom_emoji_id])
@@ -77,10 +74,26 @@ class ReactFeature(Feature):
                 pass
         elif isinstance(raw, ReactionTypeEmoji):
             reaction = raw
+
+        try:
+            await ctx.bot.delete_message(chat_id=chat_id, message_id=pending.bot_msg_id)
+        except Exception:
+            pass
+
         if reaction is None:
+            try:
+                await ctx.bot.send_message(
+                    chat_id=chat_id,
+                    text="Не получилось разобрать реакцию (попробуй стандартный эмодзи)",
+                    reply_to_message_id=pending.cmd_msg_id,
+                )
+            except Exception:
+                pass
             return True
 
         user_key = f"react_user_{user_id}"
+        done = 0
+        failed = 0
         for i in range(1, pending.count + 1):
             msg_id = pending.cmd_msg_id - i
             try:
@@ -90,15 +103,23 @@ class ReactFeature(Feature):
                 logger.warning("Rate limit hit, stopping at %d/%d", i - 1, pending.count)
                 break
             try:
-                try:
-                    await ctx.bot.set_message_reaction(
-                        chat_id=chat_id, message_id=msg_id, reaction=[],
-                    )
-                except Exception:
-                    pass
                 await ctx.bot.set_message_reaction(
                     chat_id=chat_id, message_id=msg_id, reaction=[reaction],
                 )
+                done += 1
             except Exception as e:
-                logger.warning("Failed to set reaction on msg %s: %s", msg_id, e)
+                failed += 1
+                logger.debug("Failed to set reaction on msg %s: %s", msg_id, e)
+        if done == 0:
+            try:
+                await ctx.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "Не получилось расставить реакции — возможно, "
+                        "бот не админ или сообщения слишком старые"
+                    ),
+                    reply_to_message_id=pending.cmd_msg_id,
+                )
+            except Exception:
+                pass
         return True

@@ -253,7 +253,8 @@ class BirthdayFeature(Feature):
     ):
         data = self._pending.pop(token, None)
         if data is None:
-            await ctx.edit("Это подтверждение протухло. Запусти /birthday <имя> заново.")
+            await ctx.toast("Это подтверждение протухло — запусти /birthday заново")
+            await ctx.delete_or_clear_keyboard()
             return
         name = data["name"]
         description = data["description"]

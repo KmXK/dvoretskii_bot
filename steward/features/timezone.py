@@ -162,6 +162,9 @@ class TimezoneFeature(Feature):
             return
         result = _time_by_city(q)
         if result is None:
-            await ctx.reply(f"Город «{q}» не найден")
+            await ctx.reply(
+                f"❌ Город «{q}» не найден.\n"
+                "Попробуй название по-английски или укажи смещение, например +3"
+            )
             return
         await ctx.reply(result, html=True, markdown=False)

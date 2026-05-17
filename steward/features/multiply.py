@@ -109,4 +109,6 @@ class MultiplyFeature(Feature):
                     )
         except Exception as e:
             logger.exception("Error processing voice message: %s", e)
-            await message.chat.send_message("Ошибка при обработке голосового сообщения")
+            await message.chat.send_message(
+                f"Не получилось продублировать голосовое: {type(e).__name__}"
+            )
