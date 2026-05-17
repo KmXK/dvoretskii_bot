@@ -13,14 +13,17 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from io import BytesIO
+
 from PIL import Image, ImageDraw
-from telegram import InputFile, MessageEntity
+from telegram import InputFile, Message, MessageEntity
 
 from steward.data.models.fuck_asset import FuckAsset
 from steward.data.models.user import User
 from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.avatars import get_avatar_image
+from steward.helpers.media import fetch_tg_file_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -303,11 +306,18 @@ class FuckFeature(Feature):
 
     users = collection("users")
 
-    @subcommand("", description="Ответом — на сообщение цели")
+    @subcommand("", description="Ответом — на сообщение цели или с прикреплённым фото")
     async def do_reply(self, ctx: FeatureContext):
+        photo_avatar = await self._photo_from_attachment(ctx.message)
+        if photo_avatar is not None:
+            await self._run_with_target_avatar(ctx, photo_avatar)
+            return
         target = await self._resolve_target(ctx, identifier=None)
         if target is None:
-            await ctx.reply("Укажи жертву: /fuck @username или ответом на сообщение")
+            await ctx.reply(
+                "Укажи жертву: /fuck @username, ответом на сообщение "
+                "или прикрепи фото"
+            )
             return
         target_id, target_name = target
         await self._run(ctx, target_id, target_name)
@@ -321,6 +331,39 @@ class FuckFeature(Feature):
             return
         target_id, target_name = resolved
         await self._run(ctx, target_id, target_name)
+
+    async def _run_with_target_avatar(
+        self, ctx: FeatureContext, target_avatar: Image.Image
+    ) -> None:
+        msg = ctx.message
+        if msg is not None and msg.from_user is not None:
+            self._remember_user(
+                msg.from_user.id, msg.from_user.username, msg.from_user.first_name
+            )
+        author_name = self._display_name(ctx.user_id)
+        await self._compose_and_send(
+            ctx,
+            ctx.user_id,
+            author_name,
+            target_id=0,
+            b_name=None,
+            tag="/fuck",
+            b_avatar_override=target_avatar,
+        )
+
+    async def _photo_from_attachment(self, message: Message | None) -> Image.Image | None:
+        if message is None:
+            return None
+        photo_sizes = getattr(message, "photo", None) or ()
+        if not photo_sizes:
+            return None
+        try:
+            file_id = photo_sizes[-1].file_id
+            data = await fetch_tg_file_bytes(self.bot, file_id)
+            return Image.open(BytesIO(data)).convert("RGBA")
+        except Exception as e:
+            logger.warning("/fuck: failed to load attached photo: %s", e)
+            return None
 
     async def _run(self, ctx: FeatureContext, target_id: int, target_name: str | None):
         msg = ctx.message
@@ -347,6 +390,8 @@ class FuckFeature(Feature):
         b_name: str | None,
         *,
         tag: str,
+        a_avatar_override: Image.Image | None = None,
+        b_avatar_override: Image.Image | None = None,
     ) -> None:
         asset = await asyncio.to_thread(_pick_random_asset, self.repository, ctx.chat_id)
         if asset is None:
@@ -361,8 +406,12 @@ class FuckFeature(Feature):
             return
         source_path, annotation = asset
 
-        a_avatar = await get_avatar_image(self.bot, a_id, name_hint=a_name)
-        b_avatar = await get_avatar_image(self.bot, b_id, name_hint=b_name)
+        a_avatar = a_avatar_override or await get_avatar_image(
+            self.bot, a_id, name_hint=a_name
+        )
+        b_avatar = b_avatar_override or await get_avatar_image(
+            self.bot, b_id, name_hint=b_name
+        )
 
         try:
             with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
@@ -491,13 +540,44 @@ class SexFeature(FuckFeature):
         b_id, b_name = rb
         await self._compose_and_send(ctx, a_id, a_name, b_id, b_name, tag="/sex")
 
-    @subcommand("", description="Нужны два аргумента")
+    @subcommand(
+        "",
+        description="Прикрепи фото + ответом на сообщение с фото — два фото = два «участника»",
+    )
     async def do_reply(self, ctx: FeatureContext):
-        await ctx.reply("Юзай так: /sex @author @target")
+        if await self._try_photos(ctx):
+            return
+        await ctx.reply(
+            "Юзай так: /sex @author @target — либо прикрепи фото и ответь "
+            "на сообщение с другим фото"
+        )
 
     @subcommand("<args:rest>", description="Нужны два аргумента")
     async def do(self, ctx: FeatureContext, args: str):
+        if await self._try_photos(ctx):
+            return
         await ctx.reply("Юзай так: /sex @author @target")
+
+    async def _try_photos(self, ctx: FeatureContext) -> bool:
+        msg = ctx.message
+        if msg is None:
+            return False
+        own = await self._photo_from_attachment(msg)
+        reply_msg = getattr(msg, "reply_to_message", None)
+        replied = await self._photo_from_attachment(reply_msg)
+        if own is None or replied is None:
+            return False
+        await self._compose_and_send(
+            ctx,
+            a_id=0,
+            a_name=None,
+            b_id=0,
+            b_name=None,
+            tag="/sex",
+            a_avatar_override=own,
+            b_avatar_override=replied,
+        )
+        return True
 
     async def _resolve_target_arg(self, ident: str) -> tuple[int, str | None] | None:
         ident = ident.strip().lstrip("@")
