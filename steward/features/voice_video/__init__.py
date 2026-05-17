@@ -289,15 +289,6 @@ class VoiceVideoFeature(Feature):
         text: str,
     ) -> bool:
         """Передать расшифровку в AiRouterHandler как обычный запрос «Дворецкий, ...»"""
-        # Убираем плейсхолдер «Слушаю...» — роутер сам ответит на исходное голосовое
-        try:
-            await bot_message.delete()
-        except Exception:
-            try:
-                await bot_message.edit_reply_markup(reply_markup=None)
-            except Exception:
-                pass
-
         router_message = _RouterMessageProxy(initiator, initiator.from_user, text)
         chat_context = ChatBotContext(
             ctx.repository,
@@ -309,16 +300,27 @@ class VoiceVideoFeature(Feature):
             router_message,
         )
         all_handlers = getattr(self, "_all_handlers", [])
+        handled = False
         for handler in all_handlers:
             if handler.__class__.__name__ != "AiRouterHandler":
                 continue
             try:
-                handled = await handler.chat(chat_context)
+                handled = bool(await handler.chat(chat_context))
             except Exception as e:
                 logger.exception("voice → AI route failed: %s", e)
-                return False
-            return bool(handled)
-        return False
+                handled = False
+            break
+        # Плейсхолдер «Слушаю...» убираем только если AI реально ответил —
+        # иначе у пользователя бы остался пустой чат.
+        if handled:
+            try:
+                await bot_message.delete()
+            except Exception:
+                try:
+                    await bot_message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+        return handled
 
     @on_callback(
         "voice:action",
