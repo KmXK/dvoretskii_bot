@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from telegram import Message
+from telegram import Message, ReactionTypeEmoji
 
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.framework import Feature, FeatureContext, subcommand
@@ -15,8 +15,10 @@ _REPLY_HINT = (
 )
 
 
-def _resolve_file_id(message: Message) -> tuple[str, bool] | None:
+def _resolve_file_id(message: Message | None) -> tuple[str, bool] | None:
     """Возвращает (file_id, is_video_note) для медиа, поддерживаемого расшифровкой."""
+    if message is None:
+        return None
     if message.voice:
         return message.voice.file_id, False
     if message.video_note:
@@ -43,16 +45,35 @@ class TranscribeFeature(Feature):
         if message is None:
             return
         reply = message.reply_to_message
-        if reply is None:
-            await ctx.reply(_REPLY_HINT, markdown=False)
-            return
-        resolved = _resolve_file_id(reply)
-        if resolved is None:
-            await ctx.reply(_REPLY_HINT, markdown=False)
-            return
-        file_id, is_video_note = resolved
 
-        sender = reply.from_user
+        source_message = None
+        resolved = _resolve_file_id(message)
+        if resolved is not None:
+            source_message = message
+        else:
+            resolved = _resolve_file_id(reply)
+            if resolved is not None:
+                source_message = reply
+
+        if resolved is None:
+            # reply на текст — явная ошибка, кидаем хинт. Без reply — скорее
+            # всего юзер пришлёт форвард голосового рядом, авто-расшифровка
+            # сама отработает. Шуметь хинтом не нужно — тихо реагируем 🤷.
+            if reply is not None:
+                await ctx.reply(_REPLY_HINT, markdown=False)
+                return
+            try:
+                await ctx.bot.set_message_reaction(
+                    chat_id=message.chat_id,
+                    message_id=message.message_id,
+                    reaction=[ReactionTypeEmoji(emoji="🤷")],
+                )
+            except Exception as e:
+                logger.debug("/transcribe silent react failed: %s", e)
+            return
+
+        file_id, is_video_note = resolved
+        sender = source_message.from_user
         try:
             audio_path = await self._resolve_audio_path(ctx, file_id)
         except Exception as e:
@@ -64,7 +85,7 @@ class TranscribeFeature(Feature):
         try:
             await create_transcription_reply(
                 self.repository,
-                reply,
+                source_message,
                 audio_path,
                 sender.id if sender else None,
                 sender.username if sender else None,
