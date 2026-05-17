@@ -36,6 +36,7 @@ from .chat import Chat
 from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
+from .incident import Incident
 from .reward import Reward, UserReward
 from .rule import Rule
 from .tennis import TennisMatch, TennisSession
@@ -81,8 +82,9 @@ class Database:
     user_facts: list[UserFact] = field(default_factory=list)
     fuck_assets: list[FuckAsset] = field(default_factory=list)
     tennis_sessions: list[TennisSession] = field(default_factory=list)
+    incidents: list[Incident] = field(default_factory=list)
 
-    version: int = 23
+    version: int = 24
 
 
 PARSE_CONFIG = Config(
