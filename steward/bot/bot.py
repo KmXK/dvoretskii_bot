@@ -192,6 +192,17 @@ class Bot:
                 "chat",
                 None,
             )
+        elif update.edited_message is not None:
+            ctx = ChatBotContext(
+                self.repository,
+                self.bot,
+                self.client,
+                update,
+                context,
+                self._empty_metrics(),
+                update.edited_message,
+            )
+            await self._action(ctx, "message_edited", None)
         elif update.message_reaction:
             ctx = ReactionBotContext(
                 self.repository,

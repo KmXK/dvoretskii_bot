@@ -228,6 +228,7 @@ class FeatureRequestFeature(Feature):
             message_id=msg.message_id,
             chat_id=msg.chat_id,
             creation_timestamp=datetime.datetime.now().timestamp(),
+            source_message_id=msg.message_id,
         )
         self.feature_requests.add(fr)
         reply = await ctx.reply(
@@ -237,6 +238,41 @@ class FeatureRequestFeature(Feature):
         if reply is not None:
             fr.message_id = reply.message_id
         await self.feature_requests.save()
+
+    async def message_edited(self, context):
+        message = context.message
+        if message is None or not message.text:
+            return False
+        chat_id = message.chat_id
+        msg_id = message.message_id
+        fr = self.feature_requests.find_by(
+            chat_id=chat_id, source_message_id=msg_id
+        )
+        if fr is None:
+            return False
+        new_text = self._extract_fr_text(message.text)
+        if new_text is None or new_text == fr.text:
+            return False
+        fr.text = new_text
+        await self.feature_requests.save()
+        from steward.framework import from_chat_context
+        feature_ctx = from_chat_context(context)
+        await feature_ctx.reply(f"Текст фича-реквеста #{fr.id} обновлён")
+        return True
+
+    @staticmethod
+    def _extract_fr_text(text: str) -> str | None:
+        stripped = text.lstrip()
+        for prefix in ("/fr@", "/fr", "/featurerequest@", "/featurerequest"):
+            if stripped.lower().startswith(prefix.lower()):
+                rest = stripped[len(prefix):]
+                if prefix.endswith("@"):
+                    space = rest.find(" ")
+                    if space == -1:
+                        return ""
+                    rest = rest[space + 1:]
+                return rest.strip()
+        return None
 
     @paginated("frs", per_page=15, header="Фича реквесты")
     def frs_page(self, ctx: FeatureContext, metadata: str):

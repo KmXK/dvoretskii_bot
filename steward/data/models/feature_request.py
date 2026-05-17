@@ -33,6 +33,7 @@ class FeatureRequest:
     notes: list[str] = field(default_factory=list)
     history: list[FeatureRequestChange] = field(default_factory=list)
     votes: set[int] = field(default_factory=set)
+    source_message_id: Optional[int] = None
 
     @property
     def status(self) -> FeatureRequestStatus:
