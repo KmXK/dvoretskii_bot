@@ -65,6 +65,7 @@ async def download_and_send_medias(
     videos_or_images: list[tuple[str, bool]],
     retries_count: int = 5,
     use_proxy: bool = False,
+    caption: str | None = None,
 ):
     import uuid
 
@@ -111,8 +112,13 @@ async def download_and_send_medias(
                 results[0],
                 disable_notification=True,
                 reply_markup=reply_markup,
+                caption=caption,
             )
         else:
+            if caption and medias:
+                first = medias[0]
+                if isinstance(first, (InputMediaPhoto, InputMediaVideo)):
+                    first.caption = caption
             for i in range(0, len(medias), 10):
                 retry = 0
                 while retry < retries_count:
