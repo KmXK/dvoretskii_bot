@@ -216,9 +216,6 @@ class Bot:
             logger.warning(f"invalid callback call: {update}")
             return False
 
-        if not await self._enforce_reply_owner(update.callback_query):
-            return False
-
         ctx = CallbackBotContext(
             self.repository,
             self.bot,
@@ -234,39 +231,6 @@ class Bot:
             "callback",
             lambda: ctx.callback_query.answer(),
         )
-
-    async def _enforce_reply_owner(self, cq) -> bool:
-        """Block callbacks on bot messages that were sent as a reply to a different user.
-
-        If the bot's message has `reply_to_message`, only the user it replied to
-        may press inline buttons on it. Returns False if the callback should be
-        dropped (also answers the query with an alert).
-
-        Exception: pagination callbacks (suffix `:_pg|...`) are always allowed —
-        просмотр списка по своей сути общий, нет смысла его ограничивать.
-        """
-        # Пагинация — открытая для всех. Префикс задаётся в feature.py
-        # как `<command>:_pg`, поэтому ищем сегмент `:_pg|` в callback_data.
-        data = cq.data or ""
-        if ":_pg|" in data:
-            return True
-        msg = cq.message
-        if msg is None:
-            return True
-        target_msg = msg.reply_to_message
-        if target_msg is None:
-            return True
-        target_user = target_msg.from_user
-        if target_user is None or target_user.is_bot:
-            return True
-        clicker = cq.from_user
-        if clicker is None or clicker.id == target_user.id:
-            return True
-        try:
-            await cq.answer("Это сообщение не для тебя.", show_alert=True)
-        except Exception:
-            pass
-        return False
 
     async def _action(
         self,

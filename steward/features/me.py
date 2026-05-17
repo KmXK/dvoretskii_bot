@@ -9,6 +9,7 @@ from steward.framework import (
     FeatureContext,
     Keyboard,
     collection,
+    initiator_only,
     on_callback,
     paginated,
     subcommand,
@@ -37,11 +38,19 @@ class MeFeature(Feature):
         text, kb = self._build_profile(ctx.user_id)
         await ctx.reply(text, html=True, markdown=False, keyboard=kb)
 
-    @on_callback("me:rewards", schema="<user_id:int>")
+    @on_callback(
+        "me:rewards",
+        schema="<user_id:int>",
+        access=initiator_only(field="user_id"),
+    )
     async def open_rewards(self, ctx: FeatureContext, user_id: int):
         await self.paginate(ctx, "rewards", metadata=str(user_id))
 
-    @on_callback("me:back", schema="<user_id:int>")
+    @on_callback(
+        "me:back",
+        schema="<user_id:int>",
+        access=initiator_only(field="user_id"),
+    )
     async def go_back(self, ctx: FeatureContext, user_id: int):
         text, kb = self._build_profile(user_id)
         await ctx.edit(text, keyboard=kb, html=True, markdown=False)
