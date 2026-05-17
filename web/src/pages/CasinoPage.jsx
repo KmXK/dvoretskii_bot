@@ -1939,6 +1939,8 @@ export default function CasinoPage() {
       .then(d => { if (d?.monkeys != null) setBalance(d.monkeys) })
   }, [])
 
+  const [birthdayBonus, setBirthdayBonus] = useState(0)
+
   const claimBonus = () => {
     if (!claimable) return
     api.post('/api/casino/bonus')
@@ -1947,6 +1949,14 @@ export default function CasinoPage() {
         if (d) {
           setBalance(d.monkeys)
           setLastBonusClaim(d.lastBonusClaim || Date.now() / 1000)
+          if (d.birthdayBonus > 0) {
+            setBirthdayBonus(d.birthdayBonus)
+            confetti({ particleCount: 200, spread: 100, origin: { y: 0.4 }, colors: ['#ff69b4', '#ffd700', '#ff1493', '#00ced1'] })
+            setTimeout(() => {
+              confetti({ particleCount: 150, spread: 120, origin: { y: 0.5 }, colors: ['#ff69b4', '#ffd700'] })
+            }, 400)
+            setTimeout(() => setBirthdayBonus(0), 6000)
+          }
         }
       })
       .catch(() => { })
@@ -2024,6 +2034,24 @@ export default function CasinoPage() {
                 {bonusFlash && (
                   <motion.p initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                     className="text-center text-spotify-green text-sm font-bold mt-2">+{DAILY_BONUS} 🐵 получено!</motion.p>
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {birthdayBonus > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.7, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
+                    transition={{ type: 'spring', stiffness: 280, damping: 18 }}
+                    className="mt-3 px-4 py-3 rounded-2xl text-center border border-pink-400/40"
+                    style={{ background: 'linear-gradient(135deg, #ff0080 0%, #7928ca 50%, #ff8a00 100%)' }}>
+                    <motion.div
+                      animate={{ rotate: [0, -8, 8, -8, 0], scale: [1, 1.1, 1] }}
+                      transition={{ duration: 1.4, repeat: Infinity }}
+                      className="text-3xl mb-0.5">🎂</motion.div>
+                    <div className="text-white font-bold text-sm drop-shadow">С днём рождения!</div>
+                    <div className="text-white/95 text-xs mt-0.5">+{birthdayBonus} 🐵 в подарок</div>
+                  </motion.div>
                 )}
               </AnimatePresence>
             </motion.div>
