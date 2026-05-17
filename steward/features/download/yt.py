@@ -35,6 +35,40 @@ URL_REGEX = (
 
 YT_LIMIT = "YT_LIMIT_OBJECT"
 
+_CAPTION_LIMIT = 1000
+
+
+def _make_caption(info: Any) -> str | None:
+    if not isinstance(info, dict):
+        return None
+    raw = (info.get("description") or info.get("title") or "").strip()
+    if not raw:
+        return None
+    if len(raw) > _CAPTION_LIMIT:
+        raw = raw[: _CAPTION_LIMIT - 1].rstrip() + "…"
+    return raw
+
+
+async def _extract_info_only(url: str) -> Any:
+    """yt_dlp в режиме «только метаданные» — без скачивания. Возвращает dict
+    с описанием/тайтлом, либо None на ошибке."""
+    def _run():
+        try:
+            return yt_dlp.YoutubeDL(
+                {
+                    "proxy": os.environ.get("DOWNLOAD_PROXY"),
+                    "quiet": True,
+                    "no_warnings": True,
+                    "skip_download": True,
+                    "logger": yt_logger,
+                }  # type: ignore
+            ).extract_info(url, download=False)
+        except Exception as e:
+            logger.warning("yt_dlp metadata extract failed for %s: %s", url, e)
+            return None
+
+    return await asyncio.to_thread(_run)
+
 DOWNLOAD_TYPE_MAP = {
     "tiktok": "tiktok",
     "instagram.com": "reels",
@@ -47,13 +81,16 @@ DOWNLOAD_TYPE_MAP = {
 
 
 async def load_instagram(repository: Repository, url: str, message: Message) -> None:
-    url = f"https://download.proxy.nigger.by/igdl?url={url}"
+    proxy_url = f"https://download.proxy.nigger.by/igdl?url={url}"
+
+    meta_task = asyncio.create_task(_extract_info_only(url))
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(connect=2)
     ) as session:
-        async with session.get(url) as response:
+        async with session.get(proxy_url) as response:
             if response.status != 200:
+                meta_task.cancel()
                 raise Exception(f"invalid response: {response}")
 
             json_resp = await response.json()
@@ -73,9 +110,17 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
             medias = sorted(set(medias), key=lambda x: medias.index(x))
 
             if len(medias) > 0:
+                caption = None
+                try:
+                    info = await meta_task
+                    caption = _make_caption(info)
+                except Exception as e:
+                    logger.warning("instagram description fetch failed: %s", e)
                 await download_and_send_medias(
-                    repository, message, medias, use_proxy=True
+                    repository, message, medias, use_proxy=True, caption=caption,
                 )
+            else:
+                meta_task.cancel()
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
@@ -157,6 +202,8 @@ def make_video_loader(
                     ]
                 )
 
+            caption = _make_caption(info)
+
             with open(filepath, "rb") as file:
                 await message.reply_video(
                     InputFile(file, filename=f"{type_name} Video"),
@@ -164,6 +211,7 @@ def make_video_loader(
                     width=int(width) if width is not None else None,
                     height=int(height) if height is not None else None,
                     reply_markup=reply_markup,
+                    caption=caption,
                 )
 
             logger.info(f"video {type_name} downloaded successfully")
