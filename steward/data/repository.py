@@ -478,11 +478,18 @@ class Repository:
             data.setdefault("incidents", [])
             data["version"] = 24
 
+        if data.get("version") == 24:
+            langs = data.setdefault("user_languages", {})
+            # Юра — белорусский по умолчанию (FR 142).
+            langs.setdefault("430123749", "белорусский")
+            data["version"] = 25
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
         data.setdefault("tennis_sessions", [])
         data.setdefault("incidents", [])
+        data.setdefault("user_languages", {})
         for ts in data.get("tennis_sessions", []):
             if not isinstance(ts, dict):
                 continue

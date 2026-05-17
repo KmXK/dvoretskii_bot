@@ -114,7 +114,9 @@ async def execute_ai_request(
     handler_name: str,
 ):
     messages = await build_reply_context(context, text)
-    language_hint = language_prompt_for(context.message.from_user.id)
+    language_hint = language_prompt_for(
+        context.repository, context.message.from_user.id
+    )
     if language_hint:
         messages = [("system", language_hint), *messages]
     response = ai_call(context.message.from_user.id, messages)
@@ -170,7 +172,7 @@ async def execute_ai_request_streaming(
         if memory_block:
             messages = [("system", memory_block), *messages]
 
-    language_hint = language_prompt_for(user_id)
+    language_hint = language_prompt_for(context.repository, user_id)
     if language_hint:
         messages = [("system", language_hint), *messages]
 
