@@ -12,6 +12,7 @@ from steward.bot.context import ChatBotContext
 from steward.data.models.ai_message import AiMessage
 from steward.helpers.tg_streaming import stream_reply
 from steward.helpers.thinking import try_contextual_placeholder
+from steward.helpers.user_language import language_prompt_for
 from steward.helpers.user_memory import (
     add_facts,
     extract_facts_via_ai,
@@ -113,6 +114,9 @@ async def execute_ai_request(
     handler_name: str,
 ):
     messages = await build_reply_context(context, text)
+    language_hint = language_prompt_for(context.message.from_user.id)
+    if language_hint:
+        messages = [("system", language_hint), *messages]
     response = ai_call(context.message.from_user.id, messages)
     if isawaitable(response):
         response = await response
@@ -165,6 +169,10 @@ async def execute_ai_request_streaming(
         memory_block = format_facts_for_prompt(user_id, user_name, facts)
         if memory_block:
             messages = [("system", memory_block), *messages]
+
+    language_hint = language_prompt_for(user_id)
+    if language_hint:
+        messages = [("system", language_hint), *messages]
 
     upgrade_task: asyncio.Task[str | None] | None = None
     if placeholder_upgrade is not None:
