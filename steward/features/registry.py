@@ -20,6 +20,7 @@ from steward.features.holidays import HolidaysFeature
 from steward.features.id import IdFeature
 from steward.features.incident import IncidentFeature
 from steward.features.lang import LangFeature
+from steward.features.layout import LayoutFeature
 from steward.features.link import LinkFeature
 from steward.features.me import MeFeature
 from steward.features.message_info import MessageInfoFeature
@@ -87,6 +88,7 @@ COMMANDS << [
     NewTextFeature,
     SubscribeFeature,
     TranslateFeature,
+    LayoutFeature,
     TarotFeature,
     TennisFeature,
     ExchangeRateFeature,
