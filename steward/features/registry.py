@@ -42,6 +42,7 @@ from steward.features.tarot import TarotFeature
 from steward.features.tennis import TennisFeature
 from steward.features.timezone import TimezoneFeature
 from steward.features.todo import TodoFeature
+from steward.features.transcribe import TranscribeFeature
 from steward.features.translate import TranslateFeature
 from steward.features.user_memory import UserMemoryFeature
 from steward.features.voice_video import VoiceVideoFeature
@@ -99,6 +100,7 @@ COMMANDS << [
     BroadcastFeature,
     AIFeature,
     VoiceVideoFeature,
+    TranscribeFeature,
     MultiplyFeature,
     FuckFeature,
     SexFeature,
