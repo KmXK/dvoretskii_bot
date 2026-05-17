@@ -239,6 +239,8 @@ class FeatureRequestFeature(Feature):
             fr.message_id = reply.message_id
         await self.feature_requests.save()
 
+    _EDIT_WINDOW_SECONDS = 10 * 60
+
     async def message_edited(self, context):
         message = context.message
         if message is None or not message.text:
@@ -253,10 +255,20 @@ class FeatureRequestFeature(Feature):
         new_text = self._extract_fr_text(message.text)
         if new_text is None or new_text == fr.text:
             return False
-        fr.text = new_text
-        await self.feature_requests.save()
+
         from steward.framework import from_chat_context
         feature_ctx = from_chat_context(context)
+
+        created = fr.creation_timestamp or 0
+        if created and (datetime.datetime.now().timestamp() - created) > self._EDIT_WINDOW_SECONDS:
+            await feature_ctx.reply(
+                f"Фича-реквест #{fr.id} создан давно — правка из чата уже не "
+                f"применяется (окно 10 минут)."
+            )
+            return True
+
+        fr.text = new_text
+        await self.feature_requests.save()
         await feature_ctx.reply(f"Текст фича-реквеста #{fr.id} обновлён")
         return True
 
