@@ -35,10 +35,12 @@ URL_REGEX = (
 
 YT_LIMIT = "YT_LIMIT_OBJECT"
 
-_CAPTION_LIMIT = 1000
+_CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
 
 
 def _make_caption(info: Any) -> str | None:
+    """Возвращает HTML-caption с описанием под expandable blockquote'ом.
+    Шлите с parse_mode='HTML'."""
     if not isinstance(info, dict):
         return None
     raw = (info.get("description") or info.get("title") or "").strip()
@@ -46,7 +48,8 @@ def _make_caption(info: Any) -> str | None:
         return None
     if len(raw) > _CAPTION_LIMIT:
         raw = raw[: _CAPTION_LIMIT - 1].rstrip() + "…"
-    return raw
+    from steward.helpers.formats import spoiler_block
+    return spoiler_block(raw, header="Описание")
 
 
 async def _extract_info_only(url: str) -> Any:
@@ -212,6 +215,7 @@ def make_video_loader(
                     height=int(height) if height is not None else None,
                     reply_markup=reply_markup,
                     caption=caption,
+                    parse_mode="HTML" if caption else None,
                 )
 
             logger.info(f"video {type_name} downloaded successfully")
