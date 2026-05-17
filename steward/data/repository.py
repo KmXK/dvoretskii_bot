@@ -484,6 +484,14 @@ class Repository:
             langs.setdefault("430123749", "белорусский")
             data["version"] = 25
 
+        if data.get("version") == 25:
+            for inc in data.get("incidents", []):
+                if isinstance(inc, dict):
+                    inc.setdefault("status", "open")
+                    inc.setdefault("closed_at", None)
+                    inc.setdefault("closed_by", None)
+            data["version"] = 26
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])

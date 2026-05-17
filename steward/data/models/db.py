@@ -85,7 +85,7 @@ class Database:
     incidents: list[Incident] = field(default_factory=list)
     user_languages: dict[str, str] = field(default_factory=dict)
 
-    version: int = 25
+    version: int = 26
 
 
 PARSE_CONFIG = Config(

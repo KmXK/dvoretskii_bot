@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { HOME_CARDS } from '../layouts/navigation'
+import ActiveIncidentsBanner from '../components/ActiveIncidentsBanner'
 
 export default function HomePage() {
   const navigate = useNavigate()
@@ -23,6 +24,8 @@ export default function HomePage() {
           {mode === 'miniapp' ? 'Мини-приложение' : 'Веб-приложение'}
         </p>
       </div>
+
+      <ActiveIncidentsBanner />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {HOME_CARDS.map((card, i) => (
