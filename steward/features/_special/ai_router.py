@@ -10,6 +10,7 @@ from steward.bot.context import ChatBotContext
 from steward.framework import (
     Feature,
     FeatureContext,
+    INITIATOR_ONLY,
     Keyboard,
     on_callback,
     on_message,
@@ -74,8 +75,12 @@ class AiRouterHandler(Feature):
         )
         if not matched and ctx.message.reply_to_message:
             reply_msg = ctx.message.reply_to_message
-            if self._is_bot_message(reply_msg, ctx.bot) and not self._is_video_message(
-                reply_msg
+            # Реплай на текстовое сообщение бота → продолжение диалога,
+            # реплай на медиа (тикток, голосовое, фото) → юзер комментирует
+            # контент, бот не должен лезть с ответом.
+            if (
+                self._is_bot_message(reply_msg, ctx.bot)
+                and not self._is_media_message(reply_msg)
             ):
                 user_request = ctx.message.text
                 matched = True
@@ -179,6 +184,7 @@ class AiRouterHandler(Feature):
     @on_callback(
         "airoute:confirm",
         schema="<action:literal[ok|no]>|<initiator:int>|<key:str>",
+        access=INITIATOR_ONLY,
     )
     async def on_confirm(
         self,
@@ -268,6 +274,16 @@ class AiRouterHandler(Feature):
         document = getattr(message, "document", None)
         mime_type = (getattr(document, "mime_type", "") or "").lower()
         return mime_type.startswith("video/")
+
+    @staticmethod
+    def _is_media_message(message) -> bool:
+        """True для любого нетекстового сообщения — реплай на такое мы не
+        трактуем как обращение к боту: юзер просто комментирует контент."""
+        media_attrs = (
+            "video", "video_note", "voice", "audio", "photo",
+            "sticker", "animation", "document",
+        )
+        return any(getattr(message, a, None) for a in media_attrs)
 
     @staticmethod
     def _parse_debt_table(text: str) -> list[tuple[str, str, str]]:
