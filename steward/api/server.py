@@ -547,7 +547,38 @@ CASINO_GAME_IDS = {"slots", "coinflip", "roulette", "slots5x5", "rocket"}
 _CASINO_STATS_GAME_IDS = CASINO_GAME_IDS | {"race", "chess", "checkers"}
 CASINO_INITIAL_BALANCE = 100
 CASINO_DAILY_BONUS = 50
+CASINO_BIRTHDAY_BONUS = 500
 CASINO_BONUS_COOLDOWN = 86400
+
+
+def _user_birthday(repository: Repository, user) -> tuple[int, int] | None:
+    """Лучший фаззи-матч ДР для юзера: ищем Birthday по username/first_name/
+    stand_name/stand_aliases только в чатах, где юзер участвует. Возвращает
+    (day, month) или None."""
+    if user is None:
+        return None
+    candidates: list[str] = []
+    if user.username:
+        candidates.append(user.username.strip().lower())
+    if user.first_name:
+        candidates.append(user.first_name.strip().lower())
+    if user.stand_name:
+        candidates.append(user.stand_name.strip().lower())
+    for a in user.stand_aliases or ():
+        if a:
+            candidates.append(a.strip().lower())
+    if not candidates:
+        return None
+    user_chats = set(user.chat_ids or ())
+    for b in repository.db.birthdays:
+        if b.chat_id not in user_chats:
+            continue
+        name = (b.name or "").strip().lower()
+        if not name:
+            continue
+        if any(name == c or name.startswith(c + " ") or c in name.split() for c in candidates):
+            return (b.day, b.month)
+    return None
 CASINO_MAX_BET = {"slots": 10, "coinflip": 50, "roulette": 50, "slots5x5": 10, "rocket": 50}
 CASINO_MAX_WIN = {"slots": 1500, "coinflip": 95, "roulette": 1800, "slots5x5": 5000, "rocket": 5000}
 CASINO_SESSION_TTL = 86400
@@ -709,10 +740,29 @@ async def handle_casino_bonus(request: web.Request):
 
         user.monkeys += CASINO_DAILY_BONUS
         user.casino_last_bonus = now
-        await repository.save()
-
         metrics.inc("casino_bonus_total", {"user_id": user_id, "user_name": user_name}, CASINO_DAILY_BONUS)
-        return web.json_response({"ok": True, "monkeys": user.monkeys, "lastBonusClaim": user.casino_last_bonus})
+
+        birthday_bonus = 0
+        bday = _user_birthday(repository, user)
+        if bday is not None:
+            today = datetime.datetime.now()
+            if (bday[0], bday[1]) == (today.day, today.month) and user.casino_last_birthday_bonus_year != today.year:
+                user.monkeys += CASINO_BIRTHDAY_BONUS
+                user.casino_last_birthday_bonus_year = today.year
+                birthday_bonus = CASINO_BIRTHDAY_BONUS
+                metrics.inc(
+                    "casino_bonus_total",
+                    {"user_id": user_id, "user_name": user_name, "kind": "birthday"},
+                    CASINO_BIRTHDAY_BONUS,
+                )
+
+        await repository.save()
+        return web.json_response({
+            "ok": True,
+            "monkeys": user.monkeys,
+            "lastBonusClaim": user.casino_last_bonus,
+            "birthdayBonus": birthday_bonus,
+        })
     except Exception:
         logger.exception("casino bonus error")
         return web.json_response({"error": "bad request"}, status=400)

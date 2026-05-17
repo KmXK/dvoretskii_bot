@@ -13,3 +13,4 @@ class User:
     stand_description: Optional[str] = None
     stand_aliases: list[str] = field(default_factory=list)
     first_name: Optional[str] = None
+    casino_last_birthday_bonus_year: int = 0
