@@ -5,10 +5,7 @@ from os import environ
 from aiohttp import ClientSession
 
 from steward.framework import Feature, FeatureContext, on_message, subcommand
-from steward.helpers.command_validation import (
-    ValidationArgumentsError,
-    validate_arguments,
-)
+from steward.helpers.command_validation import validate_arguments
 from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger(__name__)
@@ -51,7 +48,11 @@ class TranslateFeature(Feature):
         if not parsed.get("text"):
             reply = ctx.message.reply_to_message if ctx.message else None
             if reply is None or reply.text is None:
-                raise ValidationArgumentsError()
+                await ctx.reply(
+                    "Нужно указать текст для перевода или ответить на сообщение, "
+                    "которое надо перевести."
+                )
+                return
             parsed["text"] = reply.text
 
         from_lang = (parsed.get("from_lang") or "").lower() or None
