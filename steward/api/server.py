@@ -74,6 +74,105 @@ async def handle_todo_toggle(request: web.Request):
     return web.json_response(serialize_todo(todo))
 
 
+def _serialize_incident(repo: Repository, inc) -> dict:
+    author = next((u for u in repo.db.users if u.id == inc.author_id), None)
+    closed_by_user = (
+        next((u for u in repo.db.users if u.id == inc.closed_by), None)
+        if inc.closed_by else None
+    )
+    return {
+        "id": inc.id,
+        "chat_id": inc.chat_id,
+        "text": inc.text,
+        "status": inc.status,
+        "created_at": inc.created_at,
+        "closed_at": inc.closed_at,
+        "author_id": inc.author_id,
+        "author_name": (author.first_name or author.username if author else None) or f"id{inc.author_id}",
+        "closed_by_id": inc.closed_by,
+        "closed_by_name": (
+            (closed_by_user.first_name or closed_by_user.username)
+            if closed_by_user else None
+        ),
+    }
+
+
+def _user_chat_ids(repo: Repository, user_id: int | None) -> set[int]:
+    if user_id is None:
+        return set()
+    user = next((u for u in repo.db.users if u.id == user_id), None)
+    return set(user.chat_ids or ()) if user else set()
+
+
+async def handle_incidents(request: web.Request):
+    """Список инцидентов чатов, в которых состоит юзер. ?status=open|all"""
+    repository: Repository = request.app["repository"]
+    viewer_id = session_user_id(request)
+    if viewer_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    allowed = _user_chat_ids(repository, viewer_id)
+    if not allowed:
+        return web.json_response([])
+    status_filter = request.query.get("status", "all")
+    items = [
+        inc for inc in repository.db.incidents
+        if inc.chat_id in allowed
+        and (status_filter == "all" or inc.status == status_filter)
+    ]
+    items.sort(key=lambda i: i.created_at, reverse=True)
+    return web.json_response([_serialize_incident(repository, i) for i in items])
+
+
+async def handle_incidents_active_count(request: web.Request):
+    """Сколько открытых инцидентов у юзера. Дешёвый эндпоинт для плашки."""
+    repository: Repository = request.app["repository"]
+    viewer_id = session_user_id(request)
+    if viewer_id is None:
+        return web.json_response({"count": 0})
+    allowed = _user_chat_ids(repository, viewer_id)
+    if not allowed:
+        return web.json_response({"count": 0})
+    count = sum(
+        1 for i in repository.db.incidents
+        if i.chat_id in allowed and i.status == "open"
+    )
+    return web.json_response({"count": count})
+
+
+async def handle_incident_update(request: web.Request):
+    """Закрыть/переоткрыть инцидент. body: {"status": "open" | "resolved"}"""
+    repository: Repository = request.app["repository"]
+    viewer_id = session_user_id(request)
+    if viewer_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    inc_id = int(request.match_info["id"])
+    incident = next(
+        (i for i in repository.db.incidents if i.id == inc_id), None
+    )
+    if incident is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if (
+        incident.author_id != viewer_id
+        and viewer_id not in repository.db.admin_ids
+    ):
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    new_status = body.get("status")
+    if new_status not in ("open", "resolved"):
+        return web.json_response({"error": "bad status"}, status=400)
+    if new_status == incident.status:
+        return web.json_response(_serialize_incident(repository, incident))
+    incident.status = new_status
+    if new_status == "resolved":
+        incident.closed_at = _time.time()
+        incident.closed_by = viewer_id
+    else:
+        incident.closed_at = None
+        incident.closed_by = None
+    await repository.save()
+    return web.json_response(_serialize_incident(repository, incident))
+
+
 def serialize_feature_request(fr, viewer_id: int | None = None):
     votes = fr.votes if fr.votes is not None else set()
     return {
@@ -2267,6 +2366,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
+    app.router.add_get("/api/incidents", handle_incidents)
+    app.router.add_get("/api/incidents/active-count", handle_incidents_active_count)
+    app.router.add_patch("/api/incidents/{id}", handle_incident_update)
     app.router.add_get("/api/feature-requests", handle_feature_requests)
     app.router.add_post("/api/feature-requests", handle_feature_request_create)
     app.router.add_get("/api/feature-requests/{id}", handle_feature_request_detail)

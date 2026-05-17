@@ -21,6 +21,7 @@ export const NAV_GROUPS = [
     items: [
       { to: '/bills', label: 'Счета', icon: '💸', home: { desc: 'Совместные расходы', color: 'from-green-500/20 to-green-900/20' } },
       { to: '/todo', label: 'Задачи', icon: '📝', home: { desc: 'Список задач', color: 'from-rose-500/20 to-rose-900/20' } },
+      { to: '/incidents', label: 'Инциденты', icon: '🚨', home: { desc: 'Текущие и закрытые', color: 'from-red-500/20 to-red-900/20' } },
       { to: '/reminders', label: 'Напоминания', icon: '🔔', home: { desc: 'Напоминания', color: 'from-blue-500/20 to-blue-900/20' } },
       { to: '/birthdays', label: 'Дни рождения', icon: '🎂', home: { desc: 'Дни рождения', color: 'from-pink-500/20 to-pink-900/20' } },
       { to: '/army', label: 'Армейка', icon: '🎖️', home: { desc: 'Статус по армейке', color: 'from-emerald-500/20 to-emerald-900/20' } },
