@@ -16,6 +16,7 @@ from steward.features.exchange_rates import ExchangeRateFeature
 from steward.features.feature_request import FeatureRequestFeature
 from steward.features.fuck import FuckFeature, SexFeature
 from steward.features.google_drive import GoogleDriveFeature
+from steward.features.highcast_cleanup import HighcastCleanupFeature
 from steward.features.holidays import HolidaysFeature
 from steward.features.id import IdFeature
 from steward.features.incident import IncidentFeature
@@ -64,6 +65,7 @@ EARLY << [
     AiRelatedFeature,
     ReactionCounterFeature,
     UserMemoryFeature,
+    HighcastCleanupFeature,
 ]
 
 
