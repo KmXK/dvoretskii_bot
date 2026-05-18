@@ -29,7 +29,7 @@ class HighcastCleanupFeature(Feature):
             await ctx.bot.set_message_reaction(
                 chat_id=ctx.chat_id,
                 message_id=reply.message_id,
-                reaction=[ReactionTypeEmoji(emoji="✅")],
+                reaction=[ReactionTypeEmoji(emoji="👌")],
             )
         except Exception as e:
             logger.warning("Failed to set reaction: %s", e)
