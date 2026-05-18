@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from telegram import Message, ReactionTypeEmoji
+from telegram import Message
 
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.framework import Feature, FeatureContext, step, subcommand, wizard
@@ -16,11 +16,17 @@ _REPLY_HINT = (
     "Ответь этой командой на сообщение с голосовым, видеосообщением, "
     "видео или аудиофайлом."
 )
+_PROMPT_TEXT = (
+    "Слушаю. Пришли голосовое, видеосообщение, видео или аудиофайл — "
+    "или /stop чтобы отменить."
+)
+_NOT_MEDIA = (
+    "Это не голосовое / видео / аудио. Пришли медиа или /stop."
+)
 
 
 def _resolve_file_id(obj: Any) -> tuple[str, bool] | None:
-    """(file_id, is_video_note) для медиа из Message или ExternalReplyInfo.
-    Возвращает None если нет ничего пригодного для расшифровки."""
+    """(file_id, is_video_note) для медиа из Message или ExternalReplyInfo."""
     if obj is None:
         return None
     voice = getattr(obj, "voice", None)
@@ -57,50 +63,41 @@ def _pick_source(message: Message) -> tuple[tuple[str, bool], Any] | None:
 
 
 class _AwaitMediaStep(Step):
-    """Сессия: ждём от юзера голосовое/видео/аудио. Промпт-сообщение бота
-    запоминаем, чтобы удалить когда медиа придёт."""
-
-    PROMPT = (
-        "Слушаю. Пришли голосовое, видеосообщение, видео или аудиофайл — "
-        "или /stop чтобы отменить."
-    )
-    NOT_MEDIA = (
-        "Это не голосовое / видео / аудио. Пришли медиа или /stop."
-    )
-
-    def __init__(self) -> None:
-        self.is_waiting = False
+    """Слушает сообщения после активации сессии. Исходное /transcribe-сообщение
+    игнорируется (распознаётся по message_id из session_context). Сам промпт
+    шлёт `run()` ДО старта визарда — это уводит race-window: пока промпт
+    отправляется, концурентный voice-форвард ещё не видит активной сессии
+    и спокойно уходит в VoiceVideoFeature, а не в эту сессию."""
 
     async def chat(self, context: ChatStepContext) -> bool:
         message = context.message
         if message is None:
             return False
-        if not self.is_waiting:
-            prompt = await message.reply_text(self.PROMPT)
-            if prompt is not None:
-                context.session_context["_prompt_chat_id"] = prompt.chat_id
-                context.session_context["_prompt_message_id"] = prompt.message_id
-            self.is_waiting = True
+        sc = context.session_context
+
+        # Сообщение-активатор (само /transcribe) проходит через session.chat
+        # один раз — игнорируем его, ждём следующего.
+        if message.message_id == sc.get("_activating_message_id"):
             return False
 
         resolved = _resolve_file_id(message)
         if resolved is None:
-            await message.reply_text(self.NOT_MEDIA)
+            await message.reply_text(_NOT_MEDIA)
             return False
 
         file_id, is_video_note = resolved
-        context.session_context["file_id"] = file_id
-        context.session_context["is_video_note"] = is_video_note
+        sc["file_id"] = file_id
+        sc["is_video_note"] = is_video_note
         from_user = message.from_user
-        context.session_context["speaker_user_id"] = from_user.id if from_user else None
-        context.session_context["speaker_username"] = from_user.username if from_user else None
-        context.session_context["speaker_first_name"] = from_user.first_name if from_user else None
-        context.session_context["media_chat_id"] = message.chat_id
-        context.session_context["media_message_id"] = message.message_id
+        sc["speaker_user_id"] = from_user.id if from_user else None
+        sc["speaker_username"] = from_user.username if from_user else None
+        sc["speaker_first_name"] = from_user.first_name if from_user else None
+        sc["media_chat_id"] = message.chat_id
+        sc["media_message_id"] = message.message_id
         return True
 
     def stop(self) -> None:
-        self.is_waiting = False
+        pass
 
 
 class TranscribeFeature(Feature):
@@ -129,12 +126,17 @@ class TranscribeFeature(Feature):
             return
 
         if getattr(message, "reply_to_message", None) is not None:
-            # явный reply на не-медиа — кидаем хинт
             await ctx.reply(_REPLY_HINT, markdown=False)
             return
 
-        # одиночный /transcribe — стартуем сессию
-        await self.start_wizard("transcribe:wait_media", ctx)
+        prompt = await ctx.reply(_PROMPT_TEXT, markdown=False)
+        await self.start_wizard(
+            "transcribe:wait_media",
+            ctx,
+            _prompt_chat_id=prompt.chat_id if prompt is not None else None,
+            _prompt_message_id=prompt.message_id if prompt is not None else None,
+            _activating_message_id=message.message_id,
+        )
 
     @wizard("transcribe:wait_media", step("media", _AwaitMediaStep()))
     async def on_session_done(
@@ -149,6 +151,7 @@ class TranscribeFeature(Feature):
         media_message_id: int | None = None,
         _prompt_chat_id: int | None = None,
         _prompt_message_id: int | None = None,
+        _activating_message_id: int | None = None,
         **_,
     ):
         if _prompt_chat_id and _prompt_message_id:
@@ -232,5 +235,3 @@ class TranscribeFeature(Feature):
         if not audio_path.exists():
             raise Exception(f"File not found: {audio_path}")
         return audio_path
-
-    # Не показываем 🤷-реакцию больше — теперь /transcribe в одиночку = сессия.
