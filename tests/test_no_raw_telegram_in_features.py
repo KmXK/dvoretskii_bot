@@ -99,6 +99,9 @@ BASELINE: dict[str, set[str]] = {
     "reward.py": {"raw_telegram_send"},
     "todo.py": {"raw_telegram_send"},
     "db.py": {"raw_telegram_send"},
+
+    # transcribe.py — custom Step для wait-media сессии.
+    "transcribe.py": {"raw_telegram_send", "raw_session_import"},
 }
 
 
