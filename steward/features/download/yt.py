@@ -1,16 +1,19 @@
 import asyncio
 import base64
+import html as _html
 import json
 import logging
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 import youtube_dl
 import yt_dlp
+from pyrate_limiter import BucketFullException
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -23,7 +26,11 @@ from steward.features.download.callbacks import (
     download_and_send_medias,
     send_images,
 )
+from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
+
+_TIKTOK_AUTO_LIMIT = "TIKTOK_AUTO_TRANSCRIBE"
+_TIKTOK_AUTO_MAX_DURATION_SEC = 5 * 60
 
 logger = logging.getLogger("download_controller")
 yt_logger = logging.getLogger("youtube_dl")
@@ -50,6 +57,69 @@ def _make_caption(info: Any) -> str | None:
         raw = raw[: _CAPTION_LIMIT - 1].rstrip() + "…"
     from steward.helpers.formats import spoiler_block
     return spoiler_block(raw, header="Описание")
+
+
+def _top_comments_html(info: Any, limit: int = 3) -> str | None:
+    """Топ N комментариев по лайкам в expandable blockquote'е.
+    yt-dlp заполняет info['comments'] только если getcomments=True; для
+    некоторых платформ всё равно может вернуть пусто — это OK, возвращаем None."""
+    if not isinstance(info, dict):
+        return None
+    comments = info.get("comments") or []
+    if not isinstance(comments, list):
+        return None
+    # Только верхнеуровневые — без реплаев.
+    flat = [c for c in comments if isinstance(c, dict) and not c.get("parent")]
+    flat.sort(key=lambda c: (c.get("like_count") or 0), reverse=True)
+    top = [c for c in flat if (c.get("like_count") or 0) > 0][:limit] or flat[:limit]
+    if not top:
+        return None
+
+    lines: list[str] = []
+    for i, c in enumerate(top, 1):
+        author = (c.get("author") or c.get("author_id") or "—").strip()
+        likes = c.get("like_count") or 0
+        text = (c.get("text") or "").strip().replace("\n", " ")
+        if len(text) > 200:
+            text = text[:199].rstrip() + "…"
+        if not text:
+            continue
+        lines.append(
+            f"<b>{i}.</b> {_html.escape(author)} ❤️ {likes}\n{_html.escape(text)}"
+        )
+    if not lines:
+        return None
+    body = "\n\n".join(lines)
+    return f"<blockquote expandable><b>Топ комментариев</b>\n{body}</blockquote>"
+
+
+async def _auto_transcribe_short_video(
+    repository: Repository,
+    sent_video_msg: Message,
+    filepath: str,
+    info: Any,
+) -> None:
+    """Транскрибация + саммари короткого тиктока на бот-сообщение с видео,
+    плюс топ-3 комментариев отдельным reply."""
+    try:
+        await create_transcription_reply(
+            repository,
+            sent_video_msg,
+            Path(filepath),
+            speaker_user_id=None,
+            speaker_username=None,
+            speaker_fallback_name=None,
+            speaker_first_name=None,
+        )
+    except Exception as e:
+        logger.warning("auto transcription for short tiktok failed: %s", e)
+
+    top_html = _top_comments_html(info, 3)
+    if top_html:
+        try:
+            await sent_video_msg.reply_html(top_html, disable_notification=True)
+        except Exception as e:
+            logger.warning("top comments send failed: %s", e)
 
 
 async def _extract_info_only(url: str) -> Any:
@@ -154,6 +224,7 @@ def make_video_loader(
     type_name: str,
     cookie_file: str | None = None,
     pre_call: Callable[[], Any] = lambda: None,
+    auto_transcribe_short: bool = False,
 ):
     async def wrapper(repository: Repository, url: str, message: Message) -> None:
         pre_call()
@@ -162,19 +233,21 @@ def make_video_loader(
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
             filepath = dir + "/file"
+            ydl_opts: dict[str, Any] = {
+                "proxy": os.environ.get("DOWNLOAD_PROXY"),
+                "verbose": True,
+                "outtmpl": filepath,
+                "logger": yt_logger,
+                "cookiefile": cookie_file,
+                "format": "(bv+ba)/best",
+                "format_sort": ["ext:mp4", "res:1080"],
+                "max_filesize": 250 * 1024 * 1024,
+            }
+            if auto_transcribe_short:
+                ydl_opts["getcomments"] = True
+
             info = await asyncio.to_thread(
-                lambda: yt_dlp.YoutubeDL(
-                    {
-                        "proxy": os.environ.get("DOWNLOAD_PROXY"),
-                        "verbose": True,
-                        "outtmpl": filepath,
-                        "logger": yt_logger,
-                        "cookiefile": cookie_file,
-                        "format": "(bv+ba)/best",
-                        "format_sort": ["ext:mp4", "res:1080"],
-                        "max_filesize": 250 * 1024 * 1024,
-                    }  # type: ignore
-                ).extract_info(url)
+                lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(url)  # type: ignore
             )
 
             width: Any = None
@@ -188,9 +261,26 @@ def make_video_loader(
 
             filepath = dir + "/" + files[0]
 
-            reply_markup = None
             duration = info.get("duration") if isinstance(info, dict) else None
-            if duration is not None and duration < 3 * 60:
+
+            will_auto_transcribe = False
+            if (
+                auto_transcribe_short
+                and duration is not None
+                and duration < _TIKTOK_AUTO_MAX_DURATION_SEC
+            ):
+                try:
+                    check_limit(_TIKTOK_AUTO_LIMIT, 2, Duration.MINUTE)
+                    will_auto_transcribe = True
+                except BucketFullException:
+                    logger.info("auto-transcribe rate-limited for %s", type_name)
+
+            reply_markup = None
+            if (
+                not will_auto_transcribe
+                and duration is not None
+                and duration < 3 * 60
+            ):
                 link_id = uuid.uuid4().hex
                 repository.db.saved_links.add(link_id, url)
                 await repository.save()
@@ -208,7 +298,7 @@ def make_video_loader(
             caption = _make_caption(info)
 
             with open(filepath, "rb") as file:
-                await message.reply_video(
+                sent_video = await message.reply_video(
                     InputFile(file, filename=f"{type_name} Video"),
                     supports_streaming=True,
                     width=int(width) if width is not None else None,
@@ -219,6 +309,11 @@ def make_video_loader(
                 )
 
             logger.info(f"video {type_name} downloaded successfully")
+
+            if will_auto_transcribe and sent_video is not None:
+                await _auto_transcribe_short_video(
+                    repository, sent_video, filepath, info
+                )
 
     return wrapper
 
@@ -285,7 +380,7 @@ def build_dispatch(repository: Repository) -> dict[str, list]:
 
     return {
         "tiktok": [
-            _bind(make_video_loader("tiktok")),
+            _bind(make_video_loader("tiktok", auto_transcribe_short=True)),
             _bind(make_images_loader("tiktok")),
         ],
         "instagram.com": [
