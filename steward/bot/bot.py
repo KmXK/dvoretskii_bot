@@ -27,6 +27,7 @@ from steward.bot.context import (
     ReactionBotContext,
 )
 from steward.birthday_checker import BirthdayChecker
+from steward.joke_checker import JokeChecker
 from steward.api.server import start_api_server
 from steward.bot.delayed_action_handler import DelayedActionHandler
 from steward.dynamic_rewards import DynamicRewardChecker, ensure_dynamic_rewards_exist
@@ -153,6 +154,9 @@ class Bot:
 
             self.dynamic_reward_checker = DynamicRewardChecker(self.repository, self.metrics)
             asyncio.ensure_future(self.dynamic_reward_checker.start())
+
+            self.joke_checker = JokeChecker(self.repository, self.bot)
+            asyncio.ensure_future(self.joke_checker.start())
 
             api_port = int(environ.get("API_PORT", "8080"))
             asyncio.ensure_future(start_api_server(self.repository, self.metrics, api_port, self.bot))

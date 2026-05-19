@@ -86,6 +86,8 @@ class Database:
     incidents: list[Incident] = field(default_factory=list)
     user_languages: dict[str, str] = field(default_factory=dict)
     holiday_caches: list[HolidayCache] = field(default_factory=list)
+    last_message_at: dict[int, datetime] = field(default_factory=dict)
+    joke_settings: dict[int, timedelta] = field(default_factory=dict)
 
     version: int = 28
 
