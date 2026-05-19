@@ -16,6 +16,7 @@ import steward.delayed_action.bill_suggestion_lifecycle  # noqa: F401
 import steward.delayed_action.bill_draft_expire  # noqa: F401
 import steward.delayed_action.bill_incomplete_nudge  # noqa: F401
 from steward.helpers.class_mark import try_get_class_by_mark
+import steward.delayed_action.holiday_fetch  # noqa: F401
 
 from .army import Army
 from .banned_user import BannedUser
@@ -36,6 +37,7 @@ from .chat import Chat
 from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
+from .holiday_cache import HolidayCache
 from .incident import Incident
 from .reward import Reward, UserReward
 from .rule import Rule
@@ -84,8 +86,9 @@ class Database:
     tennis_sessions: list[TennisSession] = field(default_factory=list)
     incidents: list[Incident] = field(default_factory=list)
     user_languages: dict[str, str] = field(default_factory=dict)
+    holiday_caches: list[HolidayCache] = field(default_factory=list)
 
-    version: int = 26
+    version: int = 27
 
 
 PARSE_CONFIG = Config(
