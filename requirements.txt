@@ -27,4 +27,5 @@ google-api-python-client
 protobuf>=6.31.1
 PyDrive
 python-chess
+shazamio
 PyJWT[crypto]
