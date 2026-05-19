@@ -1,4 +1,5 @@
 import datetime
+import html
 import logging
 from datetime import timezone, timedelta
 
@@ -215,8 +216,18 @@ async def handle_feature_request_detail(request: web.Request):
     return web.json_response(serialize_feature_request(fr, session_user_id(request)))
 
 
+_FR_STATUS_LABELS = {
+    FeatureRequestStatus.OPEN: "Открыт",
+    FeatureRequestStatus.DONE: "Завершён",
+    FeatureRequestStatus.DENIED: "Отклонён",
+    FeatureRequestStatus.IN_PROGRESS: "В работе",
+    FeatureRequestStatus.TESTING: "На тестировании",
+}
+
+
 async def handle_feature_request_update(request: web.Request):
     repository: Repository = request.app["repository"]
+    bot = request.app.get("bot")
     fr_id = int(request.match_info["id"])
 
     if fr_id <= 0 or fr_id > len(repository.db.feature_requests):
@@ -224,6 +235,8 @@ async def handle_feature_request_update(request: web.Request):
 
     fr = repository.db.feature_requests[fr_id - 1]
     body = await request.json()
+
+    changes: list[tuple[str, str]] = []
 
     if "status" in body:
         new_status = int(body["status"])
@@ -238,19 +251,45 @@ async def handle_feature_request_update(request: web.Request):
                     status=FeatureRequestStatus(new_status),
                 )
             )
+            label = _FR_STATUS_LABELS.get(FeatureRequestStatus(new_status), str(new_status))
+            changes.append(("Статус", label))
 
     if "priority" in body:
         priority = int(body["priority"])
         if priority < 1 or priority > 5:
             return web.json_response({"error": "priority must be 1-5"}, status=400)
-        fr.priority = priority
+        if fr.priority != priority:
+            changes.append(("Приоритет", str(priority)))
+            fr.priority = priority
 
     if "note" in body:
         note = str(body["note"]).strip()
         if note:
             fr.notes.append(note)
+            changes.append(("Заметка от администратора", note))
 
     await repository.save()
+
+    if bot and changes and fr.author_id:
+        author = next((u for u in repository.db.users if u.id == fr.author_id), None)
+        if author and fr.author_id in (author.chat_ids or []):
+            preview = html.escape(fr.text)
+            lines = [
+                f"<b>Обновление фича-реквеста #{fr.id}</b>",
+                f"<i>{preview}</i>",
+                "",
+            ]
+            for field_name, value in changes:
+                lines.append(f"<b>{html.escape(field_name)}:</b> {html.escape(value)}")
+            try:
+                await bot.send_message(
+                    chat_id=fr.author_id,
+                    text="\n".join(lines),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.warning("Failed to notify FR author %s", fr.author_id, exc_info=True)
+
     return web.json_response(serialize_feature_request(fr, session_user_id(request)))
 
 
