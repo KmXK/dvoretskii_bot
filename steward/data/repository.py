@@ -512,6 +512,8 @@ class Repository:
         data.setdefault("tennis_sessions", [])
         data.setdefault("incidents", [])
         data.setdefault("user_languages", {})
+        data.setdefault("joke_settings", {})
+        data.setdefault("last_message_at", {})
         for ts in data.get("tennis_sessions", []):
             if not isinstance(ts, dict):
                 continue

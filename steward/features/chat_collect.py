@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from steward.data.models.chat import Chat
 from steward.data.models.user import User
@@ -86,6 +87,8 @@ class ChatCollectFeature(Feature):
                 if chat_id not in existing_user.chat_ids:
                     existing_user.chat_ids.append(chat_id)
                     changed = True
+
+        self.repository.db.last_message_at[chat_id] = datetime.now(timezone.utc)
 
         if changed:
             await self.users.save()

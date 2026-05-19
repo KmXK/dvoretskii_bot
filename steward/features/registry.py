@@ -18,6 +18,7 @@ from steward.features.fuck import FuckFeature, SexFeature
 from steward.features.google_drive import GoogleDriveFeature
 from steward.features.highcast_cleanup import HighcastCleanupFeature
 from steward.features.holidays import HolidaysFeature
+from steward.features.joke import JokeFeature
 from steward.features.id import IdFeature
 from steward.features.incident import IncidentFeature
 from steward.features.lang import LangFeature
@@ -99,6 +100,7 @@ COMMANDS << [
     RemindersFeature,
     TimezoneFeature,
     HolidaysFeature,
+    JokeFeature,
     EveryoneFeature,
     PashaFeature,
     BroadcastFeature,
