@@ -19,8 +19,15 @@ from steward.helpers.stt import transcribe_audio_bytes
 logger = logging.getLogger(__name__)
 
 _TG_TEXT_LIMIT = 4096
+_TG_CAPTION_LIMIT = 1024
 _SUMMARY_MIN_EDIT_INTERVAL = 1.2
 _TRANSCRIPTION_BODY_LIMIT = 3500
+
+# Сколько символов резервируем под блок «Коротко …» при расчёте, влезет ли
+# расшифровка в caption. Если фактический summary получится длиннее этого
+# бюджета — мы дополнительно урежем его в `trim_summary_to_fit`.
+_CAPTION_SUMMARY_RESERVED = 400
+_CAPTION_TRANSCRIPTION_MIN_BODY = 50
 
 _SUMMARY_SYSTEM_PROMPT = (
     "Ты делаешь краткую выжимку голосового сообщения. Правила:\n"
@@ -247,6 +254,121 @@ async def _stream_summary_with_spoiler(
     return bot_message
 
 
+def _fit_transcription_into_caption(
+    body: str,
+    visual_description: str | None,
+    existing_caption_html: str,
+) -> str | None:
+    """HTML «Расшифровка»-блока (+ опционально «🎬 Визуал»), усечённый чтобы
+    итоговый caption влез в 1024 символа. Возвращает None, если даже минимума
+    места не хватает — caller должен пойти в обычный reply-режим."""
+    visual_html = ""
+    if visual_description:
+        visual_html = "\n" + spoiler_block(visual_description, header="🎬 Визуал")
+
+    base = len(existing_caption_html) + (1 if existing_caption_html else 0)
+    base += _CAPTION_SUMMARY_RESERVED + 1  # newline перед расшифровкой
+    available = _TG_CAPTION_LIMIT - base - len(visual_html)
+
+    trans_overhead = len(spoiler_block("", header="Расшифровка"))
+    body_budget = available - trans_overhead
+    if body_budget < _CAPTION_TRANSCRIPTION_MIN_BODY:
+        return None
+
+    truncated = body if len(body) <= body_budget else body[: body_budget - 1].rstrip() + "…"
+    return spoiler_block(truncated, header="Расшифровка") + visual_html
+
+
+def _compose_caption(
+    existing_caption_html: str,
+    summary_text: str,
+    transcription_html: str,
+    placeholder: bool,
+) -> str:
+    parts: list[str] = []
+    if existing_caption_html:
+        parts.append(existing_caption_html)
+    if placeholder:
+        parts.append("<blockquote><b>Коротко</b>\n<i>…</i></blockquote>")
+    elif summary_text:
+        parts.append(
+            f"<blockquote><b>Коротко</b>\n{html.escape(summary_text)}</blockquote>"
+        )
+    if transcription_html:
+        parts.append(transcription_html)
+    return "\n".join(parts)
+
+
+async def _edit_caption_html(caption_message, text: str) -> None:
+    try:
+        await caption_message.edit_caption(text, parse_mode=ParseMode.HTML)
+    except RetryAfter as e:
+        await asyncio.sleep(float(e.retry_after))
+        try:
+            await caption_message.edit_caption(text, parse_mode=ParseMode.HTML)
+        except BadRequest as e2:
+            if "not modified" not in str(e2).lower():
+                logger.warning("caption edit retry failed: %s", e2)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.warning("caption edit failed: %s", e)
+
+
+async def _stream_summary_into_caption(
+    caption_message,
+    stream: AsyncIterator[str],
+    transcription_html: str,
+    existing_caption_html: str,
+) -> None:
+    def trim_summary_to_fit(summary_text: str) -> str:
+        text = _compose_caption(
+            existing_caption_html, summary_text, transcription_html, placeholder=False
+        )
+        if len(text) <= _TG_CAPTION_LIMIT:
+            return summary_text
+        overflow = len(text) - _TG_CAPTION_LIMIT + 1
+        cut = max(0, len(summary_text) - overflow)
+        return summary_text[:cut].rstrip() + "…"
+
+    initial = _compose_caption(
+        existing_caption_html, "", transcription_html, placeholder=True
+    )
+    await _edit_caption_html(caption_message, initial)
+
+    buffer: list[str] = []
+    last_edit_at = 0.0
+    last_text = initial
+    got_anything = False
+
+    try:
+        async for chunk in stream:
+            if not chunk:
+                continue
+            buffer.append(chunk)
+            got_anything = True
+            now = time.monotonic()
+            if now - last_edit_at < _SUMMARY_MIN_EDIT_INTERVAL:
+                continue
+            summary = trim_summary_to_fit("".join(buffer))
+            text = _compose_caption(
+                existing_caption_html, summary, transcription_html, placeholder=False
+            )
+            if text == last_text:
+                continue
+            await _edit_caption_html(caption_message, text)
+            last_edit_at = now
+            last_text = text
+    except Exception as e:
+        logger.exception("caption stream iteration failed: %s", e)
+
+    summary_final = trim_summary_to_fit("".join(buffer).strip()) if got_anything else ""
+    final_text = _compose_caption(
+        existing_caption_html, summary_final, transcription_html, placeholder=False
+    )
+    if final_text != last_text:
+        await _edit_caption_html(caption_message, final_text)
+
+
 async def create_transcription_reply(
     repository,
     reply_target,
@@ -259,6 +381,8 @@ async def create_transcription_reply(
     edit_message=None,
     reply_markup_provider: Callable[[], Any] | None = None,
     pretranscribed: str | None = None,
+    caption_message=None,
+    existing_caption_html: str = "",
 ):
     speaker_name = build_speaker_name(
         repository,
@@ -284,6 +408,10 @@ async def create_transcription_reply(
     if not transcription:
         if visual_task is not None:
             visual_task.cancel()
+        if caption_message is not None:
+            # Тихо: оставляем оригинальный caption (с описанием) — лучше, чем
+            # подменять его текстом ошибки.
+            return
         error_text = (
             "Речь не распознана"
             if transcription == ""
@@ -314,6 +442,37 @@ async def create_transcription_reply(
         if len(transcription) <= _TRANSCRIPTION_BODY_LIMIT
         else transcription[:_TRANSCRIPTION_BODY_LIMIT] + "..."
     )
+
+    if caption_message is not None:
+        caption_trans_html = _fit_transcription_into_caption(
+            body, visual_description, existing_caption_html
+        )
+        if caption_trans_html is not None:
+            try:
+                stream = await _summary_stream(
+                    transcription, natural_name, visual_description
+                )
+            except Exception as e:
+                logger.exception("summary stream init failed (caption): %s", e)
+                final_text = _compose_caption(
+                    existing_caption_html, "", caption_trans_html, placeholder=False
+                )
+                await _edit_caption_html(caption_message, final_text)
+                return
+            try:
+                await _stream_summary_into_caption(
+                    caption_message,
+                    stream,
+                    caption_trans_html,
+                    existing_caption_html,
+                )
+            except Exception as e:
+                logger.exception("caption streaming failed: %s", e)
+            return
+        # Не влезает в caption — падаем на обычный reply-флоу ниже,
+        # используя caption_message как reply_target.
+        reply_target = caption_message
+
     transcription_spoiler = spoiler_block(body)
     spoiler_html = transcription_spoiler
     if visual_description:
