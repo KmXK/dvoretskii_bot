@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from steward.data.models.reward import Reward, UserReward
+from steward.data.models.reward import Reward
 from steward.data.repository import Repository
 from steward.metrics.base import MetricsEngine
 
@@ -171,11 +171,11 @@ def ensure_dynamic_rewards_exist(repository: Repository) -> bool:
 def get_dynamic_reward_holder(repository: Repository, reward: Reward) -> Optional[int]:
     if not reward.dynamic_key:
         return None
-    ur = next(
-        (ur for ur in repository.db.user_rewards if ur.reward_id == reward.id),
+    user = next(
+        (u for u in repository.db.users if reward.id in u.reward_ids),
         None,
     )
-    return ur.user_id if ur else None
+    return user.id if user else None
 
 
 def get_holder_display_name(repository: Repository, user_id: int) -> str:
@@ -213,26 +213,29 @@ class DynamicRewardChecker:
 
             new_holder_id = await resolver(self._metrics, self._repository)
 
-            current_urs = [ur for ur in db.user_rewards if ur.reward_id == reward.id]
-            current_holder_id = current_urs[0].user_id if current_urs else None
+            current_holder = next(
+                (u for u in db.users if reward.id in u.reward_ids),
+                None,
+            )
+            current_holder_id = current_holder.id if current_holder else None
 
             if new_holder_id == current_holder_id:
                 continue
 
-            for ur in current_urs:
-                db.user_rewards.remove(ur)
+            if current_holder is not None:
+                current_holder.reward_ids.remove(reward.id)
                 changed = True
 
             if new_holder_id is not None:
-                db.user_rewards.append(
-                    UserReward(user_id=new_holder_id, reward_id=reward.id)
-                )
-                changed = True
-                logger.info(
-                    "Dynamic reward '%s' transferred to user %d",
-                    reward.name,
-                    new_holder_id,
-                )
+                new_holder = next((u for u in db.users if u.id == new_holder_id), None)
+                if new_holder is not None:
+                    new_holder.reward_ids.append(reward.id)
+                    changed = True
+                    logger.info(
+                        "Dynamic reward '%s' transferred to user %d",
+                        reward.name,
+                        new_holder_id,
+                    )
 
         if changed:
             await self._repository.save()

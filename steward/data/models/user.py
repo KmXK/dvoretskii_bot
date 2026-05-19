@@ -14,3 +14,4 @@ class User:
     stand_aliases: list[str] = field(default_factory=list)
     first_name: Optional[str] = None
     casino_last_birthday_bonus_year: int = 0
+    reward_ids: list[int] = field(default_factory=list)

@@ -492,6 +492,20 @@ class Repository:
                     inc.setdefault("closed_by", None)
             data["version"] = 26
 
+        if data.get("version") in (26, 27):
+            uid_to_rewards: dict[int, list[int]] = {}
+            for ur in data.get("user_rewards", []):
+                if isinstance(ur, dict):
+                    uid = ur.get("user_id")
+                    rid = ur.get("reward_id")
+                    if uid is not None and rid is not None:
+                        uid_to_rewards.setdefault(uid, []).append(rid)
+            for user in data.get("users", []):
+                if isinstance(user, dict):
+                    user.setdefault("reward_ids", uid_to_rewards.get(user.get("id"), []))
+            data.pop("user_rewards", None)
+            data["version"] = 28
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
