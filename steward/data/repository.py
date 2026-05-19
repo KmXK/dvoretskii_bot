@@ -514,6 +514,11 @@ class Repository:
         data.setdefault("user_languages", {})
         data.setdefault("joke_settings", {})
         data.setdefault("last_message_at", {})
+        # JSON сериализует int-ключи как строки — конвертируем обратно
+        if isinstance(data.get("last_message_at"), dict):
+            data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
+        if isinstance(data.get("joke_settings"), dict):
+            data["joke_settings"] = {int(k): v for k, v in data["joke_settings"].items()}
         for ts in data.get("tennis_sessions", []):
             if not isinstance(ts, dict):
                 continue
