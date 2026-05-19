@@ -51,31 +51,8 @@ class ShazamFeature(Feature):
     command = "shazam"
     description = "Распознать песню по аудио или найти по тексту"
     help_examples = [
-        "/shazam ответом на голосовое — распознать песню из аудио",
-        "/shazam название или исполнитель — поиск по тексту",
+        "/shazam ответом на голосовое или аудио — распознать песню",
     ]
-
-    @subcommand(r"(?P<query>.+)", description="<текст> — поиск по названию/исполнителю")
-    async def search_cmd(self, ctx: FeatureContext, query: str):
-        check_limit(_RATE_LIMIT, 10, Duration.MINUTE)
-        placeholder = await ctx.reply("Ищу…", markdown=False)
-        try:
-            from shazamio import Shazam
-            result = await Shazam().search_track(query, limit=5)
-            hits = result.get("tracks", {}).get("hits", [])
-            if not hits:
-                await placeholder.edit_text("Ничего не нашёл 🤷")
-                return
-            lines = []
-            for i, hit in enumerate(hits[:5], 1):
-                track = hit.get("track", {})
-                lines.append(
-                    f"{i}. <b>{track.get('title', '?')}</b> — {track.get('subtitle', '?')}"
-                )
-            await placeholder.edit_text("\n".join(lines), parse_mode="HTML")
-        except Exception as e:
-            logger.exception("shazam text search failed: %s", e)
-            await placeholder.edit_text("Не удалось выполнить поиск")
 
     @subcommand("", description="Распознать песню (ответом на голосовое/аудио)")
     async def recognize_cmd(self, ctx: FeatureContext):
