@@ -95,6 +95,10 @@ async def fetch_html(session: aiohttp.ClientSession, url: str) -> str | None:
                 if data.get("status") != "ok":
                     logger.warning("FlareSolverr error: %s", data.get("message"))
                     return None
+                solution_status = data["solution"].get("status", 200)
+                if solution_status >= 300:
+                    logger.warning("FlareSolverr: page returned HTTP %s for %s", solution_status, url)
+                    return None
                 return data["solution"]["response"]
         else:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
