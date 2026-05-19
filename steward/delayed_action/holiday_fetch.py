@@ -157,8 +157,9 @@ class HolidayFetchAction(DelayedAction):
         if not today_list:
             logger.warning(
                 "Holiday fetch: parsed 0 holidays for today from %s — "
-                "site structure may have changed",
+                "site structure may have changed. HTML snippet: %.500s",
                 _SITE_URL,
+                html,
             )
 
         saved = 0
