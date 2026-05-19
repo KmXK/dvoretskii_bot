@@ -98,9 +98,11 @@ async def _auto_transcribe_short_video(
     sent_video_msg: Message,
     filepath: str,
     info: Any,
+    existing_caption_html: str = "",
 ) -> None:
-    """Транскрибация + саммари короткого тиктока на бот-сообщение с видео,
-    плюс топ-3 комментариев отдельным reply."""
+    """Стримим расшифровку + саммари прямо в caption видео.
+    Если в caption не влезает — `create_transcription_reply` сам падает в
+    режим отдельного reply-сообщения. Плюс топ-3 комментариев отдельным reply."""
     try:
         await create_transcription_reply(
             repository,
@@ -110,6 +112,8 @@ async def _auto_transcribe_short_video(
             speaker_username=None,
             speaker_fallback_name=None,
             speaker_first_name=None,
+            caption_message=sent_video_msg,
+            existing_caption_html=existing_caption_html,
         )
     except Exception as e:
         logger.warning("auto transcription for short tiktok failed: %s", e)
@@ -312,7 +316,7 @@ def make_video_loader(
 
             if will_auto_transcribe and sent_video is not None:
                 await _auto_transcribe_short_video(
-                    repository, sent_video, filepath, info
+                    repository, sent_video, filepath, info, caption or ""
                 )
 
     return wrapper
