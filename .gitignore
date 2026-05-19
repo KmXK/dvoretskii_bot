@@ -4,6 +4,9 @@
 # vscode
 .vscode/
 
+# claude code local settings (may contain personal tokens/permissions)
+.claude/settings.local.json
+
 # data files (only root data folder)
 /data/
 
