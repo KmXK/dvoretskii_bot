@@ -88,8 +88,6 @@ def _fmt(fr: dict) -> str:
     votes = len(fr.get("votes", []))
     priority = fr.get("priority", 5)
     text = fr["text"]
-    if len(text) > 80:
-        text = text[:79] + "…"
     return f"#{fr['id']:>3} {emoji} p={priority} 👍{votes}  {text}"
 
 
