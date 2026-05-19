@@ -1,5 +1,5 @@
 """Tests for MeFeature: user profile with rewards."""
-from steward.data.models.reward import Reward, UserReward
+from steward.data.models.reward import Reward
 from steward.data.models.user import User
 from steward.features.me import MeFeature
 from tests.conftest import invoke, make_repository
@@ -18,9 +18,8 @@ class TestMeFeature:
 
     async def test_profile_with_rewards(self):
         repo = make_repository()
-        repo.db.users = [User(id=USER_ID, monkeys=10)]
+        repo.db.users = [User(id=USER_ID, monkeys=10, reward_ids=[1])]
         repo.db.rewards = [Reward(id=1, name="Чемпион", emoji="🏆")]
-        repo.db.user_rewards = [UserReward(user_id=USER_ID, reward_id=1)]
         reply, ok = await invoke(MeFeature, "/me", repo, user_id=USER_ID)
         assert ok
         assert "🏆" in reply

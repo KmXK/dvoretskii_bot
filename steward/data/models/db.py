@@ -39,7 +39,7 @@ from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
 from .holiday_cache import HolidayCache
 from .incident import Incident
-from .reward import Reward, UserReward
+from .reward import Reward
 from .rule import Rule
 from .tennis import TennisMatch, TennisSession
 from .todo_item import TodoItem
@@ -77,7 +77,6 @@ class Database:
     chat_nicknames: list[ChatNickname] = field(default_factory=list)
     users: list[User] = field(default_factory=list)
     rewards: list[Reward] = field(default_factory=list)
-    user_rewards: list[UserReward] = field(default_factory=list)
     todo_items: list[TodoItem] = field(default_factory=list)
     banned_users: list[BannedUser] = field(default_factory=list)
     birthdays: list[Birthday] = field(default_factory=list)
@@ -88,7 +87,7 @@ class Database:
     user_languages: dict[str, str] = field(default_factory=dict)
     holiday_caches: list[HolidayCache] = field(default_factory=list)
 
-    version: int = 27
+    version: int = 28
 
 
 PARSE_CONFIG = Config(

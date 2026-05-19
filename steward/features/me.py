@@ -30,7 +30,6 @@ class MeFeature(Feature):
     ]
 
     rewards = collection("rewards")
-    user_rewards = collection("user_rewards")
     users = collection("users")
 
     @subcommand("", description="Показать профиль")
@@ -58,11 +57,12 @@ class MeFeature(Feature):
     @paginated("rewards", per_page=10, header="Ваши достижения", parse_mode="HTML")
     def rewards_page(self, ctx: FeatureContext, metadata: str):
         user_id = int(metadata)
+        user = self.users.find_by(id=user_id)
         rewards_map = {r.id: r for r in self.rewards}
         items = [
-            rewards_map[ur.reward_id]
-            for ur in self.user_rewards
-            if ur.user_id == user_id and ur.reward_id in rewards_map
+            rewards_map[rid]
+            for rid in (user.reward_ids if user else [])
+            if rid in rewards_map
         ]
 
         def render(batch):
@@ -83,15 +83,16 @@ class MeFeature(Feature):
         return items, render, extra
 
     def _build_profile(self, user_id: int) -> tuple[str, Keyboard]:
+        user = self.users.find_by(id=user_id)
         rewards_map = {r.id: r for r in self.rewards}
-        user_reward_ids = [
-            ur.reward_id for ur in self.user_rewards if ur.user_id == user_id
+        user_rewards = [
+            rewards_map[rid]
+            for rid in (user.reward_ids if user else [])
+            if rid in rewards_map
         ]
-        user_rewards = [rewards_map[rid] for rid in user_reward_ids if rid in rewards_map]
         emojis = (
             " ".join(format_reward_emoji(r) for r in user_rewards) if user_rewards else "нет"
         )
-        user = self.users.find_by(id=user_id)
         monkeys = user.monkeys if user else 0
         stand = "нет"
         if user and user.stand_name and user.stand_description:

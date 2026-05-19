@@ -1,5 +1,6 @@
 """Tests for RewardFeature: list, remove, present/take routing."""
-from steward.data.models.reward import Reward, UserReward
+from steward.data.models.reward import Reward
+from steward.data.models.user import User
 from steward.features.reward import RewardFeature
 from tests.conftest import DEFAULT_USER_ID, invoke, make_repository
 
@@ -11,9 +12,9 @@ def repo_with_rewards():
         Reward(id=2, name="Кодер", emoji="💻"),
         Reward(id=3, name="Динамик", emoji="🔥", dynamic_key="top_coder"),
     ]
-    repo.db.user_rewards = [
-        UserReward(user_id=12345, reward_id=1),
-        UserReward(user_id=99999, reward_id=2),
+    repo.db.users = [
+        User(id=12345, reward_ids=[1]),
+        User(id=99999, reward_ids=[2]),
     ]
     return repo
 
@@ -35,7 +36,7 @@ class TestRewardRemove:
         _, ok = await invoke(RewardFeature, "/rewards remove 1", repo)
         assert ok
         assert not any(r.id == 1 for r in repo.db.rewards)
-        assert not any(ur.reward_id == 1 for ur in repo.db.user_rewards)
+        assert not any(1 in u.reward_ids for u in repo.db.users)
 
     async def test_nonexistent_reward(self):
         repo = repo_with_rewards()

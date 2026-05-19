@@ -3,7 +3,7 @@ import re
 
 from telegram import MessageEntity
 
-from steward.data.models.reward import Reward, UserReward
+from steward.data.models.reward import Reward
 from steward.dynamic_rewards import (
     get_dynamic_reward_holder,
     get_holder_display_name,
@@ -60,7 +60,6 @@ class RewardFeature(Feature):
     ]
 
     rewards = collection("rewards")
-    user_rewards = collection("user_rewards")
     users = collection("users")
 
     @subcommand("", description="Список достижений")
@@ -105,9 +104,9 @@ class RewardFeature(Feature):
             await ctx.reply("Динамическое достижение нельзя удалить")
             return
         self.rewards.remove(reward)
-        self.user_rewards.replace_all([
-            ur for ur in self.user_rewards if ur.reward_id != id
-        ])
+        for user in self.users:
+            if id in user.reward_ids:
+                user.reward_ids.remove(id)
         await self.rewards.save()
         await ctx.reply(
             f"Достижение {format_reward_html(reward)} удалено",
@@ -129,14 +128,10 @@ class RewardFeature(Feature):
             if user is None:
                 errors.append(f"`{identifier}` — не найден")
                 continue
-            already = any(
-                ur.user_id == user.id and ur.reward_id == reward_id
-                for ur in self.user_rewards
-            )
-            if already:
+            if reward_id in user.reward_ids:
                 errors.append(f"`{identifier}` — уже имеет это достижение")
             else:
-                self.user_rewards.add(UserReward(user_id=user.id, reward_id=reward_id))
+                user.reward_ids.append(reward_id)
                 resolved.append(f"`{identifier}` — ✅")
         await self.rewards.save()
         body = "\n".join(resolved + errors)
@@ -160,11 +155,10 @@ class RewardFeature(Feature):
             if user is None:
                 errors.append(f"`{identifier}` — не найден")
                 continue
-            ur = self.user_rewards.find_by(user_id=user.id, reward_id=reward_id)
-            if ur is None:
+            if reward_id not in user.reward_ids:
                 errors.append(f"`{identifier}` — не имеет это достижение")
             else:
-                self.user_rewards.remove(ur)
+                user.reward_ids.remove(reward_id)
                 resolved.append(f"`{identifier}` — ✅")
         await self.rewards.save()
         body = "\n".join(resolved + errors)
