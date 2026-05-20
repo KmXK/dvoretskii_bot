@@ -1,13 +1,7 @@
-from steward.framework import (
-    Button,
-    Feature,
-    FeatureContext,
-    Keyboard,
-    on_init,
-    step,
-    subcommand,
-    wizard,
-)
+from time import time
+
+from steward.data.models.ai_message import AiMessage
+from steward.framework import Feature, FeatureContext, on_init, subcommand
 from steward.helpers.ai import (
     DIANA_PROMPT,
     Model,
@@ -20,12 +14,11 @@ from steward.helpers.ai_context import (
     execute_ai_request_streaming,
     register_ai_handler,
 )
-from steward.helpers.tg_streaming import stream_reply
-from steward.session.step import Step
 
 
-_STOP_CB = "diana:stop"
 _GROK = OpenRouterModel.GROK_4_FAST
+_PRIVATE_ONLY = "Диана работает только тет-а-тет. Напиши мне в личку."
+_GREETING = "Алло… слушаю тебя."
 
 
 def _diana_call(uid, msgs):
@@ -38,51 +31,6 @@ def _diana_stream(uid, msgs):
 
 async def _quick_call(prompt: str) -> str:
     return await make_text_query(0, Model.FAST, [("user", prompt)], "")
-
-
-class _DianaStep(Step):
-    def __init__(self):
-        self.is_waiting = False
-
-    async def chat(self, context):
-        if not self.is_waiting:
-            context.session_context["history"] = []
-            keyboard = Keyboard.row(
-                Button("Положить трубку", callback_data=_STOP_CB)
-            ).to_markup()
-            await context.update.message.reply_text(
-                "Алло…",
-                reply_markup=keyboard,
-            )
-            self.is_waiting = True
-            return False
-
-        history = context.session_context["history"]
-        history.append(("user", context.message.text))
-        stream = await _diana_stream(
-            context.update.message.from_user.id,
-            history,
-        )
-        collected: list[str] = []
-
-        async def _tap():
-            async for chunk in stream:
-                collected.append(chunk)
-                yield chunk
-
-        await stream_reply(context.message, _tap())
-        response = "".join(collected)
-        history.append(("assistant", response))
-        return False
-
-    async def callback(self, context):
-        return context.callback_query.data == _STOP_CB
-
-    def stop(self):
-        self.is_waiting = False
-
-
-_PRIVATE_ONLY = "Диана работает только тет-а-тет. Напиши мне в личку."
 
 
 def _is_private(ctx: FeatureContext) -> bool:
@@ -109,7 +57,13 @@ class DianaFeature(Feature):
         if not _is_private(ctx):
             await ctx.reply(_PRIVATE_ONLY)
             return
-        await self.start_wizard("diana:chat", ctx)
+        msg = await ctx.reply(_GREETING)
+        if msg is None or ctx.message is None:
+            return
+        ctx.repository.db.ai_messages[f"{ctx.chat_id}_{msg.id}"] = AiMessage(
+            time(), ctx.message.id, "diana"
+        )
+        await ctx.repository.save()
 
     @subcommand("<text:rest>", description="Одна реплика (только в личке)", catchall=True)
     async def ask(self, ctx: FeatureContext, text: str):
@@ -119,7 +73,3 @@ class DianaFeature(Feature):
         await execute_ai_request_streaming(
             ctx, text, _diana_stream, "diana", quick_call=_quick_call
         )
-
-    @wizard("diana:chat", step("chat", _DianaStep()))
-    async def on_done(self, ctx: FeatureContext, **state):
-        pass
