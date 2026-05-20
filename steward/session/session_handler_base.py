@@ -11,6 +11,7 @@ from steward.helpers.command_validation import validate_command_msg
 from steward.session.context import (
     CallbackStepContext,
     ChatStepContext,
+    ReactionStepContext,
     SessionContext,
     StepContext,
 )
@@ -71,6 +72,12 @@ class SessionHandlerBase(Handler):
         return await self._action(
             CallbackStepContext(**context.__dict__, session_context={}),
             lambda step, context: step.callback(context),
+        )
+
+    async def reaction(self, context):
+        return await self._action(
+            ReactionStepContext(**context.__dict__, session_context={}),
+            lambda step, context: step.reaction(context),
         )
 
     async def _action[TContext: StepContext](

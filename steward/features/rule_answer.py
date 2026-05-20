@@ -2,6 +2,8 @@ import logging
 import random
 import re
 
+from telegram import ReactionTypeEmoji
+
 from steward.data.models.rule import Rule
 from steward.framework import Feature, FeatureContext, collection, on_message
 
@@ -45,7 +47,9 @@ class RuleAnswerFeature(Feature):
         if idx >= len(rule.responses):
             return False
         response = rule.responses[idx]
-        if response.text is not None:
+        if response.reaction_emoji is not None:
+            await ctx.message.set_reaction([ReactionTypeEmoji(emoji=response.reaction_emoji)])
+        elif response.text is not None:
             await ctx.message.reply_text(response.text)
         else:
             await ctx.message.reply_copy(response.from_chat_id, response.message_id)
