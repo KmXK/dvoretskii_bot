@@ -15,6 +15,7 @@ class Response:
     probability: int
 
     text: Optional[str] = None  # only for migration from version 1.*
+    reaction_emoji: Optional[str] = None
 
 
 @dataclass

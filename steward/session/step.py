@@ -1,4 +1,4 @@
-from steward.session.context import CallbackStepContext, ChatStepContext
+from steward.session.context import CallbackStepContext, ChatStepContext, ReactionStepContext
 
 
 class Step:
@@ -7,6 +7,9 @@ class Step:
 
     async def callback(self, context: CallbackStepContext) -> bool:
         return True
+
+    async def reaction(self, context: ReactionStepContext) -> bool:
+        return False
 
     def stop(self):
         pass

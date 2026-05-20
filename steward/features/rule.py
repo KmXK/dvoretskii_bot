@@ -2,7 +2,7 @@ import logging
 import re
 import textwrap
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 
 from steward.data.models.rule import Response, Rule, RulePattern
 from steward.framework import (
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class _CollectResponsesStep(Step):
     def __init__(self):
         self.is_waiting = False
+        self.is_waiting_for_reaction = False
 
     async def chat(self, context):
         response = Response(
@@ -34,6 +35,28 @@ class _CollectResponsesStep(Step):
             context.message.chat_id, context.message.message_id
         )
         context.session_context["responses"].append(response)
+        return False
+
+    async def reaction(self, context):
+        if not self.is_waiting_for_reaction:
+            return False
+        new_reactions = context.message_reaction.new_reaction
+        if not new_reactions:
+            return False
+        first = new_reactions[0]
+        if not isinstance(first, ReactionTypeEmoji):
+            await context.bot.send_message(
+                context.message_reaction.chat.id,
+                "Поддерживаются только обычные эмодзи-реакции",
+            )
+            return False
+        emoji = first.emoji
+        context.session_context["responses"].append(Response(0, 0, 100, reaction_emoji=emoji))
+        self.is_waiting_for_reaction = False
+        await context.bot.send_message(
+            context.message_reaction.chat.id,
+            f"Реакция {emoji} добавлена",
+        )
         return False
 
     async def callback(self, context):
@@ -48,10 +71,21 @@ class _CollectResponsesStep(Step):
                             "Ответы закончились",
                             callback_data="rule_handler|end_responses",
                         ),
+                        InlineKeyboardButton(
+                            "Добавить реакцию",
+                            callback_data="rule_handler|add_reaction",
+                        ),
                     ],
                 ]),
             )
             self.is_waiting = True
+            return False
+
+        if context.callback_query.data == "rule_handler|add_reaction":
+            await context.callback_query.message.chat.send_message(
+                "Поставьте реакцию на это сообщение:"
+            )
+            self.is_waiting_for_reaction = True
             return False
 
         if len(context.session_context["responses"]) == 0:
@@ -65,6 +99,7 @@ class _CollectResponsesStep(Step):
 
     def stop(self):
         self.is_waiting = False
+        self.is_waiting_for_reaction = False
 
 
 class _CheckRegexpStep(Step):

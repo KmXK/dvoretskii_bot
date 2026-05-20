@@ -16,6 +16,8 @@ session_last_activity: dict[SessionKey, datetime] = {}
 
 
 def get_session_key(update: Update):
+    if update.message_reaction and update.message_reaction.user:
+        return update.message_reaction.chat.id, update.message_reaction.user.id
     return get_message(update).chat.id, get_from_user(update).id
 
 
