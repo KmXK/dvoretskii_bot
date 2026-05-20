@@ -16,6 +16,7 @@ from typing import Any
 from io import BytesIO
 
 from PIL import Image, ImageDraw
+from pyrate_limiter import BucketFullException
 from telegram import InputFile, Message, MessageEntity
 
 from steward.data.models.fuck_asset import FuckAsset
@@ -23,12 +24,17 @@ from steward.data.models.user import User
 from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.avatars import get_avatar_image
+from steward.helpers.limiter import Duration, check_limit
 from steward.helpers.media import fetch_tg_file_bytes
 
 logger = logging.getLogger(__name__)
 
 ASSETS_DIR = Path("data/fuck")
 MAX_OUTPUT_DIM = 480
+
+_COMPOSE_SEMAPHORE = asyncio.Semaphore(2)
+_USER_RATE_LIMIT = 2
+_USER_RATE_WINDOW = Duration.MINUTE
 
 
 _MEDIA_EXTS = ("webp", "gif", "mp4", "webm", "mov")
@@ -393,6 +399,14 @@ class FuckFeature(Feature):
         a_avatar_override: Image.Image | None = None,
         b_avatar_override: Image.Image | None = None,
     ) -> None:
+        try:
+            check_limit(
+                f"fuck_compose_{ctx.user_id}", _USER_RATE_LIMIT, _USER_RATE_WINDOW
+            )
+        except BucketFullException:
+            await ctx.reply("Слишком часто. Не больше 2 в минуту, остынь.")
+            return
+
         asset = await asyncio.to_thread(_pick_random_asset, self.repository, ctx.chat_id)
         if asset is None:
             total = len(self.repository.db.fuck_assets)
@@ -406,32 +420,33 @@ class FuckFeature(Feature):
             return
         source_path, annotation = asset
 
-        a_avatar = a_avatar_override or await get_avatar_image(
-            self.bot, a_id, name_hint=a_name
-        )
-        b_avatar = b_avatar_override or await get_avatar_image(
-            self.bot, b_id, name_hint=b_name
-        )
+        async with _COMPOSE_SEMAPHORE:
+            a_avatar = a_avatar_override or await get_avatar_image(
+                self.bot, a_id, name_hint=a_name
+            )
+            b_avatar = b_avatar_override or await get_avatar_image(
+                self.bot, b_id, name_hint=b_name
+            )
 
-        try:
-            with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
-                output_path = Path(tmp_dir) / "fuck.mp4"
-                await asyncio.to_thread(
-                    _compose_mp4,
-                    source_path,
-                    annotation,
-                    a_avatar,
-                    b_avatar,
-                    output_path,
-                )
-                with output_path.open("rb") as f:
-                    await self.bot.send_animation(
-                        chat_id=ctx.chat_id,
-                        animation=InputFile(f, filename="fuck.mp4"),
+            try:
+                with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
+                    output_path = Path(tmp_dir) / "fuck.mp4"
+                    await asyncio.to_thread(
+                        _compose_mp4,
+                        source_path,
+                        annotation,
+                        a_avatar,
+                        b_avatar,
+                        output_path,
                     )
-        except Exception as e:
-            logger.exception("Failed to compose %s gif: %s", tag, e)
-            await ctx.reply("Не получилось сгенерить, попробуй позже")
+                    with output_path.open("rb") as f:
+                        await self.bot.send_animation(
+                            chat_id=ctx.chat_id,
+                            animation=InputFile(f, filename="fuck.mp4"),
+                        )
+            except Exception as e:
+                logger.exception("Failed to compose %s gif: %s", tag, e)
+                await ctx.reply("Не получилось сгенерить, попробуй позже")
 
     def _user(self, user_id: int) -> User | None:
         return next((u for u in self.repository.db.users if u.id == user_id), None)
