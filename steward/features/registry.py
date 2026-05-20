@@ -10,6 +10,7 @@ from steward.features.chat_collect import ChatCollectFeature
 from steward.features.curse import CurseFeature
 from steward.features.curse_metric import CurseMetricFeature
 from steward.features.db import DbFeature
+from steward.features.diana import DianaFeature
 from steward.features.download import DownloadFeature
 from steward.features.everyone import EveryoneFeature
 from steward.features.exchange_rates import ExchangeRateFeature
@@ -104,6 +105,7 @@ COMMANDS << [
     JokeFeature,
     EveryoneFeature,
     PashaFeature,
+    DianaFeature,
     BroadcastFeature,
     AIFeature,
     VoiceVideoFeature,
