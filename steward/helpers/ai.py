@@ -36,6 +36,7 @@ def get_prompt(prompt_name: str):
 
 JAILBREAK_PROMPT = get_prompt("jailbreak")
 PASHA_PROMPT = get_prompt("pasha")
+DIANA_PROMPT = get_prompt("diana")
 TAROT_PROMPT = get_prompt("tarot")
 GROK_SHORT_AGGRESSIVE = get_prompt("grok_short_aggressive")
 CONCISE = get_prompt("concise")
