@@ -506,6 +506,10 @@ class Repository:
             data.pop("user_rewards", None)
             data["version"] = 28
 
+        if data.get("version") == 28:
+            data.setdefault("diana_allowed_chats", [])
+            data["version"] = 29
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -514,6 +518,7 @@ class Repository:
         data.setdefault("user_languages", {})
         data.setdefault("joke_settings", {})
         data.setdefault("last_message_at", {})
+        data.setdefault("diana_allowed_chats", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
