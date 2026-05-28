@@ -39,7 +39,9 @@ from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
 from .holiday_cache import HolidayCache
 from .incident import Incident
+from .chat_settings import ChatSettings
 from .reward import Reward
+from .role import Role, UserRole
 from .rule import Rule
 from .tennis import TennisMatch, TennisSession
 from .todo_item import TodoItem
@@ -92,8 +94,11 @@ class Database:
     joke_sent_post_ids: dict[int, list[str]] = field(default_factory=dict)
     joke_last_channel: dict[int, str] = field(default_factory=dict)
     diana_allowed_chats: set[int] = field(default_factory=set)
+    roles: list[Role] = field(default_factory=list)
+    user_roles: list[UserRole] = field(default_factory=list)
+    chat_settings: list[ChatSettings] = field(default_factory=list)
 
-    version: int = 32
+    version: int = 33
 
 
 PARSE_CONFIG = Config(

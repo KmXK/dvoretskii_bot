@@ -285,6 +285,9 @@ class Feature(Handler):
             if sub.admin and not ctx.repository.is_admin(ctx.user_id):
                 await ctx.reply("Недостаточно прав.")
                 return True
+            if sub.permission and not ctx.repository.has_permission(ctx.user_id, sub.permission):
+                await ctx.reply("Недостаточно прав для этого действия.")
+                return True
             try:
                 result = await sub.func(self, ctx, **parsed)
             except ValidationArgumentsError as e:

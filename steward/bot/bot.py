@@ -5,12 +5,15 @@ from typing import Any, Awaitable, Callable
 
 from pyrate_limiter import BucketFullException
 from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Update,
 )
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ChatMemberHandler,
     ContextTypes,
     ExtBot,
     InlineQueryHandler,
@@ -115,6 +118,9 @@ class Bot:
         application.add_handler(MessageReactionHandler(self._chat, block=False))
         application.add_handler(CallbackQueryHandler(self._callback, block=False))
         application.add_handler(InlineQueryHandler(self._inline_query, block=False))
+        application.add_handler(
+            ChatMemberHandler(self._my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER, block=False)
+        )
 
         async def post_init(*_):
             await self.repository.migrate()
@@ -159,7 +165,9 @@ class Bot:
             asyncio.ensure_future(self.joke_checker.start())
 
             api_port = int(environ.get("API_PORT", "8080"))
-            asyncio.ensure_future(start_api_server(self.repository, self.metrics, api_port, self.bot))
+            asyncio.ensure_future(
+                start_api_server(self.repository, self.metrics, api_port, self.bot, self.handlers)
+            )
 
             application.run_polling(
                 allowed_updates=Update.ALL_TYPES,
@@ -296,11 +304,15 @@ class Bot:
         for handler in self.handlers:
             logging.debug(f"Try handler {handler}")
             try:
-                if (
-                    self._validate_admin(handler, user_id)
-                    and hasattr(handler, action)
-                    and await getattr(handler, action)(context)
-                ):
+                if not self._validate_admin(handler, user_id):
+                    continue
+                cap_check = self._capability_check(handler, context, action)
+                if cap_check == "skip":
+                    continue
+                if cap_check == "disabled_reply":
+                    await self._reply_capability_disabled(context, handler)
+                    break
+                if hasattr(handler, action) and await getattr(handler, action)(context):
                     logging.debug(f"Used handler {handler}")
                     self.metrics.inc("bot_handler_calls_total", {"handler": handler.__class__.__name__})
                     if func is not None:
@@ -325,3 +337,96 @@ class Bot:
         if not handler.only_for_admin:
             return True
         return user_id is not None and self.repository.is_admin(user_id)
+
+    def _capability_check(
+        self,
+        handler: Handler,
+        context: "BotActionContext",
+        action: str,
+    ) -> str:
+        """Return 'ok' if handler may run, 'skip' to silently bypass,
+        or 'disabled_reply' to respond «функция выключена»."""
+        from steward.features.registry import is_always_on
+
+        if is_always_on(handler.__class__):
+            return "ok"
+        chat = context.update.effective_chat
+        if chat is None or chat.type == "private":
+            return "ok"
+        cap = handler.capability
+        if cap is None:
+            return "ok"
+        if self.repository.is_capability_enabled(chat.id, handler.__class__):
+            return "ok"
+        # capability is disabled — figure out if this is a slash-command invocation
+        if action == "chat":
+            msg = context.update.effective_message
+            command = getattr(handler, "command", None)
+            if command and msg and msg.text:
+                from steward.helpers.command_validation import validate_command_msg
+                aliases = getattr(handler, "aliases", ()) or ()
+                names = [command, *aliases]
+                if validate_command_msg(context.update, names):
+                    return "disabled_reply"
+        return "skip"
+
+    async def _reply_capability_disabled(self, context: "BotActionContext", handler: Handler):
+        msg = context.update.effective_message
+        if msg is None:
+            return
+        try:
+            await msg.reply_text("Функция выключена в этом чате. /settings")
+        except BaseException as e:
+            logging.exception(e)
+
+    async def _my_chat_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        from steward.data.models.chat_settings import ChatSettings
+
+        cmu = update.my_chat_member
+        if cmu is None:
+            return
+        new = cmu.new_chat_member
+        old = cmu.old_chat_member
+        bot_joined = (
+            new is not None
+            and new.status in ("member", "administrator")
+            and (old is None or old.status in ("left", "kicked"))
+        )
+        if not bot_joined:
+            return
+        chat_id = cmu.chat.id
+        adder = cmu.from_user
+        adder_id = adder.id if adder else None
+        adder_username = adder.username if adder else None
+
+        existing = next(
+            (s for s in self.repository.db.chat_settings if s.chat_id == chat_id),
+            None,
+        )
+        if existing is not None:
+            return
+
+        settings = ChatSettings(
+            chat_id=chat_id,
+            enabled_capabilities=set(),
+            chat_admins={adder_id} if adder_id else set(),
+            onboarded=False,
+        )
+        self.repository.db.chat_settings.append(settings)
+        await self.repository.save()
+
+        who = f"@{adder_username}" if adder_username else "Админ"
+        greeting = (
+            "Привет! Я выключен по умолчанию.\n"
+            f"{who}, ты теперь chat-admin — открой настройки и включи что нужно."
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "⚙ Открыть настройки",
+                callback_data=f"settings:root|{chat_id}",
+            )
+        ]])
+        try:
+            await self.bot.send_message(chat_id, greeting, reply_markup=kb)
+        except BaseException as e:
+            logging.exception(e)

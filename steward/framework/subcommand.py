@@ -63,6 +63,7 @@ class Subcommand:
     catchall: bool = False
     then_wizard: str | None = None
     raw: str = ""
+    permission: str | None = None
 
     def matches(self, args: str) -> tuple[bool, dict[str, Any]]:
         if self.regex is not None:
@@ -184,6 +185,7 @@ def subcommand(
     admin: bool = False,
     catchall: bool = False,
     then_wizard: str | None = None,
+    permission: str | None = None,
 ):
     def decorator(func):
         existing = getattr(func, "_feature_subcommands", None)
@@ -201,6 +203,7 @@ def subcommand(
                 catchall=catchall,
                 then_wizard=then_wizard,
                 raw=pattern.pattern,
+                permission=permission,
             )
         else:
             spec = parse_pattern(pattern)
@@ -213,6 +216,7 @@ def subcommand(
                 catchall=catchall,
                 then_wizard=then_wizard,
                 raw=pattern,
+                permission=permission,
             )
 
         existing.append(sub)

@@ -1,5 +1,6 @@
 from steward.features.admin import AdminFeature
 from steward.features.ai import AIFeature
+# SettingsFeature imported lazily inside helpers to avoid cycles
 from steward.features.ai_related import AiRelatedFeature
 from steward.features.army import ArmyFeature
 from steward.features.ban import BanEnforcerFeature, BanFeature
@@ -46,6 +47,7 @@ from steward.features.tarot import TarotFeature
 from steward.features.tennis import TennisFeature
 from steward.features.timezone import TimezoneFeature
 from steward.features.todo import TodoFeature
+from steward.features.settings import SettingsFeature
 from steward.features.shazam import ShazamFeature
 from steward.features.transcribe import TranscribeFeature
 from steward.features.translate import TranslateFeature
@@ -74,6 +76,7 @@ EARLY << [
 
 COMMANDS = bucket("commands")
 COMMANDS << [
+    SettingsFeature,
     AdminFeature,
     LangFeature,
     ArmyFeature,
@@ -135,3 +138,65 @@ def all_features() -> list[Handler]:
         for cls in b.list:
             instances.append(cls())
     return instances
+
+
+CAPABILITIES: dict[str, set[type]] = {
+    "ai":         {AIFeature, AiRelatedFeature, PashaFeature, DianaFeature, TranslateFeature},
+    "transcribe": {TranscribeFeature, ShazamFeature, MultiplyFeature, VoiceVideoFeature},
+    "rules":      {RuleFeature, RuleAnswerFeature},
+    "fun":        {JokeFeature, TarotFeature, FuckFeature, SexFeature, ReactFeature, WatchFeature, EveryoneFeature, TennisFeature},
+    "trackers":   {ArmyFeature, BillsFeature, BirthdayFeature, TodoFeature, IncidentFeature,
+                   RemindFeature, RemindersFeature, MeFeature, RewardFeature, StandsFeature,
+                   SubscribeFeature, FeatureRequestFeature},
+    "chat_meta":  {IdFeature, MessageInfoFeature, PrettyTimeFeature, TimezoneFeature, HolidaysFeature,
+                   ExchangeRateFeature, LinkFeature, LayoutFeature, NewTextFeature, LangFeature},
+    "stats":      {StatsFeature, CurseFeature, CurseMetricFeature},
+    "downloads":  {DownloadFeature, GoogleDriveFeature},
+    "moderation": {BanFeature, BanEnforcerFeature, SilenceFeature, SilenceEnforcerFeature},
+}
+
+
+ALWAYS_ON: set[type] = {
+    AdminFeature, MiniAppFeature, ChatCollectFeature,
+    ReactionCounterFeature, UserMemoryFeature, HighcastCleanupFeature,
+    DbFeature, BroadcastFeature,
+}
+
+
+CAPABILITY_LABELS: dict[str, str] = {
+    "ai":         "AI-помощник",
+    "transcribe": "Транскрибация",
+    "rules":      "Правила-ответы",
+    "fun":        "Развлечения",
+    "trackers":   "Трекеры",
+    "chat_meta":  "Утилиты чата",
+    "stats":      "Статистика",
+    "downloads":  "Скачивание",
+    "moderation": "Модерация",
+}
+
+
+ALL_CAPABILITIES: set[str] = set(CAPABILITIES.keys())
+
+
+def capability_of(feature_cls: type) -> str | None:
+    for cap, classes in CAPABILITIES.items():
+        if feature_cls in classes:
+            return cap
+    return None
+
+
+def feature_slug(feature_cls: type) -> str:
+    name = feature_cls.__name__
+    return name.removesuffix("Feature").lower()
+
+
+def features_in_capability(cap: str) -> list[type]:
+    return list(CAPABILITIES.get(cap, set()))
+
+
+def is_always_on(feature_cls: type) -> bool:
+    if feature_cls in ALWAYS_ON:
+        return True
+    # SettingsFeature is registered lazily in COMMANDS; treat by name to avoid import cycle.
+    return feature_cls.__name__ == "SettingsFeature"

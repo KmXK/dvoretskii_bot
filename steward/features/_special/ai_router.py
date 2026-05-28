@@ -105,7 +105,9 @@ class AiRouterHandler(Feature):
             if pay_commands is not None:
                 return await self._present_commands(ctx, chat_ctx, pay_commands)
 
-        commands_info, prompts_info = self._build_commands_info(ctx.user_id)
+        chat = ctx.update.effective_chat
+        chat_id_for_caps = chat.id if chat and chat.type != "private" else None
+        commands_info, prompts_info = self._build_commands_info(ctx.user_id, chat_id_for_caps)
         prompt = ROUTER_PROMPT.format(commands=commands_info, prompts=prompts_info)
 
         check_limit("ai_router", 15, Duration.MINUTE)
@@ -154,7 +156,9 @@ class AiRouterHandler(Feature):
         commands: list[str],
     ) -> bool:
         user_id = ctx.user_id
-        allowed = self._get_allowed_command_names(user_id)
+        chat = ctx.update.effective_chat
+        chat_id_for_caps = chat.id if chat and chat.type != "private" else None
+        allowed = self._get_allowed_command_names(user_id, chat_id_for_caps)
         commands = [
             cmd
             for cmd in commands
@@ -377,21 +381,34 @@ class AiRouterHandler(Feature):
                 return text[len(trigger):].strip(" ,:"), True
         return "", False
 
-    def _get_allowed_command_names(self, user_id: int) -> set[str]:
+    def _handler_visible(self, handler: Handler, user_id: int, chat_id: int | None) -> bool:
+        if handler.only_for_admin and not self.repository.is_admin(user_id):
+            return False
+        if chat_id is None:
+            return True
+        from steward.features.registry import is_always_on
+        if is_always_on(handler.__class__):
+            return True
+        cap = handler.capability
+        if cap is None:
+            return True
+        return self.repository.is_capability_enabled(chat_id, handler.__class__)
+
+    def _get_allowed_command_names(self, user_id: int, chat_id: int | None) -> set[str]:
         names: set[str] = set()
         for handler in self._handlers:
-            if handler.only_for_admin and not self.repository.is_admin(user_id):
+            if not self._handler_visible(handler, user_id, chat_id):
                 continue
             h = handler.help()
             if h and h.startswith("/"):
                 names.add(h.split()[0].lstrip("/").split("@")[0].lower())
         return names
 
-    def _build_commands_info(self, user_id: int) -> tuple[str, str]:
+    def _build_commands_info(self, user_id: int, chat_id: int | None) -> tuple[str, str]:
         helps = []
         prompts = []
         for handler in self._handlers:
-            if handler.only_for_admin and not self.repository.is_admin(user_id):
+            if not self._handler_visible(handler, user_id, chat_id):
                 continue
             if getattr(handler, "excluded_from_ai_router", False):
                 continue

@@ -328,6 +328,31 @@ COMMANDS << [..., FooFeature, ...]
 
 Спец-хендлеры (`AiRouterHandler`, `HelpHandler`, `LogsFeature`) добавляются в `main.py`.
 
+## Capability и permission новой фичи
+
+С версии БД 33 (см. `docs/settings.md`) фичи бьются по **capabilities** — группам функций, которые `chat-admin` включает/выключает в каждом чате через `/settings`.
+
+- Добавляй новую фичу в `CAPABILITIES` в `steward/features/registry.py`. Если capability'ы нет смысла — фича всегда работает, ничего не делай (capability = None → bypass).
+- `ALWAYS_ON` — список фич, которые игнорируют capability-чек (мониторы, AdminFeature, SettingsFeature, BroadcastFeature и т.п.).
+- `feature_slug(cls)` — это `ClassName.removesuffix("Feature").lower()`. Используется для точечного отключения отдельной фичи внутри включённой capability.
+
+Permission — gate на конкретную подкоманду:
+
+```python
+@subcommand("done <ids:rest>",
+            description="Закрыть FR",
+            permission="feature_request.status")
+async def cmd_done(self, ctx, ids): ...
+```
+
+Логика gating'а (см. `Repository.has_permission`):
+- если permission `None` → открыто всем
+- если global-admin → всегда `True` (биппас)
+- если permission ни в одной роли (`gated_permissions()` пустая) → открыто всем
+- иначе нужна роль с этой permission
+
+UI редактирования ролей — `/settings → 🎭 Роли` (global-admin only) или web `/settings`.
+
 ## Тесты
 
 ```python
