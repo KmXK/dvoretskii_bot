@@ -510,6 +510,10 @@ class Repository:
             data.setdefault("diana_allowed_chats", [])
             data["version"] = 29
 
+        if data.get("version") == 29:
+            data.setdefault("last_joke_sent_at", {})
+            data["version"] = 30
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -518,10 +522,13 @@ class Repository:
         data.setdefault("user_languages", {})
         data.setdefault("joke_settings", {})
         data.setdefault("last_message_at", {})
+        data.setdefault("last_joke_sent_at", {})
         data.setdefault("diana_allowed_chats", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
+        if isinstance(data.get("last_joke_sent_at"), dict):
+            data["last_joke_sent_at"] = {int(k): v for k, v in data["last_joke_sent_at"].items()}
         if isinstance(data.get("joke_settings"), dict):
             data["joke_settings"] = {int(k): v for k, v in data["joke_settings"].items()}
         for ts in data.get("tennis_sessions", []):

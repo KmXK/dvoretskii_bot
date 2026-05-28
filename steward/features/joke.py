@@ -1,7 +1,13 @@
+from pyrate_limiter import BucketFullException
+
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.duration import format_timedelta, parse_duration
+from steward.helpers.limiter import Duration, check_limit
+from steward.joke_checker import generate_joke
 
 _OFF_TOKENS = {"off", "stop", "cancel", "0", "выкл"}
+_RATE_GLOBAL = "joke_now_global"
+_RATE_USER = "joke_now_user"
 
 
 class JokeFeature(Feature):
@@ -10,10 +16,30 @@ class JokeFeature(Feature):
     description = "Анекдот при долгом молчании"
     help_examples = [
         "«присылать анекдот при молчании 12 часов» → /joke 12h",
+        "«отправить анекдот сейчас» → /joke now",
         "«выключить» → /joke",
     ]
 
     joke_settings = collection("joke_settings")
+
+    @subcommand("now", description="Отправить анекдот прямо сейчас")
+    async def now(self, ctx: FeatureContext):
+        try:
+            check_limit(_RATE_GLOBAL, 5, Duration.MINUTE)
+            check_limit(_RATE_USER, 2, Duration.MINUTE, name=str(ctx.user_id))
+        except BucketFullException:
+            await ctx.reply("Подожди немного, слишком много запросов на анекдоты", markdown=False)
+            return
+        placeholder = await ctx.reply("Придумываю…", markdown=False)
+        joke = await generate_joke()
+        if not joke:
+            if placeholder:
+                await placeholder.edit_text("Не получилось придумать анекдот, попробуй позже")
+            return
+        if placeholder:
+            await placeholder.edit_text(joke)
+        else:
+            await ctx.reply(joke, markdown=False)
 
     @subcommand("", description="Выключить автоматические анекдоты")
     async def off_default(self, ctx: FeatureContext):
