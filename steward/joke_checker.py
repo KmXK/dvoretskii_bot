@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL = 5 * 60  # check every 5 minutes
 
-_JOKE_MODEL = OpenRouterModel.GROK_3_BETA
+_JOKE_MODEL = OpenRouterModel.GROK_4_FAST
 
 JOKE_SYSTEM_PROMPT = (
     "Ты генератор смешных анекдотов для русскоязычного телеграм-чата. "
