@@ -1,37 +1,42 @@
 import asyncio
-import json
 import logging
-import random
 from datetime import datetime, timezone
 
-import aiohttp
 from telegram.ext import ExtBot
 
 from steward.data.repository import Repository
+from steward.helpers.ai import OpenRouterModel, make_openrouter_query
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL = 5 * 60  # check every 5 minutes
 
-_JOKE_SOURCES = [
-    ("rzhunemogu", "http://www.rzhunemogu.ru/RandJSON.aspx?CType=1"),
-    ("rzhunemogu_stories", "http://www.rzhunemogu.ru/RandJSON.aspx?CType=2"),
-]
+_JOKE_MODEL = OpenRouterModel.GROK_3_BETA
+
+JOKE_SYSTEM_PROMPT = (
+    "Ты генератор смешных анекдотов для русскоязычного телеграм-чата. "
+    "Придумай один короткий смешной анекдот или шутку в стиле зумеров (Gen Z). "
+    "Стиль: абсурдный юмор, ирония, ситуационный стёб, жиза 2020-х. "
+    "Можно: чёрный юмор, самоирония, про интернет/соцсети/технологии/работу/учёбу. "
+    "Не надо: советские анекдоты, классический формат «вопрос — ответ про Вовочку», "
+    "пошлятина, расизм, политика. "
+    "Формат: только сам анекдот, без вступлений и объяснений. Коротко."
+)
 
 
-async def _fetch_joke() -> str | None:
-    name, url = random.choice(_JOKE_SOURCES)
+async def generate_joke() -> str | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                raw = await resp.text(encoding="windows-1251")
-                # Site has unescaped newlines inside JSON strings — fix before parsing
-                raw = raw.replace("\r\n", r"\n").replace("\r", r"\n").replace("\n", r"\n")
-                data = json.loads(raw)
-                text = (data.get("content") or "").replace(r"\n", "\n").strip()
-                return text or None
+        text = await make_openrouter_query(
+            "_joke_checker",
+            _JOKE_MODEL,
+            [("user", "Придумай анекдот")],
+            system_prompt=JOKE_SYSTEM_PROMPT,
+            max_tokens=300,
+            timeout_seconds=20,
+        )
+        return text.strip() or None
     except Exception:
-        logger.exception("Failed to fetch joke from %s (%s)", name, url)
+        logger.exception("Failed to generate joke via LLM")
         return None
 
 
@@ -63,14 +68,22 @@ class JokeChecker:
             if (now - last_msg) < threshold:
                 continue
 
-            joke = await _fetch_joke()
+            # Only send one joke per silence period — skip if already sent since last human message
+            last_joke = db.last_joke_sent_at.get(chat_id)
+            if last_joke is not None:
+                if last_joke.tzinfo is None:
+                    last_joke = last_joke.replace(tzinfo=timezone.utc)
+                if last_joke >= last_msg:
+                    continue
+
+            joke = await generate_joke()
             if not joke:
                 logger.warning("Got empty joke, skipping chat %s", chat_id)
                 continue
 
             try:
                 await self._bot.send_message(chat_id, joke)
-                db.last_message_at[chat_id] = now
+                db.last_joke_sent_at[chat_id] = now
                 await self._repository.save()
                 logger.info("Sent joke to chat %s after %.0fs of silence", chat_id, (now - last_msg).total_seconds())
             except Exception:

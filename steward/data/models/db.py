@@ -87,10 +87,11 @@ class Database:
     user_languages: dict[str, str] = field(default_factory=dict)
     holiday_caches: list[HolidayCache] = field(default_factory=list)
     last_message_at: dict[int, datetime] = field(default_factory=dict)
+    last_joke_sent_at: dict[int, datetime] = field(default_factory=dict)
     joke_settings: dict[int, timedelta] = field(default_factory=dict)
     diana_allowed_chats: set[int] = field(default_factory=set)
 
-    version: int = 29
+    version: int = 30
 
 
 PARSE_CONFIG = Config(
