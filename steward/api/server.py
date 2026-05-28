@@ -2374,12 +2374,13 @@ async def handle_bills_diff_get(request: web.Request):
     })
 
 
-async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None):
+async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None, handlers=None):
     from steward.api.auth import auth_middleware
     app = web.Application(middlewares=[auth_middleware])
     app["repository"] = repository
     app["metrics"] = metrics
     app["bot"] = bot
+    app["handlers"] = handlers or []
 
     if bot:
         async def _on_room_cleanup(room_id):
@@ -2459,6 +2460,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
 
     from steward.api.tennis_routes import register_routes as register_tennis_routes
     register_tennis_routes(app)
+
+    from steward.api.settings_routes import register_routes as register_settings_routes
+    register_settings_routes(app)
 
     runner = web.AppRunner(app)
     await runner.setup()

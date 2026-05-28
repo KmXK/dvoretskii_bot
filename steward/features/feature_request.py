@@ -145,7 +145,11 @@ class FeatureRequestFeature(Feature):
     async def list_alias(self, ctx: FeatureContext):
         await self.paginate(ctx, "frs", metadata=_ListState().encode())
 
-    @subcommand("<fr_id:int> priority <p:int>", description="Сменить приоритет")
+    @subcommand(
+        "<fr_id:int> priority <p:int>",
+        description="Сменить приоритет",
+        permission="feature_request.priority",
+    )
     async def set_priority(self, ctx: FeatureContext, fr_id: int, p: int):
         if p < 1 or p > 5:
             await ctx.reply("Приоритет должен быть от 1 до 5")
@@ -163,7 +167,11 @@ class FeatureRequestFeature(Feature):
         emoji = _PRIORITY_EMOJI.get(p, "⚪")
         await ctx.reply(f"Приоритет фича-реквеста #{fr_id} изменён на {emoji} {p}")
 
-    @subcommand("<fr_id:int> note <text:rest>", description="Добавить примечание")
+    @subcommand(
+        "<fr_id:int> note <text:rest>",
+        description="Добавить примечание",
+        permission="feature_request.note",
+    )
     async def add_note(self, ctx: FeatureContext, fr_id: int, text: str):
         text = text.strip()
         if not text:
@@ -189,23 +197,43 @@ class FeatureRequestFeature(Feature):
             return
         await ctx.reply(self._render_view(items[fr_id - 1]))
 
-    @subcommand("done <ids:rest>", description="Сменить статус: done")
+    @subcommand(
+        "done <ids:rest>",
+        description="Сменить статус: done",
+        permission="feature_request.status",
+    )
     async def cmd_done(self, ctx, ids):
         await self._batch_status(ctx, "done", ids.split())
 
-    @subcommand("deny <ids:rest>", description="Сменить статус: deny")
+    @subcommand(
+        "deny <ids:rest>",
+        description="Сменить статус: deny",
+        permission="feature_request.status",
+    )
     async def cmd_deny(self, ctx, ids):
         await self._batch_status(ctx, "deny", ids.split())
 
-    @subcommand("reopen <ids:rest>", description="Сменить статус: reopen")
+    @subcommand(
+        "reopen <ids:rest>",
+        description="Сменить статус: reopen",
+        permission="feature_request.status",
+    )
     async def cmd_reopen(self, ctx, ids):
         await self._batch_status(ctx, "reopen", ids.split())
 
-    @subcommand("inprogress <ids:rest>", description="Сменить статус: inprogress")
+    @subcommand(
+        "inprogress <ids:rest>",
+        description="Сменить статус: inprogress",
+        permission="feature_request.status",
+    )
     async def cmd_inprogress(self, ctx, ids):
         await self._batch_status(ctx, "inprogress", ids.split())
 
-    @subcommand("testing <ids:rest>", description="Сменить статус: testing")
+    @subcommand(
+        "testing <ids:rest>",
+        description="Сменить статус: testing",
+        permission="feature_request.status",
+    )
     async def cmd_testing(self, ctx, ids):
         await self._batch_status(ctx, "testing", ids.split())
 

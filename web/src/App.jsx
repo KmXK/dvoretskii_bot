@@ -25,6 +25,7 @@ const TodoPage = lazy(() => import('./pages/TodoPage'))
 const IncidentsPage = lazy(() => import('./pages/IncidentsPage'))
 const FuckAssetsPage = lazy(() => import('./fuck/FuckAssetsPage'))
 const FuckCreatePage = lazy(() => import('./fuck/FuckCreatePage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 function PageFallback() {
   return (
@@ -63,6 +64,8 @@ export default function App() {
                     <Route path="/fuck/assets" element={<FuckAssetsPage />} />
                     <Route path="/fuck/new" element={<FuckCreatePage />} />
                     <Route path="/fuck/assets/:id/edit" element={<FuckCreatePage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="/settings/:chatId" element={<SettingsPage />} />
                     <Route path="*" element={<NotFoundPage />} />
                   </Routes>
                 </Suspense>

@@ -42,3 +42,8 @@ class Handler:
     def prompt(self) -> str | None:
         """AI prompt for command routing — detailed instructions for the AI model."""
         return None
+
+    @property
+    def capability(self) -> str | None:
+        from steward.features.registry import capability_of
+        return capability_of(self.__class__)

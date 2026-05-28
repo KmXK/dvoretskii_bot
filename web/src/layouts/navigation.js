@@ -40,6 +40,7 @@ export const NAV_GROUPS = [
     items: [
       { to: '/stats', label: 'Статистика', icon: '📊', home: { desc: 'Статистика чатов', color: 'from-violet-500/20 to-violet-900/20' } },
       { to: '/tools', label: 'Инструменты', icon: '🧰', home: { desc: 'Валюты, перевод, время', color: 'from-amber-500/20 to-amber-900/20' } },
+      { to: '/settings', label: 'Настройки', icon: '⚙', home: { desc: 'Функции и роли', color: 'from-slate-500/20 to-slate-900/20' } },
     ],
   },
 ]

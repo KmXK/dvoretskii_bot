@@ -132,8 +132,62 @@ class Repository:
             logging.exception(e)
             pass
 
-    def is_admin(self, user_id: int):
+    def is_admin(self, user_id: int | None):
+        if user_id is None:
+            return False
         return user_id in self.db.admin_ids
+
+    def chat_settings_for(self, chat_id: int):
+        from steward.data.models.chat_settings import ChatSettings
+        for s in self.db.chat_settings:
+            if s.chat_id == chat_id:
+                return s
+        s = ChatSettings(chat_id=chat_id)
+        self.db.chat_settings.append(s)
+        return s
+
+    def is_capability_enabled(self, chat_id: int, feature_cls: type) -> bool:
+        from steward.features.registry import capability_of, feature_slug
+        cap = capability_of(feature_cls)
+        if cap is None:
+            return True
+        s = self.chat_settings_for(chat_id)
+        if cap not in s.enabled_capabilities:
+            return False
+        return feature_slug(feature_cls) not in s.disabled_features
+
+    def is_chat_admin(self, user_id: int | None, chat_id: int) -> bool:
+        if user_id is None:
+            return False
+        if self.is_admin(user_id):
+            return True
+        s = self.chat_settings_for(chat_id)
+        return user_id in s.chat_admins
+
+    def permissions_of(self, user_id: int | None) -> set[str]:
+        if user_id is None:
+            return set()
+        role_ids = {ur.role_id for ur in self.db.user_roles if ur.user_id == user_id}
+        out: set[str] = set()
+        for r in self.db.roles:
+            if r.id in role_ids:
+                out |= set(r.permissions)
+        return out
+
+    def gated_permissions(self) -> set[str]:
+        out: set[str] = set()
+        for r in self.db.roles:
+            out |= set(r.permissions)
+        return out
+
+    def has_permission(self, user_id: int | None, perm: str | None) -> bool:
+        if perm is None:
+            return True
+        if self.is_admin(user_id):
+            return True
+        if perm not in self.gated_permissions():
+            return True
+        return perm in self.permissions_of(user_id)
 
     def _migrate(self, data: dict[str, Any]):
         # TODO: Use config file
@@ -524,6 +578,37 @@ class Repository:
             data.setdefault("joke_last_channel", {})
             data["version"] = 32
 
+        if data.get("version") == 32:
+            chats = data.get("chats", []) or []
+            all_caps = [
+                "ai", "transcribe", "rules", "fun", "trackers",
+                "chat_meta", "stats", "downloads", "moderation",
+            ]
+            data["chat_settings"] = [
+                {
+                    "chat_id": c["id"],
+                    "enabled_capabilities": list(all_caps),
+                    "disabled_features": [],
+                    "chat_admins": [],
+                    "onboarded": True,
+                }
+                for c in chats
+                if isinstance(c, dict) and "id" in c
+            ]
+            data["roles"] = [
+                {
+                    "id": 1,
+                    "name": "Разработчик",
+                    "permissions": [
+                        "feature_request.priority",
+                        "feature_request.note",
+                        "feature_request.status",
+                    ],
+                }
+            ]
+            data["user_roles"] = []
+            data["version"] = 33
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -536,6 +621,9 @@ class Repository:
         data.setdefault("joke_sent_post_ids", {})
         data.setdefault("joke_last_channel", {})
         data.setdefault("diana_allowed_chats", [])
+        data.setdefault("roles", [])
+        data.setdefault("user_roles", [])
+        data.setdefault("chat_settings", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}

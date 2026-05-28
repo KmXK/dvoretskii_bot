@@ -19,7 +19,23 @@ def _legacy_first_line(handler: Handler) -> str | None:
     return msg.split("\n", 1)[0]
 
 
-def _build_overview(handlers: list[Handler], is_admin: bool) -> str:
+def _is_capability_visible(handler: Handler, ctx: FeatureContext) -> bool:
+    from steward.features.registry import is_always_on
+
+    if is_always_on(handler.__class__):
+        return True
+    if ctx.message is not None and ctx.message.chat and ctx.message.chat.type == "private":
+        return True
+    chat = ctx.update.effective_chat
+    if chat is None or chat.type == "private":
+        return True
+    cap = handler.capability
+    if cap is None:
+        return True
+    return ctx.repository.is_capability_enabled(chat.id, handler.__class__)
+
+
+def _build_overview(handlers: list[Handler], ctx: FeatureContext, is_admin: bool) -> str:
     def keep(s: str | None) -> TypeGuard[str]:
         return s is not None and s != ""
 
@@ -28,7 +44,7 @@ def _build_overview(handlers: list[Handler], is_admin: bool) -> str:
         for line in (
             _compact_line(h)
             for h in handlers
-            if is_admin or not h.only_for_admin
+            if (is_admin or not h.only_for_admin) and _is_capability_visible(h, ctx)
         )
         if keep(line)
     ]
@@ -76,7 +92,7 @@ class HelpFeature(Feature):
     @subcommand("", description="Список всех команд")
     async def overview(self, ctx: FeatureContext):
         is_admin = ctx.repository.is_admin(ctx.user_id)
-        await ctx.reply(_build_overview(self._handlers, is_admin), markdown=False)
+        await ctx.reply(_build_overview(self._handlers, ctx, is_admin), markdown=False)
 
     @subcommand("<command:str>", description="Подробно про конкретную команду")
     async def details(self, ctx: FeatureContext, command: str):
@@ -85,6 +101,9 @@ class HelpFeature(Feature):
             await ctx.reply(f"Команда {command!r} не найдена")
             return
         if handler.only_for_admin and not ctx.repository.is_admin(ctx.user_id):
+            await ctx.reply(f"Команда {command!r} не найдена")
+            return
+        if not _is_capability_visible(handler, ctx):
             await ctx.reply(f"Команда {command!r} не найдена")
             return
         text = handler.help() if handler.help else None
