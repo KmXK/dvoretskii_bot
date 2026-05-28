@@ -139,10 +139,20 @@ class Repository:
 
     def chat_settings_for(self, chat_id: int):
         from steward.data.models.chat_settings import ChatSettings
+        from steward.features.registry import ALL_CAPABILITIES
         for s in self.db.chat_settings:
             if s.chat_id == chat_id:
                 return s
-        s = ChatSettings(chat_id=chat_id)
+        # Telegram: positive chat_id == private (DM with the user).
+        # Negative chat_id == group/supergroup. Private chats default to
+        # all-on so existing users aren't broken; groups default to all-off
+        # and are configured via /settings after onboarding.
+        is_private = chat_id > 0
+        s = ChatSettings(
+            chat_id=chat_id,
+            enabled_capabilities=set(ALL_CAPABILITIES) if is_private else set(),
+            onboarded=is_private,
+        )
         self.db.chat_settings.append(s)
         return s
 
@@ -160,6 +170,9 @@ class Repository:
         if user_id is None:
             return False
         if self.is_admin(user_id):
+            return True
+        # Private chat: the user owns their own DM with the bot.
+        if chat_id > 0 and chat_id == user_id:
             return True
         s = self.chat_settings_for(chat_id)
         return user_id in s.chat_admins

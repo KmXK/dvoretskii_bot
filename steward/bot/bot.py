@@ -351,7 +351,7 @@ class Bot:
         if is_always_on(handler.__class__):
             return "ok"
         chat = context.update.effective_chat
-        if chat is None or chat.type == "private":
+        if chat is None:
             return "ok"
         cap = handler.capability
         if cap is None:

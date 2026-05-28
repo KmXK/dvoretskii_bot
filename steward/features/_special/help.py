@@ -24,10 +24,8 @@ def _is_capability_visible(handler: Handler, ctx: FeatureContext) -> bool:
 
     if is_always_on(handler.__class__):
         return True
-    if ctx.message is not None and ctx.message.chat and ctx.message.chat.type == "private":
-        return True
     chat = ctx.update.effective_chat
-    if chat is None or chat.type == "private":
+    if chat is None:
         return True
     cap = handler.capability
     if cap is None:

@@ -106,7 +106,7 @@ class AiRouterHandler(Feature):
                 return await self._present_commands(ctx, chat_ctx, pay_commands)
 
         chat = ctx.update.effective_chat
-        chat_id_for_caps = chat.id if chat and chat.type != "private" else None
+        chat_id_for_caps = chat.id if chat else None
         commands_info, prompts_info = self._build_commands_info(ctx.user_id, chat_id_for_caps)
         prompt = ROUTER_PROMPT.format(commands=commands_info, prompts=prompts_info)
 
@@ -157,7 +157,7 @@ class AiRouterHandler(Feature):
     ) -> bool:
         user_id = ctx.user_id
         chat = ctx.update.effective_chat
-        chat_id_for_caps = chat.id if chat and chat.type != "private" else None
+        chat_id_for_caps = chat.id if chat else None
         allowed = self._get_allowed_command_names(user_id, chat_id_for_caps)
         commands = [
             cmd

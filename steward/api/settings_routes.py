@@ -68,11 +68,16 @@ def _is_member(repo: Repository, user_id: int, chat_id: int) -> bool:
 # ── Chat settings ────────────────────────────────────────────────────────────
 
 async def handle_user_chats_for_settings(request: web.Request):
-    """List chats where caller is global-admin or chat-admin."""
+    """List chats where caller is global-admin or chat-admin, plus their own DM."""
     uid = require_user(request)
     repo: Repository = request.app["repository"]
     is_global = repo.is_admin(uid)
-    out = []
+    out = [{
+        "id": uid,
+        "name": "Личный чат с ботом",
+        "is_chat_admin": True,
+        "is_private": True,
+    }]
     for chat in repo.db.chats:
         settings = _settings_for(repo, chat.id)
         if not (is_global or uid in settings.chat_admins):
@@ -81,6 +86,7 @@ async def handle_user_chats_for_settings(request: web.Request):
             "id": chat.id,
             "name": chat.name,
             "is_chat_admin": uid in settings.chat_admins,
+            "is_private": False,
         })
     return web.json_response({"chats": out})
 
