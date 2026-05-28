@@ -155,7 +155,7 @@ class Bot:
             self.dynamic_reward_checker = DynamicRewardChecker(self.repository, self.metrics)
             asyncio.ensure_future(self.dynamic_reward_checker.start())
 
-            self.joke_checker = JokeChecker(self.repository, self.bot)
+            self.joke_checker = JokeChecker(self.repository, self.bot, self.client)
             asyncio.ensure_future(self.joke_checker.start())
 
             api_port = int(environ.get("API_PORT", "8080"))
