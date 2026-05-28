@@ -4,6 +4,7 @@ from typing import AsyncIterator, Awaitable, Callable
 
 import telethon
 from async_lru import alru_cache
+from telegram import Message
 from telethon import TelegramClient
 
 import asyncio
@@ -28,6 +29,9 @@ type AiStreamCallable = Callable[
 ]
 
 type QuickCallable = Callable[[str], str | Awaitable[str]]
+type PostProcessCallable = Callable[
+    [Message, str], Awaitable[None] | None
+]
 
 _ai_handlers: dict[str, AiCallable] = {}
 _ai_stream_handlers: dict[str, AiStreamCallable] = {}
@@ -146,6 +150,7 @@ async def execute_ai_request_streaming(
     *,
     quick_call: Callable[[str], str | Awaitable[str]] | None = None,
     placeholder_upgrade: Awaitable[str | None] | None = None,
+    post_process: PostProcessCallable | None = None,
 ):
     """Same shape as execute_ai_request, but streams tokens into the Telegram
     message as they arrive. When `quick_call` is given:
@@ -159,6 +164,11 @@ async def execute_ai_request_streaming(
     `placeholder_upgrade` overrides the default contextual-placeholder task.
     Pass it when the caller already knows what kind of phrase to show (e.g.
     a "going online" hint when routing through web-search).
+
+    `post_process(bot_message, full_text)` is invoked after the stream
+    finishes; subclasses can use it to inspect/rewrite the sent message
+    (e.g. content-filter substitutions for Pasha's Yandex denial phrase).
+
     Persists the final message the same way."""
     user_id = context.message.from_user.id
     user_name = context.message.from_user.full_name or context.message.from_user.username
@@ -184,19 +194,28 @@ async def execute_ai_request_streaming(
             try_contextual_placeholder(text, quick_call)
         )
 
+    captured: list[str] = []
+    stream_for_reply = ai_stream_call(user_id, messages)
+    if post_process is not None:
+        stream_for_reply = _captured_stream(stream_for_reply, captured)
+
     try:
-        stream = ai_stream_call(user_id, messages)
         # If stream is an awaitable, let stream_reply resolve it AFTER sending
         # the placeholder — this keeps the placeholder reply instant even when
         # stream init (classifier, web search, etc.) takes seconds.
         bot_message = await stream_reply(
             context.message,
-            stream,
+            stream_for_reply,
             placeholder_upgrade=upgrade_task,
         )
     finally:
         if upgrade_task is not None and not upgrade_task.done():
             upgrade_task.cancel()
+
+    if post_process is not None:
+        result = post_process(bot_message, "".join(captured))
+        if isawaitable(result):
+            await result
 
     if quick_call is not None:
         asyncio.create_task(
@@ -214,6 +233,17 @@ async def execute_ai_request_streaming(
         )
         del context.repository.db.ai_messages[oldest]
     await context.repository.save()
+
+
+async def _captured_stream(
+    source: AsyncIterator[str] | Awaitable[AsyncIterator[str]],
+    sink: list[str],
+) -> AsyncIterator[str]:
+    if isawaitable(source):
+        source = await source
+    async for chunk in source:
+        sink.append(chunk)
+        yield chunk
 
 
 async def _await_awaitable(awaitable: Awaitable[str | None]) -> str | None:
