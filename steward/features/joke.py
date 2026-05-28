@@ -3,7 +3,7 @@ from pyrate_limiter import BucketFullException
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.duration import format_timedelta, parse_duration
 from steward.helpers.limiter import Duration, check_limit
-from steward.joke_checker import generate_joke
+from steward.joke_checker import _track_sent, get_joke_from_channel
 
 _OFF_TOKENS = {"off", "stop", "cancel", "0", "выкл"}
 _RATE_GLOBAL = "joke_now_global"
@@ -12,7 +12,6 @@ _RATE_USER = "joke_now_user"
 
 class JokeFeature(Feature):
     command = "joke"
-    only_admin = True
     description = "Анекдот при долгом молчании"
     help_examples = [
         "«присылать анекдот при молчании 12 часов» → /joke 12h",
@@ -30,22 +29,29 @@ class JokeFeature(Feature):
         except BucketFullException:
             await ctx.reply("Подожди немного, слишком много запросов на анекдоты", markdown=False)
             return
-        placeholder = await ctx.reply("Придумываю…", markdown=False)
-        joke = await generate_joke()
-        if not joke:
+        placeholder = await ctx.reply("Ищу анекдот…", markdown=False)
+        db = ctx.repository.db
+        sent_ids = set(db.joke_sent_post_ids.get(ctx.chat_id, []))
+        result = await get_joke_from_channel(ctx.client, sent_ids)
+        if result is None:
             if placeholder:
-                await placeholder.edit_text("Не получилось придумать анекдот, попробуй позже")
+                await placeholder.edit_text("Не нашёл новых анекдотов, все уже были 😅")
             return
+        post_id, text = result
+        db.joke_sent_post_ids[ctx.chat_id] = _track_sent(
+            db.joke_sent_post_ids.get(ctx.chat_id, []), post_id
+        )
+        await ctx.repository.save()
         if placeholder:
-            await placeholder.edit_text(joke)
+            await placeholder.edit_text(text)
         else:
-            await ctx.reply(joke, markdown=False)
+            await ctx.reply(text, markdown=False)
 
-    @subcommand("", description="Выключить автоматические анекдоты")
+    @subcommand("", description="Выключить автоматические анекдоты", admin=True)
     async def off_default(self, ctx: FeatureContext):
         await self._off(ctx)
 
-    @subcommand("<arg:rest>", description="Включить при молчании N времени или выключить", catchall=True)
+    @subcommand("<arg:rest>", description="Включить при молчании N времени или выключить", catchall=True, admin=True)
     async def toggle(self, ctx: FeatureContext, arg: str):
         if arg.strip().lower() in _OFF_TOKENS:
             await self._off(ctx)

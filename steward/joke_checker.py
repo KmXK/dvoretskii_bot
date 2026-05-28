@@ -3,47 +3,43 @@ import logging
 from datetime import datetime, timezone
 
 from telegram.ext import ExtBot
+from telethon import TelegramClient
 
 from steward.data.repository import Repository
-from steward.helpers.ai import OpenRouterModel, make_openrouter_query
 
 logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL = 5 * 60  # check every 5 minutes
 
-_JOKE_MODEL = OpenRouterModel.GROK_4_FAST
-
-JOKE_SYSTEM_PROMPT = (
-    "Ты генератор смешных анекдотов для русскоязычного телеграм-чата. "
-    "Придумай один короткий смешной анекдот или шутку в стиле зумеров (Gen Z). "
-    "Стиль: абсурдный юмор, ирония, ситуационный стёб, жиза 2020-х. "
-    "Можно: чёрный юмор, самоирония, про интернет/соцсети/технологии/работу/учёбу. "
-    "Не надо: советские анекдоты, классический формат «вопрос — ответ про Вовочку», "
-    "пошлятина, расизм, политика. "
-    "Формат: только сам анекдот, без вступлений и объяснений. Коротко."
-)
+JOKE_CHANNEL = "baneksru"
+_MAX_SENT_IDS = 200  # cap per chat to avoid unbounded growth
 
 
-async def generate_joke() -> str | None:
+async def get_joke_from_channel(
+    client: TelegramClient,
+    sent_ids: set[int],
+) -> tuple[int, str] | None:
+    """Returns (message_id, text) of the latest unsent joke, or None if all recent posts exhausted."""
     try:
-        text = await make_openrouter_query(
-            "_joke_checker",
-            _JOKE_MODEL,
-            [("user", "Придумай анекдот")],
-            system_prompt=JOKE_SYSTEM_PROMPT,
-            max_tokens=300,
-            timeout_seconds=20,
-        )
-        return text.strip() or None
+        messages = await client.get_messages(JOKE_CHANNEL, limit=50)
+        for msg in messages:  # newest first
+            if msg.text and msg.id not in sent_ids:
+                return msg.id, msg.text
     except Exception:
-        logger.exception("Failed to generate joke via LLM")
-        return None
+        logger.exception("Failed to fetch jokes from channel %s", JOKE_CHANNEL)
+    return None
+
+
+def _track_sent(existing: list[int], post_id: int) -> list[int]:
+    updated = [i for i in existing if i != post_id] + [post_id]
+    return updated[-_MAX_SENT_IDS:]
 
 
 class JokeChecker:
-    def __init__(self, repository: Repository, bot: ExtBot[None]):
+    def __init__(self, repository: Repository, bot: ExtBot[None], client: TelegramClient):
         self._repository = repository
         self._bot = bot
+        self._client = client
 
     async def start(self):
         while True:
@@ -76,15 +72,21 @@ class JokeChecker:
                 if last_joke >= last_msg:
                     continue
 
-            joke = await generate_joke()
-            if not joke:
-                logger.warning("Got empty joke, skipping chat %s", chat_id)
+            sent_ids = set(db.joke_sent_post_ids.get(chat_id, []))
+            result = await get_joke_from_channel(self._client, sent_ids)
+            if result is None:
+                logger.warning("No new jokes available for chat %s", chat_id)
                 continue
 
+            post_id, text = result
             try:
-                await self._bot.send_message(chat_id, joke)
+                await self._bot.send_message(chat_id, text)
                 db.last_joke_sent_at[chat_id] = now
+                db.joke_sent_post_ids[chat_id] = _track_sent(
+                    db.joke_sent_post_ids.get(chat_id, []), post_id
+                )
                 await self._repository.save()
-                logger.info("Sent joke to chat %s after %.0fs of silence", chat_id, (now - last_msg).total_seconds())
+                logger.info("Sent joke (post %s) to chat %s after %.0fs of silence",
+                            post_id, chat_id, (now - last_msg).total_seconds())
             except Exception:
                 logger.exception("Failed to send joke to chat %s", chat_id)

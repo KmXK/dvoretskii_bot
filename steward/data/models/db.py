@@ -89,9 +89,10 @@ class Database:
     last_message_at: dict[int, datetime] = field(default_factory=dict)
     last_joke_sent_at: dict[int, datetime] = field(default_factory=dict)
     joke_settings: dict[int, timedelta] = field(default_factory=dict)
+    joke_sent_post_ids: dict[int, list[int]] = field(default_factory=dict)
     diana_allowed_chats: set[int] = field(default_factory=set)
 
-    version: int = 30
+    version: int = 31
 
 
 PARSE_CONFIG = Config(
