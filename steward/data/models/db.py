@@ -34,6 +34,7 @@ from .bill_v2 import (
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
+from .command_alias import CommandAlias
 from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
@@ -97,8 +98,9 @@ class Database:
     roles: list[Role] = field(default_factory=list)
     user_roles: list[UserRole] = field(default_factory=list)
     chat_settings: list[ChatSettings] = field(default_factory=list)
+    command_aliases: list[CommandAlias] = field(default_factory=list)
 
-    version: int = 33
+    version: int = 34
 
 
 PARSE_CONFIG = Config(

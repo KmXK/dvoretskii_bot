@@ -30,19 +30,22 @@ def _serialize_settings(settings: ChatSettings) -> dict:
 
 def _capabilities_meta() -> dict:
     from steward.features.registry import (
-        CAPABILITIES,
+        CAPABILITIES_GROUPED,
         CAPABILITY_LABELS,
         feature_slug,
     )
     out: dict[str, dict] = {}
-    for cap, classes in CAPABILITIES.items():
+    for cap, groups in CAPABILITIES_GROUPED.items():
         feats = []
-        for cls in sorted(classes, key=lambda c: c.__name__):
+        for group in sorted(groups, key=lambda g: g[0].__name__):
+            primary = group[0]
+            bundled = [c.__name__.removesuffix("Feature") for c in group[1:]]
             feats.append({
-                "slug": feature_slug(cls),
-                "command": getattr(cls, "command", None),
-                "description": getattr(cls, "description", "") or "",
-                "passive": getattr(cls, "command", None) is None,
+                "slug": feature_slug(primary),
+                "command": getattr(primary, "command", None),
+                "description": getattr(primary, "description", "") or "",
+                "passive": getattr(primary, "command", None) is None,
+                "bundled_with": bundled,
             })
         out[cap] = {
             "label": CAPABILITY_LABELS.get(cap, cap),
@@ -306,6 +309,44 @@ async def handle_permissions(request: web.Request):
     return web.json_response(out)
 
 
+# ── User preferences ────────────────────────────────────────────────────────
+
+def _user_for(repo: Repository, uid: int):
+    return next((u for u in repo.db.users if u.id == uid), None)
+
+
+_PREF_FIELDS = ("fr_notifications_enabled", "bills_notifications_enabled")
+
+
+def _serialize_prefs(user) -> dict:
+    return {
+        f: (getattr(user, f, True) if user else True) for f in _PREF_FIELDS
+    }
+
+
+async def handle_user_preferences_get(request: web.Request):
+    uid = require_user(request)
+    repo: Repository = request.app["repository"]
+    return web.json_response(_serialize_prefs(_user_for(repo, uid)))
+
+
+async def handle_user_preferences_patch(request: web.Request):
+    uid = require_user(request)
+    repo: Repository = request.app["repository"]
+    user = _user_for(repo, uid)
+    if user is None:
+        return web.json_response(
+            {"error": "user not found — write something first"},
+            status=404,
+        )
+    body = await request.json()
+    for field in _PREF_FIELDS:
+        if field in body:
+            setattr(user, field, bool(body[field]))
+    await repo.save()
+    return web.json_response(_serialize_prefs(user))
+
+
 # ── Registration ────────────────────────────────────────────────────────────
 
 def register_routes(app: web.Application) -> None:
@@ -321,3 +362,5 @@ def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/roles/{role_id}/users", handle_role_user_add)
     app.router.add_delete("/api/roles/{role_id}/users/{user_id}", handle_role_user_remove)
     app.router.add_get("/api/permissions", handle_permissions)
+    app.router.add_get("/api/user/me/preferences", handle_user_preferences_get)
+    app.router.add_patch("/api/user/me/preferences", handle_user_preferences_patch)

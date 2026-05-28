@@ -609,6 +609,10 @@ class Repository:
             data["user_roles"] = []
             data["version"] = 33
 
+        if data.get("version") == 33:
+            data.setdefault("command_aliases", [])
+            data["version"] = 34
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -624,6 +628,7 @@ class Repository:
         data.setdefault("roles", [])
         data.setdefault("user_roles", [])
         data.setdefault("chat_settings", [])
+        data.setdefault("command_aliases", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
