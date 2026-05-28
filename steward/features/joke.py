@@ -3,7 +3,7 @@ from pyrate_limiter import BucketFullException
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.duration import format_timedelta, parse_duration
 from steward.helpers.limiter import Duration, check_limit
-from steward.joke_checker import _track_sent, get_joke_from_channel
+from steward.joke_checker import _track_sent, get_joke
 
 _OFF_TOKENS = {"off", "stop", "cancel", "0", "выкл"}
 _RATE_GLOBAL = "joke_now_global"
@@ -31,16 +31,19 @@ class JokeFeature(Feature):
             return
         placeholder = await ctx.reply("Ищу анекдот…", markdown=False)
         db = ctx.repository.db
-        sent_ids = set(db.joke_sent_post_ids.get(ctx.chat_id, []))
-        result = await get_joke_from_channel(ctx.client, sent_ids)
+        sent_keys = set(db.joke_sent_post_ids.get(ctx.chat_id, []))
+        last_channel = db.joke_last_channel.get(ctx.chat_id)
+        result = await get_joke(sent_keys, last_channel)
         if result is None:
             if placeholder:
                 await placeholder.edit_text("Не нашёл новых анекдотов, все уже были 😅")
             return
-        post_id, text = result
+        channel, post_id, text = result
+        key = f"{channel}:{post_id}"
         db.joke_sent_post_ids[ctx.chat_id] = _track_sent(
-            db.joke_sent_post_ids.get(ctx.chat_id, []), post_id
+            db.joke_sent_post_ids.get(ctx.chat_id, []), key
         )
+        db.joke_last_channel[ctx.chat_id] = channel
         await ctx.repository.save()
         if placeholder:
             await placeholder.edit_text(text)

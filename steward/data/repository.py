@@ -518,6 +518,12 @@ class Repository:
             data.setdefault("joke_sent_post_ids", {})
             data["version"] = 31
 
+        if data.get("version") == 31:
+            # Format changed from list[int] to list[str]; reset to empty
+            data["joke_sent_post_ids"] = {}
+            data.setdefault("joke_last_channel", {})
+            data["version"] = 32
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -528,6 +534,7 @@ class Repository:
         data.setdefault("last_message_at", {})
         data.setdefault("last_joke_sent_at", {})
         data.setdefault("joke_sent_post_ids", {})
+        data.setdefault("joke_last_channel", {})
         data.setdefault("diana_allowed_chats", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
@@ -538,6 +545,8 @@ class Repository:
             data["joke_settings"] = {int(k): v for k, v in data["joke_settings"].items()}
         if isinstance(data.get("joke_sent_post_ids"), dict):
             data["joke_sent_post_ids"] = {int(k): v for k, v in data["joke_sent_post_ids"].items()}
+        if isinstance(data.get("joke_last_channel"), dict):
+            data["joke_last_channel"] = {int(k): v for k, v in data["joke_last_channel"].items()}
         for ts in data.get("tennis_sessions", []):
             if not isinstance(ts, dict):
                 continue
