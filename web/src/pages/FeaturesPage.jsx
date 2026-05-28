@@ -214,7 +214,7 @@ function StatusFilter({ selected, onChange }) {
   )
 }
 
-function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
+function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin }) {
   const [status, setStatus] = useState(feature?.status ?? STATUS.OPEN)
   const [priority, setPriority] = useState(feature?.priority ?? 5)
   const [newNote, setNewNote] = useState('')
@@ -280,45 +280,58 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
             <div className="text-white">{formatDate(feature.creation_timestamp)}</div>
           </div>
 
-          <div className="space-y-3 mb-4">
-            <div>
-              <label className="text-spotify-text text-xs mb-1 block">Статус</label>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(STATUS_CONFIG).map(([key, val]) => (
-                  <button
-                    key={key}
-                    onClick={() => setStatus(Number(key))}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                      status === Number(key)
-                        ? val.class + ' ring-2 ring-white/20'
-                        : 'bg-white/5 text-spotify-text hover:bg-white/10'
-                    }`}
-                  >
-                    {val.label}
-                  </button>
-                ))}
+          {isAdmin ? (
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="text-spotify-text text-xs mb-1 block">Статус</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(STATUS_CONFIG).map(([key, val]) => (
+                    <button
+                      key={key}
+                      onClick={() => setStatus(Number(key))}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                        status === Number(key)
+                          ? val.class + ' ring-2 ring-white/20'
+                          : 'bg-white/5 text-spotify-text hover:bg-white/10'
+                      }`}
+                    >
+                      {val.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="text-spotify-text text-xs mb-1 block">Приоритет</label>
-              <div className="flex gap-1.5">
-                {[1, 2, 3, 4, 5].map(p => (
-                  <button
-                    key={p}
-                    onClick={() => setPriority(p)}
-                    className={`w-10 h-10 rounded-lg text-sm font-medium transition-all flex items-center justify-center ${
-                      priority === p
-                        ? 'bg-spotify-green text-black ring-2 ring-spotify-green/30'
-                        : 'bg-white/5 text-spotify-text hover:bg-white/10'
-                    }`}
-                  >
-                    {PRIORITY_EMOJI[p]}
-                  </button>
-                ))}
+              <div>
+                <label className="text-spotify-text text-xs mb-1 block">Приоритет</label>
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4, 5].map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setPriority(p)}
+                      className={`w-10 h-10 rounded-lg text-sm font-medium transition-all flex items-center justify-center ${
+                        priority === p
+                          ? 'bg-spotify-green text-black ring-2 ring-spotify-green/30'
+                          : 'bg-white/5 text-spotify-text hover:bg-white/10'
+                      }`}
+                    >
+                      {PRIORITY_EMOJI[p]}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              <div className="text-spotify-text">Статус</div>
+              <div>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cfg.class}`}>
+                  {cfg.label}
+                </span>
+              </div>
+              <div className="text-spotify-text">Приоритет</div>
+              <div className="text-white">{PRIORITY_EMOJI[feature.priority] ?? '⚪'} {feature.priority}</div>
+            </div>
+          )}
 
           {feature.notes && feature.notes.length > 0 && (
             <div className="mb-4">
@@ -333,17 +346,19 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
             </div>
           )}
 
-          <div className="mb-4">
-            <label className="text-spotify-text text-xs mb-1 block">Новое примечание</label>
-            <textarea
-              value={newNote}
-              onChange={e => setNewNote(e.target.value)}
-              placeholder="Добавить примечание..."
-              rows={2}
-              className="w-full bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm
-                placeholder-spotify-text outline-none focus:ring-2 focus:ring-spotify-green/50 resize-none"
-            />
-          </div>
+          {isAdmin && (
+            <div className="mb-4">
+              <label className="text-spotify-text text-xs mb-1 block">Новое примечание</label>
+              <textarea
+                value={newNote}
+                onChange={e => setNewNote(e.target.value)}
+                placeholder="Добавить примечание..."
+                rows={2}
+                className="w-full bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm
+                  placeholder-spotify-text outline-none focus:ring-2 focus:ring-spotify-green/50 resize-none"
+              />
+            </div>
+          )}
 
           {feature.history && feature.history.length > 0 && (
             <div className="mb-4">
@@ -362,14 +377,24 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote }) {
             </div>
           )}
 
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full bg-spotify-green text-black font-semibold rounded-full py-2.5 text-sm
-              hover:bg-green-400 transition-colors disabled:opacity-50"
-          >
-            {saving ? 'Сохранение...' : 'Сохранить'}
-          </button>
+          {isAdmin ? (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full bg-spotify-green text-black font-semibold rounded-full py-2.5 text-sm
+                hover:bg-green-400 transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Сохранение...' : 'Сохранить'}
+            </button>
+          ) : (
+            <button
+              onClick={onClose}
+              className="w-full bg-white/10 text-spotify-text font-semibold rounded-full py-2.5 text-sm
+                hover:bg-white/15 transition-colors"
+            >
+              Закрыть
+            </button>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -432,7 +457,7 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
 }
 
 export default function FeaturesPage() {
-  const { firstName, lastName, username } = useAuth()
+  const { firstName, lastName, username, isAdmin } = useAuth()
   const toast = useToast()
   const authorName = username || [firstName, lastName].filter(Boolean).join(' ') || ''
 
@@ -672,6 +697,7 @@ export default function FeaturesPage() {
         onClose={() => setSelectedFeature(null)}
         onSave={handleSave}
         onVote={() => selectedFeature && handleVote(selectedFeature.id, !selectedFeature.voted)}
+        isAdmin={isAdmin}
       />
 
       <CreateFeatureModal
