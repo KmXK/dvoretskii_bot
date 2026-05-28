@@ -4,6 +4,73 @@ import { useParams, useNavigate } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import { api } from '../api/client'
 
+const NOTIFICATION_TOGGLES = [
+  {
+    key: 'fr_notifications_enabled',
+    title: 'DM по FR',
+    desc: 'Бот пишет в личку при смене статуса/приоритета фича-реквеста.',
+  },
+  {
+    key: 'bills_notifications_enabled',
+    title: 'DM по Bills',
+    desc: 'Напоминания и уведомления от /bills (платежи, предложения).',
+  },
+]
+
+function NotificationsPanel() {
+  const [prefs, setPrefs] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.get('/api/user/me/preferences')
+      .then(setPrefs)
+      .catch(() => setPrefs({
+        fr_notifications_enabled: true,
+        bills_notifications_enabled: true,
+      }))
+  }, [])
+
+  const toggle = async (key) => {
+    if (!prefs) return
+    setBusy(true)
+    try {
+      const updated = await api.patch('/api/user/me/preferences', {
+        [key]: !prefs[key],
+      })
+      setPrefs(updated)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!prefs) return null
+
+  return (
+    <div className="bg-spotify-dark rounded-xl p-3 mb-4 space-y-3">
+      {NOTIFICATION_TOGGLES.map(({ key, title, desc }) => (
+        <div key={key} className="flex items-center gap-3">
+          <span>{prefs[key] ? '🔔' : '🔕'}</span>
+          <div className="flex-1">
+            <p className="text-white text-sm font-medium">{title}</p>
+            <p className="text-spotify-text/70 text-xs">{desc}</p>
+          </div>
+          <button
+            onClick={() => toggle(key)}
+            disabled={busy}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              prefs[key]
+                ? 'bg-spotify-green text-black'
+                : 'bg-spotify-bg text-spotify-text'
+            }`}
+          >
+            {prefs[key] ? 'Вкл' : 'Выкл'}
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TabButton({ active, onClick, children }) {
   return (
     <button
@@ -124,21 +191,27 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
                   <div className="p-2 space-y-1">
                     {info.features.map(f => {
                       const active = enabled.has(cap) && !disabled.has(f.slug)
+                      const label = f.command ? `/${f.command}` : `${f.slug} (passive)`
                       return (
                         <button
                           key={f.slug}
                           onClick={() => toggleFeat(cap, f.slug)}
                           disabled={!canEdit || busy}
-                          className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/5 disabled:opacity-60 flex items-center gap-2"
+                          className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/5 disabled:opacity-60"
                         >
-                          <span>{active ? '✅' : '❌'}</span>
-                          <span className="text-white">
-                            {f.command ? `/${f.command}` : `${f.slug} (passive)`}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span>{active ? '✅' : '❌'}</span>
+                            <span className="text-white font-medium">{label}</span>
+                            {f.bundled_with && f.bundled_with.length > 0 && (
+                              <span className="text-spotify-text/60 text-xs">
+                                + {f.bundled_with.join(', ')}
+                              </span>
+                            )}
+                          </div>
                           {f.description && (
-                            <span className="text-spotify-text/70 text-xs ml-auto">
+                            <p className="text-spotify-text/70 text-xs mt-0.5 pl-7">
                               {f.description}
-                            </span>
+                            </p>
                           )}
                         </button>
                       )
@@ -482,6 +555,8 @@ export default function SettingsPage() {
       <p className="text-spotify-text text-sm mb-4">
         Тонкая настройка бота по чатам
       </p>
+
+      <NotificationsPanel />
 
       {chats.length > 0 ? (
         <ChatPicker chats={chats} currentId={chatId} onChange={setChatId} />

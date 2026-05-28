@@ -272,7 +272,11 @@ async def handle_feature_request_update(request: web.Request):
 
     if bot and changes and fr.author_id:
         author = next((u for u in repository.db.users if u.id == fr.author_id), None)
-        if author and fr.author_id in (author.chat_ids or []):
+        if (
+            author
+            and fr.author_id in (author.chat_ids or [])
+            and getattr(author, "fr_notifications_enabled", True)
+        ):
             preview = html.escape(fr.text)
             lines = [
                 f"<b>Обновление фича-реквеста #{fr.id}</b>",

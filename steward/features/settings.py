@@ -80,17 +80,25 @@ class SettingsFeature(Feature):
             return
 
         is_global = ctx.repository.is_admin(ctx.user_id)
+        fr_on = self._notify_state(ctx, "fr_notifications_enabled")
+        bills_on = self._notify_state(ctx, "bills_notifications_enabled")
+        fr_label = "🔔 FR-уведомления: вкл" if fr_on else "🔕 FR-уведомления: выкл"
+        bills_label = "🔔 Bills-уведомления: вкл" if bills_on else "🔕 Bills-уведомления: выкл"
+
         if chat.type == "private":
             text = (
                 "⚙ *Настройки* — личный чат\n\n"
                 "В личке все функции включены всегда.\n"
             )
-            kb_rows: list[list[Button]] = []
+            kb_rows: list[list[Button]] = [
+                [Button(fr_label, callback_data=self._cb("notify_toggle", key="fr"))],
+                [Button(bills_label, callback_data=self._cb("notify_toggle", key="bills"))],
+            ]
             if is_global:
                 kb_rows.append([
                     Button("🎭 Роли", callback_data=self._cb("roles_tab")),
                 ])
-            kb = Keyboard(kb_rows) if kb_rows else None
+            kb = Keyboard(kb_rows)
             if edit:
                 await ctx.edit(text, keyboard=kb)
             else:
@@ -122,6 +130,8 @@ class SettingsFeature(Feature):
             ])
         if is_global:
             kb_rows.append([Button("🎭 Роли", callback_data=self._cb("roles_tab"))])
+        kb_rows.append([Button(fr_label, callback_data=self._cb("notify_toggle", key="fr"))])
+        kb_rows.append([Button(bills_label, callback_data=self._cb("notify_toggle", key="bills"))])
         kb = Keyboard(kb_rows)
         if edit:
             await ctx.edit(text, keyboard=kb)
@@ -132,6 +142,25 @@ class SettingsFeature(Feature):
 
     @on_callback("settings:root", schema="<chat_id:int>")
     async def cb_root(self, ctx: FeatureContext, chat_id: int):
+        await self._render_root(ctx, edit=True)
+
+    _NOTIFY_FIELDS = {
+        "fr": "fr_notifications_enabled",
+        "bills": "bills_notifications_enabled",
+    }
+
+    @on_callback("settings:notify_toggle", schema="<key:literal[fr|bills]>")
+    async def cb_notify_toggle(self, ctx: FeatureContext, key: str):
+        user = next((u for u in ctx.repository.db.users if u.id == ctx.user_id), None)
+        if user is None:
+            await ctx.toast("Сначала напиши что-нибудь в чат")
+            return
+        field = self._NOTIFY_FIELDS.get(key)
+        if not field:
+            await ctx.toast("Неизвестная настройка")
+            return
+        setattr(user, field, not getattr(user, field, True))
+        await ctx.repository.save()
         await self._render_root(ctx, edit=True)
 
     @on_callback("settings:caps_tab", schema="<chat_id:int>")
@@ -226,7 +255,7 @@ class SettingsFeature(Feature):
 
     # ── Paginators ──────────────────────────────────────────────────────────
 
-    @paginated("caps", per_page=50, header="📦 Функции", parse_mode="markdown")
+    @paginated("caps", per_page=50, header="", parse_mode="markdown")
     def caps_page(self, ctx: FeatureContext, metadata: str):
         chat_id = int(metadata) if metadata else 0
         chat = ctx.repository.get_chat(chat_id)
@@ -235,16 +264,24 @@ class SettingsFeature(Feature):
         can_manage = self._can_manage_chat(ctx, chat_id)
 
         items = _all_caps_ordered()
+        icons = {"on": "✅", "off": "❌", "partial": "➖"}
 
         def render(batch: list[str]) -> str:
-            return f"*{chat_name}*\n\nИзменить состояние можно тапом по строке."
+            lines = [f"📦 *Функции* — {chat_name}", ""]
+            for cap in items:
+                state = self._cap_state(settings, cap)
+                feats = self._cap_feature_summary(cap, settings)
+                lines.append(f"{icons[state]} *{_cap_label(cap)}*")
+                if feats:
+                    lines.append(f"   _{feats}_")
+            lines.append("")
+            lines.append("Тап по строке — тогл группы. ⚙ — детали.")
+            return "\n".join(lines)
 
         rows: list[list[Button]] = []
         for cap in items:
-            label = _cap_label(cap)
             state = self._cap_state(settings, cap)
-            icon = {"on": "✅", "off": "❌", "partial": "➖"}[state]
-            text = f"{icon} {label}"
+            text = f"{icons[state]} {_cap_label(cap)}"
             cb = self._cb("cap_toggle", chat_id=chat_id, cap=cap) if can_manage else "settings:noop"
             rows.append([
                 Button(text, callback_data=cb),
@@ -252,10 +289,9 @@ class SettingsFeature(Feature):
             ])
         rows.append([Button("⏎ Назад", callback_data=self._cb("root", chat_id=chat_id))])
         extra = Keyboard(rows)
-        # We use rows directly as items so pagination shows all at once unless >per_page.
         return items, render, extra
 
-    @paginated("feats", per_page=20, header="", parse_mode="markdown")
+    @paginated("feats", per_page=50, header="", parse_mode="markdown")
     def feats_page(self, ctx: FeatureContext, metadata: str):
         parts = metadata.split("|", 1)
         chat_id = int(parts[0]) if parts and parts[0] else 0
@@ -269,10 +305,35 @@ class SettingsFeature(Feature):
         classes = _features_in(cap)
         classes.sort(key=lambda c: c.__name__)
 
-        def render(batch):
-            return f"📦 *{cap_label}* — {chat_name}"
-
         cap_enabled = cap in settings.enabled_capabilities
+        from steward.features.registry import features_in_group
+
+        def render(batch):
+            lines = [f"📦 *{cap_label}* — {chat_name}", ""]
+            for cls in classes:
+                slug = _slug(cls)
+                disabled = slug in settings.disabled_features
+                active = cap_enabled and not disabled
+                icon = "✅" if active else "❌"
+                label = self._feature_button_label(cls)
+                desc = (getattr(cls, "description", "") or "").strip()
+                bundle = features_in_group(cls)
+                if len(bundle) > 1:
+                    extras = ", ".join(
+                        c.__name__.removesuffix("Feature") for c in bundle[1:]
+                    )
+                    suffix = f" _(+ {extras})_"
+                else:
+                    suffix = ""
+                line = f"{icon} *{label}*{suffix}"
+                if desc:
+                    line += f" — {desc}"
+                lines.append(line)
+            if not cap_enabled:
+                lines.append("")
+                lines.append("_Группа выключена. Тогл фичи включит её._")
+            return "\n".join(lines)
+
         rows: list[list[Button]] = []
         for cls in classes:
             slug = _slug(cls)
@@ -537,10 +598,28 @@ class SettingsFeature(Feature):
     def _cb(self, name: str, **values) -> str:
         return self.cb(f"settings:{name}")(**values)
 
+    def _notify_state(self, ctx: FeatureContext, field: str) -> bool:
+        user = next((u for u in ctx.repository.db.users if u.id == ctx.user_id), None)
+        return getattr(user, field, True) if user else True
+
     def _can_manage_chat(self, ctx: FeatureContext, chat_id: int) -> bool:
         if ctx.repository.is_admin(ctx.user_id):
             return True
         return ctx.repository.is_chat_admin(ctx.user_id, chat_id)
+
+    def _cap_feature_summary(self, cap: str, settings: ChatSettings) -> str:
+        """Compact 'in this group: /a, /b, /c' for the caps overview line."""
+        classes = _features_in(cap)
+        if not classes:
+            return ""
+        names: list[str] = []
+        for cls in classes:
+            command = getattr(cls, "command", None)
+            if command:
+                names.append(f"/{command}")
+            else:
+                names.append(cls.__name__.removesuffix("Feature"))
+        return ", ".join(names)
 
     def _cap_state(self, settings: ChatSettings, cap: str) -> str:
         if cap not in settings.enabled_capabilities:

@@ -1,5 +1,6 @@
 from steward.features.admin import AdminFeature
 from steward.features.ai import AIFeature
+from steward.features.alias import AliasFeature
 # SettingsFeature imported lazily inside helpers to avoid cycles
 from steward.features.ai_related import AiRelatedFeature
 from steward.features.army import ArmyFeature
@@ -60,6 +61,7 @@ from steward.handlers.handler import Handler
 
 EARLY = bucket("monitors")
 EARLY << [
+    AliasFeature,
     MiniAppFeature,
     ChatCollectFeature,
     CurseMetricFeature,
@@ -140,19 +142,27 @@ def all_features() -> list[Handler]:
     return instances
 
 
+# Логические группы: классы, которые тогглятся вместе (бан-команда + ban-enforcer
+# и т.п.). Первый класс группы — primary, по нему берётся slug, label, описание.
+CAPABILITIES_GROUPED: dict[str, list[list[type]]] = {
+    "ai":         [[AIFeature], [AiRelatedFeature], [PashaFeature], [DianaFeature], [TranslateFeature]],
+    "transcribe": [[TranscribeFeature], [ShazamFeature], [MultiplyFeature], [VoiceVideoFeature]],
+    "rules":      [[RuleFeature, RuleAnswerFeature]],
+    "fun":        [[JokeFeature], [TarotFeature], [FuckFeature], [SexFeature], [ReactFeature],
+                   [WatchFeature], [EveryoneFeature], [TennisFeature]],
+    "trackers":   [[ArmyFeature], [BillsFeature], [BirthdayFeature], [TodoFeature], [IncidentFeature],
+                   [RemindFeature, RemindersFeature], [MeFeature], [RewardFeature], [StandsFeature],
+                   [SubscribeFeature], [FeatureRequestFeature]],
+    "chat_meta":  [[IdFeature], [MessageInfoFeature], [PrettyTimeFeature], [TimezoneFeature], [HolidaysFeature],
+                   [ExchangeRateFeature], [LinkFeature], [LayoutFeature], [NewTextFeature], [LangFeature]],
+    "stats":      [[StatsFeature], [CurseFeature, CurseMetricFeature]],
+    "downloads":  [[DownloadFeature], [GoogleDriveFeature]],
+    "moderation": [[BanFeature, BanEnforcerFeature], [SilenceFeature, SilenceEnforcerFeature]],
+}
+
 CAPABILITIES: dict[str, set[type]] = {
-    "ai":         {AIFeature, AiRelatedFeature, PashaFeature, DianaFeature, TranslateFeature},
-    "transcribe": {TranscribeFeature, ShazamFeature, MultiplyFeature, VoiceVideoFeature},
-    "rules":      {RuleFeature, RuleAnswerFeature},
-    "fun":        {JokeFeature, TarotFeature, FuckFeature, SexFeature, ReactFeature, WatchFeature, EveryoneFeature, TennisFeature},
-    "trackers":   {ArmyFeature, BillsFeature, BirthdayFeature, TodoFeature, IncidentFeature,
-                   RemindFeature, RemindersFeature, MeFeature, RewardFeature, StandsFeature,
-                   SubscribeFeature, FeatureRequestFeature},
-    "chat_meta":  {IdFeature, MessageInfoFeature, PrettyTimeFeature, TimezoneFeature, HolidaysFeature,
-                   ExchangeRateFeature, LinkFeature, LayoutFeature, NewTextFeature, LangFeature},
-    "stats":      {StatsFeature, CurseFeature, CurseMetricFeature},
-    "downloads":  {DownloadFeature, GoogleDriveFeature},
-    "moderation": {BanFeature, BanEnforcerFeature, SilenceFeature, SilenceEnforcerFeature},
+    cap: {cls for group in groups for cls in group}
+    for cap, groups in CAPABILITIES_GROUPED.items()
 }
 
 
@@ -186,13 +196,32 @@ def capability_of(feature_cls: type) -> str | None:
     return None
 
 
+def _group_of(feature_cls: type) -> list[type] | None:
+    for groups in CAPABILITIES_GROUPED.values():
+        for group in groups:
+            if feature_cls in group:
+                return group
+    return None
+
+
+def feature_group_primary(feature_cls: type) -> type:
+    group = _group_of(feature_cls)
+    return group[0] if group else feature_cls
+
+
 def feature_slug(feature_cls: type) -> str:
-    name = feature_cls.__name__
-    return name.removesuffix("Feature").lower()
+    primary = feature_group_primary(feature_cls)
+    return primary.__name__.removesuffix("Feature").lower()
 
 
 def features_in_capability(cap: str) -> list[type]:
-    return list(CAPABILITIES.get(cap, set()))
+    """Primary class of each group inside the capability."""
+    return [group[0] for group in CAPABILITIES_GROUPED.get(cap, [])]
+
+
+def features_in_group(primary: type) -> list[type]:
+    group = _group_of(primary)
+    return list(group) if group else [primary]
 
 
 def is_always_on(feature_cls: type) -> bool:

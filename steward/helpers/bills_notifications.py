@@ -102,6 +102,13 @@ async def send_bill_notification(
     """
     if not recipient.telegram_id:
         return None
+    recipient_user = next(
+        (u for u in repository.db.users if u.id == recipient.telegram_id), None
+    )
+    if recipient_user is not None and not getattr(
+        recipient_user, "bills_notifications_enabled", True
+    ):
+        return None
     user_ids_in_chats = build_user_ids_in_chats(repository.db.users)
     prefs = repository.get_bill_notification_prefs(recipient.telegram_id)
     chat_id = find_best_notification_chat(

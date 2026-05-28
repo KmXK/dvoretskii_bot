@@ -15,3 +15,5 @@ class User:
     first_name: Optional[str] = None
     casino_last_birthday_bonus_year: int = 0
     reward_ids: list[int] = field(default_factory=list)
+    fr_notifications_enabled: bool = True
+    bills_notifications_enabled: bool = True
