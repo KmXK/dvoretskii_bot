@@ -488,3 +488,139 @@ def test_update_match_after_edit_window_rejected():
     ok, err = _run(room.update_match(0, 11, 9))
     assert not ok
     assert "Окно" in err
+
+
+# ── sport helpers: next_first_server / normalize_sport / sport_meta ───────────
+
+from steward.tennis.engine import (
+    DEFAULT_SPORT,
+    SPORT_SQUASH,
+    SPORT_TABLE_TENNIS,
+    next_first_server,
+    normalize_sport,
+    sport_meta,
+)
+
+
+def test_normalize_sport_falls_back_to_default():
+    assert normalize_sport(None) == DEFAULT_SPORT
+    assert normalize_sport("") == DEFAULT_SPORT
+    assert normalize_sport("badminton") == DEFAULT_SPORT
+    assert normalize_sport(SPORT_SQUASH) == SPORT_SQUASH
+    assert normalize_sport(SPORT_TABLE_TENNIS) == SPORT_TABLE_TENNIS
+
+
+def test_sport_meta_has_required_keys():
+    for sport in (SPORT_TABLE_TENNIS, SPORT_SQUASH):
+        meta = sport_meta(sport)
+        assert {"label", "label_short", "genitive", "emoji"} <= meta.keys()
+    # неизвестный спорт → мета дефолтного
+    assert sport_meta("nope") == sport_meta(DEFAULT_SPORT)
+
+
+def _match(winner: str) -> TennisMatch:
+    t = datetime(2026, 5, 14, 18, 0)
+    return TennisMatch(started_at=t, ended_at=t, winner=winner, score_a=11, score_b=7)
+
+
+def test_next_first_server_table_tennis_streak_2():
+    # initial=a, каждые 2 партии переход
+    def srv(n_matches):
+        ms = [_match("a")] * n_matches
+        return next_first_server(SPORT_TABLE_TENNIS, ms, initial_server="a", serve_streak=2)
+    assert srv(0) == "a"
+    assert srv(1) == "a"
+    assert srv(2) == "b"
+    assert srv(3) == "b"
+    assert srv(4) == "a"
+
+
+def test_next_first_server_table_tennis_streak_1_alternates():
+    def srv(n_matches):
+        ms = [_match("a")] * n_matches
+        return next_first_server(SPORT_TABLE_TENNIS, ms, initial_server="a", serve_streak=1)
+    assert srv(0) == "a"
+    assert srv(1) == "b"
+    assert srv(2) == "a"
+
+
+def test_next_first_server_table_tennis_respects_initial_b():
+    ms = [_match("a")] * 2
+    assert next_first_server(SPORT_TABLE_TENNIS, ms, initial_server="b", serve_streak=2) == "a"
+    assert next_first_server(SPORT_TABLE_TENNIS, [], initial_server="b", serve_streak=2) == "b"
+
+
+def test_next_first_server_squash_winner_serves():
+    # В сквоше следующую партию подаёт победитель предыдущей.
+    assert next_first_server(SPORT_SQUASH, [], initial_server="a", serve_streak=2) == "a"
+    assert next_first_server(SPORT_SQUASH, [], initial_server="b", serve_streak=2) == "b"
+    assert next_first_server(SPORT_SQUASH, [_match("a")], initial_server="a", serve_streak=2) == "a"
+    assert next_first_server(SPORT_SQUASH, [_match("b")], initial_server="a", serve_streak=2) == "b"
+    assert next_first_server(SPORT_SQUASH, [_match("a"), _match("b")], initial_server="a", serve_streak=2) == "b"
+
+
+# ── TennisRoom: squash serve rules ────────────────────────────────────────────
+
+def test_squash_room_winner_serves_next_party():
+    s = _live_session(sport=SPORT_SQUASH, first_server="a", initial_server="a", serve_streak=2)
+    room = _make_room(s)
+    _run(room.record_match_with_score(11, 7))   # выиграл a → a подаёт
+    assert s.first_server == "a"
+    _run(room.record_match_with_score(7, 11))   # выиграл b → b подаёт
+    assert s.first_server == "b"
+    _run(room.record_match_with_score(7, 11))   # снова b
+    assert s.first_server == "b"
+
+
+def test_squash_room_undo_recomputes_server():
+    s = _live_session(sport=SPORT_SQUASH, first_server="a", initial_server="a", serve_streak=2)
+    room = _make_room(s)
+    _run(room.record_match_with_score(11, 7))   # a
+    _run(room.record_match_with_score(7, 11))   # b
+    assert s.first_server == "b"
+    _run(room.undo_last_match())                # откат к [a-win] → снова a подаёт
+    assert s.first_server == "a"
+    assert len(s.matches) == 1
+
+
+def test_squash_uses_same_party_validation():
+    # Счёт партии у сквоша тот же (PAR 11, разница ≥2).
+    s = _live_session(sport=SPORT_SQUASH)
+    room = _make_room(s)
+    ok, _err, _ = _run(room.record_match_with_score(11, 10))  # deuce не разошёлся
+    assert not ok
+    assert len(s.matches) == 0
+
+
+# ── player_stats: sport filtering ─────────────────────────────────────────────
+
+def test_player_stats_filters_by_sport():
+    user = 1001
+    other = 2002
+    tt = _build_detailed_session(1, user, other, [(11, 7), (11, 9)], datetime(2026, 5, 10, 18, 0))
+    tt.sport = SPORT_TABLE_TENNIS
+    sq = _build_detailed_session(2, user, other, [(8, 11), (11, 5), (11, 6)], datetime(2026, 5, 11, 18, 0))
+    sq.sport = SPORT_SQUASH
+
+    all_stats = player_stats([tt, sq], user)
+    assert all_stats.matches == 5
+
+    tt_stats = player_stats([tt, sq], user, sport=SPORT_TABLE_TENNIS)
+    assert tt_stats.sessions == 1
+    assert tt_stats.matches == 2
+    assert tt_stats.wins == 2
+
+    sq_stats = player_stats([tt, sq], user, sport=SPORT_SQUASH)
+    assert sq_stats.sessions == 1
+    assert sq_stats.matches == 3
+    assert sq_stats.wins == 2
+
+
+def test_player_stats_legacy_sessions_count_as_table_tennis():
+    # Старые сессии без поля sport (дефолт table_tennis) учитываются в фильтре теннис.
+    user = 1001
+    other = 2002
+    legacy = _build_detailed_session(1, user, other, [(11, 7)], datetime(2026, 5, 10, 18, 0))
+    # не трогаем legacy.sport — остаётся дефолт "table_tennis"
+    assert player_stats([legacy], user, sport=SPORT_TABLE_TENNIS).matches == 1
+    assert player_stats([legacy], user, sport=SPORT_SQUASH).matches == 0

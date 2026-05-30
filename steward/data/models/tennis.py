@@ -14,12 +14,18 @@ class TennisMatch:
 
 @dataclass
 class TennisSession:
-    """Сессия игры 1v1: набор партий между двумя игроками."""
+    """Сессия игры 1v1: набор партий между двумя игроками.
+
+    sport — вид спорта с ракеткой: "table_tennis" (наст. теннис, дефолт) или
+    "squash". Счёт партии у обоих PAR до 11 (разница ≥2); отличается правило
+    подачи (см. steward.tennis.engine.next_first_server).
+    """
     id: int
     chat_id: int
     player_a_id: int
     player_b_id: int
     started_at: datetime
+    sport: str = "table_tennis"
     ended_at: datetime | None = None
     last_activity_at: datetime = field(default_factory=datetime.now)
     matches: list[TennisMatch] = field(default_factory=list)
@@ -32,6 +38,9 @@ class TennisSession:
     current_score_b: int = 0
     points_log: list[str] = field(default_factory=list)  # 'a'|'b' по поинтам текущей партии
     first_server: str = "a"   # кто подаёт первым в следующей партии
+    # Кто подавал первым в самой первой партии сессии. Нужен, чтобы корректно
+    # пересчитывать first_server из списка партий (в т.ч. при undo до пустого).
+    initial_server: str = "a"
     # Каждые N партий первая подача переходит к другому игроку. По правилам
     # настольного тенниса обычно 2 партии «свои подачи» подряд → дефолт 2.
     serve_streak: int = 2

@@ -14,6 +14,65 @@ from steward.data.models.tennis import TennisMatch, TennisSession
 SIDE_A = "a"
 SIDE_B = "b"
 
+# ── виды спорта с ракеткой ────────────────────────────────────────────────────
+# Счёт партии у настольного тенниса и сквоша одинаковый (PAR до 11, разница ≥2),
+# отличается лишь правило подачи (см. next_first_server). Падел будет добавлен
+# отдельно — у него теннисный счёт и пары 2v2.
+SPORT_TABLE_TENNIS = "table_tennis"
+SPORT_SQUASH = "squash"
+DEFAULT_SPORT = SPORT_TABLE_TENNIS
+
+SPORTS: dict[str, dict[str, str]] = {
+    SPORT_TABLE_TENNIS: {
+        "label": "настольный теннис",
+        "label_short": "теннис",
+        "genitive": "настольного тенниса",
+        "emoji": "🏓",
+    },
+    SPORT_SQUASH: {
+        "label": "сквош",
+        "label_short": "сквош",
+        "genitive": "сквоша",
+        "emoji": "🎾",
+    },
+}
+
+
+def normalize_sport(sport: str | None) -> str:
+    """Любое неизвестное/None значение → дефолтный спорт. Защищает старые записи."""
+    return sport if sport in SPORTS else DEFAULT_SPORT
+
+
+def sport_meta(sport: str | None) -> dict[str, str]:
+    return SPORTS[normalize_sport(sport)]
+
+
+def next_first_server(
+    sport: str | None,
+    matches: list[TennisMatch],
+    *,
+    initial_server: str,
+    serve_streak: int,
+) -> str:
+    """Кто подаёт первым в предстоящей партии — по правилам конкретного спорта.
+
+    Чистая функция: пересчитывается целиком из списка сыгранных партий, поэтому
+    одинаково корректна и после записи новой партии, и после undo.
+
+    - настольный теннис: первая подача переходит к другому игроку каждые
+      ``serve_streak`` партий (отсчёт от ``initial_server``).
+    - сквош: следующую партию начинает подавать победитель предыдущей; если
+      партий ещё нет — подаёт ``initial_server``.
+    """
+    base = initial_server if initial_server in (SIDE_A, SIDE_B) else SIDE_A
+    if normalize_sport(sport) == SPORT_SQUASH:
+        return matches[-1].winner if matches else base
+    streak = max(1, serve_streak or 2)
+    flips = len(matches) // streak
+    if flips % 2 == 0:
+        return base
+    return SIDE_B if base == SIDE_A else SIDE_A
+
 
 def is_valid_party_score(score_a: int, score_b: int) -> bool:
     """11 очков у победителя минимум, разница ≥2.
@@ -85,11 +144,19 @@ class PlayerStats:
     longest_win_streak: int
 
 
-def player_stats(sessions: list[TennisSession], user_id: int) -> PlayerStats:
-    """Агрегируем по всем сессиям, где user_id участвовал."""
+def player_stats(
+    sessions: list[TennisSession],
+    user_id: int,
+    sport: str | None = None,
+) -> PlayerStats:
+    """Агрегируем по всем сессиям, где user_id участвовал.
+
+    Если задан ``sport`` — учитываем только сессии этого вида спорта (нужно,
+    чтобы статистика тенниса и сквоша не смешивалась)."""
     relevant = [
         s for s in sessions
-        if s.player_a_id == user_id or s.player_b_id == user_id
+        if (s.player_a_id == user_id or s.player_b_id == user_id)
+        and (sport is None or normalize_sport(getattr(s, "sport", None)) == normalize_sport(sport))
     ]
     matches_total = 0
     wins = 0

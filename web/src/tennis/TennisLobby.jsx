@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
+import { sportMeta } from './sports'
 
 function SessionRow({ s, onClick }) {
   const isLive = s.ended_at === null || s.ended_at === undefined
@@ -14,11 +15,13 @@ function SessionRow({ s, onClick }) {
       ? 'агрегат'
       : `${s.matches_count} парт.`
   const [a, b] = s.wins
+  const sp = sportMeta(s.sport)
   return (
     <button
       onClick={onClick}
       className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-zinc-900/70 hover:bg-zinc-800 active:bg-zinc-800 border border-zinc-800 text-left"
     >
+      <span className="text-base shrink-0" title={sp.label}>{sp.emoji}</span>
       <span className="text-zinc-500 text-xs font-mono w-10 shrink-0">#{s.id}</span>
       <span className="text-zinc-300 text-xs font-mono w-16 shrink-0">{date}</span>
       <span className="text-white truncate flex-1 text-base">
@@ -56,8 +59,8 @@ export default function TennisLobby({ onStartLive, onOpenSession, onOpenImport, 
       style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 80px)' }}
     >
       <header className="mb-6">
-        <div className="text-5xl mb-1">🏓</div>
-        <h1 className="text-2xl font-bold text-white">Теннис</h1>
+        <div className="text-5xl mb-1">🏓🎾</div>
+        <h1 className="text-2xl font-bold text-white">Теннис и сквош</h1>
         <p className="text-zinc-400 text-sm">Привет, {greetName}</p>
       </header>
 
@@ -66,8 +69,11 @@ export default function TennisLobby({ onStartLive, onOpenSession, onOpenImport, 
           onClick={onStartLive}
           className="w-full mb-4 bg-gradient-to-br from-emerald-600 to-emerald-800 text-white rounded-2xl px-5 py-4 text-left shadow-lg active:scale-[0.98] transition-transform"
         >
-          <div className="text-[11px] uppercase tracking-wider opacity-80">Активная сессия</div>
+          <div className="text-[11px] uppercase tracking-wider opacity-80">
+            Активная сессия · {sportMeta(liveSession.sport).label}
+          </div>
           <div className="font-semibold mt-1 text-lg">
+            {sportMeta(liveSession.sport).emoji}{' '}
             {liveSession.player_a_name} {liveSession.wins[0]}:{liveSession.wins[1]} {liveSession.player_b_name}
           </div>
           <div className="text-sm opacity-80 mt-1">Открыть табло →</div>

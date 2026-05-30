@@ -30,10 +30,14 @@ from steward.helpers.webapp import _get_direct_url, get_webapp_deep_link
 from steward.tennis.engine import (
     SIDE_A,
     SIDE_B,
+    SPORT_SQUASH,
+    SPORT_TABLE_TENNIS,
     aggregate_session_matches,
     is_valid_party_score,
+    normalize_sport,
     player_stats,
     session_wins,
+    sport_meta,
 )
 from steward.tennis.room_manager import get_manager
 
@@ -114,11 +118,12 @@ def _format_session_line(session: TennisSession, users) -> str:
     date = session.started_at.strftime("%Y-%m-%d")
     name_a = _format_user(users, session.player_a_id)
     name_b = _format_user(users, session.player_b_id)
+    emoji = sport_meta(session.sport)["emoji"]
     tag = " · live" if session.ended_at is None else (
         " · timeout" if session.closed_reason == "timeout" else ""
     )
     parties = "агрегат" if session.is_aggregate_only else f"{len(session.matches)} парт."
-    return f"#{session.id} {date} · {name_a} {wins_a}:{wins_b} {name_b} · {parties}{tag}"
+    return f"{emoji} #{session.id} {date} · {name_a} {wins_a}:{wins_b} {name_b} · {parties}{tag}"
 
 
 def _build_webapp_keyboard(bot, chat_id: int, is_private: bool) -> Keyboard | None:
@@ -133,10 +138,10 @@ def _build_webapp_keyboard(bot, chat_id: int, is_private: bool) -> Keyboard | No
 
 class TennisFeature(Feature):
     command = "tennis"
-    description = "Настольный теннис: live-табло, импорт истории, статистика"
+    description = "Настольный теннис и сквош: live-табло, импорт истории, статистика"
     help_examples = [
         "/tennis — список последних сессий",
-        "/tennis start — открыть live-табло с оппонентом",
+        "/tennis start — открыть live-табло (выбор спорта: теннис/сквош)",
         "/tennis start @ivan — запустить против конкретного игрока",
         "/tennis serve — переключить первую подачу",
         "/tennis streak 2 — каждые N партий первая подача переходит (по умолчанию 2)",
@@ -199,6 +204,7 @@ class TennisFeature(Feature):
         *,
         first_server: str = SIDE_A,
         serve_streak: int = 2,
+        sport: str = SPORT_TABLE_TENNIS,
     ) -> TennisSession | None:
         existing = self._active_session_for(ctx.user_id, ctx.chat_id)
         if existing is not None:
@@ -208,26 +214,30 @@ class TennisFeature(Feature):
             )
             return None
 
+        sport = normalize_sport(sport)
         now = datetime.now()
         session = self.sessions.add(TennisSession(
             id=0,
             chat_id=ctx.chat_id,
+            sport=sport,
             player_a_id=ctx.user_id,
             player_b_id=opponent_id,
             started_at=now,
             last_activity_at=now,
             initiator_id=ctx.user_id,
             first_server=first_server,
+            initial_server=first_server,
             serve_streak=max(1, int(serve_streak or 2)),
         ))
         await self.sessions.save()
 
         is_private = ctx.message is not None and ctx.message.chat.type == "private"
         kb = _build_webapp_keyboard(self.bot, ctx.chat_id, is_private)
+        meta = sport_meta(sport)
         name_a = _format_user(self.users, ctx.user_id)
         name_b = _format_user(self.users, opponent_id)
         await ctx.reply(
-            f"🏓 Сессия #{session.id}: {name_a} vs {name_b}\n"
+            f"{meta['emoji']} Сессия #{session.id} ({meta['label']}): {name_a} vs {name_b}\n"
             f"Жми кнопку, чтобы открыть табло.",
             keyboard=kb,
         )
@@ -377,6 +387,14 @@ class TennisFeature(Feature):
 
     @wizard(
         "tennis:start",
+        choice(
+            "sport",
+            "Какой вид спорта?",
+            [
+                ("🏓 Настольный теннис", SPORT_TABLE_TENNIS),
+                ("🎾 Сквош", SPORT_SQUASH),
+            ],
+        ),
         ask(
             "opponent_raw",
             "С кем играешь? Пришли @username или id оппонента.",
@@ -396,13 +414,20 @@ class TennisFeature(Feature):
             validator=validate_message_text([
                 try_get(lambda t: max(1, int(t.strip() or "2")), "Введи число ≥ 1"),
             ]),
+            # В сквоше следующую партию подаёт победитель — фикс. правило, спрашивать нечего.
+            when=lambda s: s.get("sport") != SPORT_SQUASH,
         ),
         confirm(
             "confirmed",
             lambda state: (
-                f"Запустить сессию против {state.get('opponent_raw', '?')}? "
-                f"Подаёт {'ты' if state.get('first_server') == SIDE_A else 'оппонент'}, "
-                f"подача переходит каждые {state.get('serve_streak', 2)} парт."
+                f"Запустить сессию ({sport_meta(state.get('sport'))['label']}) "
+                f"против {state.get('opponent_raw', '?')}? "
+                f"Подаёт {'ты' if state.get('first_server') == SIDE_A else 'оппонент'}"
+                + (
+                    ", победитель партии подаёт следующую."
+                    if state.get('sport') == SPORT_SQUASH
+                    else f", подача переходит каждые {state.get('serve_streak', 2)} парт."
+                )
             ),
         ),
     )
@@ -411,8 +436,9 @@ class TennisFeature(Feature):
         ctx: FeatureContext,
         opponent_raw: str,
         first_server: str,
-        serve_streak: int,
         confirmed: bool,
+        sport: str = SPORT_TABLE_TENNIS,
+        serve_streak: int = 2,
         **_,
     ):
         if not confirmed:
@@ -430,6 +456,7 @@ class TennisFeature(Feature):
             user.id,
             first_server=first_server,
             serve_streak=int(serve_streak or 2),
+            sport=normalize_sport(sport),
         )
 
     # ── wizard: add (история) ────────────────────────────────────────────────
