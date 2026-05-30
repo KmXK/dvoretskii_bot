@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
+import { SPORT_LIST, DEFAULT_SPORT, sportMeta } from './sports'
 
 function isValidPartyScore(a, b) {
   if (a === b) return false
@@ -134,10 +135,13 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
   const [opponents, setOpponents] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [customRaw, setCustomRaw] = useState('')
+  const [sport, setSport] = useState(DEFAULT_SPORT)
   const [firstServer, setFirstServer] = useState('a')
   const [serveStreak, setServeStreak] = useState(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
+
+  const sportInfo = sportMeta(sport)
 
   useEffect(() => {
     if (!open) return
@@ -158,6 +162,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
     try {
       const created = await tennisApi.createSession({
         opponent,
+        sport,
         first_server: firstServer,
         serve_streak: serveStreak,
       })
@@ -179,6 +184,37 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
   return (
     <AnimatePresence>
       <SheetShell title="Новая сессия" onClose={onClose}>
+        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Вид спорта</div>
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {SPORT_LIST.map((sp) => {
+            const active = sport === sp.key
+            return (
+              <motion.button
+                key={sp.key}
+                whileTap={{ scale: 0.96 }}
+                onClick={() => setSport(sp.key)}
+                className={`relative py-3 rounded-xl text-base font-semibold border overflow-hidden ${
+                  active
+                    ? 'border-emerald-500 text-white'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="sport-pill"
+                    className="absolute inset-0 bg-gradient-to-br from-emerald-600 to-emerald-800"
+                    transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center justify-center gap-2">
+                  <span className="text-xl">{sp.emoji}</span>
+                  {sp.labelShort}
+                </span>
+              </motion.button>
+            )
+          })}
+        </div>
+
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Оппонент</div>
         {opponents.length === 0 ? (
           <p className="text-zinc-500 text-sm mb-3">Кандидатов из общих чатов не нашлось — впиши @username вручную.</p>
@@ -230,30 +266,52 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           </button>
         </div>
 
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партий за одну подачу</div>
-        <p className="text-zinc-500 text-[11px] mb-2">
-          Каждые N партий первая подача переходит к другому игроку.
-        </p>
-        <div className="flex items-center gap-2 mb-4">
-          {[1, 2, 5].map((n) => (
-            <button
-              key={n}
-              onClick={() => setServeStreak(n)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                serveStreak === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
-              }`}
+        <AnimatePresence initial={false}>
+          {sportInfo.winnerServes ? (
+            <motion.p
+              key="winner-serves"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="text-zinc-400 text-xs mb-4 bg-zinc-800/50 rounded-lg px-3 py-2 overflow-hidden"
             >
-              {n}
-            </button>
-          ))}
-          <input
-            type="number"
-            min={1}
-            value={serveStreak}
-            onChange={(e) => setServeStreak(Math.max(1, parseInt(e.target.value || '1', 10)))}
-            className="w-16 bg-zinc-800 text-white text-sm px-2 py-1.5 rounded-lg border border-zinc-700 ml-auto"
-          />
-        </div>
+              🎾 В сквоше следующую партию подаёт победитель предыдущей — переключать вручную не нужно.
+            </motion.p>
+          ) : (
+            <motion.div
+              key="serve-streak"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партий за одну подачу</div>
+              <p className="text-zinc-500 text-[11px] mb-2">
+                Каждые N партий первая подача переходит к другому игроку.
+              </p>
+              <div className="flex items-center gap-2 mb-4">
+                {[1, 2, 5].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setServeStreak(n)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                      serveStreak === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min={1}
+                  value={serveStreak}
+                  onChange={(e) => setServeStreak(Math.max(1, parseInt(e.target.value || '1', 10)))}
+                  className="w-16 bg-zinc-800 text-white text-sm px-2 py-1.5 rounded-lg border border-zinc-700 ml-auto"
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {error && (
           <p className="text-red-400 text-sm mb-3">{error}</p>
@@ -656,8 +714,11 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
         {!data && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
         {data && (
           <>
-            <div className="text-zinc-300 text-sm mb-1">
-              {new Date(data.started_at).toLocaleString('ru-RU')}
+            <div className="text-zinc-300 text-sm mb-1 flex items-center gap-2">
+              <span title={sportMeta(data.sport).label}>{sportMeta(data.sport).emoji}</span>
+              <span>{sportMeta(data.sport).label}</span>
+              <span className="text-zinc-500">·</span>
+              <span>{new Date(data.started_at).toLocaleString('ru-RU')}</span>
             </div>
             <div className="text-white text-lg font-semibold mb-2">
               {data.player_a_name}{' '}
@@ -755,19 +816,45 @@ function fmtDuration(s) {
 export function StatsSheet({ open, onClose }) {
   const [stats, setStats] = useState(null)
   const [error, setError] = useState(null)
+  // null = все виды спорта вместе; иначе фильтр по конкретному
+  const [sportFilter, setSportFilter] = useState(null)
 
   useEffect(() => {
     if (!open) return
     setError(null)
-    tennisApi.getStats()
+    setStats(null)
+    tennisApi.getStats(undefined, sportFilter || undefined)
       .then(setStats)
       .catch((e) => setError(e.message || 'Не загрузилось'))
-  }, [open])
+  }, [open, sportFilter])
 
   if (!open) return null
+  const filterTabs = [
+    { key: null, label: 'Все', emoji: '∑' },
+    ...SPORT_LIST.map((sp) => ({ key: sp.key, label: sp.labelShort, emoji: sp.emoji })),
+  ]
   return (
     <AnimatePresence>
       <SheetShell title="Моя статистика" onClose={onClose}>
+        <div className="flex gap-2 mb-4">
+          {filterTabs.map((t) => {
+            const active = sportFilter === t.key
+            return (
+              <motion.button
+                key={t.key ?? 'all'}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setSportFilter(t.key)}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium border ${
+                  active
+                    ? 'bg-emerald-700 border-emerald-500 text-white'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                }`}
+              >
+                <span className="mr-1">{t.emoji}</span>{t.label}
+              </motion.button>
+            )
+          })}
+        </div>
         {error && <p className="text-red-400 text-sm">{error}</p>}
         {!stats && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
         {stats && (

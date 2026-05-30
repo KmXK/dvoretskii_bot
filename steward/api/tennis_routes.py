@@ -18,6 +18,7 @@ from steward.tennis.engine import (
     SIDE_A,
     SIDE_B,
     aggregate_session_matches,
+    normalize_sport,
     player_stats,
     session_wins,
 )
@@ -67,6 +68,7 @@ def _serialize_session(
     payload = {
         "id": s.id,
         "chat_id": s.chat_id,
+        "sport": s.sport,
         "player_a_id": s.player_a_id,
         "player_b_id": s.player_b_id,
         "player_a_name": _spoken_name(repository, s.player_a_id, "игрок А"),
@@ -182,6 +184,7 @@ async def create_session(request: web.Request) -> web.Response:
     if first_server not in (SIDE_A, SIDE_B):
         first_server = SIDE_A
     serve_streak = max(1, int(body.get("serve_streak", 2) or 2))
+    sport = normalize_sport(body.get("sport"))
 
     # Один активный сеанс на пользователя в чате
     chat_id = int(body.get("chat_id") or user_id)
@@ -208,12 +211,14 @@ async def create_session(request: web.Request) -> web.Response:
     session = TennisSession(
         id=next_id,
         chat_id=chat_id,
+        sport=sport,
         player_a_id=user_id,
         player_b_id=opponent_id,
         started_at=now,
         last_activity_at=now,
         initiator_id=user_id,
         first_server=first_server,
+        initial_server=first_server,
         serve_streak=serve_streak,
     )
     repository.db.tennis_sessions.append(session)
@@ -333,10 +338,13 @@ async def get_stats(request: web.Request) -> web.Response:
     else:
         target_id = me
 
-    stats = player_stats(list(repository.db.tennis_sessions), target_id)
+    sport_filter = request.query.get("sport")
+    sport = normalize_sport(sport_filter) if sport_filter else None
+    stats = player_stats(list(repository.db.tennis_sessions), target_id, sport=sport)
     return web.json_response({
         "user_id": stats.user_id,
         "user_name": _spoken_name(repository, target_id, f"id{target_id}"),
+        "sport": sport,
         "sessions": stats.sessions,
         "matches": stats.matches,
         "wins": stats.wins,

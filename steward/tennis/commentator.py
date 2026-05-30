@@ -11,21 +11,23 @@ from typing import Sequence
 
 from steward.data.models.tennis import TennisMatch, TennisSession
 from steward.helpers.ai import OpenRouterModel, make_openrouter_query
-from steward.tennis.engine import SIDE_A, SIDE_B, session_wins
+from steward.tennis.engine import SIDE_A, SIDE_B, session_wins, sport_meta
 
 __all__ = ["generate_match_commentary", "should_generate_commentary"]
 
 logger = logging.getLogger(__name__)
 
 
-_SYSTEM = (
-    "Ты — живой комментатор настольного тенниса. После каждой партии выдаёшь "
-    "одну короткую реплику (1 предложение, до 120 символов). Стиль: живой, "
-    "с лёгким сарказмом и эмоциями, как комментатор у Sportbox. Можно подкалывать, "
-    "обыгрывать счёт, замечать серии и отыгрыши, реагировать на разгромы и deuce. "
-    "Никаких эмодзи, кавычек, скобок, пояснений. Только сама реплика, без префиксов "
-    "вроде «Комментатор:». Не повторяй один и тот же шаблон в подряд идущих репликах."
-)
+def _system_prompt(sport: str | None) -> str:
+    name = sport_meta(sport)["genitive"]
+    return (
+        f"Ты — живой комментатор {name}. После каждой партии выдаёшь "
+        "одну короткую реплику (1 предложение, до 120 символов). Стиль: живой, "
+        "с лёгким сарказмом и эмоциями, как комментатор у Sportbox. Можно подкалывать, "
+        "обыгрывать счёт, замечать серии и отыгрыши, реагировать на разгромы и deuce. "
+        "Никаких эмодзи, кавычек, скобок, пояснений. Только сама реплика, без префиксов "
+        "вроде «Комментатор:». Не повторяй один и тот же шаблон в подряд идущих репликах."
+    )
 
 
 def _current_win_streak(matches: Sequence[TennisMatch]) -> tuple[str, int]:
@@ -91,6 +93,7 @@ async def generate_match_commentary(
     *,
     name_a: str,
     name_b: str,
+    sport: str | None = None,
 ) -> str | None:
     wins_a, wins_b = session_wins(session)
     streak_side, streak_n = _current_win_streak(session.matches)
@@ -122,7 +125,7 @@ async def generate_match_commentary(
             user_id=session.initiator_id or session.player_a_id,
             model=OpenRouterModel.FAST,
             messages=[("user", user_msg)],
-            system_prompt=_SYSTEM,
+            system_prompt=_system_prompt(sport if sport is not None else getattr(session, "sport", None)),
             max_tokens=120,
             timeout_seconds=8.0,
         )

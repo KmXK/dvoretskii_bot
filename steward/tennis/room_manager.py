@@ -25,7 +25,9 @@ from steward.tennis.engine import (
     SIDE_A,
     SIDE_B,
     is_valid_party_score,
+    next_first_server,
     session_wins,
+    sport_meta,
 )
 from steward.tennis.commentator import generate_match_commentary, should_generate_commentary
 from steward.tennis.tts import (
@@ -125,6 +127,7 @@ class TennisRoom:
         return {
             "id": self.session.id,
             "chat_id": self.session.chat_id,
+            "sport": self.session.sport,
             "player_a_id": self.session.player_a_id,
             "player_b_id": self.session.player_b_id,
             "player_a_name": self.manager._spoken_name(self.session.player_a_id, "игрок А"),
@@ -177,10 +180,14 @@ class TennisRoom:
             score_b=score_b,
         )
         self.session.matches.append(match)
-        # Первая подача переключается каждые serve_streak партий
-        streak = max(1, self.session.serve_streak or 2)
-        if len(self.session.matches) % streak == 0:
-            self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
+        # Подачу пересчитываем по правилам спорта (наст. теннис — каждые
+        # serve_streak партий; сквош — подаёт победитель предыдущей).
+        self.session.first_server = next_first_server(
+            self.session.sport,
+            self.session.matches,
+            initial_server=self.session.initial_server,
+            serve_streak=self.session.serve_streak,
+        )
 
         info = {"match_completed": True}
         self.session.last_activity_at = datetime.now()
@@ -221,11 +228,15 @@ class TennisRoom:
             return False, "Сессия уже закрыта"
         if not self.session.matches:
             return False, "Нечего отменять"
-        # До отката: матчей было N → подача переключилась если N % streak == 0
-        streak = max(1, self.session.serve_streak or 2)
-        if len(self.session.matches) % streak == 0:
-            self.session.first_server = SIDE_B if self.session.first_server == SIDE_A else SIDE_A
         self.session.matches.pop()
+        # Подача — чистый пересчёт из оставшихся партий (см. next_first_server),
+        # поэтому откат к любому состоянию, включая пустое, корректен.
+        self.session.first_server = next_first_server(
+            self.session.sport,
+            self.session.matches,
+            initial_server=self.session.initial_server,
+            serve_streak=self.session.serve_streak,
+        )
         self.session.last_activity_at = datetime.now()
         await self.repository.save()
         return True, ""
@@ -340,8 +351,9 @@ class TennisRoomManager:
         wins_a, wins_b = session_wins(session)
         name_a = self._display(session.player_a_id)
         name_b = self._display(session.player_b_id)
+        sport_name = sport_meta(session.sport)["genitive"]
         text = (
-            f"⏱ Сессия тенниса #{session.id} закрыта по таймауту.\n"
+            f"⏱ Сессия {sport_name} #{session.id} закрыта по таймауту.\n"
             f"Итог: {name_a} {wins_a} : {wins_b} {name_b}"
         )
         try:
@@ -409,7 +421,7 @@ class TennisRoomManager:
             return
 
         commentary = await generate_match_commentary(
-            session, match, name_a=name_a, name_b=name_b
+            session, match, name_a=name_a, name_b=name_b, sport=session.sport
         )
         if not commentary:
             return

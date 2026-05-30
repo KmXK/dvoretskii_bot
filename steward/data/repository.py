@@ -632,6 +632,14 @@ class Repository:
             data.setdefault("tunnel_messages", [])
             data["version"] = 35
 
+        if data.get("version") == 35:
+            # Ракетка: добавили sport (наст. теннис/сквош) и initial_server.
+            for ts in data.get("tennis_sessions", []):
+                if isinstance(ts, dict):
+                    ts.setdefault("sport", "table_tennis")
+                    ts.setdefault("initial_server", ts.get("first_server", "a"))
+            data["version"] = 36
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -669,6 +677,8 @@ class Repository:
             ts.setdefault("current_score_b", 0)
             ts.setdefault("points_log", [])
             ts.setdefault("first_server", "a")
+            ts.setdefault("initial_server", ts.get("first_server", "a"))
+            ts.setdefault("sport", "table_tennis")
             ts.setdefault("serve_streak", 2)
             ts.setdefault("set_size", 0)
             ts.setdefault("sets_announced", 0)

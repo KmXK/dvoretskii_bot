@@ -9,7 +9,13 @@ export const tennisApi = {
   updateMatch: (id, idx, score_a, score_b) =>
     api.patch(`/api/tennis/sessions/${id}/matches/${idx}`, { score_a, score_b }),
   toggleServe: (id) => api.post(`/api/tennis/sessions/${id}/serve`),
-  getStats: (userId) => api.get(`/api/tennis/stats${userId ? `?user_id=${userId}` : ''}`),
+  getStats: (userId, sport) => {
+    const params = new URLSearchParams()
+    if (userId) params.set('user_id', userId)
+    if (sport) params.set('sport', sport)
+    const qs = params.toString()
+    return api.get(`/api/tennis/stats${qs ? `?${qs}` : ''}`)
+  },
   listOpponents: () => api.get('/api/tennis/opponents'),
   parseImport: (text) => api.post('/api/tennis/import/parse', { text }),
   commitImport: (text, chatId) => api.post('/api/tennis/import', { text, chat_id: chatId }),

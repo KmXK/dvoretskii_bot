@@ -104,7 +104,7 @@ class Database:
     tunnel_open_chats: set[int] = field(default_factory=set)
     tunnel_messages: list[TunnelMessage] = field(default_factory=list)
 
-    version: int = 35
+    version: int = 36
 
 
 PARSE_CONFIG = Config(

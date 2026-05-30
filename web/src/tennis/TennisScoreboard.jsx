@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 import { EditMatchSheet } from './Modals'
+import { sportMeta } from './sports'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const MUTE_KEY = 'tennis:muted'
@@ -520,6 +521,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const partyIndex = state.matches?.length ?? 0
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
   const firstServerName = state.first_server === 'a' ? nameA : nameB
+  const sp = sportMeta(state.sport)
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-950 to-black overflow-hidden flex flex-col">
@@ -536,12 +538,12 @@ export default function TennisScoreboard({ onBackToLobby }) {
           <span>⏱ {fmtClock(elapsedSec)}</span>
         </button>
         <div className="flex items-center gap-1">
-          {!isClosed && canEdit && (
+          {!isClosed && canEdit && !sp.winnerServes && (
             <button
               onClick={handleServeToggle}
               className="text-base px-2 py-1 rounded hover:bg-white/10"
               title="Переключить первую подачу"
-            >↻🏓</button>
+            >↻{sp.emoji}</button>
           )}
           <button
             onClick={toggleMute}
@@ -559,7 +561,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         <div className="flex items-end justify-center gap-4 w-full max-w-md">
           <div className="flex-1 text-center">
             <div className="text-rose-300/80 text-xs uppercase tracking-wider mb-2 truncate font-semibold">
-              {state.first_server === 'a' && <span>🏓 </span>}{nameA}
+              {state.first_server === 'a' && <span>{sp.emoji} </span>}{nameA}
             </div>
             <motion.div
               key={`a-${winsA}`}
@@ -575,7 +577,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
           <div className="text-5xl text-zinc-700 font-light pb-3">:</div>
           <div className="flex-1 text-center">
             <div className="text-sky-300/80 text-xs uppercase tracking-wider mb-2 truncate font-semibold">
-              {state.first_server === 'b' && <span>🏓 </span>}{nameB}
+              {state.first_server === 'b' && <span>{sp.emoji} </span>}{nameB}
             </div>
             <motion.div
               key={`b-${winsB}`}
@@ -594,7 +596,9 @@ export default function TennisScoreboard({ onBackToLobby }) {
           Партия <span className="text-white font-semibold">{currentPartyNumber}</span>
         </div>
         {!isClosed && (
-          <div className="text-zinc-500 text-xs mt-2">🏓 первая подача — {firstServerName}</div>
+          <div className="text-zinc-500 text-xs mt-2">
+            {sp.emoji} {sp.winnerServes ? 'подаёт' : 'первая подача —'} {firstServerName}
+          </div>
         )}
         {state.last_commentary && (
           <motion.div
