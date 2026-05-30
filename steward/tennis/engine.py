@@ -92,6 +92,56 @@ def derive_winner(score_a: int, score_b: int) -> str:
     return SIDE_A if score_a > score_b else SIDE_B
 
 
+# ── point-by-point (тап = очко) ───────────────────────────────────────────────
+# Базовая цель партии — 11 очков, при 10:10 играем до разницы в 2. Та же модель,
+# что и is_valid_party_score, но для незавершённого («живого») счёта.
+PARTY_TARGET = 11
+
+
+def is_party_complete(score_a: int, score_b: int, *, target: int = PARTY_TARGET) -> bool:
+    """Закончилась ли партия при текущем счёте: кто-то набрал target и ведёт ≥2.
+
+    11:9 — да; 11:10 — нет (deuce); 12:10 — да; 13:11 — да; 12:11 — нет.
+    """
+    hi, lo = max(score_a, score_b), min(score_a, score_b)
+    return hi >= target and hi - lo >= 2
+
+
+def party_point_to_side(points_log: list[str]) -> tuple[int, int]:
+    """Свернуть журнал поинтов ('a'/'b') в текущий счёт партии (a, b)."""
+    a = sum(1 for p in points_log if p == SIDE_A)
+    b = sum(1 for p in points_log if p == SIDE_B)
+    return a, b
+
+
+def current_point_server(
+    sport: str | None,
+    score_a: int,
+    score_b: int,
+    *,
+    party_first_server: str,
+) -> str:
+    """Кто подаёт следующий розыгрыш в текущей партии (для индикатора на табло).
+
+    - настольный теннис: подача переходит каждые 2 очка; при счёте 10:10
+      (deuce) — каждое очко.
+    - сквош (PAR): подаёт тот, кто выиграл прошлый розыгрыш; в начале партии —
+      ``party_first_server``.
+    """
+    base = party_first_server if party_first_server in (SIDE_A, SIDE_B) else SIDE_A
+    other = SIDE_B if base == SIDE_A else SIDE_A
+
+    if normalize_sport(sport) == SPORT_SQUASH:
+        if score_a == score_b == 0:
+            return base
+        return SIDE_A if score_a > score_b else (SIDE_B if score_b > score_a else base)
+
+    total = score_a + score_b
+    deuce = score_a >= 10 and score_b >= 10
+    blocks = total if deuce else total // 2
+    return base if blocks % 2 == 0 else other
+
+
 def session_wins(session: TennisSession) -> tuple[int, int]:
     a = sum(1 for m in session.matches if m.winner == SIDE_A)
     b = sum(1 for m in session.matches if m.winner == SIDE_B)
