@@ -137,6 +137,7 @@ class FeatureContext:
         keyboard: Keyboard | None = None,
         html: bool = False,
         markdown: bool = True,
+        reply_to_message_id: int | None = None,
     ) -> Message:
         markup = keyboard.to_markup() if keyboard is not None else None
         parse_mode: str | None = None
@@ -149,6 +150,7 @@ class FeatureContext:
             text=text,
             reply_markup=markup,
             parse_mode=parse_mode,
+            reply_to_message_id=reply_to_message_id,
         )
 
 

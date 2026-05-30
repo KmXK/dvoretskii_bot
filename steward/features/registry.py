@@ -52,6 +52,7 @@ from steward.features.settings import SettingsFeature
 from steward.features.shazam import ShazamFeature
 from steward.features.transcribe import TranscribeFeature
 from steward.features.translate import TranslateFeature
+from steward.features.tunnel import TunnelFeature
 from steward.features.user_memory import UserMemoryFeature
 from steward.features.voice_video import VoiceVideoFeature
 from steward.features.watch import WatchFeature
@@ -103,6 +104,7 @@ COMMANDS << [
     TennisFeature,
     ExchangeRateFeature,
     LinkFeature,
+    TunnelFeature,
     RemindFeature,
     RemindersFeature,
     TimezoneFeature,
@@ -154,7 +156,7 @@ CAPABILITIES_GROUPED: dict[str, list[list[type]]] = {
                    [RemindFeature, RemindersFeature], [MeFeature], [RewardFeature], [StandsFeature],
                    [SubscribeFeature], [FeatureRequestFeature]],
     "chat_meta":  [[IdFeature], [MessageInfoFeature], [PrettyTimeFeature], [TimezoneFeature], [HolidaysFeature],
-                   [ExchangeRateFeature], [LinkFeature], [LayoutFeature], [NewTextFeature], [LangFeature]],
+                   [ExchangeRateFeature], [LinkFeature], [TunnelFeature], [LayoutFeature], [NewTextFeature], [LangFeature]],
     "stats":      [[StatsFeature], [CurseFeature, CurseMetricFeature]],
     "downloads":  [[DownloadFeature], [GoogleDriveFeature]],
     "moderation": [[BanFeature, BanEnforcerFeature], [SilenceFeature, SilenceEnforcerFeature]],
