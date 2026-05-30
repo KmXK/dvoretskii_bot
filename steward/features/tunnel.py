@@ -525,18 +525,19 @@ class TunnelFeature(Feature):
         user = self.users.find_by(id=user_id)
         if user is None:
             return str(user_id)
-        if user.first_name:
-            return user.first_name
+        # Предпочитаем @username; имя — фоллбэк, если юзернейма нет.
         if user.username:
             return f"@{user.username}"
+        if user.first_name:
+            return user.first_name
         return str(user_id)
 
     def _sender_name(self, ctx: FeatureContext) -> str:
         msg = ctx.message
         if msg is not None and msg.from_user is not None:
             u = msg.from_user
-            if u.first_name:
-                return u.first_name
             if u.username:
                 return f"@{u.username}"
+            if u.first_name:
+                return u.first_name
         return self._user_name(ctx.user_id)

@@ -290,12 +290,18 @@ class TestReplyForwarding:
 
 
 class TestNames:
-    async def test_private_chat_name_uses_person(self):
+    async def test_private_chat_name_uses_username(self):
         repo = base_repo()
-        # ЛС: chat_id == user_id; имя берётся от человека, а не «Unknown».
+        # ЛС: chat_id == user_id; показываем @username (не имя, не «Unknown»).
         repo.db.users.append(User(123, "vasya", [123], first_name="Вася"))
         feature = make_feature(repo)
-        assert feature._chat_name(123) == "Вася"
+        assert feature._chat_name(123) == "@vasya"
+
+    async def test_user_without_username_falls_back_to_name(self):
+        repo = base_repo()
+        repo.db.users.append(User(124, None, [124], first_name="Петя"))
+        feature = make_feature(repo)
+        assert feature._chat_name(124) == "Петя"
 
     async def test_unknown_chat_name_not_leaked(self):
         repo = base_repo()
