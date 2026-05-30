@@ -153,6 +153,26 @@ class FeatureContext:
             reply_to_message_id=reply_to_message_id,
         )
 
+    async def copy_to(
+        self,
+        chat_id: int,
+        from_chat_id: int,
+        message_id: int,
+        *,
+        reply_to_message_id: int | None = None,
+    ):
+        """Copy any message (text, photo, sticker, video, …) into another chat.
+
+        Returns a telegram.MessageId. Unlike forwarding, the copy hides the
+        original sender — the bot relays the content as its own message.
+        """
+        return await self.bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=from_chat_id,
+            message_id=message_id,
+            reply_to_message_id=reply_to_message_id,
+        )
+
 
 def from_chat_context(ctx: ChatBotContext) -> FeatureContext:
     return FeatureContext(

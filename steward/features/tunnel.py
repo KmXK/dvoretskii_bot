@@ -40,6 +40,8 @@ HELP_TEXT = """\
   • Отправить сообщение:        /tunnel 4 привет, как дела
   • Ответить на пришедшее:      сделайте reply на сообщение из туннеля —
     ответ улетит обратно, а на ваш reply встанет 👌
+    В ответе можно слать что угодно: текст, фото, видео, стикеры, голосовые —
+    всё перешлётся в другой чат.
   • Список туннелей этого чата:  /tunnel   (или /tunnel list)
   • Удалить туннель (чатадмин):  /tunnel rm 4
   • Перестать принимать запросы: /tunnel close
@@ -331,12 +333,10 @@ class TunnelFeature(Feature):
             await ctx.reply("Туннель не найден в этом чате.")
             return
 
-        sender = self._sender_name(ctx)
-        from_name = self._chat_name(ctx.chat_id)
         try:
             sent = await ctx.send_to(
                 target,
-                f"💬 [{from_name}] {sender}:\n{message}",
+                f"{self._header(ctx, '💬')}\n{message}",
                 markdown=False,
             )
         except Exception:
@@ -362,10 +362,10 @@ class TunnelFeature(Feature):
     @on_message
     async def forward_reply(self, ctx: FeatureContext) -> bool:
         msg = ctx.message
-        if msg is None or not msg.text:
+        if msg is None:
             return False
         # Команды идут своим путём; не пересылаем их как ответы.
-        if msg.text.startswith("/"):
+        if msg.text and msg.text.startswith("/"):
             return False
         reply = msg.reply_to_message
         if reply is None:
@@ -377,27 +377,18 @@ class TunnelFeature(Feature):
         if mapping is None:
             return False
 
-        sender = self._sender_name(ctx)
-        from_name = self._chat_name(ctx.chat_id)
-        body = f"↩️ [{from_name}] {sender}:\n{msg.text}"
+        header = self._header(ctx, "↩️")
         try:
-            sent = await ctx.send_to(
-                mapping.src_chat,
-                body,
-                markdown=False,
-                reply_to_message_id=mapping.src_msg_id or None,
+            dst_msg_id = await self._relay_content(
+                ctx, mapping.src_chat, header, msg, mapping.src_msg_id or None
             )
         except Exception:
-            # Исходное сообщение могло быть удалено — шлём без реплая.
-            try:
-                sent = await ctx.send_to(mapping.src_chat, body, markdown=False)
-            except Exception:
-                logger.exception(
-                    "tunnel %s: failed to deliver reply to %s",
-                    mapping.tunnel_id,
-                    mapping.src_chat,
-                )
-                return True
+            logger.exception(
+                "tunnel %s: failed to deliver reply to %s",
+                mapping.tunnel_id,
+                mapping.src_chat,
+            )
+            return True
 
         # Цепочка реплаев должна работать в обе стороны: запоминаем новую пару.
         self._record_message(
@@ -405,7 +396,7 @@ class TunnelFeature(Feature):
             src_chat=ctx.chat_id,
             src_msg_id=msg.message_id,
             dst_chat=mapping.src_chat,
-            dst_msg_id=sent.message_id,
+            dst_msg_id=dst_msg_id,
             sender_id=ctx.user_id,
         )
         await self.tmsgs.save()
@@ -486,10 +477,49 @@ class TunnelFeature(Feature):
     def _chat_name(self, chat_id: int | None) -> str:
         if chat_id is None:
             return "?"
+        # Личка: chat_id == user_id, «название чата» — это имя самого человека.
+        if chat_id > 0:
+            return self._user_name(chat_id)
         chat = self.chats.find_by(id=chat_id)
-        if chat is not None and chat.name:
+        if chat is not None and chat.name and chat.name != "Unknown":
             return chat.name
-        return str(chat_id)
+        return f"чат {chat_id}"
+
+    def _header(self, ctx: FeatureContext, prefix: str) -> str:
+        sender = self._sender_name(ctx)
+        # В личке отправитель и есть «чат» — не дублируем имя.
+        if ctx.chat_id > 0:
+            return f"{prefix} {sender}:"
+        return f"{prefix} [{self._chat_name(ctx.chat_id)}] {sender}:"
+
+    async def _relay_content(
+        self,
+        ctx: FeatureContext,
+        dst_chat: int,
+        header: str,
+        src_message,
+        reply_to: int | None,
+    ) -> int:
+        """Доставить сообщение в dst_chat. Текст — одним сообщением с шапкой,
+        медиа (стикеры/фото/видео/документы/голос/…) — шапка + copy_message.
+        Возвращает id сообщения в dst_chat, на которое можно реплайнуть.
+        """
+        text = src_message.text
+        if text:
+            body = f"{header}\n{text}"
+            try:
+                sent = await ctx.send_to(dst_chat, body, markdown=False, reply_to_message_id=reply_to)
+            except Exception:
+                sent = await ctx.send_to(dst_chat, body, markdown=False)
+            return sent.message_id
+
+        # Любой нетекстовый контент: шапка отдельным сообщением, затем копия.
+        try:
+            await ctx.send_to(dst_chat, header, markdown=False, reply_to_message_id=reply_to)
+        except Exception:
+            await ctx.send_to(dst_chat, header, markdown=False)
+        copied = await ctx.copy_to(dst_chat, ctx.chat_id, src_message.message_id)
+        return copied.message_id
 
     def _user_name(self, user_id: int) -> str:
         user = self.users.find_by(id=user_id)

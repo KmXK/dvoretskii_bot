@@ -246,6 +246,33 @@ class TestReplyForwarding:
         assert len(back) == 1
         assert back[0].dst_chat == CHAT_A
 
+    async def test_media_reply_forwarded(self):
+        repo = base_repo()
+        repo.db.chat_tunnels.append(
+            ChatTunnel(id=1, chat_a=CHAT_A, chat_b=CHAT_B, chat_a_name="Чат А", chat_b_name="Чат Б", created_by=USER)
+        )
+        repo.db.tunnel_messages.append(
+            TunnelMessage(tunnel_id=1, src_chat=CHAT_A, src_msg_id=10, dst_chat=CHAT_B, dst_msg_id=20, sender_id=USER)
+        )
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+
+        update = make_text_update("", user_id=ADMIN, chat_id=CHAT_B)
+        update.message.text = None  # медиа без текста (стикер/фото)
+        update.message.message_id = 55
+        update.message.reply_to_message = MagicMock(message_id=20)
+        from steward.bot.context import ChatBotContext
+
+        ctx = ChatBotContext(
+            repository=repo, bot=bot, client=MagicMock(), update=update,
+            tg_context=MagicMock(), metrics=MagicMock(), message=update.message,
+        )
+        result = await feature.chat(ctx)
+        assert result is True
+        back = [m for m in repo.db.tunnel_messages if m.src_chat == CHAT_B]
+        assert len(back) == 1
+        assert back[0].dst_chat == CHAT_A
+
     async def test_non_reply_ignored(self):
         repo = base_repo()
         bot, _ = await make_bot()
@@ -260,6 +287,21 @@ class TestReplyForwarding:
         )
         result = await feature.chat(ctx)
         assert result is False
+
+
+class TestNames:
+    async def test_private_chat_name_uses_person(self):
+        repo = base_repo()
+        # ЛС: chat_id == user_id; имя берётся от человека, а не «Unknown».
+        repo.db.users.append(User(123, "vasya", [123], first_name="Вася"))
+        feature = make_feature(repo)
+        assert feature._chat_name(123) == "Вася"
+
+    async def test_unknown_chat_name_not_leaked(self):
+        repo = base_repo()
+        repo.db.chats.append(Chat(id=-100333, name="Unknown"))
+        feature = make_feature(repo)
+        assert "Unknown" not in feature._chat_name(-100333)
 
 
 class TestRemove:
