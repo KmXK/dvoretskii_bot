@@ -34,6 +34,7 @@ from .bill_v2 import (
 from .birthday import Birthday
 from .channel_subscription import ChannelSubscription
 from .chat import Chat
+from .chat_tunnel import ChatTunnel, TunnelMessage
 from .command_alias import CommandAlias
 from .curse import CurseParticipant, CursePunishment
 from .feature_request import FeatureRequest
@@ -99,8 +100,11 @@ class Database:
     user_roles: list[UserRole] = field(default_factory=list)
     chat_settings: list[ChatSettings] = field(default_factory=list)
     command_aliases: list[CommandAlias] = field(default_factory=list)
+    chat_tunnels: list[ChatTunnel] = field(default_factory=list)
+    tunnel_open_chats: set[int] = field(default_factory=set)
+    tunnel_messages: list[TunnelMessage] = field(default_factory=list)
 
-    version: int = 34
+    version: int = 35
 
 
 PARSE_CONFIG = Config(

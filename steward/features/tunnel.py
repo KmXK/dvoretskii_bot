@@ -1,0 +1,512 @@
+import logging
+
+from telegram import ReactionTypeEmoji
+
+from steward.data.models.chat_tunnel import ChatTunnel, TunnelMessage
+from steward.framework import (
+    INITIATOR_ONLY,
+    Feature,
+    FeatureContext,
+    Keyboard,
+    collection,
+    on_callback,
+    on_message,
+    subcommand,
+)
+
+logger = logging.getLogger(__name__)
+
+OK_EMOJI = "👌"
+# Сколько последних маппингов сообщений держим на один туннель (для реплаев).
+MAX_MESSAGES_PER_TUNNEL = 500
+# Ограничение на размер inline-списка чатов в /tunnel to.
+MAX_PICK_BUTTONS = 30
+
+
+HELP_TEXT = """\
+/tunnel — туннели между чатами: связать два чата и пересылать сообщения.
+
+Как создать туннель (по шагам):
+  1. В чате, КУДА хотите пускать сообщения, чатадмин пишет:  /tunnel open
+     (этим чат становится виден в списке для подключения)
+  2. В своём чате любой участник пишет:  /tunnel to
+  3. Бот покажет список открытых чатов — выберите нужный кнопкой.
+  4. В выбранный чат придёт запрос с кнопками «Согласиться / Отклонить».
+     Нажать может только чатадмин того чата.
+  5. Если согласились — в ОБА чата придёт номер туннеля (например #4),
+     а вам в чат вернётся подтверждение, что подключение приняли (или отклонили).
+
+Как пользоваться:
+  • Отправить сообщение:        /tunnel 4 привет, как дела
+  • Ответить на пришедшее:      сделайте reply на сообщение из туннеля —
+    ответ улетит обратно, а на ваш reply встанет 👌
+  • Список туннелей этого чата:  /tunnel   (или /tunnel list)
+  • Удалить туннель (чатадмин):  /tunnel rm 4
+  • Перестать принимать запросы: /tunnel close
+
+Команды:
+  /tunnel open            — открыть чат для подключений (чатадмин)
+  /tunnel to              — начать подключение к другому чату
+  /tunnel <id> <текст>    — переслать сообщение по туннелю
+  /tunnel list            — туннели этого чата
+  /tunnel rm <id>         — удалить туннель (чатадмин)
+  /tunnel close           — закрыть чат для новых подключений (чатадмин)
+  /tunnel help            — эта справка\
+"""
+
+
+class TunnelFeature(Feature):
+    """Двунаправленные туннели сообщений между чатами.
+
+    `/tunnel open` помечает чат как открытый для подключений. `/tunnel to`
+    показывает список открытых чатов; выбор шлёт запрос в целевой чат, где
+    чатадмин жмёт «Согласиться/Отклонить». После согласия туннель получает
+    числовой id, и любой участник любой из сторон может слать
+    `/tunnel <id> текст`. Реплай на пришедшее сообщение доставляется обратно
+    автору исходного, а на сам реплай ставится 👌.
+    """
+
+    command = "tunnel"
+    description = "Туннели между чатами"
+    custom_help = HELP_TEXT
+    help_examples = [
+        "«открой чат для туннелей» → /tunnel open",
+        "«подключиться к другому чату» → /tunnel to",
+        "«напиши в туннель 4 привет» → /tunnel 4 привет",
+        "«покажи туннели чата» → /tunnel",
+        "«удали туннель 4» → /tunnel rm 4",
+    ]
+
+    tunnels = collection("chat_tunnels")
+    tmsgs = collection("tunnel_messages")
+    open_chats = collection("tunnel_open_chats")
+    chats = collection("chats")
+    users = collection("users")
+
+    # ------------------------------------------------------------------ #
+    # Open / close
+    # ------------------------------------------------------------------ #
+
+    @subcommand("open", description="Открыть чат для подключений (чатадмин)")
+    async def open_chat(self, ctx: FeatureContext):
+        if not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+            await ctx.reply("Открыть чат для туннелей может только чатадмин.")
+            return
+        if self.open_chats.contains(ctx.chat_id):
+            await ctx.reply("Этот чат уже открыт для подключений.")
+            return
+        self.open_chats.add(ctx.chat_id)
+        await self.open_chats.save()
+        await ctx.reply(
+            "Чат открыт для подключений. Теперь он виден в /tunnel to из других чатов.\n"
+            "Закрыть: /tunnel close"
+        )
+
+    @subcommand("close", description="Закрыть чат для новых подключений (чатадмин)")
+    async def close_chat(self, ctx: FeatureContext):
+        if not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+            await ctx.reply("Закрыть чат может только чатадмин.")
+            return
+        if not self.open_chats.contains(ctx.chat_id):
+            await ctx.reply("Этот чат и так не открыт для подключений.")
+            return
+        self.open_chats.remove(ctx.chat_id)
+        await self.open_chats.save()
+        await ctx.reply(
+            "Чат закрыт для новых подключений. Существующие туннели продолжают работать."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Initiate connection
+    # ------------------------------------------------------------------ #
+
+    @subcommand("to", description="Подключиться к другому чату")
+    async def connect_to(self, ctx: FeatureContext):
+        candidates = self._candidate_open_chats(ctx.chat_id)
+        if not candidates:
+            await ctx.reply(
+                "Нет доступных чатов для подключения.\n\n"
+                "Чтобы чат появился здесь, его чатадмин должен выполнить там /tunnel open."
+            )
+            return
+        buttons = [
+            self.cb("tunnel:pick").button(
+                self._chat_name(cid), target=cid, initiator=ctx.user_id
+            )
+            for cid in candidates[:MAX_PICK_BUTTONS]
+        ]
+        await ctx.reply(
+            "Выберите чат, к которому хотите подключиться:",
+            keyboard=Keyboard.column(*buttons),
+        )
+
+    @on_callback(
+        "tunnel:pick",
+        schema="<target:int>|<initiator:int>",
+        access=INITIATOR_ONLY,
+    )
+    async def on_pick(self, ctx: FeatureContext, target: int, initiator: int):
+        from_chat = ctx.chat_id
+        if target == from_chat:
+            await ctx.toast("Нельзя подключить чат к самому себе.")
+            return
+        if self._tunnel_between(from_chat, target) is not None:
+            await ctx.edit("Туннель с этим чатом уже существует.")
+            return
+        if not self.open_chats.contains(target):
+            await ctx.edit("Этот чат больше не принимает подключения.")
+            return
+
+        from_name = self._chat_name(from_chat)
+        by_name = self._user_name(initiator)
+        kb = Keyboard.row(
+            self.cb("tunnel:accept").button(
+                "✅ Согласиться", from_chat=from_chat, to_chat=target, by=initiator
+            ),
+            self.cb("tunnel:decline").button(
+                "❌ Отклонить", from_chat=from_chat, to_chat=target, by=initiator
+            ),
+        )
+        try:
+            await ctx.send_to(
+                target,
+                (
+                    "🔗 Запрос на туннель\n\n"
+                    f"Чат «{from_name}» хочет связаться с этим чатом.\n"
+                    f"Запросил: {by_name}\n\n"
+                    "Принять или отклонить может только чатадмин этого чата."
+                ),
+                keyboard=kb,
+                markdown=False,
+            )
+        except Exception:
+            logger.exception("failed to deliver tunnel request to %s", target)
+            await ctx.edit(
+                "Не удалось отправить запрос в выбранный чат — возможно, бот там больше не состоит."
+            )
+            return
+
+        await ctx.edit(
+            f"📨 Запрос отправлен в чат «{self._chat_name(target)}». "
+            "Ждём подтверждения от их чатадмина."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Accept / decline (in the target chat)
+    # ------------------------------------------------------------------ #
+
+    @on_callback(
+        "tunnel:accept",
+        schema="<from_chat:int>|<to_chat:int>|<by:int>",
+    )
+    async def on_accept(self, ctx: FeatureContext, from_chat: int, to_chat: int, by: int):
+        if not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+            await ctx.toast("Подтвердить может только чатадмин этого чата.")
+            return
+        if from_chat == to_chat:
+            await ctx.edit("Нельзя подключить чат к самому себе.")
+            return
+
+        existing = self._tunnel_between(from_chat, to_chat)
+        if existing is not None:
+            await ctx.edit(f"Туннель с этим чатом уже существует (#{existing.id}).")
+            return
+
+        from_name = self._chat_name(from_chat)
+        to_name = self._chat_name(to_chat)
+        tunnel = self.tunnels.add(
+            ChatTunnel(
+                id=0,
+                chat_a=from_chat,
+                chat_b=to_chat,
+                chat_a_name=from_name,
+                chat_b_name=to_name,
+                created_by=by,
+            )
+        )
+        await self.tunnels.save()
+
+        await ctx.edit(
+            f"✅ Туннель #{tunnel.id} с чатом «{from_name}» создан.\n"
+            f"Пишите: /tunnel {tunnel.id} ваш текст"
+        )
+        await self._notify(
+            ctx,
+            from_chat,
+            f"✅ Чат «{to_name}» принял подключение!\n"
+            f"Туннель #{tunnel.id} готов. Пишите: /tunnel {tunnel.id} ваш текст",
+        )
+
+    @on_callback(
+        "tunnel:decline",
+        schema="<from_chat:int>|<to_chat:int>|<by:int>",
+    )
+    async def on_decline(self, ctx: FeatureContext, from_chat: int, to_chat: int, by: int):
+        if not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+            await ctx.toast("Отклонить может только чатадмин этого чата.")
+            return
+        from_name = self._chat_name(from_chat)
+        to_name = self._chat_name(to_chat)
+        await ctx.edit(f"❌ Запрос от чата «{from_name}» отклонён.")
+        await self._notify(ctx, from_chat, f"❌ Чат «{to_name}» отклонил подключение.")
+
+    # ------------------------------------------------------------------ #
+    # List / remove
+    # ------------------------------------------------------------------ #
+
+    @subcommand("", description="Туннели этого чата")
+    async def list_default(self, ctx: FeatureContext):
+        await self._list(ctx)
+
+    @subcommand("list", description="Туннели этого чата")
+    async def list_alias(self, ctx: FeatureContext):
+        await self._list(ctx)
+
+    @subcommand("help", description="Подробная справка")
+    async def help_cmd(self, ctx: FeatureContext):
+        await ctx.reply(HELP_TEXT, markdown=False)
+
+    @subcommand("rm <id:int>", description="Удалить туннель (чатадмин)")
+    async def remove(self, ctx: FeatureContext, id: int):
+        await self._remove(ctx, id)
+
+    @subcommand("delete <id:int>", description="Удалить туннель (чатадмин)")
+    async def remove_alt(self, ctx: FeatureContext, id: int):
+        await self._remove(ctx, id)
+
+    async def _list(self, ctx: FeatureContext):
+        mine = [t for t in self.tunnels if t.involves(ctx.chat_id)]
+        if not mine:
+            await ctx.reply(
+                "В этом чате нет туннелей.\n\n"
+                "Создать: /tunnel to (нужно, чтобы целевой чат сделал /tunnel open).\n"
+                "Подробнее: /tunnel help",
+                markdown=False,
+            )
+            return
+        lines = ["Туннели этого чата:", ""]
+        for t in sorted(mine, key=lambda x: x.id):
+            other = t.other_side(ctx.chat_id)
+            lines.append(
+                f"#{t.id} → «{self._chat_name(other)}» "
+                f"(создал {self._user_name(t.created_by)})"
+            )
+        lines.append("")
+        lines.append("Написать: /tunnel <id> текст · Удалить: /tunnel rm <id>")
+        await ctx.reply("\n".join(lines), markdown=False)
+
+    async def _remove(self, ctx: FeatureContext, tunnel_id: int):
+        tunnel = self.tunnels.find_by(id=tunnel_id)
+        if tunnel is None or not tunnel.involves(ctx.chat_id):
+            await ctx.reply("Туннель не найден в этом чате.")
+            return
+        if not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+            await ctx.reply("Удалять туннели может только чатадмин.")
+            return
+        other = tunnel.other_side(ctx.chat_id)
+        this_name = self._chat_name(ctx.chat_id)
+        self.tunnels.remove(tunnel)
+        self.tmsgs.replace_all(
+            [m for m in self.tmsgs if m.tunnel_id != tunnel_id]
+        )
+        await self.tunnels.save()
+        await ctx.reply(f"Туннель #{tunnel_id} удалён.")
+        if other is not None:
+            await self._notify(
+                ctx, other, f"Туннель #{tunnel_id} с чатом «{this_name}» был удалён."
+            )
+
+    # ------------------------------------------------------------------ #
+    # Send through tunnel
+    # ------------------------------------------------------------------ #
+
+    @subcommand("<id:int> <message:rest>", description="Переслать сообщение по туннелю")
+    async def send(self, ctx: FeatureContext, id: int, message: str):
+        tunnel = self.tunnels.find_by(id=id)
+        if tunnel is None or not tunnel.involves(ctx.chat_id):
+            await ctx.reply("Туннель не найден в этом чате. Список: /tunnel list")
+            return
+        target = tunnel.other_side(ctx.chat_id)
+        if target is None:
+            await ctx.reply("Туннель не найден в этом чате.")
+            return
+
+        sender = self._sender_name(ctx)
+        from_name = self._chat_name(ctx.chat_id)
+        try:
+            sent = await ctx.send_to(
+                target,
+                f"💬 [{from_name}] {sender}:\n{message}",
+                markdown=False,
+            )
+        except Exception:
+            logger.exception("tunnel %s: failed to forward to %s", id, target)
+            await ctx.reply("Не удалось доставить сообщение — возможно, бот выгнан из того чата.")
+            return
+
+        self._record_message(
+            tunnel_id=id,
+            src_chat=ctx.chat_id,
+            src_msg_id=ctx.message.message_id if ctx.message else 0,
+            dst_chat=target,
+            dst_msg_id=sent.message_id,
+            sender_id=ctx.user_id,
+        )
+        await self.tmsgs.save()
+        await self._react_ok(ctx.chat_id, ctx.message.message_id if ctx.message else None)
+
+    # ------------------------------------------------------------------ #
+    # Reply forwarding (back through the tunnel)
+    # ------------------------------------------------------------------ #
+
+    @on_message
+    async def forward_reply(self, ctx: FeatureContext) -> bool:
+        msg = ctx.message
+        if msg is None or not msg.text:
+            return False
+        # Команды идут своим путём; не пересылаем их как ответы.
+        if msg.text.startswith("/"):
+            return False
+        reply = msg.reply_to_message
+        if reply is None:
+            return False
+
+        mapping = self.tmsgs.find_one(
+            lambda m: m.dst_chat == ctx.chat_id and m.dst_msg_id == reply.message_id
+        )
+        if mapping is None:
+            return False
+
+        sender = self._sender_name(ctx)
+        from_name = self._chat_name(ctx.chat_id)
+        body = f"↩️ [{from_name}] {sender}:\n{msg.text}"
+        try:
+            sent = await ctx.send_to(
+                mapping.src_chat,
+                body,
+                markdown=False,
+                reply_to_message_id=mapping.src_msg_id or None,
+            )
+        except Exception:
+            # Исходное сообщение могло быть удалено — шлём без реплая.
+            try:
+                sent = await ctx.send_to(mapping.src_chat, body, markdown=False)
+            except Exception:
+                logger.exception(
+                    "tunnel %s: failed to deliver reply to %s",
+                    mapping.tunnel_id,
+                    mapping.src_chat,
+                )
+                return True
+
+        # Цепочка реплаев должна работать в обе стороны: запоминаем новую пару.
+        self._record_message(
+            tunnel_id=mapping.tunnel_id,
+            src_chat=ctx.chat_id,
+            src_msg_id=msg.message_id,
+            dst_chat=mapping.src_chat,
+            dst_msg_id=sent.message_id,
+            sender_id=ctx.user_id,
+        )
+        await self.tmsgs.save()
+        await self._react_ok(ctx.chat_id, msg.message_id)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+
+    def _candidate_open_chats(self, current: int) -> list[int]:
+        connected = set()
+        for t in self.tunnels:
+            if t.chat_a == current:
+                connected.add(t.chat_b)
+            elif t.chat_b == current:
+                connected.add(t.chat_a)
+        out = []
+        for cid in self.open_chats.all():
+            if cid == current or cid in connected:
+                continue
+            out.append(cid)
+        out.sort(key=lambda c: self._chat_name(c).lower())
+        return out
+
+    def _tunnel_between(self, a: int, b: int) -> ChatTunnel | None:
+        return self.tunnels.find_one(lambda t: t.involves(a) and t.involves(b))
+
+    def _record_message(
+        self,
+        *,
+        tunnel_id: int,
+        src_chat: int,
+        src_msg_id: int,
+        dst_chat: int,
+        dst_msg_id: int,
+        sender_id: int,
+    ) -> None:
+        self.tmsgs.add(
+            TunnelMessage(
+                tunnel_id=tunnel_id,
+                src_chat=src_chat,
+                src_msg_id=src_msg_id,
+                dst_chat=dst_chat,
+                dst_msg_id=dst_msg_id,
+                sender_id=sender_id,
+            )
+        )
+        self._prune(tunnel_id)
+
+    def _prune(self, tunnel_id: int) -> None:
+        for_tunnel = [m for m in self.tmsgs if m.tunnel_id == tunnel_id]
+        if len(for_tunnel) <= MAX_MESSAGES_PER_TUNNEL:
+            return
+        extra = len(for_tunnel) - MAX_MESSAGES_PER_TUNNEL
+        oldest = sorted(for_tunnel, key=lambda m: m.created_at)[:extra]
+        for m in oldest:
+            self.tmsgs.remove(m)
+
+    async def _react_ok(self, chat_id: int, message_id: int | None) -> None:
+        if message_id is None:
+            return
+        try:
+            await self.bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=OK_EMOJI)],
+            )
+        except Exception:
+            logger.debug("could not set %s reaction on %s/%s", OK_EMOJI, chat_id, message_id)
+
+    async def _notify(self, ctx: FeatureContext, chat_id: int, text: str) -> None:
+        try:
+            await ctx.send_to(chat_id, text, markdown=False)
+        except Exception:
+            logger.exception("failed to notify chat %s", chat_id)
+
+    def _chat_name(self, chat_id: int | None) -> str:
+        if chat_id is None:
+            return "?"
+        chat = self.chats.find_by(id=chat_id)
+        if chat is not None and chat.name:
+            return chat.name
+        return str(chat_id)
+
+    def _user_name(self, user_id: int) -> str:
+        user = self.users.find_by(id=user_id)
+        if user is None:
+            return str(user_id)
+        if user.first_name:
+            return user.first_name
+        if user.username:
+            return f"@{user.username}"
+        return str(user_id)
+
+    def _sender_name(self, ctx: FeatureContext) -> str:
+        msg = ctx.message
+        if msg is not None and msg.from_user is not None:
+            u = msg.from_user
+            if u.first_name:
+                return u.first_name
+            if u.username:
+                return f"@{u.username}"
+        return self._user_name(ctx.user_id)

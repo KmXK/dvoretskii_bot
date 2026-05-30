@@ -392,6 +392,7 @@ features/foo/
 - `features/pasha.py` — wizard со `step()` для perpetual GPT
 - `features/subscribe/` — wizard со `step()` для нелинейного потока
 - `features/bills/` — большой пакет с pagination + 3 wizard'а
+- `features/tunnel.py` — кросс-чат туннели: `@on_callback` с подтверждением чатадмина + `@on_message` для реплаев
 
 ## Что НЕ делать
 

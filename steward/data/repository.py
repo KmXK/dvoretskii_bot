@@ -626,6 +626,12 @@ class Repository:
             data.setdefault("command_aliases", [])
             data["version"] = 34
 
+        if data.get("version") == 34:
+            data.setdefault("chat_tunnels", [])
+            data.setdefault("tunnel_open_chats", [])
+            data.setdefault("tunnel_messages", [])
+            data["version"] = 35
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -642,6 +648,9 @@ class Repository:
         data.setdefault("user_roles", [])
         data.setdefault("chat_settings", [])
         data.setdefault("command_aliases", [])
+        data.setdefault("chat_tunnels", [])
+        data.setdefault("tunnel_open_chats", [])
+        data.setdefault("tunnel_messages", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
