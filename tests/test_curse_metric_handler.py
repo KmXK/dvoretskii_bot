@@ -25,6 +25,7 @@ class TestCurseMetricFeature:
 
         assert not ok
         metrics.inc.assert_called_once_with("bot_curse_words_total", value=2)
+        ctx.message.set_reaction.assert_called_once_with("🤬")
 
     async def test_skips_forwarded_messages(self):
         repo = make_repository()

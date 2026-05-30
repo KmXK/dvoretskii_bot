@@ -156,6 +156,7 @@ def _make_message_mock(
         "reply_text", "reply_html", "reply_markdown", "reply_markdown_v2",
         "reply_photo", "reply_animation", "reply_document", "reply_video",
         "reply_audio", "reply_sticker", "delete", "edit_text",
+        "set_reaction",
     ):
         setattr(message, method, AsyncMock(return_value=MagicMock()))
 
