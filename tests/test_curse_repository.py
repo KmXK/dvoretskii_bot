@@ -41,3 +41,40 @@ class TestCurseRepositoryMigration:
 
         assert migrated["version"] >= 35
         assert migrated["curse_ignore_words"] == []
+
+    async def test_migrate_adds_curse_debt_fields(self):
+        repo = make_repository()
+
+        migrated = repo._migrate({"version": 35, "admin_ids": []})
+
+        assert migrated["version"] >= 36
+        assert migrated["curse_punishment_debts"] == []
+        assert migrated["curse_debts_backfilled"] is False
+
+    async def test_migrate_adds_interest_percent_to_existing_punishments(self):
+        repo = make_repository()
+
+        migrated = repo._migrate(
+            {
+                "version": 35,
+                "admin_ids": [],
+                "curse_punishments": [{"id": 1, "coeff": 5, "title": "отжиманий"}],
+            }
+        )
+
+        assert migrated["curse_punishments"][0]["interest_percent"] == 0.0
+
+    async def test_migrate_adds_punishment_day_fields(self):
+        repo = make_repository()
+
+        migrated = repo._migrate(
+            {
+                "version": 36,
+                "admin_ids": [],
+                "curse_punishments": [{"id": 1, "coeff": 5, "title": "отжиманий"}],
+            }
+        )
+
+        assert migrated["version"] >= 36
+        assert migrated["curse_punishment_days"] == []
+        assert migrated["curse_punishments"][0]["selection_weight"] == 1.0

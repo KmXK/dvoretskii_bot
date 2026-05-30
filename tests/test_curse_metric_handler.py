@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from steward.data.models.curse import CurseParticipant, CursePunishment
 from steward.features.curse_metric import CurseMetricFeature
-from tests.conftest import make_repository, make_text_context
+from tests.conftest import DEFAULT_USER_ID, make_repository, make_text_context
 
 
 def _make_feature(repo):
@@ -94,3 +96,23 @@ class TestCurseMetricFeature:
         await feature.chat(bad_ctx)
 
         metrics.inc.assert_called_once_with("bot_curse_words_total", value=1)
+
+    async def test_accrues_db_debt_for_subscribed_user(self):
+        repo = make_repository()
+        repo.db.curse_words = {"мат"}
+        repo.db.curse_punishments = [CursePunishment(id=1, coeff=4, title="приседаний")]
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=DEFAULT_USER_ID, subscribed_at=datetime.now(timezone.utc))
+        ]
+        metrics = MagicMock()
+        feature = _make_feature(repo)
+
+        ctx = make_text_context("мат мат", repo=repo, metrics=metrics)
+        ok = await feature.chat(ctx)
+
+        assert not ok
+        metrics.inc.assert_called_once_with("bot_curse_words_total", value=2)
+        assert len(repo.db.curse_punishment_debts) == 1
+        assert repo.db.curse_punishment_debts[0].user_id == DEFAULT_USER_ID
+        assert repo.db.curse_punishment_debts[0].rule_id == 1
+        assert repo.db.curse_punishment_debts[0].punishment_count == 8

@@ -1,4 +1,4 @@
-from steward.metrics.base import Labels, MetricSample, MetricsEngine
+from steward.metrics.base import Labels, MetricQueryError, MetricSample, MetricsEngine
 
 
 class NoopMetricsEngine(MetricsEngine):
@@ -14,6 +14,7 @@ class NoopMetricsEngine(MetricsEngine):
     def start_server(self, port: int) -> None:
         pass
 
-    async def query(self, promql: str) -> list[MetricSample]:
+    async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]:
+        if strict:
+            raise MetricQueryError("Metrics query requested while metrics engine is disabled")
         return []
-

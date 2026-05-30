@@ -1,4 +1,5 @@
 from steward.framework import Feature, FeatureContext, collection, on_message
+from steward.helpers.curse_debt import accrue_curse_debt, today_msk
 from steward.helpers.curse_detector import CurseDetector
 
 
@@ -29,4 +30,6 @@ class CurseMetricFeature(Feature):
         )
         if count > 0:
             ctx.metrics.inc("bot_curse_words_total", value=count)
+            if accrue_curse_debt(self.repository, ctx.user_id, count, today_msk()):
+                await self.repository.save()
         return False

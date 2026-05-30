@@ -655,10 +655,27 @@ class Repository:
                     ts.setdefault("sets_to_win", 2)
             data["version"] = 38
 
+        if data.get("version") == 38:
+            if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
+                data["curse_ignore_words"] = []
+            data.setdefault("curse_punishment_debts", [])
+            data.setdefault("curse_punishment_days", [])
+            data.setdefault("curse_debts_backfilled", False)
+            for punishment in data.get("curse_punishments", []):
+                punishment.setdefault("interest_percent", 0.0)
+                punishment.setdefault("selection_weight", 1.0)
+            data["version"] = 39
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
             data["curse_ignore_words"] = []
+        data.setdefault("curse_punishment_debts", [])
+        data.setdefault("curse_punishment_days", [])
+        data.setdefault("curse_debts_backfilled", False)
+        for punishment in data.get("curse_punishments", []):
+            punishment.setdefault("interest_percent", 0.0)
+            punishment.setdefault("selection_weight", 1.0)
         data.setdefault("fuck_assets", [])
         data.setdefault("tennis_sessions", [])
         data.setdefault("incidents", [])
