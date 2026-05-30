@@ -8,6 +8,7 @@ youtube-dl-nightly
 coloredlogs
 aiofiles
 pymorphy3
+crosstem
 pyrate-limiter==3.9.0
 yt-dlp
 gallery-dl

@@ -657,6 +657,8 @@ class Repository:
 
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
+        if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
+            data["curse_ignore_words"] = []
         data.setdefault("fuck_assets", [])
         data.setdefault("tennis_sessions", [])
         data.setdefault("incidents", [])

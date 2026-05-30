@@ -28,6 +28,36 @@ class TestCurseWordList:
         assert "прав" in reply.lower()
 
 
+class TestCurseIgnoreList:
+    async def test_empty_ignore_list(self):
+        reply, ok = await invoke(CurseFeature, "/curse ignore_list", make_repository())
+        assert ok
+        assert "исключ" in reply.lower()
+        assert "пуст" in reply.lower()
+
+    async def test_adds_ignore_words_for_admin(self):
+        repo = make_repository()
+        repo.db.admin_ids = {DEFAULT_USER_ID}
+        reply, ok = await invoke(CurseFeature, "/curse ignore_list add Пиздец БЛЯХА", repo)
+        assert ok
+        assert repo.db.curse_ignore_words == {"пиздец", "бляха"}
+        assert "Добавлены" in reply
+
+    async def test_removes_ignore_words_for_admin(self):
+        repo = make_repository()
+        repo.db.admin_ids = {DEFAULT_USER_ID}
+        repo.db.curse_ignore_words = {"пиздец", "бляха"}
+        reply, ok = await invoke(CurseFeature, "/curse ignore_list remove бляха", repo)
+        assert ok
+        assert repo.db.curse_ignore_words == {"пиздец"}
+        assert "Удалены" in reply
+
+    async def test_rejects_ignore_add_for_non_admin(self):
+        reply, ok = await invoke(CurseFeature, "/curse ignore_list add бляха", make_repository())
+        assert ok
+        assert "прав" in reply.lower()
+
+
 class TestCurseIncrement:
     async def test_increments_metric(self):
         metrics = MagicMock()

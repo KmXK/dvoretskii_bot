@@ -33,3 +33,11 @@ class TestCurseRepositoryMigration:
 
         assert migrated["version"] >= 17
         assert migrated["curse_participants"][0]["done_words_offset"] == 0
+
+    async def test_migrate_adds_curse_ignore_words(self):
+        repo = make_repository()
+
+        migrated = repo._migrate({"version": 34, "admin_ids": []})
+
+        assert migrated["version"] >= 35
+        assert migrated["curse_ignore_words"] == []

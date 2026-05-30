@@ -39,6 +39,7 @@ class CurseFeature(Feature):
     description = "Маты и наказания"
 
     curse_words = collection("curse_words")
+    curse_ignore_words = collection("curse_ignore_words")
     curse_punishments = collection("curse_punishments")
     curse_participants = collection("curse_participants")
     delayed_actions = collection("delayed_actions")
@@ -99,6 +100,38 @@ class CurseFeature(Feature):
             return
         await self.curse_words.save()
         await ctx.reply("Удалены слова: " + ", ".join(removed))
+
+    @subcommand("ignore_list", description="Список исключений для матерных слов")
+    async def show_ignore_list(self, ctx: FeatureContext):
+        words = sorted(self.curse_ignore_words.all())
+        if not words:
+            await ctx.reply("Список исключений пуст.")
+            return
+        await ctx.reply("Исключения:\n\n" + "\n".join(words))
+
+    @subcommand("ignore_list add <words:rest>", description="Добавить исключения", admin=True)
+    async def add_ignore_words(self, ctx: FeatureContext, words: str):
+        items = _parse_words(words)
+        if not items:
+            raise ValidationArgumentsError()
+        added = self.curse_ignore_words.add_many(items)
+        if not added:
+            await ctx.reply("Все исключения уже есть в списке.")
+            return
+        await self.curse_ignore_words.save()
+        await ctx.reply("Добавлены исключения: " + ", ".join(added))
+
+    @subcommand("ignore_list remove <words:rest>", description="Удалить исключения", admin=True)
+    async def remove_ignore_words(self, ctx: FeatureContext, words: str):
+        items = _parse_words(words)
+        if not items:
+            raise ValidationArgumentsError()
+        removed = self.curse_ignore_words.remove_many(items)
+        if not removed:
+            await ctx.reply("Ни одно исключение не найдено в списке.")
+            return
+        await self.curse_ignore_words.save()
+        await ctx.reply("Удалены исключения: " + ", ".join(removed))
 
     @subcommand("punishment", description="Список наказаний")
     async def show_punishments(self, ctx: FeatureContext):

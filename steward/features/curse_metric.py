@@ -1,8 +1,14 @@
 from steward.framework import Feature, FeatureContext, collection, on_message
+from steward.helpers.curse_detector import CurseDetector
 
 
 class CurseMetricFeature(Feature):
     curse_words = collection("curse_words")
+    curse_ignore_words = collection("curse_ignore_words")
+
+    def __init__(self):
+        super().__init__()
+        self._detector = CurseDetector()
 
     @on_message
     async def count(self, ctx: FeatureContext) -> bool:
@@ -16,7 +22,11 @@ class CurseMetricFeature(Feature):
         words = self.curse_words.all()
         if not words:
             return False
-        count = sum(1 for token in text.split() if token.lower() in words)
+        count = self._detector.count(
+            text,
+            set(words),
+            set(self.curse_ignore_words.all()),
+        )
         if count > 0:
             ctx.metrics.inc("bot_curse_words_total", value=count)
         return False

@@ -61,6 +61,7 @@ class Database:
     curse_participants: list[CurseParticipant] = field(default_factory=list)
     curse_punishments: list[CursePunishment] = field(default_factory=list)
     curse_words: set[str] = field(default_factory=set)
+    curse_ignore_words: set[str] = field(default_factory=set)
     silenced_chats: dict[int, datetime] = field(default_factory=dict)
     rules: list[Rule] = field(default_factory=list)
     feature_requests: list[FeatureRequest] = field(default_factory=list)
