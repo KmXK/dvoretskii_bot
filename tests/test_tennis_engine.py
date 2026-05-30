@@ -624,3 +624,147 @@ def test_player_stats_legacy_sessions_count_as_table_tennis():
     # не трогаем legacy.sport — остаётся дефолт "table_tennis"
     assert player_stats([legacy], user, sport=SPORT_TABLE_TENNIS).matches == 1
     assert player_stats([legacy], user, sport=SPORT_SQUASH).matches == 0
+
+
+# ── point-by-point: pure helpers ──────────────────────────────────────────────
+
+from steward.tennis.engine import (
+    current_point_server,
+    is_party_complete,
+    party_point_to_side,
+)
+
+
+@pytest.mark.parametrize(
+    "a,b,done",
+    [
+        (0, 0, False),
+        (11, 0, True),
+        (11, 9, True),
+        (11, 10, False),   # deuce
+        (12, 10, True),
+        (12, 11, False),
+        (13, 11, True),
+        (10, 9, False),
+    ],
+)
+def test_is_party_complete(a, b, done):
+    assert is_party_complete(a, b) is done
+
+
+def test_party_point_to_side_counts_log():
+    assert party_point_to_side([]) == (0, 0)
+    assert party_point_to_side(["a", "a", "b"]) == (2, 1)
+    assert party_point_to_side(["b", "b", "b", "a"]) == (1, 3)
+
+
+def test_current_point_server_table_tennis_every_two_points():
+    # initial server a: подача переходит каждые 2 очка
+    srv = lambda a, b: current_point_server(SPORT_TABLE_TENNIS, a, b, party_first_server="a")
+    assert srv(0, 0) == "a"
+    assert srv(1, 0) == "a"
+    assert srv(1, 1) == "b"   # 2 очка разыграно → переход
+    assert srv(2, 1) == "b"
+    assert srv(2, 2) == "a"   # 4 очка → снова a
+
+
+def test_current_point_server_table_tennis_deuce_alternates_each_point():
+    srv = lambda a, b: current_point_server(SPORT_TABLE_TENNIS, a, b, party_first_server="a")
+    # при 10:10 — каждое очко меняет подающего
+    s1 = srv(10, 10)
+    s2 = srv(11, 10)
+    assert s1 != s2
+
+
+def test_current_point_server_squash_winner_serves():
+    srv = lambda a, b: current_point_server(SPORT_SQUASH, a, b, party_first_server="a")
+    assert srv(0, 0) == "a"
+    assert srv(3, 1) == "a"   # a ведёт → a подаёт
+    assert srv(1, 3) == "b"
+
+
+# ── point-by-point: TennisRoom ────────────────────────────────────────────────
+
+def test_add_point_accumulates_without_finalizing():
+    s = _live_session(first_server="a", initial_server="a")
+    room = _make_room(s)
+    _run(room.add_point("a"))
+    _run(room.add_point("b"))
+    _run(room.add_point("a"))
+    assert s.current_score_a == 2 and s.current_score_b == 1
+    assert s.points_log == ["a", "b", "a"]
+    assert len(s.matches) == 0
+
+
+def test_add_point_finalizes_party_on_11():
+    s = _live_session(first_server="a", initial_server="a", serve_streak=1)
+    room = _make_room(s)
+    for _ in range(11):
+        ok, _err, info = _run(room.add_point("a"))
+    assert ok and info["match_completed"]
+    assert len(s.matches) == 1
+    assert s.matches[0].score_a == 11 and s.matches[0].score_b == 0
+    assert s.matches[0].winner == "a"
+    # лайв-счёт обнулён под следующую партию
+    assert s.current_score_a == 0 and s.current_score_b == 0
+    assert s.points_log == []
+    # подача переключилась по serve_streak=1
+    assert s.first_server == "b"
+
+
+def test_add_point_deuce_requires_two_point_gap():
+    s = _live_session(first_server="a", initial_server="a")
+    room = _make_room(s)
+    for _ in range(10):
+        _run(room.add_point("a"))
+    for _ in range(10):
+        _run(room.add_point("b"))
+    # 10:10 — партия не закончена
+    assert len(s.matches) == 0
+    _run(room.add_point("a"))  # 11:10 — ещё нет
+    assert len(s.matches) == 0
+    _run(room.add_point("a"))  # 12:10 — победа
+    assert len(s.matches) == 1
+    assert s.matches[0].score_a == 12 and s.matches[0].score_b == 10
+
+
+def test_undo_point_removes_last_point():
+    s = _live_session()
+    room = _make_room(s)
+    _run(room.add_point("a"))
+    _run(room.add_point("b"))
+    ok, _err = _run(room.undo_point())
+    assert ok
+    assert s.points_log == ["a"]
+    assert s.current_score_a == 1 and s.current_score_b == 0
+
+
+def test_undo_point_empty_returns_false():
+    s = _live_session()
+    room = _make_room(s)
+    ok, err = _run(room.undo_point())
+    assert not ok
+    assert "нет очков" in err.lower()
+
+
+def test_reset_current_party_clears_points():
+    s = _live_session()
+    room = _make_room(s)
+    _run(room.add_point("a"))
+    _run(room.add_point("a"))
+    ok, _err = _run(room.reset_current_party())
+    assert ok
+    assert s.points_log == []
+    assert s.current_score_a == 0 and s.current_score_b == 0
+
+
+def test_record_match_with_score_clears_pending_points():
+    # Если велась point-by-point партия, ручная запись готового счёта её перебивает.
+    s = _live_session()
+    room = _make_room(s)
+    _run(room.add_point("a"))
+    _run(room.add_point("a"))
+    _run(room.record_match_with_score(11, 5))
+    assert len(s.matches) == 1
+    assert s.current_score_a == 0 and s.current_score_b == 0
+    assert s.points_log == []

@@ -457,6 +457,18 @@ export default function TennisScoreboard({ onBackToLobby }) {
     setFinishOpen(false)
   }
 
+  const handlePoint = (side) => {
+    if (!canEdit || isClosed) return
+    try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('medium') } catch { /* noop */ }
+    send({ type: 'point', side })
+  }
+
+  const handleUndoPoint = () => {
+    if (!canEdit || isClosed) return
+    try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
+    send({ type: 'undo_point' })
+  }
+
   const handleEditSubmit = (a, b) => {
     if (editIdx == null) return
     send({ type: 'edit_match', idx: editIdx, score_a: a, score_b: b })
@@ -522,6 +534,9 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
   const firstServerName = state.first_server === 'a' ? nameA : nameB
   const sp = sportMeta(state.sport)
+  const [curA, curB] = state.current_score ?? [0, 0]
+  const partyInProgress = curA > 0 || curB > 0
+  const currentServer = state.current_server
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-950 to-black overflow-hidden flex flex-col">
@@ -600,6 +615,36 @@ export default function TennisScoreboard({ onBackToLobby }) {
             {sp.emoji} {sp.winnerServes ? 'подаёт' : 'первая подача —'} {firstServerName}
           </div>
         )}
+
+        {/* Лайв-счёт текущей партии (point-by-point) */}
+        {!isClosed && (
+          <div className="mt-4 flex items-center justify-center gap-3">
+            <motion.span
+              key={`pa-${curA}`}
+              initial={{ scale: 1.5 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 16 }}
+              className={`text-3xl font-black tabular-nums ${currentServer === 'a' ? 'text-rose-300' : 'text-zinc-400'}`}
+            >
+              {curA}
+            </motion.span>
+            <span className="text-zinc-600 text-xl">:</span>
+            <motion.span
+              key={`pb-${curB}`}
+              initial={{ scale: 1.5 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 16 }}
+              className={`text-3xl font-black tabular-nums ${currentServer === 'b' ? 'text-sky-300' : 'text-zinc-400'}`}
+            >
+              {curB}
+            </motion.span>
+            {currentServer && (
+              <span className="text-[10px] uppercase tracking-wider text-zinc-500 ml-1">
+                {sp.emoji} {currentServer === 'a' ? nameA : nameB}
+              </span>
+            )}
+          </div>
+        )}
         {state.last_commentary && (
           <motion.div
             key={state.last_commentary_seq}
@@ -617,22 +662,50 @@ export default function TennisScoreboard({ onBackToLobby }) {
         className="shrink-0 bg-black/80 backdrop-blur-sm border-t border-zinc-800 px-3 pt-3"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
       >
+        {/* Point-by-point: тап = очко. Две большие зоны под каждого игрока. */}
         {!isClosed && canEdit && (
-          <motion.button
-            whileTap={{ scale: 0.97 }}
-            onClick={() => setFinishOpen(true)}
-            className="w-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white py-5 rounded-2xl font-bold text-xl shadow-lg"
-          >
-            + Записать партию
-          </motion.button>
+          <div className="grid grid-cols-2 gap-2">
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => handlePoint('a')}
+              className="bg-gradient-to-br from-rose-600 to-rose-800 text-white py-6 rounded-2xl font-bold shadow-lg flex flex-col items-center"
+            >
+              <span className="text-3xl leading-none">+1</span>
+              <span className="text-xs opacity-80 mt-1 truncate max-w-[90%]">{nameA}</span>
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => handlePoint('b')}
+              className="bg-gradient-to-br from-sky-600 to-sky-800 text-white py-6 rounded-2xl font-bold shadow-lg flex flex-col items-center"
+            >
+              <span className="text-3xl leading-none">+1</span>
+              <span className="text-xs opacity-80 mt-1 truncate max-w-[90%]">{nameB}</span>
+            </motion.button>
+          </div>
         )}
-        <div className="flex items-center justify-between gap-2 mt-2">
+        <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+          {!isClosed && canEdit && partyInProgress && (
+            <button
+              onClick={handleUndoPoint}
+              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
+            >
+              ↩ убрать очко
+            </button>
+          )}
+          {!isClosed && canEdit && (
+            <button
+              onClick={() => setFinishOpen(true)}
+              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
+            >
+              ✎ счёт вручную
+            </button>
+          )}
           {!isClosed && canEdit && partyIndex > 0 && (
             <button
               onClick={handleUndo}
               className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
             >
-              ↶ отменить последнюю
+              ↶ отменить партию
             </button>
           )}
           <div className="flex-1" />
