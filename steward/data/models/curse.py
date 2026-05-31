@@ -7,6 +7,23 @@ class CursePunishment:
     id: int
     coeff: int
     title: str
+    interest_percent: float = 0.0
+    selection_weight: float = 1.0
+
+
+@dataclass
+class CursePunishmentDay:
+    date: str
+    rule_id: int
+
+
+@dataclass
+class CursePunishmentDebt:
+    id: int
+    user_id: int
+    rule_id: int
+    punishment_count: int
+    last_interest_applied_date: str
 
 
 @dataclass
