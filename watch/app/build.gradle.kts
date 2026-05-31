@@ -61,4 +61,7 @@ dependencies {
 
     // HTTP. JSON парсим через org.json (встроен в Android), без лишних зависимостей.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Генерация QR-кода для привязки (часы показывают QR, телефон сканирует).
+    implementation("com.google.zxing:core:3.5.3")
 }

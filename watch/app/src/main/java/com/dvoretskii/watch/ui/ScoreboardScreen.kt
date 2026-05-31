@@ -1,6 +1,7 @@
 package com.dvoretskii.watch.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,15 +50,19 @@ private val sideB = Color(0xFF38BDF8)   // sky
 @Composable
 fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf<ActiveState?>(null) }
+    var sessions by remember { mutableStateOf<List<ActiveState>>(emptyList()) }
+    var selectedId by remember { mutableStateOf<Int?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
     suspend fun refresh() {
         try {
-            state = api.getActive()
+            sessions = api.getActiveSessions()
             error = null
+            // авто-выбор единственной; сброс, если выбранная исчезла
+            if (sessions.size == 1) selectedId = sessions[0].sessionId
+            else if (selectedId != null && sessions.none { it.sessionId == selectedId }) selectedId = null
         } catch (e: ApiException) {
             if (e.status == 401) { onUnauthorized(); return }
             error = e.message
@@ -66,7 +73,7 @@ fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
         }
     }
 
-    // Поллинг — ловим изменения, сделанные с телефона/вебаппы.
+    // Поллинг — ловим изменения, сделанные с телефона/вебаппы/других часов.
     LaunchedEffect(Unit) {
         while (true) {
             refresh()
@@ -80,7 +87,9 @@ fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
         scope.launch {
             try {
                 val updated = block()
-                if (updated != null) state = updated
+                if (updated != null) {
+                    sessions = sessions.map { if (it.sessionId == updated.sessionId) updated else it }
+                }
                 error = null
             } catch (e: ApiException) {
                 if (e.status == 401) onUnauthorized() else error = e.message
@@ -92,19 +101,52 @@ fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
         }
     }
 
-    val s = state
+    val selected = sessions.firstOrNull { it.sessionId == selectedId }
     when {
-        loading && s == null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+        loading && sessions.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
             CircularProgressIndicator()
         }
-        s == null -> NoActiveSession(error)
+        sessions.isEmpty() -> NoActiveSession(error)
+        selected == null -> SessionPicker(sessions = sessions, onPick = { selectedId = it })
         else -> Scoreboard(
-            s = s,
+            s = selected,
+            canSwitch = sessions.size > 1,
             busy = busy,
-            onPointA = { act { api.addPoint(s.sessionId, "a") } },
-            onPointB = { act { api.addPoint(s.sessionId, "b") } },
-            onUndo = { act { api.undoPoint(s.sessionId) } },
+            onPointA = { act { api.addPoint(selected.sessionId, "a") } },
+            onPointB = { act { api.addPoint(selected.sessionId, "b") } },
+            onUndo = { act { api.undoPoint(selected.sessionId) } },
+            onSwitch = { selectedId = null },
         )
+    }
+}
+
+@Composable
+private fun SessionPicker(sessions: List<ActiveState>, onPick: (Int) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 26.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Какая сессия?", style = MaterialTheme.typography.title3, textAlign = TextAlign.Center)
+        sessions.forEach { s ->
+            Chip(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onPick(s.sessionId) },
+                colors = ChipDefaults.secondaryChipColors(),
+                label = {
+                    Text(
+                        "${s.playerA} ${s.winsA}:${s.winsB} ${s.playerB}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                    )
+                },
+            )
+        }
     }
 }
 
@@ -133,34 +175,46 @@ private fun NoActiveSession(error: String?) {
 @Composable
 private fun Scoreboard(
     s: ActiveState,
+    canSwitch: Boolean,
     busy: Boolean,
     onPointA: () -> Unit,
     onPointB: () -> Unit,
     onUndo: () -> Unit,
+    onSwitch: () -> Unit,
 ) {
+    // Горизонтальные поля побольше — на круглом экране края обрезаются.
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 18.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 26.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
     ) {
-        // Имена + счёт по партиям
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            ServerDot(active = s.currentServer == "a", color = sideA)
+        if (canSwitch) {
             Text(
-                text = "${s.playerA}  ${s.winsA}:${s.winsB}  ${s.playerB}",
-                style = MaterialTheme.typography.caption2,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 4.dp),
+                "▾ сменить сессию",
+                style = MaterialTheme.typography.caption3,
+                color = MaterialTheme.colors.onSurfaceVariant,
+                modifier = Modifier.clickable(enabled = !busy, onClick = onSwitch),
             )
-            ServerDot(active = s.currentServer == "b", color = sideB)
         }
+        // Имена (по центру, с эллипсисом) — без краевых элементов, чтобы не резалось.
+        Text(
+            text = "${s.playerA} ${s.winsA}:${s.winsB} ${s.playerB}",
+            style = MaterialTheme.typography.caption2,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
-        // Крупный счёт текущей партии
+        // Крупный счёт текущей партии; подача — цветная точка под подающей стороной.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${s.scoreA}", fontSize = 40.sp, fontWeight = FontWeight.Black, color = sideA)
-            Text(" : ", fontSize = 30.sp, color = MaterialTheme.colors.onSurfaceVariant)
-            Text("${s.scoreB}", fontSize = 40.sp, fontWeight = FontWeight.Black, color = sideB)
+            Text("${s.scoreA}", fontSize = 38.sp, fontWeight = FontWeight.Black, color = sideA)
+            Text(" : ", fontSize = 26.sp, color = MaterialTheme.colors.onSurfaceVariant)
+            Text("${s.scoreB}", fontSize = 38.sp, fontWeight = FontWeight.Black, color = sideB)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+            ServerDot(active = s.currentServer == "a", color = sideA)
+            ServerDot(active = s.currentServer == "b", color = sideB)
         }
 
         // Две зоны +1
@@ -173,7 +227,7 @@ private fun Scoreboard(
         }
 
         Chip(
-            label = { Text("↩ Отменить очко") },
+            label = { Text("↩ Отменить", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) },
             onClick = onUndo,
             enabled = !busy,
             colors = ChipDefaults.secondaryChipColors(),

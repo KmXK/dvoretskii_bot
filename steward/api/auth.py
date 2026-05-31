@@ -267,8 +267,10 @@ PUBLIC_API_PATHS = {
     "/api/auth/oidc",
     "/api/auth/me",
     "/api/auth/logout",
-    # Часы привязываются по коду, своей сессии у них ещё нет.
+    # Часы привязываются по коду/QR, своей сессии у них ещё нет.
     "/api/watch/pair/claim",
+    "/api/watch/pair/device-start",
+    "/api/watch/pair/device-poll",
 }
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
