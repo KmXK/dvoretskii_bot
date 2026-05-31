@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 CHROMA_BBOX = (637, 185, 1110, 460)
 ASSETS = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "news"
+EMOTIONS_DIR = ASSETS / "anchor_emotions"
+
+
+def _emotion_anchor(emotion: str, fallback: Path) -> Path:
+    """Pick the per-emotion anchor cutout if available, else fall back to neutral/static."""
+    p = EMOTIONS_DIR / f"{emotion}.png"
+    if p.exists():
+        return p
+    n = EMOTIONS_DIR / "neutral.png"
+    if n.exists():
+        return n
+    return fallback
 
 ProgressFn = Callable[[str], Awaitable[None]]
 
@@ -91,19 +103,29 @@ async def generate_news_video(
     filtered_paths: list[Path] = []
     filtered_texts: list[str] = []
     filtered_durations: list[float] = []
+    filtered_emotions: list[str] = []
     for slide, path, dur in zip(script.slides, image_results, tts.chunk_durations):
         if path is not None:
             filtered_paths.append(path)
             filtered_texts.append(slide.text)
             filtered_durations.append(dur)
+            filtered_emotions.append(slide.emotion)
     if not filtered_paths:
         logger.error("no slide images obtained")
         return None
 
-    if animated_anchor is None:
-        logger.info("anchor: static cutout (no animation)")
-    else:
+    if animated_anchor is not None:
         logger.info("anchor: animated via EchoMimicV2")
+        anchor_arg: Path | list[Path] = animated_anchor
+    else:
+        # Pick per-slide emotion cutout if available, else single static fallback.
+        per_slide_anchors = [_emotion_anchor(e, anchor_static) for e in filtered_emotions]
+        unique = {p.name for p in per_slide_anchors}
+        logger.info(
+            "anchor: per-slide emotions=%s (unique files=%d)",
+            filtered_emotions, len(unique),
+        )
+        anchor_arg = per_slide_anchors
 
     await progress("compose")
     output_path = out_dir / "news.mp4"
@@ -113,7 +135,7 @@ async def generate_news_video(
         slide_paths=filtered_paths,
         slide_texts=filtered_texts,
         slide_durations=filtered_durations,
-        anchor_path=animated_anchor or anchor_static,
+        anchor_path=anchor_arg,
         audio_path=audio_path,
         output_path=output_path,
         anchor_is_video=animated_anchor is not None,
