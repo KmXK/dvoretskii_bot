@@ -1,11 +1,14 @@
-"""Yandex SpeechKit TTS for news anchor — gruff male voice (madirus by default).
+"""TTS for news anchor — Yandex SpeechKit by default, optional ElevenLabs.
 
 Yandex v3 sync endpoint caps single requests at ~250 chars. We split the script by
 sentences, synthesize each chunk and concat via ffmpeg.
 
-`synthesize_news` returns a TtsResult that exposes both the merged audio path
-(used as soundtrack) and the per-chunk paths (used by the echomimic stage to
-animate the anchor in matching segments).
+Set `NEWS_TTS_PROVIDER=elevenlabs` (+ `EVELEN_LABS_STT`/`ELEVENLABS_API_KEY` and
+`NEWS_TTS_ELEVEN_VOICE_ID`) to route through ElevenLabs `eleven_multilingual_v2`.
+
+`synthesize_per_sentence` returns a TtsResult that exposes the merged audio,
+per-slide chunk paths (for V2 / slide-timing) and per-sentence durations (for
+per-sentence anchor emotion swaps).
 """
 from __future__ import annotations
 
@@ -28,6 +31,8 @@ _YANDEX_TTS_V3_URL = "https://tts.api.cloud.yandex.net/tts/v3/utteranceSynthesis
 _TIMEOUT = 30.0
 _DEFAULT_VOICE = "madirus"
 _CHUNK_LIMIT = 240
+_ELEVEN_CHUNK_LIMIT = 4500  # ElevenLabs allows much longer single calls
+_ELEVEN_DEFAULT_MODEL = "eleven_multilingual_v2"
 
 
 def _api_key() -> str | None:
@@ -75,6 +80,52 @@ def _split_into_chunks(text: str, limit: int = _CHUNK_LIMIT) -> list[str]:
     if cur:
         chunks.append(cur)
     return chunks
+
+
+def _eleven_key() -> str | None:
+    return (
+        os.environ.get("ELEVENLABS_API_KEY")
+        or os.environ.get("EVELEN_LABS_STT")  # name used elsewhere in the project
+    )
+
+
+def _provider() -> str:
+    p = os.environ.get("NEWS_TTS_PROVIDER", "yandex").strip().lower()
+    return p if p in {"yandex", "elevenlabs"} else "yandex"
+
+
+def _tts_one_eleven_sync(text: str, voice_id: str, model_id: str, api_key: str) -> bytes | None:
+    """Sync call to ElevenLabs TTS, returns mp3 bytes."""
+    from elevenlabs.client import ElevenLabs
+
+    client = ElevenLabs(
+        api_key=api_key,
+        httpx_client=httpx.Client(timeout=120, proxy=os.environ.get("DOWNLOAD_PROXY")),
+    )
+    try:
+        stream = client.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id=model_id,
+            output_format="mp3_44100_128",
+        )
+        return b"".join(stream)
+    except Exception:
+        logger.exception("ElevenLabs TTS call failed")
+        return None
+
+
+async def _tts_one_eleven(text: str) -> bytes | None:
+    api_key = _eleven_key()
+    if not api_key:
+        logger.warning("ElevenLabs TTS: no API key (ELEVENLABS_API_KEY / EVELEN_LABS_STT)")
+        return None
+    voice_id = os.environ.get("NEWS_TTS_ELEVEN_VOICE_ID")
+    if not voice_id:
+        logger.warning("ElevenLabs TTS: NEWS_TTS_ELEVEN_VOICE_ID not set")
+        return None
+    model_id = os.environ.get("NEWS_TTS_ELEVEN_MODEL", _ELEVEN_DEFAULT_MODEL)
+    return await asyncio.to_thread(_tts_one_eleven_sync, text, voice_id, model_id, api_key)
 
 
 async def _tts_one(text: str, api_key: str, voice: str, folder_id: str) -> bytes | None:
@@ -161,6 +212,53 @@ def _probe_duration(path: Path) -> float:
     return float(result.stdout.strip() or 0.0)
 
 
+def _mp3_to_ogg(mp3: bytes, dst: Path) -> bool:
+    """Convert mp3 bytes (ElevenLabs output) to OGG/Opus on disk so all downstream
+    concat/duration logic is uniform regardless of provider."""
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", "pipe:0",
+         "-c:a", "libopus", "-b:a", "64k", str(dst)],
+        input=mp3, capture_output=True,
+    )
+    return result.returncode == 0
+
+
+async def _synth_one_sentence(
+    text: str, dst: Path, *, yandex_key: str | None, voice: str, folder_id: str,
+) -> bool:
+    """Synthesize one sentence with the currently selected provider; write OGG to dst."""
+    provider = _provider()
+    if provider == "elevenlabs":
+        mp3 = await _tts_one_eleven(text)
+        if mp3 is None:
+            return False
+        return await asyncio.to_thread(_mp3_to_ogg, mp3, dst)
+    # Yandex (default): one sentence may exceed 240-char limit, chunk if needed.
+    if yandex_key is None:
+        return False
+    sub_chunks = _split_into_chunks(text)
+    if len(sub_chunks) == 1:
+        audio = await _tts_one(sub_chunks[0], yandex_key, voice, folder_id)
+        if audio is None:
+            return False
+        dst.write_bytes(audio)
+        return True
+    sub_paths: list[Path] = []
+    for k, sub in enumerate(sub_chunks):
+        audio = await _tts_one(sub, yandex_key, voice, folder_id)
+        if audio is None:
+            for sp in sub_paths:
+                sp.unlink(missing_ok=True)
+            return False
+        sp = dst.parent / f"{dst.stem}_sub{k:02d}.ogg"
+        sp.write_bytes(audio)
+        sub_paths.append(sp)
+    await asyncio.to_thread(_concat_ogg, sub_paths, dst)
+    for sp in sub_paths:
+        sp.unlink(missing_ok=True)
+    return True
+
+
 async def synthesize_per_sentence(
     slides_sentences: list[list[str]],
     out_path: Path,
@@ -173,12 +271,20 @@ async def synthesize_per_sentence(
     Returns TtsResult with per-slide chunks (for V2 + slide-image timing) and
     per-sentence durations within each slide (for per-sentence emotion overlay).
     """
-    api_key = _api_key()
-    if not api_key or not slides_sentences:
-        logger.warning("news TTS: no api key or empty input")
+    provider = _provider()
+    yandex_key = _api_key() if provider == "yandex" else None
+    if provider == "yandex" and not yandex_key:
+        logger.warning("news TTS yandex: no api key")
         return None
+    if provider == "elevenlabs" and not (_eleven_key() and os.environ.get("NEWS_TTS_ELEVEN_VOICE_ID")):
+        logger.warning("news TTS elevenlabs: missing key or NEWS_TTS_ELEVEN_VOICE_ID")
+        return None
+    if not slides_sentences:
+        return None
+
     voice = voice or os.environ.get("NEWS_TTS_VOICE", _DEFAULT_VOICE)
     folder_id = folder_id or os.environ.get("AI_FOLDER_ID", "")
+    logger.info("news TTS: provider=%s", provider)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     slide_paths: list[Path] = []
@@ -192,24 +298,13 @@ async def synthesize_per_sentence(
             sent = (sent or "").strip()
             if not sent:
                 return None
-            # A single sentence may still exceed the 240-char limit on rare occasions.
-            sub_chunks = _split_into_chunks(sent)
-            sub_paths: list[Path] = []
-            for k, sub in enumerate(sub_chunks):
-                audio = await _tts_one(sub, api_key, voice, folder_id)
-                if audio is None:
-                    logger.warning("TTS slide %d sent %d sub %d failed: %r", i, j, k, sub[:80])
-                    return None
-                sp = out_path.parent / f"_tts_s{i:02d}_t{j:02d}_p{k:02d}.ogg"
-                sp.write_bytes(audio)
-                sub_paths.append(sp)
             sent_path = out_path.parent / f"tts_s{i:02d}_t{j:02d}.ogg"
-            if len(sub_paths) == 1:
-                shutil.move(str(sub_paths[0]), str(sent_path))
-            else:
-                await asyncio.to_thread(_concat_ogg, sub_paths, sent_path)
-                for sp in sub_paths:
-                    sp.unlink(missing_ok=True)
+            ok = await _synth_one_sentence(
+                sent, sent_path, yandex_key=yandex_key, voice=voice, folder_id=folder_id,
+            )
+            if not ok:
+                logger.warning("TTS slide %d sent %d failed: %r", i, j, sent[:80])
+                return None
             sentence_paths.append(sent_path)
 
         slide_path = out_path.parent / f"tts_slide_{i:02d}.ogg"
