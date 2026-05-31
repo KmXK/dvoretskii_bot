@@ -160,17 +160,22 @@ class FeatureContext:
         message_id: int,
         *,
         reply_to_message_id: int | None = None,
+        caption: str | None = None,
     ):
         """Copy any message (text, photo, sticker, video, …) into another chat.
 
         Returns a telegram.MessageId. Unlike forwarding, the copy hides the
         original sender — the bot relays the content as its own message.
+
+        `caption` overrides the copied message's caption (pass "" to drop it);
+        leave as None to keep the original caption.
         """
         return await self.bot.copy_message(
             chat_id=chat_id,
             from_chat_id=from_chat_id,
             message_id=message_id,
             reply_to_message_id=reply_to_message_id,
+            caption=caption,
         )
 
 

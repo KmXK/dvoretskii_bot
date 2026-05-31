@@ -1,4 +1,5 @@
 import logging
+import re
 
 from telegram import ReactionTypeEmoji
 
@@ -22,6 +23,10 @@ MAX_MESSAGES_PER_TUNNEL = 500
 # Ограничение на размер inline-списка чатов в /tunnel to.
 MAX_PICK_BUTTONS = 30
 
+# Команда в подписи к медиа: «/tunnel 4 текст» (телеграм не считает её командой,
+# поэтому ловим вручную в on_message по caption).
+_CAPTION_CMD_RE = re.compile(r"^/tunnel(?:@\w+)?\s+(\d+)(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+
 
 HELP_TEXT = """\
 /tunnel — туннели между чатами: связать два чата и пересылать сообщения.
@@ -37,11 +42,15 @@ HELP_TEXT = """\
      а вам в чат вернётся подтверждение, что подключение приняли (или отклонили).
 
 Как пользоваться:
-  • Отправить сообщение:        /tunnel 4 привет, как дела
+  • Отправить текст:            /tunnel 4 привет, как дела
+  • Отправить медиа:            прикрепите фото/видео/гифку и в подписи
+    напишите /tunnel 4 (можно с текстом: /tunnel 4 смотри сюда)
+  • Переслать любое сообщение:  сделайте reply на ЛЮБОЕ сообщение в чате
+    (своё фото, чужой текст, стикер, голосовое…) и напишите /tunnel 4 —
+    это сообщение улетит в другой чат, а на ваш reply встанет 👌
   • Ответить на пришедшее:      сделайте reply на сообщение из туннеля —
-    ответ улетит обратно, а на ваш reply встанет 👌
-    В ответе можно слать что угодно: текст, фото, видео, стикеры, голосовые —
-    всё перешлётся в другой чат.
+    ответ улетит обратно. В ответе можно слать что угодно: текст, фото,
+    видео, стикеры, голосовые — всё перешлётся в другой чат.
   • Список туннелей этого чата:  /tunnel   (или /tunnel list)
   • Удалить туннель (чатадмин):  /tunnel rm 4
   • Перестать принимать запросы: /tunnel close
@@ -49,7 +58,8 @@ HELP_TEXT = """\
 Команды:
   /tunnel open            — открыть чат для подключений (чатадмин)
   /tunnel to              — начать подключение к другому чату
-  /tunnel <id> <текст>    — переслать сообщение по туннелю
+  /tunnel <id> <текст>    — переслать текст по туннелю
+  /tunnel <id>            — reply на сообщение → переслать его по туннелю
   /tunnel list            — туннели этого чата
   /tunnel rm <id>         — удалить туннель (чатадмин)
   /tunnel close           — закрыть чат для новых подключений (чатадмин)
@@ -355,6 +365,88 @@ class TunnelFeature(Feature):
         await self.tmsgs.save()
         await self._react_ok(ctx.chat_id, ctx.message.message_id if ctx.message else None)
 
+    @subcommand("<id:int>", description="Reply на сообщение → переслать его по туннелю")
+    async def send_reply(self, ctx: FeatureContext, id: int):
+        msg = ctx.message
+        reply = msg.reply_to_message if msg else None
+        if reply is None:
+            await ctx.reply(
+                f"Чтобы что-то отправить по туннелю #{id}: либо напишите текст "
+                f"(/tunnel {id} привет), либо ответьте (reply) на сообщение "
+                f"и напишите /tunnel {id} — это сообщение перешлётся в другой чат."
+            )
+            return
+        tunnel = self.tunnels.find_by(id=id)
+        if tunnel is None or not tunnel.involves(ctx.chat_id):
+            await ctx.reply("Туннель не найден в этом чате. Список: /tunnel list")
+            return
+        target = tunnel.other_side(ctx.chat_id)
+        if target is None:
+            await ctx.reply("Туннель не найден в этом чате.")
+            return
+
+        header = self._header(ctx, "💬")
+        try:
+            dst_msg_id = await self._relay(ctx, target, header, copy_from=reply)
+        except Exception:
+            logger.exception("tunnel %s: failed to forward replied message to %s", id, target)
+            await ctx.reply("Не удалось доставить сообщение — возможно, бот выгнан из того чата.")
+            return
+
+        self._record_message(
+            tunnel_id=id,
+            src_chat=ctx.chat_id,
+            src_msg_id=reply.message_id,
+            dst_chat=target,
+            dst_msg_id=dst_msg_id,
+            sender_id=ctx.user_id,
+        )
+        await self.tmsgs.save()
+        await self._react_ok(ctx.chat_id, msg.message_id if msg else None)
+
+    # ------------------------------------------------------------------ #
+    # Media with a command in the caption: «/tunnel 4 текст» on a photo/video
+    # ------------------------------------------------------------------ #
+
+    @on_message
+    async def forward_caption(self, ctx: FeatureContext) -> bool:
+        msg = ctx.message
+        if msg is None:
+            return False
+        parsed = self._caption_command(msg)
+        if parsed is None:
+            return False
+        tunnel_id, body = parsed
+
+        tunnel = self.tunnels.find_by(id=tunnel_id)
+        if tunnel is None or not tunnel.involves(ctx.chat_id):
+            await ctx.reply("Туннель не найден в этом чате. Список: /tunnel list")
+            return True
+        target = tunnel.other_side(ctx.chat_id)
+        if target is None:
+            await ctx.reply("Туннель не найден в этом чате.")
+            return True
+
+        header = self._header(ctx, "💬")
+        try:
+            dst_msg_id = await self._relay(ctx, target, header, copy_from=msg, text=body)
+        except Exception:
+            logger.exception("tunnel %s: failed to forward media to %s", tunnel_id, target)
+            await ctx.reply("Не удалось доставить сообщение — возможно, бот выгнан из того чата.")
+            return True
+
+        self._record_message(
+            tunnel_id=tunnel_id,
+            src_chat=ctx.chat_id,
+            src_msg_id=msg.message_id,
+            dst_chat=target,
+            dst_msg_id=dst_msg_id,
+            sender_id=ctx.user_id,
+        )
+        await self.tmsgs.save()
+        await self._react_ok(ctx.chat_id, msg.message_id)
+        return True
+
     # ------------------------------------------------------------------ #
     # Reply forwarding (back through the tunnel)
     # ------------------------------------------------------------------ #
@@ -367,6 +459,9 @@ class TunnelFeature(Feature):
         # Команды идут своим путём; не пересылаем их как ответы.
         if msg.text and msg.text.startswith("/"):
             return False
+        # Медиа с командой в подписи обрабатывает forward_caption.
+        if self._caption_command(msg) is not None:
+            return False
         reply = msg.reply_to_message
         if reply is None:
             return False
@@ -377,10 +472,10 @@ class TunnelFeature(Feature):
         if mapping is None:
             return False
 
-        header = self._header(ctx, "↩️")
+        header = self._header(ctx)
         try:
-            dst_msg_id = await self._relay_content(
-                ctx, mapping.src_chat, header, msg, mapping.src_msg_id or None
+            dst_msg_id = await self._relay(
+                ctx, mapping.src_chat, header, copy_from=msg, reply_to=mapping.src_msg_id or None
             )
         except Exception:
             logger.exception(
@@ -485,41 +580,65 @@ class TunnelFeature(Feature):
             return chat.name
         return f"чат {chat_id}"
 
-    def _header(self, ctx: FeatureContext, prefix: str) -> str:
+    def _header(self, ctx: FeatureContext, prefix: str = "") -> str:
         sender = self._sender_name(ctx)
+        lead = f"{prefix} " if prefix else ""
         # В личке отправитель и есть «чат» — не дублируем имя.
         if ctx.chat_id > 0:
-            return f"{prefix} {sender}:"
-        return f"{prefix} [{self._chat_name(ctx.chat_id)}] {sender}:"
+            return f"{lead}{sender}:"
+        return f"{lead}[{self._chat_name(ctx.chat_id)}] {sender}:"
 
-    async def _relay_content(
+    def _caption_command(self, msg) -> tuple[int, str] | None:
+        """Если сообщение — медиа с подписью вида «/tunnel <id> [текст]»,
+        вернуть (id, очищенный_текст). Иначе None.
+        """
+        caption = getattr(msg, "caption", None)
+        if not isinstance(caption, str):
+            return None
+        m = _CAPTION_CMD_RE.match(caption.strip())
+        if m is None:
+            return None
+        return int(m.group(1)), (m.group(2) or "").strip()
+
+    async def _send_text(
+        self, ctx: FeatureContext, dst_chat: int, text: str, reply_to: int | None
+    ):
+        """Отправить текст; если reply_to недоступен (сообщения нет) — без него."""
+        try:
+            return await ctx.send_to(dst_chat, text, markdown=False, reply_to_message_id=reply_to)
+        except Exception:
+            return await ctx.send_to(dst_chat, text, markdown=False)
+
+    async def _relay(
         self,
         ctx: FeatureContext,
         dst_chat: int,
         header: str,
-        src_message,
-        reply_to: int | None,
+        *,
+        copy_from=None,
+        text: str | None = None,
+        reply_to: int | None = None,
     ) -> int:
-        """Доставить сообщение в dst_chat. Текст — одним сообщением с шапкой,
-        медиа (стикеры/фото/видео/документы/голос/…) — шапка + copy_message.
-        Возвращает id сообщения в dst_chat, на которое можно реплайнуть.
-        """
-        text = src_message.text
-        if text:
-            body = f"{header}\n{text}"
-            try:
-                sent = await ctx.send_to(dst_chat, body, markdown=False, reply_to_message_id=reply_to)
-            except Exception:
-                sent = await ctx.send_to(dst_chat, body, markdown=False)
-            return sent.message_id
+        """Доставить контент в dst_chat и вернуть id доставленного сообщения.
 
-        # Любой нетекстовый контент: шапка отдельным сообщением, затем копия.
-        try:
-            await ctx.send_to(dst_chat, header, markdown=False, reply_to_message_id=reply_to)
-        except Exception:
-            await ctx.send_to(dst_chat, header, markdown=False)
-        copied = await ctx.copy_to(dst_chat, ctx.chat_id, src_message.message_id)
-        return copied.message_id
+        copy_from — исходное сообщение. Если оно нетекстовое (медиа/стикер/
+        голос/…), оно копируется через copy_message; иначе пересылается текст.
+        text — для медиа это новая подпись (override; "" убирает подпись,
+        None оставляет оригинальную); для текста — тело под шапкой.
+        """
+        is_media = copy_from is not None and copy_from.text is None
+        if is_media:
+            # Шапка отдельным сообщением, затем копия контента.
+            await self._send_text(ctx, dst_chat, header, reply_to)
+            copied = await ctx.copy_to(
+                dst_chat, ctx.chat_id, copy_from.message_id, caption=text
+            )
+            return copied.message_id
+
+        body = text if text is not None else (copy_from.text if copy_from is not None else None)
+        full = f"{header}\n{body}" if body else header
+        sent = await self._send_text(ctx, dst_chat, full, reply_to)
+        return sent.message_id
 
     def _user_name(self, user_id: int) -> str:
         user = self.users.find_by(id=user_id)

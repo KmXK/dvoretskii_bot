@@ -213,6 +213,130 @@ class TestSend:
         assert repo.db.tunnel_messages == []
 
 
+class TestSendReply:
+    """/tunnel <id> как reply на любое сообщение → переслать его в туннель."""
+
+    def _repo_with_tunnel(self):
+        repo = base_repo()
+        repo.db.chat_tunnels.append(
+            ChatTunnel(id=1, chat_a=CHAT_A, chat_b=CHAT_B, chat_a_name="Чат А", chat_b_name="Чат Б", created_by=USER)
+        )
+        return repo
+
+    async def test_reply_text_forwarded(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = make_context("tunnel", args="1", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.message.reply_to_message = MagicMock(message_id=42, text="исходный текст")
+        result = await feature.chat(ctx)
+        assert result is True
+        recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
+        assert len(recorded) == 1
+        assert recorded[0].src_chat == CHAT_A
+        assert recorded[0].dst_chat == CHAT_B
+        # Back-reply из другого чата должен целиться в исходное сообщение.
+        assert recorded[0].src_msg_id == 42
+
+    async def test_reply_media_forwarded(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = make_context("tunnel", args="1", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.message.reply_to_message = MagicMock(message_id=42, text=None)  # медиа
+        result = await feature.chat(ctx)
+        assert result is True
+        recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
+        assert len(recorded) == 1
+        assert recorded[0].src_msg_id == 42
+
+    async def test_without_reply_hints(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = make_context("tunnel", args="1", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.message.reply_to_message = None
+        result = await feature.chat(ctx)
+        assert result is True
+        assert repo.db.tunnel_messages == []
+        assert "ответьте" in reply_of(ctx).lower() or "reply" in reply_of(ctx).lower()
+
+    async def test_reply_unknown_tunnel(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = make_context("tunnel", args="99", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.message.reply_to_message = MagicMock(message_id=42, text="x")
+        await feature.chat(ctx)
+        assert "не найден" in reply_of(ctx)
+        assert repo.db.tunnel_messages == []
+
+
+class TestCaptionSend:
+    """Медиа с командой в подписи: «/tunnel <id> [текст]» на фото/видео."""
+
+    def _repo_with_tunnel(self):
+        repo = base_repo()
+        repo.db.chat_tunnels.append(
+            ChatTunnel(id=1, chat_a=CHAT_A, chat_b=CHAT_B, chat_a_name="Чат А", chat_b_name="Чат Б", created_by=USER)
+        )
+        return repo
+
+    def _media_caption_ctx(self, repo, bot, caption, chat_id=CHAT_A):
+        update = make_text_update("", user_id=USER, chat_id=chat_id)
+        update.message.text = None  # медиа без текста
+        update.message.caption = caption
+        update.message.message_id = 70
+        update.message.reply_to_message = None
+        from steward.bot.context import ChatBotContext
+
+        return ChatBotContext(
+            repository=repo, bot=bot, client=MagicMock(), update=update,
+            tg_context=MagicMock(), metrics=MagicMock(), message=update.message,
+        )
+
+    async def test_media_caption_forwarded(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = self._media_caption_ctx(repo, bot, "/tunnel 1 смотри сюда")
+        result = await feature.chat(ctx)
+        assert result is True
+        recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
+        assert len(recorded) == 1
+        assert recorded[0].src_chat == CHAT_A
+        assert recorded[0].dst_chat == CHAT_B
+        assert recorded[0].src_msg_id == 70
+
+    async def test_media_caption_no_text(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = self._media_caption_ctx(repo, bot, "/tunnel 1")
+        result = await feature.chat(ctx)
+        assert result is True
+        assert len([m for m in repo.db.tunnel_messages if m.tunnel_id == 1]) == 1
+
+    async def test_caption_unknown_tunnel(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = self._media_caption_ctx(repo, bot, "/tunnel 99 hi")
+        result = await feature.chat(ctx)
+        assert result is True
+        assert "не найден" in reply_of(ctx)
+        assert repo.db.tunnel_messages == []
+
+    async def test_non_tunnel_caption_ignored(self):
+        repo = self._repo_with_tunnel()
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+        ctx = self._media_caption_ctx(repo, bot, "просто подпись к фото")
+        result = await feature.chat(ctx)
+        assert result is False
+        assert repo.db.tunnel_messages == []
+
+
 class TestReplyForwarding:
     async def test_reply_forwarded_back(self):
         repo = base_repo()
