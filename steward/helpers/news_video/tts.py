@@ -115,6 +115,27 @@ def _tts_one_eleven_sync(text: str, voice_id: str, model_id: str, api_key: str) 
         return None
 
 
+async def synthesize_eleven_test(text: str, voice_id: str, out_path: Path) -> Path | None:
+    """One-shot ElevenLabs synth for admin voice-testing (the /tts command).
+
+    Always uses ElevenLabs regardless of NEWS_TTS_PROVIDER. Writes OGG/Opus to
+    out_path so the caller can send it as a Telegram voice message.
+    """
+    api_key = _eleven_key()
+    if not api_key:
+        logger.warning("ElevenLabs test: no API key set")
+        return None
+    if not text.strip() or not voice_id.strip():
+        return None
+    model_id = os.environ.get("NEWS_TTS_ELEVEN_MODEL", _ELEVEN_DEFAULT_MODEL)
+    mp3 = await asyncio.to_thread(_tts_one_eleven_sync, text, voice_id, model_id, api_key)
+    if mp3 is None:
+        return None
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ok = await asyncio.to_thread(_mp3_to_ogg, mp3, out_path)
+    return out_path if ok else None
+
+
 async def _tts_one_eleven(text: str) -> bytes | None:
     api_key = _eleven_key()
     if not api_key:

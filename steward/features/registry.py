@@ -53,6 +53,7 @@ from steward.features.settings import SettingsFeature
 from steward.features.shazam import ShazamFeature
 from steward.features.transcribe import TranscribeFeature
 from steward.features.translate import TranslateFeature
+from steward.features.tts import TtsTestFeature
 from steward.features.tunnel import TunnelFeature
 from steward.features.user_memory import UserMemoryFeature
 from steward.features.voice_video import VoiceVideoFeature
@@ -120,6 +121,7 @@ COMMANDS << [
     VoiceVideoFeature,
     TranscribeFeature,
     ShazamFeature,
+    TtsTestFeature,
     MultiplyFeature,
     FuckFeature,
     SexFeature,
