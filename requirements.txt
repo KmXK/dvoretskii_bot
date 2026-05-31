@@ -29,3 +29,6 @@ PyDrive
 python-chess
 shazamio
 PyJWT[crypto]
+rembg
+onnxruntime
+ddgs
