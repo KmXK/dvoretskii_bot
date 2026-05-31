@@ -4,8 +4,10 @@ from typing import Any
 
 from telegram import Message
 
+from steward.features.curse_metric import CurseMetricFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.framework import Feature, FeatureContext, step, subcommand, wizard
+from steward.helpers.curse_processing import process_transcribed_curse_text
 from steward.session.context import ChatStepContext
 from steward.session.step import Step
 
@@ -23,6 +25,7 @@ _PROMPT_TEXT = (
 _NOT_MEDIA = (
     "Это не голосовое / видео / аудио. Пришли медиа или /stop."
 )
+_CURSE_SOURCE_DEFAULT = object()
 
 
 def _resolve_file_id(obj: Any) -> tuple[str, bool] | None:
@@ -117,11 +120,14 @@ class TranscribeFeature(Feature):
         picked = _pick_source(message)
         if picked is not None:
             (file_id, is_video_note), source = picked
+            source_message = source if isinstance(source, Message) else message
+            curse_source_message = source if isinstance(source, Message) else None
             await self._transcribe(
                 ctx,
                 file_id=file_id,
                 is_video_note=is_video_note,
-                source_message=source if isinstance(source, Message) else message,
+                source_message=source_message,
+                curse_source_message=curse_source_message,
             )
             return
 
@@ -174,7 +180,7 @@ class TranscribeFeature(Feature):
             return
 
         try:
-            await create_transcription_reply(
+            transcription = await create_transcription_reply(
                 self.repository,
                 source_message,
                 audio_path,
@@ -184,6 +190,7 @@ class TranscribeFeature(Feature):
                 speaker_first_name,
                 video_path=audio_path if is_video_note else None,
             )
+            await self._process_transcribed_curses(ctx, source_message, transcription)
         except Exception as e:
             logger.exception("/transcribe session: failed: %s", e)
             await ctx.reply("Не удалось сделать расшифровку", markdown=False)
@@ -195,6 +202,7 @@ class TranscribeFeature(Feature):
         file_id: str,
         is_video_note: bool,
         source_message: Message,
+        curse_source_message: Message | None | object = _CURSE_SOURCE_DEFAULT,
     ):
         try:
             audio_path = await self._resolve_audio_path(ctx, file_id)
@@ -206,7 +214,7 @@ class TranscribeFeature(Feature):
         sender = source_message.from_user
         placeholder = await ctx.reply("Слушаю…", markdown=False)
         try:
-            await create_transcription_reply(
+            transcription = await create_transcription_reply(
                 self.repository,
                 source_message,
                 audio_path,
@@ -217,12 +225,29 @@ class TranscribeFeature(Feature):
                 video_path=audio_path if is_video_note else None,
                 edit_message=placeholder,
             )
+            if curse_source_message is _CURSE_SOURCE_DEFAULT:
+                curse_source_message = source_message
+            await self._process_transcribed_curses(ctx, curse_source_message, transcription)
         except Exception as e:
             logger.exception("/transcribe failed: %s", e)
             try:
                 await placeholder.edit_text("Не удалось сделать расшифровку")
             except Exception:
                 pass
+
+    async def _process_transcribed_curses(
+        self,
+        ctx: FeatureContext,
+        source_message: Message | None,
+        transcription: str | None,
+    ) -> None:
+        await process_transcribed_curse_text(
+            self.repository,
+            ctx.metrics,
+            source_message=source_message,
+            text=transcription,
+            capability_cls=CurseMetricFeature,
+        )
 
     async def _resolve_audio_path(self, ctx: FeatureContext, file_id: str) -> Path:
         tg_file = await ctx.bot.get_file(file_id)

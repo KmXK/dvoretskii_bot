@@ -1,21 +1,10 @@
-import logging
-
 from steward.framework import Feature, FeatureContext, collection, on_message
-from steward.helpers.curse_debt import accrue_curse_debt, today_msk
-from steward.helpers.curse_detector import CurseDetector
-
-
-logger = logging.getLogger(__name__)
-CURSE_REACTION = "🤬"
+from steward.helpers.curse_processing import process_curse_text
 
 
 class CurseMetricFeature(Feature):
     curse_words = collection("curse_words")
     curse_ignore_words = collection("curse_ignore_words")
-
-    def __init__(self):
-        super().__init__()
-        self._detector = CurseDetector()
 
     @on_message
     async def count(self, ctx: FeatureContext) -> bool:
@@ -26,20 +15,11 @@ class CurseMetricFeature(Feature):
             return False
         if getattr(ctx.message, "forward_origin", None) is not None:
             return False
-        words = self.curse_words.all()
-        if not words:
-            return False
-        count = self._detector.count(
-            text,
-            set(words),
-            set(self.curse_ignore_words.all()),
+        await process_curse_text(
+            self.repository,
+            ctx.metrics,
+            user_id=ctx.user_id,
+            text=text,
+            source_message=ctx.message,
         )
-        if count > 0:
-            ctx.metrics.inc("bot_curse_words_total", value=count)
-            try:
-                await ctx.message.set_reaction(CURSE_REACTION)
-            except Exception:
-                logger.warning("failed to set curse reaction", exc_info=True)
-            if accrue_curse_debt(self.repository, ctx.user_id, count, today_msk()):
-                await self.repository.save()
         return False

@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from steward.bot.context import ChatBotContext
+from steward.features.curse_metric import CurseMetricFeature
 from steward.features.voice_video.conversion import create_video_reply
 from steward.features.voice_video.transcription import (
     build_speaker_name,
@@ -21,6 +22,7 @@ from steward.framework import (
     on_message,
     subcommand,
 )
+from steward.helpers.curse_processing import process_transcribed_curse_text
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,7 @@ class VoiceVideoFeature(Feature):
                 pending.speaker_fallback_name,
             )
             transcription = await transcribe_voice(audio_path, speaker_name)
+            await self._process_transcribed_curses(ctx, initiator, transcription)
 
             ai_text = _detect_dvoretskii_prefix(transcription) if transcription else None
             if ai_text:
@@ -376,10 +379,11 @@ class VoiceVideoFeature(Feature):
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
             if action == "transcribe":
-                initiator = message.reply_to_message or message
-                await create_transcription_reply(
+                initiator = message.reply_to_message
+                reply_target = initiator or message
+                transcription = await create_transcription_reply(
                     self.repository,
-                    initiator,
+                    reply_target,
                     audio_path,
                     pending.speaker_user_id,
                     pending.speaker_username,
@@ -389,6 +393,7 @@ class VoiceVideoFeature(Feature):
                     edit_message=message,
                     reply_markup_provider=reply_markup_provider,
                 )
+                await self._process_transcribed_curses(ctx, initiator, transcription)
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)
             if pending.transcribe_clicked and pending.request_clicked:
@@ -401,6 +406,20 @@ class VoiceVideoFeature(Feature):
                 )
             except Exception:
                 pass
+
+    async def _process_transcribed_curses(
+        self,
+        ctx: FeatureContext,
+        source_message,
+        transcription: str | None,
+    ) -> None:
+        await process_transcribed_curse_text(
+            self.repository,
+            ctx.metrics,
+            source_message=source_message,
+            text=transcription,
+            capability_cls=CurseMetricFeature,
+        )
 
     async def _resolve_audio_path(self, ctx: FeatureContext, file_id: str) -> Path:
         tg_file = await ctx.bot.get_file(file_id)
