@@ -202,11 +202,47 @@ def _init_data_user_id(request: web.Request) -> int | None:
         return None
 
 
+def _bearer_token(request: web.Request) -> str:
+    """Сырой токен из заголовка `Authorization: Bearer <token>` (или "")."""
+    raw = request.headers.get("Authorization", "")
+    if not raw:
+        return ""
+    parts = raw.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return ""
+    return parts[1].strip()
+
+
+def bearer_device_user_id(request: web.Request) -> int | None:
+    """user_id привязанного устройства (часов) по bearer-токену, либо None.
+
+    Обновляет last_seen_at в памяти (без записи на диск — персистится при
+    ближайшем repository.save())."""
+    token = _bearer_token(request)
+    if not token:
+        return None
+    repository = request.app.get("repository")
+    if repository is None:
+        return None
+    from steward.api.watch_pairing import find_device_by_token
+
+    device = find_device_by_token(repository, token)
+    if device is None:
+        return None
+    from datetime import datetime, timezone
+
+    device.last_seen_at = datetime.now(timezone.utc)
+    return device.user_id
+
+
 def session_user_id(request: web.Request) -> int | None:
     uid = parse_session_token(request.cookies.get(SESSION_COOKIE, ""))
     if uid is not None:
         return uid
-    return _init_data_user_id(request)
+    uid = _init_data_user_id(request)
+    if uid is not None:
+        return uid
+    return bearer_device_user_id(request)
 
 
 def require_user(request: web.Request) -> int:
@@ -231,6 +267,8 @@ PUBLIC_API_PATHS = {
     "/api/auth/oidc",
     "/api/auth/me",
     "/api/auth/logout",
+    # Часы привязываются по коду, своей сессии у них ещё нет.
+    "/api/watch/pair/claim",
 }
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -255,7 +293,15 @@ async def auth_middleware(request: web.Request, handler):
     path = request.path
     if not path.startswith("/api/"):
         return await handler(request)
-    if request.method not in SAFE_METHODS and not _origin_allowed(request):
+    # CSRF-защита нужна только cookie-аутентификации (браузер шлёт куку
+    # автоматически). Bearer-токен устройства браузер сам не отправляет, а
+    # claim защищён одноразовым кодом — обоим origin-проверка не нужна.
+    if (
+        request.method not in SAFE_METHODS
+        and path not in PUBLIC_API_PATHS
+        and bearer_device_user_id(request) is None
+        and not _origin_allowed(request)
+    ):
         return web.json_response({"error": "cross-origin blocked"}, status=403)
     if path not in PUBLIC_API_PATHS and session_user_id(request) is None:
         return web.json_response({"error": "auth required"}, status=401)

@@ -41,6 +41,7 @@ from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
 from .holiday_cache import HolidayCache
 from .incident import Incident
+from .paired_device import PairedDevice
 from .chat_settings import ChatSettings
 from .reward import Reward
 from .role import Role, UserRole
@@ -103,8 +104,9 @@ class Database:
     chat_tunnels: list[ChatTunnel] = field(default_factory=list)
     tunnel_open_chats: set[int] = field(default_factory=set)
     tunnel_messages: list[TunnelMessage] = field(default_factory=list)
+    paired_devices: list[PairedDevice] = field(default_factory=list)
 
-    version: int = 36
+    version: int = 37
 
 
 PARSE_CONFIG = Config(

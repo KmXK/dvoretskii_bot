@@ -564,6 +564,71 @@ async def serve_toggle(request: web.Request) -> web.Response:
     return web.json_response(_serialize_session(repository, session, detailed=True))
 
 
+async def get_active(request: web.Request) -> web.Response:
+    """GET /api/tennis/active — текущая активная сессия юзера в live-формате.
+
+    Главная ручка для часов: один вызов — и есть всё табло. Если активной
+    сессии нет — {"active": false}.
+    """
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    room = get_manager().find_active_for_user(repository, user_id)
+    if room is None:
+        return web.json_response({"active": False})
+    return web.json_response({"active": True, "state": room.to_state(user_id)})
+
+
+async def _room_for_player(request: web.Request):
+    """Достать (room, user_id) для активной сессии {id}, проверив права игрока.
+
+    Возвращает либо (room, user_id), либо (web.Response с ошибкой, None).
+    """
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    try:
+        sid = int(request.match_info["id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad id"}, status=400), None
+    session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
+    if session is None:
+        return web.json_response({"error": "not found"}, status=404), None
+    if not _is_player(session, user_id):
+        return web.json_response({"error": "only players can score"}, status=403), None
+    room = get_manager().attach(session, repository)
+    return room, user_id
+
+
+async def add_point(request: web.Request) -> web.Response:
+    """POST /api/tennis/sessions/{id}/point {side: 'a'|'b'} — начислить очко.
+
+    Идёт через room_manager: лайв-табло в вебе (WS) обновится тем же бродкастом.
+    При доборе партии она автоматически финализируется.
+    """
+    room, user_id = await _room_for_player(request)
+    if user_id is None:
+        return room  # error response
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    side = str(body.get("side", "")).lower()
+    ok, err, info = await room.add_point(side)
+    if not ok:
+        return web.json_response({"error": err}, status=400)
+    return web.json_response({"ok": True, "info": info, "state": room.to_state(user_id)})
+
+
+async def undo_point(request: web.Request) -> web.Response:
+    """POST /api/tennis/sessions/{id}/undo_point — откатить последнее очко."""
+    room, user_id = await _room_for_player(request)
+    if user_id is None:
+        return room  # error response
+    ok, err = await room.undo_point()
+    if not ok:
+        return web.json_response({"error": err}, status=400)
+    return web.json_response({"ok": True, "state": room.to_state(user_id)})
+
+
 async def tts(request: web.Request) -> web.Response:
     """POST /api/tennis/tts {text} → audio/ogg (OGG/Opus от Yandex SpeechKit).
 
@@ -590,9 +655,12 @@ async def tts(request: web.Request) -> web.Response:
 
 
 def register_routes(app: web.Application) -> None:
+    app.router.add_get("/api/tennis/active", get_active)
     app.router.add_get("/api/tennis/sessions", list_sessions)
     app.router.add_post("/api/tennis/sessions", create_session)
     app.router.add_get("/api/tennis/sessions/{id}", get_session)
+    app.router.add_post("/api/tennis/sessions/{id}/point", add_point)
+    app.router.add_post("/api/tennis/sessions/{id}/undo_point", undo_point)
     app.router.add_delete("/api/tennis/sessions/{id}", delete_session)
     app.router.add_post("/api/tennis/sessions/{id}/serve", serve_toggle)
     app.router.add_delete(

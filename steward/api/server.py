@@ -2465,6 +2465,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     from steward.api.tennis_routes import register_routes as register_tennis_routes
     register_tennis_routes(app)
 
+    from steward.api.watch_routes import register_routes as register_watch_routes
+    register_watch_routes(app)
+
     from steward.api.settings_routes import register_routes as register_settings_routes
     register_settings_routes(app)
 
