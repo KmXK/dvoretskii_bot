@@ -10,6 +10,7 @@ import {
   SessionDetailsSheet,
   StatsSheet,
 } from '../tennis/Modals'
+import WatchPairSheet from '../watch/WatchPairSheet'
 
 export default function TennisPage() {
   const { userId } = useAuth()
@@ -69,6 +70,7 @@ export default function TennisPage() {
         onOpenImport={() => setModal('import')}
         onOpenStats={() => setModal('stats')}
         onOpenNewSession={() => setModal('new')}
+        onOpenWatch={() => setModal('watch')}
       />
       <AnimatePresence>
         {modal === 'new' && (
@@ -87,6 +89,12 @@ export default function TennisPage() {
         )}
         {modal === 'stats' && (
           <StatsSheet
+            open
+            onClose={() => setModal(null)}
+          />
+        )}
+        {modal === 'watch' && (
+          <WatchPairSheet
             open
             onClose={() => setModal(null)}
           />
