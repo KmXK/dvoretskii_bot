@@ -51,6 +51,43 @@ class ApiClient(private val prefs: Prefs) {
         }
     }
 
+    /** Старт QR-привязки: часы показывают QR, телефон сканирует и подтверждает. */
+    suspend fun deviceStart(deviceName: String): PairStart = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("device_name", deviceName).toString().toRequestBody(json)
+        val req = Request.Builder().url("$baseUrl/api/watch/pair/device-start").post(body).build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw ApiException(resp.code, errorOf(text, "ошибка ${resp.code}"))
+            val obj = JSONObject(text)
+            val pairId = obj.optString("pair_id")
+            val secret = obj.optString("secret")
+            // Если deep_link не пришёл (бот без username) — зашиваем в QR хотя бы pair_id.
+            val link = obj.optString("deep_link").ifBlank { "wp_$pairId" }
+            PairStart(pairId, secret, link, obj.optInt("expires_in", 300))
+        }
+    }
+
+    /**
+     * Опрос статуса QR-привязки. Возвращает true, если подтверждено (токен
+     * сохранён в Prefs), false — ещё ждём. Бросает ApiException(404) если истекло.
+     */
+    suspend fun devicePoll(pairId: String, secret: String): Boolean = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("pair_id", pairId).put("secret", secret).toString().toRequestBody(json)
+        val req = Request.Builder().url("$baseUrl/api/watch/pair/device-poll").post(body).build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (resp.code == 404) throw ApiException(404, "истекло")
+            if (!resp.isSuccessful) throw ApiException(resp.code, errorOf(text, "ошибка ${resp.code}"))
+            val obj = JSONObject(text)
+            if (obj.optString("status") != "approved") return@use false
+            val token = obj.optString("token")
+            if (token.isBlank()) return@use false
+            prefs.token = token
+            prefs.userName = obj.optString("user_name", "")
+            true
+        }
+    }
+
     /** Текущая активная сессия (или null, если её нет). */
     suspend fun getActive(): ActiveState? = withContext(Dispatchers.IO) {
         val req = authed(Request.Builder().url("$baseUrl/api/tennis/active").get()).build()
@@ -61,6 +98,18 @@ class ApiClient(private val prefs: Prefs) {
             val obj = JSONObject(text)
             if (!obj.optBoolean("active", false)) return@use null
             parseState(obj.getJSONObject("state"))
+        }
+    }
+
+    /** Все активные сессии юзера (для выбора, когда их несколько). Свежие первыми. */
+    suspend fun getActiveSessions(): List<ActiveState> = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url("$baseUrl/api/tennis/active-sessions").get()).build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (resp.code == 401) throw ApiException(401, "unauthorized")
+            if (!resp.isSuccessful) throw ApiException(resp.code, errorOf(text, "ошибка ${resp.code}"))
+            val arr = JSONObject(text).optJSONArray("sessions") ?: return@use emptyList()
+            (0 until arr.length()).map { parseState(arr.getJSONObject(it)) }
         }
     }
 

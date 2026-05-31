@@ -6,6 +6,7 @@ import { ToastProvider } from './context/ToastContext'
 import AuthGate from './layouts/AuthGate'
 import AppLayout from './layouts/AppLayout'
 import HomePage from './pages/HomePage'
+import WatchApproveGate from './watch/WatchApproveGate'
 
 const ArmyPage = lazy(() => import('./pages/ArmyPage'))
 const BillsPage = lazy(() => import('./pages/BillsPage'))
@@ -41,6 +42,7 @@ export default function App() {
       <ToastProvider>
         <BrowserRouter>
           <AuthGate>
+            <WatchApproveGate />
             <AppLayout>
               <AnimatePresence mode="wait">
                 <Suspense fallback={<PageFallback />}>

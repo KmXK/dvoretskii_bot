@@ -6,6 +6,9 @@ from steward.api.watch_pairing import (
     CODE_LENGTH,
     CODE_TTL_SECONDS,
     claim_code,
+    device_approve,
+    device_poll,
+    device_start,
     find_device_by_token,
     hash_token,
     normalize_code,
@@ -22,8 +25,10 @@ from tests.conftest import make_repository
 @pytest.fixture(autouse=True)
 def _clear_pending():
     wp._pending_codes.clear()
+    wp._pending_pairs.clear()
     yield
     wp._pending_codes.clear()
+    wp._pending_pairs.clear()
 
 
 # ── коды ────────────────────────────────────────────────────────────────────
@@ -155,6 +160,61 @@ def test_paired_device_survives_serialization():
 def find_device_by_token_in(db, token):
     candidate = hash_token(token)
     return next((d for d in db.paired_devices if d.token_hash == candidate), None)
+
+
+# ── QR-привязка (часы показывают QR, телефон сканирует) ───────────────────────
+
+def test_device_start_registers_pending():
+    pair_id, secret, ttl = device_start("Galaxy Watch")
+    assert pair_id and secret
+    assert ttl == CODE_TTL_SECONDS
+    assert pair_id in wp._pending_pairs
+    assert wp._pending_pairs[pair_id].device_name == "Galaxy Watch"
+
+
+def test_device_poll_pending_then_approved_once():
+    repo = make_repository()
+    pair_id, secret, _ = device_start("Watch")
+    # до подтверждения — pending
+    assert device_poll(pair_id, secret) == {"status": "pending"}
+    # телефон подтверждает
+    assert device_approve(repo, pair_id, 555) is True
+    assert len(repo.db.paired_devices) == 1
+    # часы забирают токен один раз
+    res = device_poll(pair_id, secret)
+    assert res["status"] == "approved"
+    assert res["user_id"] == 555
+    token = res["token"]
+    assert find_device_by_token(repo, token).user_id == 555
+    # повторный poll — уже израсходовано
+    assert device_poll(pair_id, secret) is None
+
+
+def test_device_poll_wrong_secret():
+    device_start("Watch")
+    pair_id = next(iter(wp._pending_pairs))
+    assert device_poll(pair_id, "wrong-secret") is None
+
+
+def test_device_approve_unknown_pair():
+    repo = make_repository()
+    assert device_approve(repo, "nope", 1) is False
+    assert repo.db.paired_devices == []
+
+
+def test_device_approve_idempotent_no_duplicate_device():
+    repo = make_repository()
+    pair_id, secret, _ = device_start("Watch")
+    assert device_approve(repo, pair_id, 9) is True
+    assert device_approve(repo, pair_id, 9) is True   # второй раз — без нового устройства
+    assert len(repo.db.paired_devices) == 1
+
+
+def test_device_pair_expires():
+    repo = make_repository()
+    pair_id, secret, _ = device_start("Watch", now=1000.0)
+    assert device_approve(repo, pair_id, 1, now=1000.0 + CODE_TTL_SECONDS + 1) is False
+    assert device_poll(pair_id, secret, now=1000.0 + CODE_TTL_SECONDS + 1) is None
 
 
 def test_default_database_has_paired_devices():

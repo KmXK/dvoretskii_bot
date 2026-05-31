@@ -11,8 +11,16 @@ import logging
 from aiohttp import web
 
 from steward.api.auth import require_user
-from steward.api.watch_pairing import claim_code, revoke_device, start_pairing
+from steward.api.watch_pairing import (
+    claim_code,
+    device_approve,
+    device_poll,
+    device_start,
+    revoke_device,
+    start_pairing,
+)
 from steward.data.repository import Repository
+from steward.helpers.webapp import get_webapp_deep_link
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +115,78 @@ async def me(request: web.Request) -> web.Response:
     )
 
 
+# ── QR-привязка (часы показывают QR, телефон сканирует) ───────────────────────
+
+def _pair_deep_link(request: web.Request, pair_id: str) -> str | None:
+    """Deep-link, который зашиваем в QR: открывает вебаппу с startapp=wp_<id>."""
+    bot = request.app.get("bot")
+    if bot is None:
+        return None
+    base = get_webapp_deep_link(bot)
+    if not base:
+        return None
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}startapp=wp_{pair_id}"
+
+
+async def pair_device_start(request: web.Request) -> web.Response:
+    """POST /api/watch/pair/device-start {device_name?} — старт QR-привязки.
+
+    Публичная: инициатор — часы. Возвращает pair_id, secret, deep_link (для QR)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    device_name = str(body.get("device_name", "Часы"))
+    pair_id, secret, ttl = device_start(device_name)
+    return web.json_response({
+        "pair_id": pair_id,
+        "secret": secret,
+        "expires_in": ttl,
+        "deep_link": _pair_deep_link(request, pair_id),
+    })
+
+
+async def pair_approve(request: web.Request) -> web.Response:
+    """POST /api/watch/pair/approve {pair_id} — подтвердить привязку (из вебаппы)."""
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    pair_id = str(body.get("pair_id", ""))
+    if not device_approve(repository, pair_id, user_id):
+        return web.json_response({"error": "запрос привязки не найден или истёк"}, status=404)
+    await repository.save()
+    return web.json_response({"ok": True, "user_name": _display_name(repository, user_id)})
+
+
+async def pair_device_poll(request: web.Request) -> web.Response:
+    """POST /api/watch/pair/device-poll {pair_id, secret} — опрос статуса часами.
+
+    Публичная. Отдаёт токен один раз после подтверждения."""
+    repository: Repository = request.app["repository"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    pair_id = str(body.get("pair_id", ""))
+    secret = str(body.get("secret", ""))
+    result = device_poll(pair_id, secret)
+    if result is None:
+        return web.json_response({"error": "истёк или не найден"}, status=404)
+    if result["status"] == "approved":
+        result["user_name"] = _display_name(repository, result["user_id"])
+    return web.json_response(result)
+
+
 def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/watch/pair/start", pair_start)
     app.router.add_post("/api/watch/pair/claim", pair_claim)
+    app.router.add_post("/api/watch/pair/device-start", pair_device_start)
+    app.router.add_post("/api/watch/pair/approve", pair_approve)
+    app.router.add_post("/api/watch/pair/device-poll", pair_device_poll)
     app.router.add_get("/api/watch/devices", list_devices)
     app.router.add_delete("/api/watch/devices/{id}", delete_device)
     app.router.add_get("/api/watch/me", me)

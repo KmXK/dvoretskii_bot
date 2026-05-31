@@ -612,6 +612,19 @@ async def get_active(request: web.Request) -> web.Response:
     return web.json_response({"active": True, "state": room.to_state(user_id)})
 
 
+async def list_active(request: web.Request) -> web.Response:
+    """GET /api/tennis/active-sessions — ВСЕ активные сессии юзера в live-формате.
+
+    Нужно часам/табло, когда одновременно идёт несколько сессий: даём список,
+    клиент сам выбирает к какой подключиться. Свежие первыми."""
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    manager = get_manager()
+    sessions = manager.active_sessions_for(repository, user_id)
+    states = [manager.attach(s, repository).to_state(user_id) for s in sessions]
+    return web.json_response({"sessions": states})
+
+
 async def _room_for_player(request: web.Request):
     """Достать (room, user_id) для активной сессии {id}, проверив права игрока.
 
@@ -690,6 +703,7 @@ async def tts(request: web.Request) -> web.Response:
 
 def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/tennis/active", get_active)
+    app.router.add_get("/api/tennis/active-sessions", list_active)
     app.router.add_get("/api/tennis/sessions", list_sessions)
     app.router.add_post("/api/tennis/sessions", create_session)
     app.router.add_get("/api/tennis/sessions/{id}", get_session)

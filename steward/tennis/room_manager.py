@@ -465,15 +465,27 @@ class TennisRoomManager:
         user_id: int,
         chat_id: int | None = None,
     ) -> TennisRoom | None:
-        """Активная сессия, где пользователь — игрок или инициатор."""
-        for session in repository.db.tennis_sessions:
-            if session.ended_at is not None:
-                continue
-            if chat_id is not None and session.chat_id != chat_id:
-                continue
-            if user_id in (session.player_a_id, session.player_b_id, session.initiator_id):
-                return self.attach(session, repository)
-        return None
+        """Самая свежая активная сессия, где пользователь — игрок или инициатор.
+
+        При нескольких одновременно активных (в разных чатах) берём ту, где
+        последняя активность — её логичнее всего показать по умолчанию."""
+        candidates = [
+            s for s in self.active_sessions_for(repository, user_id)
+            if chat_id is None or s.chat_id == chat_id
+        ]
+        if not candidates:
+            return None
+        return self.attach(candidates[0], repository)
+
+    def active_sessions_for(self, repository: Repository, user_id: int) -> list[TennisSession]:
+        """Все активные сессии пользователя, свежие первыми (по last_activity_at)."""
+        out = [
+            s for s in repository.db.tennis_sessions
+            if s.ended_at is None
+            and user_id in (s.player_a_id, s.player_b_id, s.initiator_id)
+        ]
+        out.sort(key=lambda s: s.last_activity_at, reverse=True)
+        return out
 
     # ── TTL watcher ──────────────────────────────────────────────────────────
 

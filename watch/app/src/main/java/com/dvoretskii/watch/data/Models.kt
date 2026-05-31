@@ -18,3 +18,11 @@ data class ActiveState(
 data class PairResult(
     val userName: String,
 )
+
+/** Старт QR-привязки: что показать в QR + чем опрашивать статус. */
+data class PairStart(
+    val pairId: String,
+    val secret: String,
+    val deepLink: String,
+    val expiresIn: Int,
+)
