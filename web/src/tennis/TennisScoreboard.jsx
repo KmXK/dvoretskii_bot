@@ -277,6 +277,45 @@ function HistoryPanel({ state, elapsedSec, onClose, onEditMatch }) {
   )
 }
 
+// ── PadelLiveScore: сеты / геймы / очки текущего матча ────────────────────────
+
+function PadelLiveScore({ padel, nameA, nameB, currentServer }) {
+  const [setsA, setsB] = padel.sets ?? [0, 0]
+  const [gamesA, gamesB] = padel.games ?? [0, 0]
+  const [ptA, ptB] = padel.points ?? ['0', '0']
+  const completed = padel.completed_sets ?? []
+
+  const Row = ({ label, a, b, big = false }) => (
+    <div className="flex items-center justify-center gap-3">
+      <span className={`tabular-nums font-black ${big ? 'text-4xl' : 'text-xl'} ${currentServer === 'a' ? 'text-rose-300' : 'text-zinc-300'}`}>{a}</span>
+      <span className="text-zinc-600 text-xs w-16 text-center uppercase tracking-wider">{label}</span>
+      <span className={`tabular-nums font-black ${big ? 'text-4xl' : 'text-xl'} ${currentServer === 'b' ? 'text-sky-300' : 'text-zinc-300'}`}>{b}</span>
+    </div>
+  )
+
+  return (
+    <div className="mt-4 flex flex-col items-center gap-1.5">
+      {completed.length > 0 && (
+        <div className="text-zinc-500 text-xs font-mono mb-1">
+          {completed.map((s, i) => (
+            <span key={i} className="mx-1">{s[0]}-{s[1]}</span>
+          ))}
+        </div>
+      )}
+      <Row label="сеты" a={setsA} b={setsB} />
+      <Row label="геймы" a={gamesA} b={gamesB} />
+      <motion.div key={`${ptA}-${ptB}`} initial={{ scale: 1.3 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 500, damping: 16 }}>
+        <Row label={padel.in_tiebreak ? 'тай-брейк' : 'очки'} a={ptA} b={ptB} big />
+      </motion.div>
+      {currentServer && (
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500 mt-1">
+          🎾 подаёт {currentServer === 'a' ? nameA : nameB}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TennisScoreboard({ onBackToLobby }) {
@@ -534,8 +573,13 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
   const firstServerName = state.first_server === 'a' ? nameA : nameB
   const sp = sportMeta(state.sport)
+  const isPadel = state.sport === 'padel'
+  const padel = state.padel
   const [curA, curB] = state.current_score ?? [0, 0]
-  const partyInProgress = curA > 0 || curB > 0
+  // Для падела «партия в процессе» определяется по journal'у очков, а не по сетам.
+  const partyInProgress = isPadel
+    ? (state.points_log?.length ?? 0) > 0
+    : (curA > 0 || curB > 0)
   const currentServer = state.current_server
 
   return (
@@ -608,7 +652,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         </div>
 
         <div className="text-zinc-400 text-sm mt-6">
-          Партия <span className="text-white font-semibold">{currentPartyNumber}</span>
+          {isPadel ? 'Матч' : 'Партия'} <span className="text-white font-semibold">{currentPartyNumber}</span>
         </div>
         {!isClosed && (
           <div className="text-zinc-500 text-xs mt-2">
@@ -617,7 +661,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         )}
 
         {/* Лайв-счёт текущей партии (point-by-point) */}
-        {!isClosed && (
+        {!isClosed && !isPadel && (
           <div className="mt-4 flex items-center justify-center gap-3">
             <motion.span
               key={`pa-${curA}`}
@@ -644,6 +688,11 @@ export default function TennisScoreboard({ onBackToLobby }) {
               </span>
             )}
           </div>
+        )}
+
+        {/* Падел: живой счёт сеты / геймы / очки (+ тай-брейк) */}
+        {!isClosed && isPadel && padel && (
+          <PadelLiveScore padel={padel} nameA={nameA} nameB={nameB} currentServer={currentServer} />
         )}
         {state.last_commentary && (
           <motion.div
@@ -692,7 +741,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
               ↩ убрать очко
             </button>
           )}
-          {!isClosed && canEdit && (
+          {!isClosed && canEdit && !isPadel && (
             <button
               onClick={() => setFinishOpen(true)}
               className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
