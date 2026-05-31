@@ -22,7 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.app.RemoteInput
+// Системный RemoteInput (android.app), его же ждёт RemoteInputIntentHelper из wear-input.
+import android.app.RemoteInput
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
@@ -46,7 +47,8 @@ fun PairScreen(api: ApiClient, onPaired: () -> Unit) {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val text = RemoteInput.getResultsFromIntent(result.data)
+            val text = result.data
+                ?.let { RemoteInput.getResultsFromIntent(it) }
                 ?.getCharSequence(KEY_CODE)?.toString().orEmpty()
             code = text.uppercase().filter { it.isLetterOrDigit() }
         }
