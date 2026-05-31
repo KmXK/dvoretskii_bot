@@ -131,6 +131,43 @@ export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
 
 // ── NewSessionSheet ───────────────────────────────────────────────────────────
 
+// Компактный выбор игрока: чипсы из общих чатов + ручной ввод @username/id.
+function PlayerPicker({ label, opponents, selectedId, customRaw, onPick, onCustom, accent = 'rose' }) {
+  const activeCls = accent === 'sky'
+    ? 'bg-sky-700 border-sky-500 text-white'
+    : accent === 'indigo'
+      ? 'bg-indigo-700 border-indigo-500 text-white'
+      : 'bg-rose-700 border-rose-500 text-white'
+  return (
+    <div className="mb-3">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">{label}</div>
+      {opponents.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {opponents.slice(0, 12).map((o) => (
+            <button
+              key={o.id}
+              onClick={() => onPick(o.id)}
+              className={`px-3 py-1.5 rounded-full text-sm border ${
+                selectedId === o.id ? activeCls : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:border-zinc-500'
+              }`}
+            >
+              {o.name}
+              {o.played_against > 0 && <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        value={customRaw}
+        onChange={(e) => onCustom(e.target.value)}
+        placeholder="@username или id"
+        className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700"
+      />
+    </div>
+  )
+}
+
 export function NewSessionSheet({ open, onClose, onCreated }) {
   const [opponents, setOpponents] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -138,10 +175,18 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
   const [sport, setSport] = useState(DEFAULT_SPORT)
   const [firstServer, setFirstServer] = useState('a')
   const [serveStreak, setServeStreak] = useState(2)
+  // падел (2v2 + теннисный счёт)
+  const [partnerId, setPartnerId] = useState(null)
+  const [partnerRaw, setPartnerRaw] = useState('')
+  const [oppPartnerId, setOppPartnerId] = useState(null)
+  const [oppPartnerRaw, setOppPartnerRaw] = useState('')
+  const [goldenPoint, setGoldenPoint] = useState(true)
+  const [setsToWin, setSetsToWin] = useState(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
   const sportInfo = sportMeta(sport)
+  const isPadel = sport === 'padel'
 
   useEffect(() => {
     if (!open) return
@@ -158,14 +203,27 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
       setError('Выбери оппонента или впиши @username')
       return
     }
+    const payload = {
+      opponent,
+      sport,
+      first_server: firstServer,
+      serve_streak: serveStreak,
+    }
+    if (isPadel) {
+      const partner = partnerId != null ? partnerId : partnerRaw.trim()
+      const oppPartner = oppPartnerId != null ? oppPartnerId : oppPartnerRaw.trim()
+      if ((!partner && partner !== 0) || (!oppPartner && oppPartner !== 0)) {
+        setError('В паделе нужны напарник и пара соперников')
+        return
+      }
+      payload.partner = partner
+      payload.opponent_partner = oppPartner
+      payload.golden_point = goldenPoint
+      payload.sets_to_win = setsToWin
+    }
     setSubmitting(true)
     try {
-      const created = await tennisApi.createSession({
-        opponent,
-        sport,
-        first_server: firstServer,
-        serve_streak: serveStreak,
-      })
+      const created = await tennisApi.createSession(payload)
       onCreated(created)
     } catch (e) {
       let msg = e.message || 'Ошибка'
@@ -242,9 +300,39 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           type="text"
           value={customRaw}
           onChange={(e) => { setCustomRaw(e.target.value); setSelectedId(null) }}
-          placeholder="@username или id"
+          placeholder={isPadel ? 'Соперник (@username или id)' : '@username или id'}
           className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 mb-4"
         />
+
+        <AnimatePresence initial={false}>
+          {isPadel && (
+            <motion.div
+              key="padel-partners"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <PlayerPicker
+                label="Мой напарник"
+                opponents={opponents}
+                selectedId={partnerId}
+                customRaw={partnerRaw}
+                onPick={(id) => { setPartnerId(id); setPartnerRaw('') }}
+                onCustom={(v) => { setPartnerRaw(v); setPartnerId(null) }}
+              />
+              <PlayerPicker
+                label="Напарник соперника"
+                accent="sky"
+                opponents={opponents}
+                selectedId={oppPartnerId}
+                customRaw={oppPartnerRaw}
+                onPick={(id) => { setOppPartnerId(id); setOppPartnerRaw('') }}
+                onCustom={(v) => { setOppPartnerRaw(v); setOppPartnerId(null) }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Кто подаёт первым</div>
         <div className="grid grid-cols-2 gap-2 mb-4">
@@ -254,7 +342,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
               firstServer === 'a' ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
             }`}
           >
-            🏓 Я
+            {isPadel ? '🎾 Моя пара' : '🏓 Я'}
           </button>
           <button
             onClick={() => setFirstServer('b')}
@@ -262,12 +350,54 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
               firstServer === 'b' ? 'bg-sky-700 text-white' : 'bg-zinc-800 text-zinc-300'
             }`}
           >
-            🏓 Оппонент
+            {isPadel ? '🎾 Соперники' : '🏓 Оппонент'}
           </button>
         </div>
 
         <AnimatePresence initial={false}>
-          {sportInfo.winnerServes ? (
+          {isPadel ? (
+            <motion.div
+              key="padel-config"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">При 40:40</div>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button
+                  onClick={() => setGoldenPoint(true)}
+                  className={`py-2.5 rounded-lg text-sm font-medium ${
+                    goldenPoint ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                  }`}
+                >
+                  🟡 Золотой мяч
+                </button>
+                <button
+                  onClick={() => setGoldenPoint(false)}
+                  className={`py-2.5 rounded-lg text-sm font-medium ${
+                    !goldenPoint ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                  }`}
+                >
+                  ♻️ Преимущество
+                </button>
+              </div>
+              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Формат матча</div>
+              <div className="flex items-center gap-2 mb-4">
+                {[{ n: 1, l: '1 сет' }, { n: 2, l: 'До 2 (bo3)' }, { n: 3, l: 'До 3 (bo5)' }].map((o) => (
+                  <button
+                    key={o.n}
+                    onClick={() => setSetsToWin(o.n)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                      setsToWin === o.n ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                    }`}
+                  >
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          ) : sportInfo.winnerServes ? (
             <motion.p
               key="winner-serves"
               initial={{ opacity: 0, height: 0 }}

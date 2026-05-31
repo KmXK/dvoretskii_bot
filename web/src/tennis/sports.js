@@ -18,6 +18,16 @@ export const SPORTS = {
     winnerServes: true,
     accent: 'lime',
   },
+  padel: {
+    key: 'padel',
+    label: 'Падел',
+    labelShort: 'Падел',
+    emoji: '🎾',
+    winnerServes: false,
+    accent: 'indigo',
+    // парный (2v2) + теннисный счёт очки/геймы/сеты
+    team: true,
+  },
 }
 
 export const DEFAULT_SPORT = 'table_tennis'
