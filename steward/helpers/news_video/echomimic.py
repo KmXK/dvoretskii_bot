@@ -85,8 +85,11 @@ async def animate_anchor(
         return None
     try:
         infer = _get_infer()
-    except ImportError:
-        logger.warning("modal SDK not installed — skipping anchor animation")
+    except ImportError as e:
+        logger.warning(
+            "modal SDK import failed — skipping anchor animation: %s",
+            e,
+        )
         return None
     except Exception:
         logger.exception("failed to look up Modal echomimic-v2 endpoint")
