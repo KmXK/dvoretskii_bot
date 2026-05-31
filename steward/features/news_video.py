@@ -35,13 +35,20 @@ class NewsVideoFeature(Feature):
         if ctx.message is None:
             return
         reply = ctx.message.reply_to_message
-        if reply is None or not (reply.text or "").strip():
+        if reply is None:
             await ctx.reply(
-                "Ответь этой командой на сообщение с текстом (≥100 символов)",
+                "Ответь этой командой на сообщение с новостью (≥100 символов текста или caption)",
                 markdown=False,
             )
             return
-        text = reply.text.strip()
+        # Photos/videos forwarded as news posts carry the text in `.caption`, not `.text`.
+        text = (reply.text or reply.caption or "").strip()
+        if not text:
+            await ctx.reply(
+                "В этом сообщении нет текста — реплайни на пост с текстом или подписью",
+                markdown=False,
+            )
+            return
         if len(text) < _MIN_TEXT_LEN:
             await ctx.reply(
                 f"Текст коротковат ({len(text)} симв, нужно ≥{_MIN_TEXT_LEN})",

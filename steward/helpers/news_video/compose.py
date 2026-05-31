@@ -62,6 +62,7 @@ def make_video(
     audio_path: Path,
     output_path: Path,
     slide_durations: Sequence[float] | None = None,
+    anchor_events: Sequence[tuple[Path, float, float]] | None = None,
     fps: int = 25,
     anchor_height: int = 560,
     anchor_x: int = 60,
@@ -122,10 +123,12 @@ def make_video(
         sc = slide_clip(path, durations[i]).with_start(starts[i])
         slide_clips.append(sc)
 
-    # Anchor — three modes:
-    #   1. anchor_is_video=True:  animated mp4 from EchoMimicV2 (black bg → alpha)
-    #   2. anchor_path is a sequence: per-slide emotion cutouts (PNG with alpha)
-    #   3. anchor_path is a single Path: legacy static cutout
+    # Anchor — four modes (in priority order):
+    #   1. anchor_is_video=True: animated mp4 from EchoMimicV2 (black bg → alpha)
+    #   2. anchor_events given: arbitrary list of (path, start, duration) — used for
+    #      per-sentence emotion switches inside a slide
+    #   3. anchor_path is a sequence: one cutout per slide
+    #   4. anchor_path is a single Path: legacy static cutout
     anchor_pos = (anchor_x, studio_h - anchor_height + anchor_y_offset)
     anchor_clips: list = []
     if anchor_is_video:
@@ -146,16 +149,25 @@ def make_video(
             .with_position(anchor_pos)
             .with_duration(total_duration)
         ]
+    elif anchor_events:
+        logger.info("anchor: %d emotion events", len(anchor_events))
+        for ap, st, dur in anchor_events:
+            anchor_clips.append(
+                ImageClip(str(ap), transparent=True)
+                .resized(height=anchor_height)
+                .with_position(anchor_pos)
+                .with_start(st)
+                .with_duration(dur)
+            )
     elif isinstance(anchor_path, (list, tuple)):
         for i, ap in enumerate(anchor_path):
-            clip = (
+            anchor_clips.append(
                 ImageClip(str(ap), transparent=True)
                 .resized(height=anchor_height)
                 .with_position(anchor_pos)
                 .with_start(starts[i])
                 .with_duration(durations[i])
             )
-            anchor_clips.append(clip)
     else:
         anchor_clips = [
             ImageClip(str(anchor_path), transparent=True)

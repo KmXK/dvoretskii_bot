@@ -11,7 +11,7 @@ from .compose import make_video
 from .echomimic import animate_anchor
 from .images import fetch_slides
 from .script import Script, enrich, make_script
-from .tts import synthesize_per_slide
+from .tts import synthesize_per_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,10 @@ async def generate_news_video(
 
     await progress("tts")
     audio_path = out_dir / "audio.ogg"
-    tts = await synthesize_per_slide([s.text for s in script.slides], audio_path)
+    tts = await synthesize_per_sentence(
+        [[sent.text for sent in s.sentences] for s in script.slides],
+        audio_path,
+    )
     if tts is None:
         logger.error("TTS produced no audio")
         return None
@@ -100,32 +103,49 @@ async def generate_news_video(
     (image_results, animated_anchor) = await asyncio.gather(images_task(), anchor_task())
 
     # Keep slides aligned to their texts/durations; drop slides whose image fetch failed.
-    filtered_paths: list[Path] = []
-    filtered_texts: list[str] = []
-    filtered_durations: list[float] = []
-    filtered_emotions: list[str] = []
-    for slide, path, dur in zip(script.slides, image_results, tts.chunk_durations):
+    sentence_durations = tts.sentence_durations or [[d] for d in tts.chunk_durations]
+    kept: list[tuple[int, Path, float, list[float]]] = []  # (orig_idx, path, dur, sent_durs)
+    for orig_idx, (slide, path, dur, sent_durs) in enumerate(
+        zip(script.slides, image_results, tts.chunk_durations, sentence_durations)
+    ):
         if path is not None:
-            filtered_paths.append(path)
-            filtered_texts.append(slide.text)
-            filtered_durations.append(dur)
-            filtered_emotions.append(slide.emotion)
-    if not filtered_paths:
+            kept.append((orig_idx, path, dur, sent_durs))
+    if not kept:
         logger.error("no slide images obtained")
         return None
+
+    filtered_paths = [k[1] for k in kept]
+    filtered_texts = [script.slides[k[0]].text for k in kept]
+    filtered_durations = [k[2] for k in kept]
+
+    # Build per-sentence anchor events with absolute timings.
+    anchor_events: list[tuple[Path, float, float]] = []
+    cursor = 0.0
+    for (orig_idx, _path, slide_dur, sent_durs) in kept:
+        slide = script.slides[orig_idx]
+        # Sentences and their durations align 1-to-1.
+        # If any rounding drift, the last sentence absorbs it so anchor covers the whole slide.
+        diff = slide_dur - sum(sent_durs)
+        if abs(diff) > 0.02 and sent_durs:
+            sent_durs = list(sent_durs)
+            sent_durs[-1] += diff
+        for sent, sdur in zip(slide.sentences, sent_durs):
+            anchor_p = _emotion_anchor(sent.emotion, anchor_static)
+            anchor_events.append((anchor_p, cursor, sdur))
+            cursor += sdur
 
     if animated_anchor is not None:
         logger.info("anchor: animated via EchoMimicV2")
         anchor_arg: Path | list[Path] = animated_anchor
+        events_arg = None
     else:
-        # Pick per-slide emotion cutout if available, else single static fallback.
-        per_slide_anchors = [_emotion_anchor(e, anchor_static) for e in filtered_emotions]
-        unique = {p.name for p in per_slide_anchors}
         logger.info(
-            "anchor: per-slide emotions=%s (unique files=%d)",
-            filtered_emotions, len(unique),
+            "anchor: %d emotion events (emotions=%s)",
+            len(anchor_events),
+            [sent.emotion for k in kept for sent in script.slides[k[0]].sentences],
         )
-        anchor_arg = per_slide_anchors
+        anchor_arg = anchor_static  # unused when anchor_events present
+        events_arg = anchor_events
 
     await progress("compose")
     output_path = out_dir / "news.mp4"
@@ -136,6 +156,7 @@ async def generate_news_video(
         slide_texts=filtered_texts,
         slide_durations=filtered_durations,
         anchor_path=anchor_arg,
+        anchor_events=events_arg,
         audio_path=audio_path,
         output_path=output_path,
         anchor_is_video=animated_anchor is not None,

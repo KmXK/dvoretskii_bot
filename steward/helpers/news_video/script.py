@@ -26,11 +26,20 @@ EMOTIONS = (
 
 
 @dataclass
-class Slide:
+class Sentence:
     text: str
+    emotion: str = "neutral"
+
+
+@dataclass
+class Slide:
+    sentences: list[Sentence]
     image_query: str
     is_meme: bool = False
-    emotion: str = "neutral"
+
+    @property
+    def text(self) -> str:
+        return " ".join(s.text for s in self.sentences).strip()
 
 
 @dataclass
@@ -65,13 +74,15 @@ _SCRIPT_PROMPT = """\
 Ты сценарист короткой новостной подачи в стиле TikTok. На основе темы и фактов сделай
 сценарий для диктора-мужчины с грубоватым голосом на ~30-40 секунд (70-90 слов всего).
 
-Разбей на ровно 5 коротких реплик (слайдов). Для каждой:
-- "text": 1-2 предложения по-русски, разговорный, мужской диктор, с лёгким сарказмом или
-  иронией там где уместно. Без эмодзи.
+Разбей на ровно 5 слайдов. Каждый слайд — это:
 - "image_query": 2-4 английских слова, простые, для поиска иллюстрации в Google Images.
   Для мемов — известные шаблоны ("drake meme", "distracted boyfriend meme", "doge").
 - "is_meme": true только если эта реплика — явная шутка с мем-подачей. Максимум 1-2 из 5.
-- "emotion": эмоция диктора на этой реплике, ровно одна из:
+- "sentences": МАССИВ из 1-3 коротких предложений. Каждое предложение = {{text, emotion}}.
+  Эмоция меняется чтобы лицо диктора было живым — у каждого предложения СВОЯ эмоция,
+  обычно разная даже внутри одного слайда. Это важно.
+
+emotion должно быть ровно одно из:
   neutral (нейтрально/пояснение)
   happy (хорошая новость)
   serious (важное, веское)
@@ -82,14 +93,24 @@ _SCRIPT_PROMPT = """\
   concerned (предупреждение, проблема)
   amused (мягкая шутка)
   skeptical (сомнение, "ну-ну")
-  Выбирай эмоцию ПОД СОДЕРЖАНИЕ реплики. Разнообразь — не ставь одну и ту же эмоцию подряд.
 
-Структура: первый слайд = вступление (часто serious или neutral), последний = панчлайн (часто smirk/amused/skeptical).
+Принципы:
+- Текст предложений по-русски, разговорный, мужской диктор с лёгким сарказмом или иронией. Без эмодзи.
+- Эмоция выбирается ПОД СОДЕРЖАНИЕ предложения, а не наугад.
+- Старайся не повторять подряд одну эмоцию — пусть лицо реально реагирует.
+- Первый слайд часто открывается serious/neutral, последний — smirk/amused/skeptical.
 
 Верни строго JSON:
 {{
   "slides": [
-    {{"text": "...", "image_query": "...", "is_meme": false, "emotion": "neutral"}},
+    {{
+      "image_query": "...",
+      "is_meme": false,
+      "sentences": [
+        {{"text": "Первое предложение.", "emotion": "serious"}},
+        {{"text": "Второе предложение с другой подачей.", "emotion": "smirk"}}
+      ]
+    }},
     ...
   ]
 }}
@@ -134,14 +155,30 @@ async def make_script(user_id: int, enrich_data: dict) -> Script:
         timeout_seconds=90.0,
     )
     data = _extract_json(raw)
-    slides = [
-        Slide(
-            text=s["text"],
-            image_query=s["image_query"],
-            is_meme=bool(s.get("is_meme", False)),
-            emotion=s["emotion"] if s.get("emotion") in EMOTIONS else "neutral",
+    slides: list[Slide] = []
+    for s in data.get("slides", []):
+        if not s.get("image_query"):
+            continue
+        raw_sentences = s.get("sentences")
+        sentences: list[Sentence] = []
+        if isinstance(raw_sentences, list) and raw_sentences:
+            for sent in raw_sentences:
+                t = (sent.get("text") or "").strip()
+                if not t:
+                    continue
+                e = sent.get("emotion") if sent.get("emotion") in EMOTIONS else "neutral"
+                sentences.append(Sentence(text=t, emotion=e))
+        elif s.get("text"):
+            # Backwards compatibility if the model returns the old flat shape.
+            e = s.get("emotion") if s.get("emotion") in EMOTIONS else "neutral"
+            sentences.append(Sentence(text=str(s["text"]).strip(), emotion=e))
+        if not sentences:
+            continue
+        slides.append(
+            Slide(
+                sentences=sentences,
+                image_query=s["image_query"],
+                is_meme=bool(s.get("is_meme", False)),
+            )
         )
-        for s in data.get("slides", [])
-        if s.get("text") and s.get("image_query")
-    ]
     return Script(slides=slides)

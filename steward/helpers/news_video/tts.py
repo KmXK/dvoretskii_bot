@@ -143,8 +143,12 @@ def _concat_ogg(parts: list[Path], out_path: Path) -> None:
 @dataclass
 class TtsResult:
     full_path: Path
+    # Per-slide audio files (used by EchoMimicV2 and as the source for chunk_durations).
     chunk_paths: list[Path]
     chunk_durations: list[float]
+    # Per-slide list of per-sentence durations (sum equals the slide's chunk_duration).
+    # Populated by synthesize_per_sentence; empty list per slide when sentence info is absent.
+    sentence_durations: list[list[float]] | None = None
 
 
 def _probe_duration(path: Path) -> float:
@@ -155,6 +159,86 @@ def _probe_duration(path: Path) -> float:
         capture_output=True, text=True,
     )
     return float(result.stdout.strip() or 0.0)
+
+
+async def synthesize_per_sentence(
+    slides_sentences: list[list[str]],
+    out_path: Path,
+    *,
+    voice: str | None = None,
+    folder_id: str | None = None,
+) -> TtsResult | None:
+    """One TTS call per sentence, grouped into per-slide audio files.
+
+    Returns TtsResult with per-slide chunks (for V2 + slide-image timing) and
+    per-sentence durations within each slide (for per-sentence emotion overlay).
+    """
+    api_key = _api_key()
+    if not api_key or not slides_sentences:
+        logger.warning("news TTS: no api key or empty input")
+        return None
+    voice = voice or os.environ.get("NEWS_TTS_VOICE", _DEFAULT_VOICE)
+    folder_id = folder_id or os.environ.get("AI_FOLDER_ID", "")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    slide_paths: list[Path] = []
+    sentence_durations: list[list[float]] = []
+
+    for i, sentences in enumerate(slides_sentences):
+        if not sentences:
+            return None
+        sentence_paths: list[Path] = []
+        for j, sent in enumerate(sentences):
+            sent = (sent or "").strip()
+            if not sent:
+                return None
+            # A single sentence may still exceed the 240-char limit on rare occasions.
+            sub_chunks = _split_into_chunks(sent)
+            sub_paths: list[Path] = []
+            for k, sub in enumerate(sub_chunks):
+                audio = await _tts_one(sub, api_key, voice, folder_id)
+                if audio is None:
+                    logger.warning("TTS slide %d sent %d sub %d failed: %r", i, j, k, sub[:80])
+                    return None
+                sp = out_path.parent / f"_tts_s{i:02d}_t{j:02d}_p{k:02d}.ogg"
+                sp.write_bytes(audio)
+                sub_paths.append(sp)
+            sent_path = out_path.parent / f"tts_s{i:02d}_t{j:02d}.ogg"
+            if len(sub_paths) == 1:
+                shutil.move(str(sub_paths[0]), str(sent_path))
+            else:
+                await asyncio.to_thread(_concat_ogg, sub_paths, sent_path)
+                for sp in sub_paths:
+                    sp.unlink(missing_ok=True)
+            sentence_paths.append(sent_path)
+
+        slide_path = out_path.parent / f"tts_slide_{i:02d}.ogg"
+        if len(sentence_paths) == 1:
+            shutil.copy(str(sentence_paths[0]), str(slide_path))
+        else:
+            await asyncio.to_thread(_concat_ogg, sentence_paths, slide_path)
+        slide_paths.append(slide_path)
+        sentence_durations.append([_probe_duration(p) for p in sentence_paths])
+
+    if len(slide_paths) == 1:
+        shutil.copy(str(slide_paths[0]), str(out_path))
+    else:
+        await asyncio.to_thread(_concat_ogg, slide_paths, out_path)
+
+    slide_durations = [_probe_duration(p) for p in slide_paths]
+    logger.info(
+        "news TTS: %d slides, %d sentences total, slide durations=%s, total=%.2fs",
+        len(slide_paths),
+        sum(len(s) for s in sentence_durations),
+        [f"{d:.2f}" for d in slide_durations],
+        sum(slide_durations),
+    )
+    return TtsResult(
+        full_path=out_path,
+        chunk_paths=slide_paths,
+        chunk_durations=slide_durations,
+        sentence_durations=sentence_durations,
+    )
 
 
 async def synthesize_per_slide(
