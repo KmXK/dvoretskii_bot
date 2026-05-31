@@ -20,7 +20,12 @@ SIDE_B = "b"
 # отдельно — у него теннисный счёт и пары 2v2.
 SPORT_TABLE_TENNIS = "table_tennis"
 SPORT_SQUASH = "squash"
+SPORT_PADEL = "padel"
 DEFAULT_SPORT = SPORT_TABLE_TENNIS
+
+# Спорты с «партийным» счётом PAR-до-11 (тап=очко сворачивается в один счёт
+# партии). Падел сюда НЕ входит — у него теннисная иерархия очки→гейм→сет.
+PAR_SPORTS = (SPORT_TABLE_TENNIS, SPORT_SQUASH)
 
 SPORTS: dict[str, dict[str, str]] = {
     SPORT_TABLE_TENNIS: {
@@ -35,7 +40,22 @@ SPORTS: dict[str, dict[str, str]] = {
         "genitive": "сквоша",
         "emoji": "🎾",
     },
+    SPORT_PADEL: {
+        "label": "падел",
+        "label_short": "падел",
+        "genitive": "падела",
+        "emoji": "🎾",
+    },
 }
+
+
+def is_padel(sport: str | None) -> bool:
+    return normalize_sport(sport) == SPORT_PADEL
+
+
+def is_team_sport(sport: str | None) -> bool:
+    """Парный (2v2) спорт. Сейчас только падел."""
+    return is_padel(sport)
 
 
 def normalize_sport(sport: str | None) -> str:
@@ -140,6 +160,153 @@ def current_point_server(
     deuce = score_a >= 10 and score_b >= 10
     blocks = total if deuce else total // 2
     return base if blocks % 2 == 0 else other
+
+
+# ── падел: теннисный счёт очки→гейм→сет→матч ──────────────────────────────────
+# Падел считается как теннис: в гейме очки 0/15/30/40 (+ Ad или «золотой мяч»),
+# сет — до 6 геймов с разницей ≥2, при 6:6 тай-брейк до 7 (разница ≥2), матч —
+# best-of-N сетов. Всё состояние реконструируется из points_log (список 'a'/'b'),
+# поэтому undo = снять последний поинт и пересчитать. Чистая функция, без I/O.
+
+PADEL_GAMES_PER_SET = 6
+PADEL_TIEBREAK_TO = 7
+PADEL_DEFAULT_SETS_TO_WIN = 2   # best-of-3
+_POINT_NAMES = ("0", "15", "30", "40")
+
+
+@dataclass
+class PadelState:
+    sets_a: int
+    sets_b: int
+    games_a: int
+    games_b: int
+    points_a: int                 # сырые очки текущего гейма/тай-брейка
+    points_b: int
+    point_label_a: str            # "0"/"15"/"30"/"40"/"Ad" или число (тай-брейк)
+    point_label_b: str
+    in_tiebreak: bool
+    completed_sets: list[tuple[int, int]]   # счёт законченных сетов (геймы)
+    match_complete: bool
+    winner: str | None
+
+
+def _padel_point_labels(pa: int, pb: int, golden: bool, in_tb: bool) -> tuple[str, str]:
+    if in_tb:
+        return str(pa), str(pb)
+    if not golden and pa >= 3 and pb >= 3:
+        if pa == pb:
+            return "40", "40"
+        return ("Ad", "40") if pa > pb else ("40", "Ad")
+    return _POINT_NAMES[min(pa, 3)], _POINT_NAMES[min(pb, 3)]
+
+
+def _padel_game_winner(pa: int, pb: int, golden: bool) -> str | None:
+    """Кто выиграл гейм при сырых очках pa:pb. golden — «золотой мяч» при 40:40."""
+    if golden:
+        # Очки 0,15,30,40 → 4-е очко всегда решающее (при 40:40 — punto de oro).
+        if pa >= 4:
+            return SIDE_A
+        if pb >= 4:
+            return SIDE_B
+        return None
+    if pa >= 4 and pa - pb >= 2:
+        return SIDE_A
+    if pb >= 4 and pb - pa >= 2:
+        return SIDE_B
+    return None
+
+
+def padel_state(
+    points_log: list[str],
+    *,
+    golden_point: bool = True,
+    sets_to_win: int = PADEL_DEFAULT_SETS_TO_WIN,
+    games_per_set: int = PADEL_GAMES_PER_SET,
+    tiebreak_to: int = PADEL_TIEBREAK_TO,
+) -> PadelState:
+    """Развернуть журнал поинтов в полное состояние паделльного матча."""
+    sets_a = sets_b = 0
+    completed_sets: list[tuple[int, int]] = []
+    games_a = games_b = 0
+    pa = pb = 0
+    in_tb = False
+    winner: str | None = None
+
+    def finalize_set(ga: int, gb: int) -> None:
+        nonlocal sets_a, sets_b, games_a, games_b, pa, pb, in_tb, winner
+        completed_sets.append((ga, gb))
+        if ga > gb:
+            sets_a += 1
+        else:
+            sets_b += 1
+        games_a = games_b = pa = pb = 0
+        in_tb = False
+        if sets_a >= sets_to_win:
+            winner = SIDE_A
+        elif sets_b >= sets_to_win:
+            winner = SIDE_B
+
+    for p in points_log:
+        if winner is not None:
+            break
+        if p == SIDE_A:
+            pa += 1
+        elif p == SIDE_B:
+            pb += 1
+        else:
+            continue
+
+        if in_tb:
+            hi, lo = max(pa, pb), min(pa, pb)
+            if hi >= tiebreak_to and hi - lo >= 2:
+                # победитель тай-брейка забирает сет 7:6
+                if pa > pb:
+                    finalize_set(games_a + 1, games_b)
+                else:
+                    finalize_set(games_a, games_b + 1)
+            continue
+
+        gw = _padel_game_winner(pa, pb, golden_point)
+        if gw is None:
+            continue
+        if gw == SIDE_A:
+            games_a += 1
+        else:
+            games_b += 1
+        pa = pb = 0
+
+        if games_a >= games_per_set and games_a - games_b >= 2:
+            finalize_set(games_a, games_b)
+        elif games_b >= games_per_set and games_b - games_a >= 2:
+            finalize_set(games_a, games_b)
+        elif games_a == games_per_set and games_b == games_per_set:
+            in_tb = True
+
+    la, lb = _padel_point_labels(pa, pb, golden_point, in_tb)
+    return PadelState(
+        sets_a=sets_a,
+        sets_b=sets_b,
+        games_a=games_a,
+        games_b=games_b,
+        points_a=pa,
+        points_b=pb,
+        point_label_a=la,
+        point_label_b=lb,
+        in_tiebreak=in_tb,
+        completed_sets=completed_sets,
+        match_complete=winner is not None,
+        winner=winner,
+    )
+
+
+def padel_server_side(points_log: list[str], party_first_server: str, **kwargs) -> str:
+    """Приблизительный индикатор: подача в паделе переходит к другой паре каждый
+    гейм. Считаем по чётности числа сыгранных геймов (тай-брейк — как один гейм)."""
+    base = party_first_server if party_first_server in (SIDE_A, SIDE_B) else SIDE_A
+    other = SIDE_B if base == SIDE_A else SIDE_A
+    st = padel_state(points_log, **kwargs)
+    played_games = sum(ga + gb for ga, gb in st.completed_sets) + st.games_a + st.games_b
+    return base if played_games % 2 == 0 else other
 
 
 def session_wins(session: TennisSession) -> tuple[int, int]:

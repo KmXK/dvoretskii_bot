@@ -645,6 +645,16 @@ class Repository:
             data.setdefault("paired_devices", [])
             data["version"] = 37
 
+        if data.get("version") == 37:
+            # Падел: парные сессии (2v2) + конфиг счёта.
+            for ts in data.get("tennis_sessions", []):
+                if isinstance(ts, dict):
+                    ts.setdefault("player_a2_id", None)
+                    ts.setdefault("player_b2_id", None)
+                    ts.setdefault("golden_point", True)
+                    ts.setdefault("sets_to_win", 2)
+            data["version"] = 38
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])

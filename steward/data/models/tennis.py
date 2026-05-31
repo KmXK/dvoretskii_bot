@@ -26,6 +26,12 @@ class TennisSession:
     player_b_id: int
     started_at: datetime
     sport: str = "table_tennis"
+    # Падел — парный (2v2). Напарники сторон A/B; None для одиночных спортов.
+    player_a2_id: int | None = None
+    player_b2_id: int | None = None
+    # Конфиг падела (для остальных спортов игнорируется).
+    golden_point: bool = True   # «золотой мяч» при 40:40 вместо advantage
+    sets_to_win: int = 2        # best-of-N сетов (2 = best-of-3)
     ended_at: datetime | None = None
     last_activity_at: datetime = field(default_factory=datetime.now)
     matches: list[TennisMatch] = field(default_factory=list)
