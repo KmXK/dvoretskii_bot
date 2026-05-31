@@ -25,9 +25,12 @@ from steward.tennis.engine import (
     SIDE_A,
     SIDE_B,
     current_point_server,
+    is_padel,
     is_party_complete,
     is_valid_party_score,
     next_first_server,
+    padel_server_side,
+    padel_state,
     party_point_to_side,
     session_wins,
     sport_meta,
@@ -125,8 +128,44 @@ class TennisRoom:
 
     # ── state serialization for frontend ─────────────────────────────────────
 
+    def _padel_state(self):
+        return padel_state(
+            list(self.session.points_log),
+            golden_point=self.session.golden_point,
+            sets_to_win=max(1, self.session.sets_to_win or 2),
+        )
+
     def to_state(self, viewer_id: int | None = None) -> dict:
         wins_a, wins_b = session_wins(self.session)
+        padel = is_padel(self.session.sport)
+        if padel:
+            st = self._padel_state()
+            current_score = [st.sets_a, st.sets_b]
+            current_server = padel_server_side(
+                list(self.session.points_log),
+                self.session.first_server,
+                golden_point=self.session.golden_point,
+                sets_to_win=max(1, self.session.sets_to_win or 2),
+            )
+            padel_block = {
+                "sets": [st.sets_a, st.sets_b],
+                "games": [st.games_a, st.games_b],
+                "points": [st.point_label_a, st.point_label_b],
+                "in_tiebreak": st.in_tiebreak,
+                "completed_sets": [list(s) for s in st.completed_sets],
+                "match_complete": st.match_complete,
+                "golden_point": self.session.golden_point,
+                "sets_to_win": max(1, self.session.sets_to_win or 2),
+            }
+        else:
+            current_score = [self.session.current_score_a, self.session.current_score_b]
+            current_server = current_point_server(
+                self.session.sport,
+                self.session.current_score_a,
+                self.session.current_score_b,
+                party_first_server=self.session.first_server,
+            )
+            padel_block = None
         return {
             "id": self.session.id,
             "chat_id": self.session.chat_id,
@@ -145,15 +184,12 @@ class TennisRoom:
             "first_server": self.session.first_server,
             "serve_streak": self.session.serve_streak,
             # Лайв-счёт текущей (ещё не записанной) партии — для point-by-point
-            # ввода (тап = очко) на табло и часах.
-            "current_score": [self.session.current_score_a, self.session.current_score_b],
+            # ввода (тап = очко) на табло и часах. Для падела current_score —
+            # это сеты, а полная раскладка очки/геймы лежит в "padel".
+            "current_score": current_score,
             "points_log": list(self.session.points_log),
-            "current_server": current_point_server(
-                self.session.sport,
-                self.session.current_score_a,
-                self.session.current_score_b,
-                party_first_server=self.session.first_server,
-            ),
+            "current_server": current_server,
+            "padel": padel_block,
             "last_commentary": self.last_commentary,
             "last_commentary_seq": self.last_commentary_seq,
             "matches": [
@@ -211,6 +247,8 @@ class TennisRoom:
         """Записать партию готовым счётом (быстрый финиш без point-by-point)."""
         if self.session.ended_at is not None:
             return False, "Сессия уже закрыта", {}
+        if is_padel(self.session.sport):
+            return False, "В паделе счёт ведётся только по очкам", {}
         if not is_valid_party_score(score_a, score_b):
             return False, "Невалидный счёт партии (11 + разница ≥2)", {}
 
@@ -230,21 +268,54 @@ class TennisRoom:
         asyncio.create_task(self.manager._announce_match(self.session, match))
         return True, "", info
 
+    def _sync_live_score(self) -> None:
+        """Пересчитать current_score_a/b из points_log по правилам спорта.
+
+        Наст. теннис/сквош — сырые очки текущей партии. Падел — счёт по сетам
+        (полная раскладка считается в to_state)."""
+        if is_padel(self.session.sport):
+            st = self._padel_state()
+            self.session.current_score_a = st.sets_a
+            self.session.current_score_b = st.sets_b
+        else:
+            a, b = party_point_to_side(self.session.points_log)
+            self.session.current_score_a = a
+            self.session.current_score_b = b
+
     async def add_point(self, side: str) -> tuple[bool, str, dict]:
-        """Начислить одно очко стороне (тап = очко). Когда партия добирается до
-        11 (с разницей ≥2) — она автоматически финализируется как TennisMatch,
-        а лайв-счёт обнуляется под следующую партию.
-        """
+        """Начислить одно очко стороне (тап = очко). Когда «партия» добирается до
+        конца — она автоматически финализируется как TennisMatch, а лайв-счёт
+        обнуляется под следующую.
+
+        Что считать «партией» зависит от спорта: наст. теннис/сквош — гейм до 11;
+        падел — целый матч best-of-N сетов (записывается счётом по сетам)."""
         if self.session.ended_at is not None:
             return False, "Сессия уже закрыта", {}
         if side not in (SIDE_A, SIDE_B):
             return False, "Неизвестная сторона", {}
 
         self.session.points_log.append(side)
+        self.session.last_activity_at = datetime.now()
+
+        if is_padel(self.session.sport):
+            st = self._padel_state()
+            self.session.current_score_a = st.sets_a
+            self.session.current_score_b = st.sets_b
+            if not st.match_complete:
+                await self.repository.save()
+                await self.broadcast()
+                return True, "", {"match_completed": False}
+            match = self._append_completed_party(st.sets_a, st.sets_b)
+            self._reset_current_party()
+            await self.repository.save()
+            self.last_commentary = ""
+            await self.broadcast()
+            asyncio.create_task(self.manager._announce_match(self.session, match))
+            return True, "", {"match_completed": True, "winner": match.winner}
+
         a, b = party_point_to_side(self.session.points_log)
         self.session.current_score_a = a
         self.session.current_score_b = b
-        self.session.last_activity_at = datetime.now()
 
         if not is_party_complete(a, b):
             await self.repository.save()
@@ -270,9 +341,7 @@ class TennisRoom:
         if not self.session.points_log:
             return False, "В текущей партии нет очков"
         self.session.points_log.pop()
-        a, b = party_point_to_side(self.session.points_log)
-        self.session.current_score_a = a
-        self.session.current_score_b = b
+        self._sync_live_score()
         self.session.last_activity_at = datetime.now()
         await self.repository.save()
         await self.broadcast()
@@ -296,6 +365,8 @@ class TennisRoom:
         """Поменять счёт уже записанной партии. Победитель меняется автоматом
         если этого требует новый счёт.
         """
+        if is_padel(self.session.sport):
+            return False, "Счёт падела не редактируется вручную"
         if not can_edit_matches(self.session):
             return False, "Окно редактирования закрыто (1 час после конца сессии)"
         if idx < 0 or idx >= len(self.session.matches):
