@@ -17,6 +17,11 @@ class AiRelatedFeature(Feature):
             or not ctx.message.reply_to_message
         ):
             return False
+        # Slash commands win over AI continuation — e.g. replying with
+        # /make_news to a message the user previously chatted with AI about
+        # must dispatch to the command, not feed the text back to the LLM.
+        if ctx.message.text.lstrip().startswith("/"):
+            return False
         key = f"{ctx.message.chat.id}_{ctx.message.reply_to_message.id}"
         if key not in ctx.repository.db.ai_messages:
             return False
