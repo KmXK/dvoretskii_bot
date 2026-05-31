@@ -32,3 +32,4 @@ PyJWT[crypto]
 rembg
 onnxruntime
 ddgs
+modal
