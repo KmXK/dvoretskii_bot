@@ -383,7 +383,7 @@ async def create_transcription_reply(
     pretranscribed: str | None = None,
     caption_message=None,
     existing_caption_html: str = "",
-):
+) -> str | None:
     speaker_name = build_speaker_name(
         repository,
         speaker_user_id,
@@ -411,7 +411,7 @@ async def create_transcription_reply(
         if caption_message is not None:
             # Тихо: оставляем оригинальный caption (с описанием) — лучше, чем
             # подменять его текстом ошибки.
-            return
+            return None
         error_text = (
             "Речь не распознана"
             if transcription == ""
@@ -421,11 +421,11 @@ async def create_transcription_reply(
             markup = reply_markup_provider() if reply_markup_provider else None
             try:
                 await edit_message.edit_text(error_text, reply_markup=markup)
-                return
+                return None
             except Exception as e:
                 logger.warning("failed to edit message with transcription error: %s", e)
         await reply_target.reply_text(error_text)
-        return
+        return None
 
     visual_description: str | None = None
     if visual_task is not None:
@@ -458,7 +458,7 @@ async def create_transcription_reply(
                     existing_caption_html, "", caption_trans_html, placeholder=False
                 )
                 await _edit_caption_html(caption_message, final_text)
-                return
+                return transcription
             try:
                 await _stream_summary_into_caption(
                     caption_message,
@@ -468,7 +468,7 @@ async def create_transcription_reply(
                 )
             except Exception as e:
                 logger.exception("caption streaming failed: %s", e)
-            return
+            return transcription
         # Не влезает в caption — падаем на обычный reply-флоу ниже,
         # используя caption_message как reply_target.
         reply_target = caption_message
@@ -509,6 +509,7 @@ async def create_transcription_reply(
 
     if bot_message is not None:
         await _register_ai_reply_target(repository, reply_target, bot_message)
+    return transcription
 
 
 async def _register_ai_reply_target(repository, reply_target, bot_message) -> None:

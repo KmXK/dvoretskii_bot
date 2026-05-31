@@ -38,6 +38,7 @@ from steward.bot.inline_hints_updater import InlineHintsUpdater
 from steward.data.repository import Repository
 from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
+from steward.helpers.curse_debt import initialize_curse_debts, today_msk
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
 from steward.helpers.webapp import get_webapp_inline_button
 from steward.metrics import ContextMetrics, MetricsEngine
@@ -125,6 +126,9 @@ class Bot:
         async def post_init(*_):
             await self.repository.migrate()
             await self.hints_updater.start(application.bot)
+
+            if await initialize_curse_debts(self.repository, self.metrics, today_msk()):
+                await self.repository.save()
 
             from steward.features.fuck import migrate_legacy_fuck_assets
             if migrate_legacy_fuck_assets(self.repository):

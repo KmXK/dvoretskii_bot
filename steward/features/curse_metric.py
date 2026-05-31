@@ -1,8 +1,10 @@
 from steward.framework import Feature, FeatureContext, collection, on_message
+from steward.helpers.curse_processing import process_curse_text
 
 
 class CurseMetricFeature(Feature):
     curse_words = collection("curse_words")
+    curse_ignore_words = collection("curse_ignore_words")
 
     @on_message
     async def count(self, ctx: FeatureContext) -> bool:
@@ -13,10 +15,11 @@ class CurseMetricFeature(Feature):
             return False
         if getattr(ctx.message, "forward_origin", None) is not None:
             return False
-        words = self.curse_words.all()
-        if not words:
-            return False
-        count = sum(1 for token in text.split() if token.lower() in words)
-        if count > 0:
-            ctx.metrics.inc("bot_curse_words_total", value=count)
+        await process_curse_text(
+            self.repository,
+            ctx.metrics,
+            user_id=ctx.user_id,
+            text=text,
+            source_message=ctx.message,
+        )
         return False
