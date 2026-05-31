@@ -201,3 +201,7 @@ CLAUDE.md
 
 # dev scratch dir for news_video pipeline (modal scripts, smoke tests, etc.)
 news_avatar/
+
+# AI-generated raw emotion images (cutouts checked in instead)
+assets/news/anchor_emotions/_raw_*.png
+assets/**/.DS_Store

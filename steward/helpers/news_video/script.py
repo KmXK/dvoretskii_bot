@@ -11,11 +11,26 @@ from steward.helpers.ai import OpenRouterModel, make_openrouter_query
 logger = logging.getLogger(__name__)
 
 
+EMOTIONS = (
+    "neutral",      # default / explanatory
+    "happy",        # good news, positive announcement
+    "serious",      # weighty, important news
+    "surprised",    # unexpected fact
+    "thoughtful",   # analysis, "вот в чём суть"
+    "smirk",        # sarcastic / ironic, the punchline
+    "shocked",      # WTF moment
+    "concerned",    # warning, problem
+    "amused",       # mild joke, fun fact
+    "skeptical",    # doubt, "ну-ну"
+)
+
+
 @dataclass
 class Slide:
     text: str
     image_query: str
     is_meme: bool = False
+    emotion: str = "neutral"
 
 
 @dataclass
@@ -56,13 +71,25 @@ _SCRIPT_PROMPT = """\
 - "image_query": 2-4 английских слова, простые, для поиска иллюстрации в Google Images.
   Для мемов — известные шаблоны ("drake meme", "distracted boyfriend meme", "doge").
 - "is_meme": true только если эта реплика — явная шутка с мем-подачей. Максимум 1-2 из 5.
+- "emotion": эмоция диктора на этой реплике, ровно одна из:
+  neutral (нейтрально/пояснение)
+  happy (хорошая новость)
+  serious (важное, веское)
+  surprised (неожиданный факт)
+  thoughtful (размышление, "вот в чём суть")
+  smirk (сарказм/ирония, панчлайн)
+  shocked (WTF-момент)
+  concerned (предупреждение, проблема)
+  amused (мягкая шутка)
+  skeptical (сомнение, "ну-ну")
+  Выбирай эмоцию ПОД СОДЕРЖАНИЕ реплики. Разнообразь — не ставь одну и ту же эмоцию подряд.
 
-Структура: первый слайд = вступление "в эфире...", последний = неожиданный/ироничный финал.
+Структура: первый слайд = вступление (часто serious или neutral), последний = панчлайн (часто smirk/amused/skeptical).
 
 Верни строго JSON:
 {{
   "slides": [
-    {{"text": "...", "image_query": "...", "is_meme": false}},
+    {{"text": "...", "image_query": "...", "is_meme": false, "emotion": "neutral"}},
     ...
   ]
 }}
@@ -112,6 +139,7 @@ async def make_script(user_id: int, enrich_data: dict) -> Script:
             text=s["text"],
             image_query=s["image_query"],
             is_meme=bool(s.get("is_meme", False)),
+            emotion=s["emotion"] if s.get("emotion") in EMOTIONS else "neutral",
         )
         for s in data.get("slides", [])
         if s.get("text") and s.get("image_query")

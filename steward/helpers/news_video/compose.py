@@ -58,7 +58,7 @@ def make_video(
     chroma_bbox: tuple[int, int, int, int],
     slide_paths: Sequence[Path],
     slide_texts: Sequence[str],
-    anchor_path: Path,
+    anchor_path: Path | Sequence[Path],
     audio_path: Path,
     output_path: Path,
     slide_durations: Sequence[float] | None = None,
@@ -122,35 +122,47 @@ def make_video(
         sc = slide_clip(path, durations[i]).with_start(starts[i])
         slide_clips.append(sc)
 
-    # Anchor — either static PNG cutout, or animated mp4 (black bg → alpha → mov)
+    # Anchor — three modes:
+    #   1. anchor_is_video=True:  animated mp4 from EchoMimicV2 (black bg → alpha)
+    #   2. anchor_path is a sequence: per-slide emotion cutouts (PNG with alpha)
+    #   3. anchor_path is a single Path: legacy static cutout
+    anchor_pos = (anchor_x, studio_h - anchor_height + anchor_y_offset)
+    anchor_clips: list = []
     if anchor_is_video:
         wd = workdir or output_path.parent
         wd.mkdir(parents=True, exist_ok=True)
         anchor_mov = wd / "anchor_alpha.mov"
-        _colorkey_to_mov(anchor_path, anchor_mov)
+        _colorkey_to_mov(anchor_path, anchor_mov)  # type: ignore[arg-type]
         anchor_src = VideoFileClip(str(anchor_mov), has_mask=True)
-        logger.info(
-            "anchor video: src duration=%.2fs, total=%.2fs",
-            anchor_src.duration, total_duration,
-        )
-        # If V2 output shorter than audio (chunk failed or audio rounding) — loop to cover.
+        logger.info("anchor video: src duration=%.2fs, total=%.2fs",
+                    anchor_src.duration, total_duration)
         if anchor_src.duration + 0.1 < total_duration:
             n_loops = int(total_duration / anchor_src.duration) + 1
             anchor_full = concatenate_videoclips([anchor_src] * n_loops)
         else:
             anchor_full = anchor_src
-        anchor = (
+        anchor_clips = [
             anchor_full.resized(height=anchor_height)
-            .with_position((anchor_x, studio_h - anchor_height + anchor_y_offset))
+            .with_position(anchor_pos)
             .with_duration(total_duration)
-        )
+        ]
+    elif isinstance(anchor_path, (list, tuple)):
+        for i, ap in enumerate(anchor_path):
+            clip = (
+                ImageClip(str(ap), transparent=True)
+                .resized(height=anchor_height)
+                .with_position(anchor_pos)
+                .with_start(starts[i])
+                .with_duration(durations[i])
+            )
+            anchor_clips.append(clip)
     else:
-        anchor = (
+        anchor_clips = [
             ImageClip(str(anchor_path), transparent=True)
             .resized(height=anchor_height)
-            .with_position((anchor_x, studio_h - anchor_height + anchor_y_offset))
+            .with_position(anchor_pos)
             .with_duration(total_duration)
-        )
+        ]
 
     # Subtitles — pre-wrap explicitly, render with `label` mode, anchor bottom with margin
     subtitle_clips = []
@@ -185,7 +197,7 @@ def make_video(
 
     final = (
         CompositeVideoClip(
-            [studio, chroma_mat, *slide_clips, anchor, *subtitle_clips],
+            [studio, chroma_mat, *slide_clips, *anchor_clips, *subtitle_clips],
             size=(studio_w, studio_h),
         )
         .with_audio(audio)
