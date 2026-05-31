@@ -32,6 +32,10 @@ def _message_chat_id(message: Any) -> int | None:
     return chat_id if isinstance(chat_id, int) else None
 
 
+def _is_curse_participant(repo: Repository, user_id: int) -> bool:
+    return any(participant.user_id == user_id for participant in repo.db.curse_participants)
+
+
 async def process_curse_text(
     repo: Repository,
     metrics: ContextMetrics,
@@ -61,7 +65,7 @@ async def process_curse_text(
     else:
         metrics.inc("bot_curse_words_total", metric_labels, value=count)
 
-    if source_message is not None:
+    if source_message is not None and _is_curse_participant(repo, user_id):
         try:
             await source_message.set_reaction(CURSE_REACTION)
         except Exception:
