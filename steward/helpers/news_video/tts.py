@@ -115,6 +115,47 @@ def _tts_one_eleven_sync(text: str, voice_id: str, model_id: str, api_key: str) 
         return None
 
 
+async def list_eleven_voices() -> list[dict] | None:
+    """List voices available on the configured ElevenLabs account.
+
+    Returns a list of dicts: [{voice_id, name, gender, age, category, description}].
+    Use this to find voice IDs that actually work on the current plan — free-tier
+    accounts can only call voices that already sit in 'My Voices', so this is the
+    safest way to enumerate them.
+    """
+    api_key = _eleven_key()
+    if not api_key:
+        logger.warning("ElevenLabs list: no API key set")
+        return None
+
+    def _fetch() -> list[dict]:
+        from elevenlabs.client import ElevenLabs
+
+        client = ElevenLabs(
+            api_key=api_key,
+            httpx_client=httpx.Client(timeout=60, proxy=os.environ.get("DOWNLOAD_PROXY")),
+        )
+        resp = client.voices.get_all()
+        out: list[dict] = []
+        for v in getattr(resp, "voices", []) or []:
+            labels = getattr(v, "labels", None) or {}
+            out.append({
+                "voice_id": getattr(v, "voice_id", ""),
+                "name": getattr(v, "name", ""),
+                "gender": labels.get("gender", ""),
+                "age": labels.get("age", ""),
+                "category": getattr(v, "category", ""),
+                "description": labels.get("description", "") or labels.get("descriptive", ""),
+            })
+        return out
+
+    try:
+        return await asyncio.to_thread(_fetch)
+    except Exception:
+        logger.exception("ElevenLabs voice list failed")
+        return None
+
+
 async def synthesize_eleven_test(text: str, voice_id: str, out_path: Path) -> Path | None:
     """One-shot ElevenLabs synth for admin voice-testing (the /tts command).
 

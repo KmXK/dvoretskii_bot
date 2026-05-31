@@ -8,7 +8,7 @@ from pathlib import Path
 from steward.framework import Feature, FeatureContext, subcommand
 from steward.helpers.limiter import Duration, check_limit
 from steward.helpers.news_video.sender import send_voice_reply
-from steward.helpers.news_video.tts import synthesize_eleven_test
+from steward.helpers.news_video.tts import list_eleven_voices, synthesize_eleven_test
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,26 @@ class TtsTestFeature(Feature):
     description = "Тест ElevenLabs голоса по voice_id (admin)"
     excluded_from_ai_router = True
     help_examples = [
+        "/tts list",
         "/tts 21m00Tcm4TlvDq8ikWAM Привет, это тест голоса",
     ]
+
+    @subcommand("list", description="Список доступных голосов", admin=True)
+    async def list_voices(self, ctx: FeatureContext):
+        voices = await list_eleven_voices()
+        if voices is None:
+            await ctx.reply("❌ Не получилось — проверь ELEVENLABS_API_KEY / EVELEN_LABS_STT")
+            return
+        if not voices:
+            await ctx.reply("Список пуст — ни одного голоса в кабинете")
+            return
+        lines = ["Доступные голоса ElevenLabs:\n"]
+        for v in voices[:40]:
+            name = v["name"] or "?"
+            extras = " ".join(filter(None, [v["gender"], v["age"], v["category"]]))
+            tail = f" — {extras}" if extras else ""
+            lines.append(f"`{v['voice_id']}` — *{name}*{tail}")
+        await ctx.reply("\n".join(lines), markdown=True)
 
     @subcommand(
         "<voice_id:str> <text:rest>",
