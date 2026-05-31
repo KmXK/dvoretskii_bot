@@ -61,6 +61,7 @@ def make_video(
     anchor_path: Path,
     audio_path: Path,
     output_path: Path,
+    slide_durations: Sequence[float] | None = None,
     fps: int = 25,
     anchor_height: int = 560,
     anchor_x: int = 60,
@@ -73,13 +74,25 @@ def make_video(
 
     Layout: studio.jpg full-frame, slides in chroma_bbox region (one at a time),
     anchor cutout overlaid on the left bottom, per-slide subtitle at bottom center.
+
+    If `slide_durations` is given, each slide's image + subtitle is shown for exactly
+    that long (sums to ~audio length) — this is how we sync to TTS timing. Otherwise
+    duration is split evenly.
     """
     audio = AudioFileClip(str(audio_path))
     total_duration = float(audio.duration)
     n = len(slide_paths)
     if n == 0:
         raise ValueError("Need at least one slide")
-    per_slide = total_duration / n
+    if slide_durations is not None and len(slide_durations) == n:
+        durations = list(slide_durations)
+        # Stretch last slide if rounding leaves a tail
+        diff = total_duration - sum(durations)
+        if abs(diff) > 0.05:
+            durations[-1] += diff
+    else:
+        durations = [total_duration / n] * n
+    starts = [sum(durations[:i]) for i in range(n)]
 
     x0, y0, x1, y1 = chroma_bbox
     chroma_w, chroma_h = x1 - x0, y1 - y0
@@ -94,20 +107,19 @@ def make_video(
         .with_duration(total_duration)
     )
 
-    # Slide track — each slide letterboxed into chroma_w x chroma_h
-    def slide_clip(path: Path) -> ImageClip:
+    # Slide track — each slide letterboxed into chroma_w x chroma_h, shown for its own duration
+    def slide_clip(path: Path, duration: float) -> ImageClip:
         clip = ImageClip(str(path))
         sw, sh = clip.size
         scale = min(chroma_w / sw, chroma_h / sh)
-        clip = clip.resized((int(sw * scale), int(sh * scale))).with_duration(per_slide)
-        # Center within chromakey area
+        clip = clip.resized((int(sw * scale), int(sh * scale))).with_duration(duration)
         cx = x0 + (chroma_w - clip.w) // 2
         cy = y0 + (chroma_h - clip.h) // 2
         return clip.with_position((cx, cy))
 
     slide_clips = []
     for i, path in enumerate(slide_paths):
-        sc = slide_clip(path).with_start(i * per_slide)
+        sc = slide_clip(path, durations[i]).with_start(starts[i])
         slide_clips.append(sc)
 
     # Anchor — either static PNG cutout, or animated mp4 (black bg → alpha → mov)
@@ -162,10 +174,11 @@ def make_video(
         # MoviePy can under-report height with stroke; add line_count * stroke_width as safety
         safety = wrapped.count("\n") * 6 + 8
         y_top = max(0, studio_h - sub.h - sub_bottom_margin - safety)
-        logger.info("subtitle %d: lines=%d, sub.h=%d, y_top=%d", i, wrapped.count("\n") + 1, sub.h, y_top)
+        logger.info("subtitle %d: lines=%d, sub.h=%d, y_top=%d, start=%.2f, dur=%.2f",
+                    i, wrapped.count("\n") + 1, sub.h, y_top, starts[i], durations[i])
         sub = (
-            sub.with_start(i * per_slide)
-            .with_duration(per_slide)
+            sub.with_start(starts[i])
+            .with_duration(durations[i])
             .with_position(("center", y_top))
         )
         subtitle_clips.append(sub)

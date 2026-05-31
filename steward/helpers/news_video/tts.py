@@ -144,39 +144,70 @@ def _concat_ogg(parts: list[Path], out_path: Path) -> None:
 class TtsResult:
     full_path: Path
     chunk_paths: list[Path]
+    chunk_durations: list[float]
 
 
-async def synthesize_news(
-    text: str,
+def _probe_duration(path: Path) -> float:
+    """Return the duration of an audio file in seconds via ffprobe."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True,
+    )
+    return float(result.stdout.strip() or 0.0)
+
+
+async def synthesize_per_slide(
+    slide_texts: list[str],
     out_path: Path,
     *,
     voice: str | None = None,
     folder_id: str | None = None,
 ) -> TtsResult | None:
-    """Synthesize Russian male voice; return both merged file and per-chunk paths."""
+    """One TTS call per slide → chunk_paths align 1-to-1 with input slides.
+
+    If a slide's text exceeds the 240-char Yandex limit, it's internally chunked
+    and concatenated back so the result is still exactly one audio file per slide.
+    Returns concatenated full audio + per-slide paths + per-slide durations.
+    """
     api_key = _api_key()
-    if not api_key or not text.strip():
-        logger.warning("news TTS: no api key or empty text")
+    if not api_key or not slide_texts:
+        logger.warning("news TTS: no api key or empty slides")
         return None
     voice = voice or os.environ.get("NEWS_TTS_VOICE", _DEFAULT_VOICE)
     folder_id = folder_id or os.environ.get("AI_FOLDER_ID", "")
 
-    chunks = _split_into_chunks(text)
-    logger.info("news TTS: %d chunks (lens: %s)", len(chunks), [len(c) for c in chunks])
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    chunk_paths: list[Path] = []
-    for i, chunk in enumerate(chunks):
-        audio = await _tts_one(chunk, api_key, voice, folder_id)
-        if audio is None:
-            logger.warning("TTS chunk %d failed: %r", i, chunk[:80])
+    slide_paths: list[Path] = []
+    for i, text in enumerate(slide_texts):
+        if not text.strip():
             return None
-        path = out_path.parent / f"tts_chunk_{i:02d}.ogg"
-        path.write_bytes(audio)
-        chunk_paths.append(path)
+        sub_chunks = _split_into_chunks(text)
+        sub_paths: list[Path] = []
+        for j, sub in enumerate(sub_chunks):
+            audio = await _tts_one(sub, api_key, voice, folder_id)
+            if audio is None:
+                logger.warning("TTS slide %d sub-chunk %d failed: %r", i, j, sub[:80])
+                return None
+            sp = out_path.parent / f"_tts_s{i:02d}_p{j:02d}.ogg"
+            sp.write_bytes(audio)
+            sub_paths.append(sp)
 
-    if len(chunk_paths) == 1:
-        shutil.copy(str(chunk_paths[0]), str(out_path))
+        slide_path = out_path.parent / f"tts_slide_{i:02d}.ogg"
+        if len(sub_paths) == 1:
+            shutil.move(str(sub_paths[0]), str(slide_path))
+        else:
+            await asyncio.to_thread(_concat_ogg, sub_paths, slide_path)
+            for sp in sub_paths:
+                sp.unlink(missing_ok=True)
+        slide_paths.append(slide_path)
+
+    if len(slide_paths) == 1:
+        shutil.copy(str(slide_paths[0]), str(out_path))
     else:
-        await asyncio.to_thread(_concat_ogg, chunk_paths, out_path)
-    return TtsResult(full_path=out_path, chunk_paths=chunk_paths)
+        await asyncio.to_thread(_concat_ogg, slide_paths, out_path)
+
+    durations = [_probe_duration(p) for p in slide_paths]
+    logger.info("news TTS per-slide: %d slides, durations=%s, total=%.2fs",
+                len(slide_paths), [f"{d:.2f}" for d in durations], sum(durations))
+    return TtsResult(full_path=out_path, chunk_paths=slide_paths, chunk_durations=durations)
