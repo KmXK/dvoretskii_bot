@@ -31,6 +31,7 @@ from steward.features.me import MeFeature
 from steward.features.message_info import MessageInfoFeature
 from steward.features.miniapp import MiniAppFeature
 from steward.features.multiply import MultiplyFeature
+from steward.features.news_video import NewsVideoFeature
 from steward.features.newtext import NewTextFeature
 from steward.features.pasha import PashaFeature
 from steward.features.pretty_time import PrettyTimeFeature
@@ -97,6 +98,7 @@ COMMANDS << [
     PrettyTimeFeature,
     MessageInfoFeature,
     NewTextFeature,
+    NewsVideoFeature,
     SubscribeFeature,
     TranslateFeature,
     LayoutFeature,

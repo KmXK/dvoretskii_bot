@@ -198,3 +198,6 @@ scripts/tunnel-key/*
 !scripts/tunnel-key/.gitkeep
 
 CLAUDE.md
+
+# dev scratch dir for news_video pipeline (modal scripts, smoke tests, etc.)
+news_avatar/
