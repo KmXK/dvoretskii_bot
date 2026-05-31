@@ -11,7 +11,7 @@ from .compose import make_video
 from .echomimic import animate_anchor
 from .images import fetch_slides
 from .script import Script, enrich, make_script
-from .tts import synthesize_news
+from .tts import synthesize_per_slide
 
 logger = logging.getLogger(__name__)
 
@@ -55,27 +55,24 @@ async def generate_news_video(
 
     await progress("tts")
     audio_path = out_dir / "audio.ogg"
-    tts = await synthesize_news(script.full_text, audio_path)
+    tts = await synthesize_per_slide([s.text for s in script.slides], audio_path)
     if tts is None:
         logger.error("TTS produced no audio")
         return None
 
     # Images + anchor animation run in parallel — both take time.
-    async def images_task() -> tuple[list[Path], list[str]]:
+    async def images_task() -> list[Path | None]:
         slides_dir = out_dir / "slides"
-        image_results = await fetch_slides(
+        return await fetch_slides(
             [(s.image_query, s.is_meme) for s in script.slides], slides_dir
         )
-        paths: list[Path] = []
-        texts: list[str] = []
-        for slide, path in zip(script.slides, image_results):
-            if path is not None:
-                paths.append(path)
-                texts.append(slide.text)
-        return paths, texts
 
     async def anchor_task() -> Path | None:
-        if not _echomimic_enabled() or not anchor_for_v2.exists():
+        if not _echomimic_enabled():
+            logger.info("echomimic disabled via NEWS_VIDEO_ECHOMIMIC — using static anchor")
+            return None
+        if not anchor_for_v2.exists():
+            logger.warning("anchor_on_black.jpg missing — using static anchor")
             return None
         return await animate_anchor(
             image_bytes=anchor_for_v2.read_bytes(),
@@ -84,11 +81,25 @@ async def generate_news_video(
         )
 
     await progress("media")
-    (images_pair, animated_anchor) = await asyncio.gather(images_task(), anchor_task())
-    filtered_paths, filtered_texts = images_pair
+    (image_results, animated_anchor) = await asyncio.gather(images_task(), anchor_task())
+
+    # Keep slides aligned to their texts/durations; drop slides whose image fetch failed.
+    filtered_paths: list[Path] = []
+    filtered_texts: list[str] = []
+    filtered_durations: list[float] = []
+    for slide, path, dur in zip(script.slides, image_results, tts.chunk_durations):
+        if path is not None:
+            filtered_paths.append(path)
+            filtered_texts.append(slide.text)
+            filtered_durations.append(dur)
     if not filtered_paths:
         logger.error("no slide images obtained")
         return None
+
+    if animated_anchor is None:
+        logger.info("anchor: static cutout (no animation)")
+    else:
+        logger.info("anchor: animated via EchoMimicV2")
 
     await progress("compose")
     output_path = out_dir / "news.mp4"
@@ -97,6 +108,7 @@ async def generate_news_video(
         chroma_bbox=CHROMA_BBOX,
         slide_paths=filtered_paths,
         slide_texts=filtered_texts,
+        slide_durations=filtered_durations,
         anchor_path=animated_anchor or anchor_static,
         audio_path=audio_path,
         output_path=output_path,
