@@ -95,7 +95,7 @@ export function EditMatchSheet({ open, nameA, nameB, initialScoreA, initialScore
   )
 }
 
-function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
+export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}

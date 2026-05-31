@@ -34,7 +34,7 @@ function SessionRow({ s, onClick }) {
   )
 }
 
-export default function TennisLobby({ onStartLive, onOpenSession, onOpenImport, onOpenStats, onOpenNewSession }) {
+export default function TennisLobby({ onStartLive, onOpenSession, onOpenImport, onOpenStats, onOpenNewSession, onOpenWatch }) {
   const { firstName, username } = useAuth()
   const [sessions, setSessions] = useState(null)
   const [loadError, setLoadError] = useState(null)
@@ -103,6 +103,19 @@ export default function TennisLobby({ onStartLive, onOpenSession, onOpenImport, 
           <div className="font-semibold text-base">Импорт</div>
         </button>
       </div>
+
+      <motion.button
+        whileTap={{ scale: 0.98 }}
+        onClick={onOpenWatch}
+        className="w-full mb-6 flex items-center gap-3 bg-gradient-to-br from-indigo-700/40 to-zinc-900 hover:from-indigo-700/60 text-white rounded-2xl px-4 py-4 border border-indigo-800/60 text-left"
+      >
+        <span className="text-2xl">⌚</span>
+        <span className="flex-1">
+          <span className="block font-semibold text-base">Привязать часы</span>
+          <span className="block text-indigo-200/70 text-xs">Вести счёт с Galaxy Watch без телефона</span>
+        </span>
+        <span className="text-indigo-300/70 text-xl">→</span>
+      </motion.button>
 
       <h2 className="text-zinc-400 text-xs uppercase tracking-wider mb-2">Последние</h2>
       {loadError && (
