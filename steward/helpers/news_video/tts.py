@@ -276,9 +276,15 @@ async def synthesize_per_sentence(
     if provider == "yandex" and not yandex_key:
         logger.warning("news TTS yandex: no api key")
         return None
-    if provider == "elevenlabs" and not (_eleven_key() and os.environ.get("NEWS_TTS_ELEVEN_VOICE_ID")):
-        logger.warning("news TTS elevenlabs: missing key or NEWS_TTS_ELEVEN_VOICE_ID")
-        return None
+    if provider == "elevenlabs":
+        missing = []
+        if not _eleven_key():
+            missing.append("ELEVENLABS_API_KEY or EVELEN_LABS_STT")
+        if not os.environ.get("NEWS_TTS_ELEVEN_VOICE_ID"):
+            missing.append("NEWS_TTS_ELEVEN_VOICE_ID")
+        if missing:
+            logger.warning("news TTS elevenlabs: missing env vars: %s", ", ".join(missing))
+            return None
     if not slides_sentences:
         return None
 
