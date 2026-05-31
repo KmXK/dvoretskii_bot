@@ -1,18 +1,16 @@
 from typing import AsyncIterator, ClassVar
 
-from telegram import Message
-
 from steward.features._persona import AiPersonaFeature
 from steward.helpers.ai import (
     PASHA_PROMPT,
-    make_yandex_ai_query,
-    make_yandex_ai_stream,
+    OpenRouterModel,
+    make_openrouter_query,
+    make_openrouter_stream,
 )
 from steward.helpers.limiter import Duration
 
 
-_YANDEX_DENIAL = "Я не могу обсуждать эту тему."
-_DENIAL_REPLACEMENT = "Ой, иди нахуй"
+_GROK = OpenRouterModel.GROK_4_FAST
 
 
 class PashaFeature(AiPersonaFeature):
@@ -31,17 +29,9 @@ class PashaFeature(AiPersonaFeature):
     rate_window: ClassVar[int] = 20 * Duration.SECOND
 
     async def _call(self, user_id: int, messages: list[tuple[str, str]]) -> str:
-        return await make_yandex_ai_query(user_id, messages, PASHA_PROMPT)
+        return await make_openrouter_query(user_id, _GROK, messages, PASHA_PROMPT)
 
     async def _stream(
         self, user_id: int, messages: list[tuple[str, str]]
     ) -> AsyncIterator[str]:
-        return await make_yandex_ai_stream(user_id, messages, PASHA_PROMPT)
-
-    async def _post_process(self, bot_message: Message, full_text: str) -> None:
-        if _YANDEX_DENIAL not in full_text:
-            return
-        try:
-            await bot_message.edit_text(_DENIAL_REPLACEMENT)
-        except Exception:
-            pass
+        return await make_openrouter_stream(user_id, _GROK, messages, PASHA_PROMPT)

@@ -37,6 +37,18 @@ _ai_handlers: dict[str, AiCallable] = {}
 _ai_stream_handlers: dict[str, AiStreamCallable] = {}
 _ai_quick_handlers: dict[str, QuickCallable] = {}
 
+# Grok tends to glue a meta-comment / rhetorical filler onto the end of a reply
+# ("а что хотел то", "ну как-то так", …). Inject this into every persona's
+# context so the model ends on substance instead. Applies to all callers of the
+# execute_ai_request* helpers (the /ai butler, Diana, Pasha).
+NO_META_TAIL_HINT = (
+    "Заканчивай ответ строго по существу. Не добавляй в конце никаких приписок, "
+    "подытоживаний и риторических вопросов-затычек вроде «а что хотел то», "
+    "«ну как-то так», «вот так вот», «что ещё хотел узнать» и подобных "
+    "мета-комментариев — последняя фраза должна быть содержательной частью "
+    "самого ответа."
+)
+
 
 def register_ai_handler(
     name: str,
@@ -123,6 +135,7 @@ async def execute_ai_request(
     )
     if language_hint:
         messages = [("system", language_hint), *messages]
+    messages = [("system", NO_META_TAIL_HINT), *messages]
     response = ai_call(context.message.from_user.id, messages)
     if isawaitable(response):
         response = await response
@@ -185,6 +198,8 @@ async def execute_ai_request_streaming(
     language_hint = language_prompt_for(context.repository, user_id)
     if language_hint:
         messages = [("system", language_hint), *messages]
+
+    messages = [("system", NO_META_TAIL_HINT), *messages]
 
     upgrade_task: asyncio.Task[str | None] | None = None
     if placeholder_upgrade is not None:
