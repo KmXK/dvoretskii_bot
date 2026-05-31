@@ -22,7 +22,11 @@ ProgressFn = Callable[[str], Awaitable[None]]
 
 
 def _echomimic_enabled() -> bool:
-    return os.environ.get("NEWS_VIDEO_ECHOMIMIC", "1").lower() not in {"0", "off", "false"}
+    # Default OFF — Modal $30 free credit requires a card, and the emotion-based
+    # static anchor (see assets/news/anchor_emotions/) usually looks good enough.
+    # Set NEWS_VIDEO_ECHOMIMIC=1 to opt into the V2 animation when you do have
+    # Modal credit.
+    return os.environ.get("NEWS_VIDEO_ECHOMIMIC", "0").lower() in {"1", "on", "true"}
 
 
 async def _noop(stage: str) -> None:
