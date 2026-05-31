@@ -14,8 +14,6 @@ import logging
 import subprocess
 from pathlib import Path
 
-import modal
-
 logger = logging.getLogger(__name__)
 
 _APP = "echomimic-v2"
@@ -59,7 +57,11 @@ def _concat_mp4(parts: list[Path], out_path: Path) -> None:
 
 
 def _get_infer():
-    """Look up the deployed EchoMimicV2.infer remote function."""
+    """Look up the deployed EchoMimicV2.infer remote function. Lazy-imports `modal`
+    so the bot can start in environments without the SDK (falls back to static anchor).
+    """
+    import modal  # local import — optional dependency
+
     cls = modal.Cls.from_name(_APP, _CLS)
     return cls().infer
 
@@ -81,7 +83,14 @@ async def animate_anchor(
     """
     if not audio_chunk_paths:
         return None
-    infer = _get_infer()
+    try:
+        infer = _get_infer()
+    except ImportError:
+        logger.warning("modal SDK not installed — skipping anchor animation")
+        return None
+    except Exception:
+        logger.exception("failed to look up Modal echomimic-v2 endpoint")
+        return None
 
     async def one(i: int, audio_path: Path) -> Path | None:
         try:
