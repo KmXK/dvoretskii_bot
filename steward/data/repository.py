@@ -640,6 +640,11 @@ class Repository:
                     ts.setdefault("initial_server", ts.get("first_server", "a"))
             data["version"] = 36
 
+        if data.get("version") == 36:
+            # Часы/устройства: долгоживущие bearer-токены, привязанные по коду.
+            data.setdefault("paired_devices", [])
+            data["version"] = 37
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         data.setdefault("fuck_assets", [])
@@ -659,6 +664,7 @@ class Repository:
         data.setdefault("chat_tunnels", [])
         data.setdefault("tunnel_open_chats", [])
         data.setdefault("tunnel_messages", [])
+        data.setdefault("paired_devices", [])
         # JSON сериализует int-ключи как строки — конвертируем обратно
         if isinstance(data.get("last_message_at"), dict):
             data["last_message_at"] = {int(k): v for k, v in data["last_message_at"].items()}
