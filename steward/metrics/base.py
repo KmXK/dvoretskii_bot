@@ -4,6 +4,10 @@ from dataclasses import dataclass
 Labels = dict[str, str]
 
 
+class MetricQueryError(RuntimeError):
+    pass
+
+
 @dataclass
 class MetricSample:
     labels: dict[str, str]
@@ -24,7 +28,7 @@ class MetricsEngine(ABC):
     def start_server(self, port: int) -> None: ...
 
     @abstractmethod
-    async def query(self, promql: str) -> list[MetricSample]: ...
+    async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]: ...
 
 
 class ContextMetrics:
@@ -41,6 +45,5 @@ class ContextMetrics:
     def observe(self, name: str, value: float, labels: Labels | None = None) -> None:
         self._engine.observe(name, {**self._labels, **(labels or {})}, value)
 
-    async def query(self, promql: str) -> list[MetricSample]:
-        return await self._engine.query(promql)
-
+    async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]:
+        return await self._engine.query(promql, strict=strict)

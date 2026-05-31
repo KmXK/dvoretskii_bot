@@ -3,7 +3,7 @@ import logging
 import aiohttp
 from prometheus_client import Counter, Gauge, Histogram, REGISTRY, start_http_server
 
-from steward.metrics.base import Labels, MetricSample, MetricsEngine
+from steward.metrics.base import Labels, MetricQueryError, MetricSample, MetricsEngine
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,10 @@ class PrometheusMetricsEngine(MetricsEngine):
     def start_server(self, port: int) -> None:
         start_http_server(port, registry=REGISTRY)
 
-    async def query(self, promql: str) -> list[MetricSample]:
+    async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]:
         if not self._vm_url:
+            if strict:
+                raise MetricQueryError("VictoriaMetrics URL is not configured")
             return []
         try:
             async with aiohttp.ClientSession() as session:
@@ -54,6 +56,8 @@ class PrometheusMetricsEngine(MetricsEngine):
                     data = await resp.json()
                     if data.get("status") != "success":
                         logger.warning("VM query failed: %s", data)
+                        if strict:
+                            raise MetricQueryError(f"VictoriaMetrics query failed: {data}")
                         return []
                     results = []
                     for item in data.get("data", {}).get("result", []):
@@ -63,8 +67,13 @@ class PrometheusMetricsEngine(MetricsEngine):
                     return results
         except aiohttp.ClientConnectorError as e:
             logger.warning("VM unreachable: %s", e)
+            if strict:
+                raise MetricQueryError("VictoriaMetrics is unreachable") from e
             return []
+        except MetricQueryError:
+            raise
         except Exception as e:
             logger.exception("VM query error: %s", e)
+            if strict:
+                raise MetricQueryError("VictoriaMetrics query error") from e
             return []
-
