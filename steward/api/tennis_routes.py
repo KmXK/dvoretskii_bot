@@ -18,6 +18,7 @@ from steward.tennis.engine import (
     SIDE_A,
     SIDE_B,
     aggregate_session_matches,
+    is_padel,
     normalize_sport,
     player_stats,
     session_wins,
@@ -73,6 +74,13 @@ def _serialize_session(
         "player_b_id": s.player_b_id,
         "player_a_name": _spoken_name(repository, s.player_a_id, "игрок А"),
         "player_b_name": _spoken_name(repository, s.player_b_id, "игрок Б"),
+        # Падел — парный (2v2): напарники сторон (None для одиночных спортов).
+        "player_a2_id": s.player_a2_id,
+        "player_b2_id": s.player_b2_id,
+        "player_a2_name": _spoken_name(repository, s.player_a2_id, "напарник А") if s.player_a2_id else None,
+        "player_b2_name": _spoken_name(repository, s.player_b2_id, "напарник Б") if s.player_b2_id else None,
+        "golden_point": s.golden_point,
+        "sets_to_win": s.sets_to_win,
         "started_at": _iso_utc(s.started_at),
         "ended_at": _iso_utc(s.ended_at),
         "last_activity_at": _iso_utc(s.last_activity_at),
@@ -186,6 +194,26 @@ async def create_session(request: web.Request) -> web.Response:
     serve_streak = max(1, int(body.get("serve_streak", 2) or 2))
     sport = normalize_sport(body.get("sport"))
 
+    # Падел — парный (2v2): нужны напарник и пара соперников.
+    player_a2_id: int | None = None
+    player_b2_id: int | None = None
+    golden_point = True
+    sets_to_win = 2
+    if is_padel(sport):
+        partner_raw = body.get("partner")
+        opp_partner_raw = body.get("opponent_partner")
+        player_a2_id = _resolve_user(repository, partner_raw)
+        player_b2_id = _resolve_user(repository, opp_partner_raw)
+        if player_a2_id is None:
+            return web.json_response({"error": f"напарник «{partner_raw}» не найден"}, status=400)
+        if player_b2_id is None:
+            return web.json_response({"error": f"соперник «{opp_partner_raw}» не найден"}, status=400)
+        four = {user_id, opponent_id, player_a2_id, player_b2_id}
+        if len(four) != 4:
+            return web.json_response({"error": "в паделе нужны четыре разных игрока"}, status=400)
+        golden_point = bool(body.get("golden_point", True))
+        sets_to_win = max(1, int(body.get("sets_to_win", 2) or 2))
+
     # Один активный сеанс на пользователя в чате
     chat_id = int(body.get("chat_id") or user_id)
     existing = next(
@@ -220,6 +248,10 @@ async def create_session(request: web.Request) -> web.Response:
         first_server=first_server,
         initial_server=first_server,
         serve_streak=serve_streak,
+        player_a2_id=player_a2_id,
+        player_b2_id=player_b2_id,
+        golden_point=golden_point,
+        sets_to_win=sets_to_win,
     )
     repository.db.tennis_sessions.append(session)
     await repository.save()
@@ -301,6 +333,8 @@ async def update_match(request: web.Request) -> web.Response:
     session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
     if session is None:
         return web.json_response({"error": "not found"}, status=404)
+    if is_padel(session.sport):
+        return web.json_response({"error": "счёт падела не редактируется вручную"}, status=409)
     if not _is_player(session, user_id):
         return web.json_response({"error": "only players can edit matches"}, status=403)
     if not can_edit_matches(session):
