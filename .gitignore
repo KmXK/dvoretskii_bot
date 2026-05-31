@@ -205,3 +205,7 @@ news_avatar/
 # AI-generated raw emotion images (cutouts checked in instead)
 assets/news/anchor_emotions/_raw_*.png
 assets/**/.DS_Store
+
+# persona analysis: account session + exported chats / portraits (private)
+scripts/persona_session.session*
+/junk/
