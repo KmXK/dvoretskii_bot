@@ -17,3 +17,8 @@ async def send_news_video(message: Message, video_path: Path, caption: str = "")
             video=InputFile(f, filename=video_path.name),
             caption=caption or None,
         )
+
+
+async def send_voice_reply(message: Message, audio_path: Path) -> None:
+    with audio_path.open("rb") as f:
+        await message.reply_voice(voice=InputFile(f, filename=audio_path.name))
