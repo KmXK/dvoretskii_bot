@@ -4,9 +4,11 @@ from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.class_mark import class_mark
-from steward.helpers.curse_punishment import (
-    build_punishment_today_entries,
-    format_punishment_today_text,
+from steward.helpers.curse_debt import (
+    apply_curse_interest_until,
+    build_curse_debt_report_entries,
+    format_curse_debt_report,
+    today_msk,
 )
 
 
@@ -16,6 +18,9 @@ class CursePunishmentDigestDelayedAction(DelayedAction):
     generator: ConstantGenerator
 
     async def execute(self, context: DelayedActionContext):
+        if apply_curse_interest_until(context.repository, today_msk()):
+            await context.repository.save()
+
         if not context.repository.db.curse_punishments:
             return
 
@@ -31,13 +36,9 @@ class CursePunishmentDigestDelayedAction(DelayedAction):
             return
 
         for chat_id in chat_ids:
-            entries = await build_punishment_today_entries(
-                context.repository,
-                context.metrics,
-                chat_id,
-            )
+            entries = build_curse_debt_report_entries(context.repository, chat_id)
             if not entries:
                 continue
 
-            text = format_punishment_today_text(context.repository, entries)
+            text = format_curse_debt_report(entries)
             await context.bot.send_message(chat_id, text)

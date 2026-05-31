@@ -1,3 +1,5 @@
+"""Legacy metric-based helpers used only for one-time curse debt backfill."""
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -27,7 +29,13 @@ def _participant_since(participant: CurseParticipant) -> datetime:
     return participant.last_done_at or participant.subscribed_at
 
 
-async def get_current_curse_count(queryable, user_id: int, since: datetime | None) -> int:
+async def get_current_curse_count(
+    queryable,
+    user_id: int,
+    since: datetime | None,
+    *,
+    strict: bool = False,
+) -> int:
     if since is None:
         promql = f'sum(bot_curse_words_total{{user_id="{user_id}"}})'
     else:
@@ -35,7 +43,7 @@ async def get_current_curse_count(queryable, user_id: int, since: datetime | Non
         seconds = max(int((now - since).total_seconds()), 1)
         promql = f'sum(increase(bot_curse_words_total{{user_id="{user_id}"}}[{seconds}s]))'
 
-    results = await queryable.query(promql)
+    results = await queryable.query(promql, strict=strict)
     if not results:
         return 0
     return max(int(round(results[0].value)), 0)
