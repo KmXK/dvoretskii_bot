@@ -73,7 +73,7 @@ class InlineHintsUpdater:
         # for all users
         await self._set_commands(
             bot,
-            lambda x: not x.only_for_admin,
+            lambda x: not x.only_for_admin and not getattr(x, "only_for_chat_admin", False),
             BotCommandScopeDefault(),
         )
 

@@ -120,7 +120,7 @@ class CurseFeature(Feature):
             return
         await ctx.reply("Матерные слова:\n\n" + "\n".join(words))
 
-    @subcommand("word_list add <words:rest>", description="Добавить слова", admin=True)
+    @subcommand("word_list add <words:rest>", description="Добавить слова", permission="curse.manage")
     async def add_words(self, ctx: FeatureContext, words: str):
         items = _parse_words(words)
         if not items:
@@ -132,7 +132,7 @@ class CurseFeature(Feature):
         await self.curse_words.save()
         await ctx.reply("Добавлены слова: " + ", ".join(added))
 
-    @subcommand("word_list remove <words:rest>", description="Удалить слова", admin=True)
+    @subcommand("word_list remove <words:rest>", description="Удалить слова", permission="curse.manage")
     async def remove_words(self, ctx: FeatureContext, words: str):
         items = _parse_words(words)
         if not items:
@@ -152,7 +152,7 @@ class CurseFeature(Feature):
             return
         await ctx.reply("Исключения:\n\n" + "\n".join(words))
 
-    @subcommand("ignore_list add <words:rest>", description="Добавить исключения", admin=True)
+    @subcommand("ignore_list add <words:rest>", description="Добавить исключения", permission="curse.manage")
     async def add_ignore_words(self, ctx: FeatureContext, words: str):
         items = _parse_words(words)
         if not items:
@@ -164,7 +164,7 @@ class CurseFeature(Feature):
         await self.curse_ignore_words.save()
         await ctx.reply("Добавлены исключения: " + ", ".join(added))
 
-    @subcommand("ignore_list remove <words:rest>", description="Удалить исключения", admin=True)
+    @subcommand("ignore_list remove <words:rest>", description="Удалить исключения", permission="curse.manage")
     async def remove_ignore_words(self, ctx: FeatureContext, words: str):
         items = _parse_words(words)
         if not items:
@@ -248,7 +248,7 @@ class CurseFeature(Feature):
         await self.curse_participants.save()
         await ctx.reply("Подписка на наказания отключена.")
 
-    @subcommand("punishment add", description="Добавить наказание", admin=True)
+    @subcommand("punishment add", description="Добавить наказание", permission="curse.manage")
     async def start_add_punishment(self, ctx: FeatureContext):
         await self.start_wizard("curse:punishment:add", ctx)
 
@@ -267,7 +267,7 @@ class CurseFeature(Feature):
         selection_weight: float,
         interest_percent: float,
     ):
-        if not ctx.repository.is_admin(ctx.user_id):
+        if not ctx.repository.has_permission(ctx.user_id, "curse.manage"):
             await ctx.reply("Недостаточно прав.")
             return
         title = title.strip()
@@ -299,7 +299,7 @@ class CurseFeature(Feature):
             f"({punishment.interest_percent}% в день, вес {punishment.selection_weight})"
         )
 
-    @subcommand("punishment add <coeff:int> <title:rest>", admin=True)
+    @subcommand("punishment add <coeff:int> <title:rest>", permission="curse.manage")
     async def add_punishment(self, ctx: FeatureContext, coeff: int, title: str):
         title = title.strip()
         if coeff <= 0 or not title:
@@ -312,7 +312,7 @@ class CurseFeature(Feature):
             f"Наказание добавлено: {punishment.id}. {punishment.coeff} -> {punishment.title}"
         )
 
-    @subcommand("punishment edit <id:int>", description="Редактировать наказание", admin=True)
+    @subcommand("punishment edit <id:int>", description="Редактировать наказание", permission="curse.manage")
     async def edit_punishment(self, ctx: FeatureContext, id: int):
         punishment = self.curse_punishments.find_by(id=id)
         if punishment is None:
@@ -328,7 +328,7 @@ class CurseFeature(Feature):
         schema="<id:int>|<field:literal[title|coeff|weight|interest|delete]>",
     )
     async def cb_punishment_edit(self, ctx: FeatureContext, id: int, field: str):
-        if not ctx.repository.is_admin(ctx.user_id):
+        if not ctx.repository.has_permission(ctx.user_id, "curse.manage"):
             await ctx.toast("Недостаточно прав.")
             return
         punishment = self.curse_punishments.find_by(id=id)
@@ -356,7 +356,7 @@ class CurseFeature(Feature):
         field: str,
         value,
     ):
-        if not ctx.repository.is_admin(ctx.user_id):
+        if not ctx.repository.has_permission(ctx.user_id, "curse.manage"):
             await ctx.reply("Недостаточно прав.")
             return
         punishment = self.curse_punishments.find_by(id=id)
@@ -397,7 +397,7 @@ class CurseFeature(Feature):
             f"Наказание {id} изменено.\n\n{self._punishment_edit_text(punishment)}"
         )
 
-    @subcommand("punishment coeff <id:int> <coeff:int>", description="Изменить коэффициент", admin=True)
+    @subcommand("punishment coeff <id:int> <coeff:int>", description="Изменить коэффициент", permission="curse.manage")
     async def update_punishment_coeff(self, ctx: FeatureContext, id: int, coeff: int):
         if coeff <= 0:
             raise ValidationArgumentsError()
@@ -418,7 +418,7 @@ class CurseFeature(Feature):
         )
         await ctx.reply(f"Коэффициент наказания {id} изменён: {old} -> {coeff}.")
 
-    @subcommand("punishment interest <id:int> <percent:float>", description="Изменить процент", admin=True)
+    @subcommand("punishment interest <id:int> <percent:float>", description="Изменить процент", permission="curse.manage")
     async def update_punishment_interest(self, ctx: FeatureContext, id: int, percent: float):
         if percent < 0.0:
             raise ValidationArgumentsError()
@@ -441,7 +441,7 @@ class CurseFeature(Feature):
         )
         await ctx.reply(f"Процент наказания {id} изменён: {old}% -> {percent}%.")
 
-    @subcommand("punishment rename <id:int> <title:rest>", description="Переименовать наказание", admin=True)
+    @subcommand("punishment rename <id:int> <title:rest>", description="Переименовать наказание", permission="curse.manage")
     async def rename_punishment(self, ctx: FeatureContext, id: int, title: str):
         title = title.strip()
         if not title:
@@ -462,7 +462,7 @@ class CurseFeature(Feature):
         )
         await ctx.reply(f"Наказание {id} переименовано: {old} -> {title}.")
 
-    @subcommand("punishment remove <id:int>", description="Удалить наказание", admin=True)
+    @subcommand("punishment remove <id:int>", description="Удалить наказание", permission="curse.manage")
     async def remove_punishment(self, ctx: FeatureContext, id: int):
         message = self._remove_punishment(id, ctx.user_id)
         if message is not None:

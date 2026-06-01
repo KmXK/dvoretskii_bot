@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class PrettyTimeFeature(Feature):
     command = "pretty_time"
-    only_admin = True
+    only_chat_admin = True
     description = "Красивое время в чате"
 
     delayed_actions = collection("delayed_actions")

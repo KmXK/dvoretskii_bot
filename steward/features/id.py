@@ -6,7 +6,6 @@ from steward.helpers.tg_update_helpers import get_message
 
 class IdFeature(Feature):
     command = "id"
-    only_admin = True
     description = "Получить айди пользователя"
 
     @subcommand("", description="Бесконечный режим")

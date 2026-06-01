@@ -18,7 +18,7 @@ _OFF_TOKENS = {"off", "stop", "cancel", "0"}
 
 class SilenceFeature(Feature):
     command = "silence"
-    only_admin = True
+    only_chat_admin = True
     description = "Режим тишины"
     help_examples = [
         "«включи тишину на 30 минут» → /silence 30m",

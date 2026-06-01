@@ -10,6 +10,7 @@ class Handler:
     # но при присвоении значения в дочерних объектах, они создают новый атрибут,
     # а не перезаписывают его тут
     only_for_admin = False
+    only_for_chat_admin = False
 
     # initialized externally (# TODO: перепридумать!)
     repository: Repository

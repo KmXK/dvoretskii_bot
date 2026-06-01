@@ -44,7 +44,7 @@ class ArmyFeature(Feature):
         text, kb = self._render(_OutputType.DAYS)
         await ctx.reply(text, keyboard=kb)
 
-    @subcommand("add <name:str> <start:str> <end:str>", description="Добавить армейца", admin=True)
+    @subcommand("add <name:str> <start:str> <end:str>", description="Добавить армейца")
     async def add(self, ctx: FeatureContext, name: str, start: str, end: str):
         try:
             start_ts = _date_to_timestamp(start)
@@ -56,7 +56,7 @@ class ArmyFeature(Feature):
         await self.army.save()
         await ctx.reply("Добавил человечка")
 
-    @subcommand("remove <name:rest>", description="Удалить армейца", admin=True)
+    @subcommand("remove <name:rest>", description="Удалить армейца")
     async def remove(self, ctx: FeatureContext, name: str):
         item = self.army.find_by(name=name)
         if item is None:
