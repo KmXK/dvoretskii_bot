@@ -290,10 +290,13 @@ class Bot:
         except UnsupportedUpdateType:
             context.metrics = ContextMetrics(self.metrics, {})
 
+        eff_chat = update.effective_chat
+        chat_id_int = eff_chat.id if eff_chat else None
+
         try:
             session_handler = try_get_session_handler(update) if user_id is not None else None
             if session_handler is not None:
-                if not self._validate_admin(session_handler, user_id):
+                if not self._validate_admin(session_handler, user_id, chat_id_int):
                     deactivate_session(update)
                     logger.warning("Dropped session for non-admin user %s", user_id)
                 elif hasattr(session_handler, action) and await getattr(session_handler, action)(context):
@@ -308,7 +311,7 @@ class Bot:
         for handler in self.handlers:
             logging.debug(f"Try handler {handler}")
             try:
-                if not self._validate_admin(handler, user_id):
+                if not self._validate_admin(handler, user_id, chat_id_int):
                     continue
                 cap_check = self._capability_check(handler, context, action)
                 if cap_check == "skip":
@@ -337,10 +340,16 @@ class Bot:
             except BaseException as e:
                 logging.exception(e)
 
-    def _validate_admin(self, handler: Handler, user_id: int | None):
-        if not handler.only_for_admin:
-            return True
-        return user_id is not None and self.repository.is_admin(user_id)
+    def _validate_admin(self, handler: Handler, user_id: int | None, chat_id: int | None = None):
+        if handler.only_for_admin:
+            return user_id is not None and self.repository.is_admin(user_id)
+        if getattr(handler, "only_for_chat_admin", False):
+            return (
+                user_id is not None
+                and chat_id is not None
+                and self.repository.is_chat_admin(user_id, chat_id)
+            )
+        return True
 
     def _capability_check(
         self,

@@ -50,11 +50,11 @@ class JokeFeature(Feature):
         else:
             await ctx.reply(text, markdown=False)
 
-    @subcommand("", description="Выключить автоматические анекдоты", admin=True)
+    @subcommand("", description="Выключить автоматические анекдоты", chat_admin=True)
     async def off_default(self, ctx: FeatureContext):
         await self._off(ctx)
 
-    @subcommand("<arg:rest>", description="Включить при молчании N времени или выключить", catchall=True, admin=True)
+    @subcommand("<arg:rest>", description="Включить при молчании N времени или выключить", catchall=True, chat_admin=True)
     async def toggle(self, ctx: FeatureContext, arg: str):
         if arg.strip().lower() in _OFF_TOKENS:
             await self._off(ctx)

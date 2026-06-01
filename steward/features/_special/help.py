@@ -33,17 +33,22 @@ def _is_capability_visible(handler: Handler, ctx: FeatureContext) -> bool:
     return ctx.repository.is_capability_enabled(chat.id, handler.__class__)
 
 
-def _build_overview(handlers: list[Handler], ctx: FeatureContext, is_admin: bool) -> str:
+def _build_overview(
+    handlers: list[Handler], ctx: FeatureContext, is_admin: bool, is_chat_admin: bool
+) -> str:
     def keep(s: str | None) -> TypeGuard[str]:
         return s is not None and s != ""
 
+    def visible(h: Handler) -> bool:
+        if h.only_for_admin and not is_admin:
+            return False
+        if getattr(h, "only_for_chat_admin", False) and not (is_admin or is_chat_admin):
+            return False
+        return _is_capability_visible(h, ctx)
+
     entries = [
         line
-        for line in (
-            _compact_line(h)
-            for h in handlers
-            if (is_admin or not h.only_for_admin) and _is_capability_visible(h, ctx)
-        )
+        for line in (_compact_line(h) for h in handlers if visible(h))
         if keep(line)
     ]
     entries.sort()
@@ -90,7 +95,11 @@ class HelpFeature(Feature):
     @subcommand("", description="Список всех команд")
     async def overview(self, ctx: FeatureContext):
         is_admin = ctx.repository.is_admin(ctx.user_id)
-        await ctx.reply(_build_overview(self._handlers, ctx, is_admin), markdown=False)
+        is_chat_admin = ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id)
+        await ctx.reply(
+            _build_overview(self._handlers, ctx, is_admin, is_chat_admin),
+            markdown=False,
+        )
 
     @subcommand("<command:str>", description="Подробно про конкретную команду")
     async def details(self, ctx: FeatureContext, command: str):
@@ -99,6 +108,12 @@ class HelpFeature(Feature):
             await ctx.reply(f"Команда {command!r} не найдена")
             return
         if handler.only_for_admin and not ctx.repository.is_admin(ctx.user_id):
+            await ctx.reply(f"Команда {command!r} не найдена")
+            return
+        if getattr(handler, "only_for_chat_admin", False) and not (
+            ctx.repository.is_admin(ctx.user_id)
+            or ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id)
+        ):
             await ctx.reply(f"Команда {command!r} не найдена")
             return
         if not _is_capability_visible(handler, ctx):

@@ -666,6 +666,19 @@ class Repository:
                 punishment.setdefault("selection_weight", 1.0)
             data["version"] = 39
 
+        if data.get("version") == 39:
+            # Управление матами/наказаниями вынесли с глобал-админа на роль
+            # «Идеолог» (право curse.manage). Создаём роль, если её ещё нет.
+            roles = data.setdefault("roles", [])
+            if not any(r.get("name") == "Идеолог" for r in roles):
+                next_id = max((r.get("id", 0) for r in roles), default=0) + 1
+                roles.append({
+                    "id": next_id,
+                    "name": "Идеолог",
+                    "permissions": ["curse.manage"],
+                })
+            data["version"] = 40
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):

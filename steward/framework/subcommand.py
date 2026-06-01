@@ -60,6 +60,7 @@ class Subcommand:
     func: Callable[..., Awaitable[Any]]
     description: str = ""
     admin: bool = False
+    chat_admin: bool = False
     catchall: bool = False
     then_wizard: str | None = None
     raw: str = ""
@@ -183,6 +184,7 @@ def subcommand(
     *,
     description: str = "",
     admin: bool = False,
+    chat_admin: bool = False,
     catchall: bool = False,
     then_wizard: str | None = None,
     permission: str | None = None,
@@ -200,6 +202,7 @@ def subcommand(
                 func=func,
                 description=description,
                 admin=admin,
+                chat_admin=chat_admin,
                 catchall=catchall,
                 then_wizard=then_wizard,
                 raw=pattern.pattern,
@@ -213,6 +216,7 @@ def subcommand(
                 func=func,
                 description=description,
                 admin=admin,
+                chat_admin=chat_admin,
                 catchall=catchall,
                 then_wizard=then_wizard,
                 raw=pattern,

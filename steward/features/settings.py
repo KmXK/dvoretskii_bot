@@ -2,6 +2,7 @@ import logging
 
 from steward.data.models.chat_settings import ChatSettings
 from steward.data.models.role import Role, UserRole
+from steward.helpers.formats import escape_markdown
 from steward.framework import (
     Button,
     Feature,
@@ -247,8 +248,14 @@ class SettingsFeature(Feature):
             return
         settings = ctx.repository.chat_settings_for(chat_id)
         if cap not in settings.enabled_capabilities:
+            # Группа была выключена целиком. Включаем группу, но гасим все
+            # ОСТАЛЬНЫЕ фичи, чтобы зажглась только та, по которой нажали,
+            # а не вся категория разом.
             settings.enabled_capabilities.add(cap)
-        if feat in settings.disabled_features:
+            for cls in _features_in(cap):
+                settings.disabled_features.add(_slug(cls))
+            settings.disabled_features.discard(feat)
+        elif feat in settings.disabled_features:
             settings.disabled_features.discard(feat)
         else:
             settings.disabled_features.add(feat)
@@ -307,7 +314,7 @@ class SettingsFeature(Feature):
         notify_summary = self._notifications_summary(ctx)
 
         def render(batch: list[str]) -> str:
-            lines = [f"📦 *Функции* — {chat_name}", ""]
+            lines = [f"📦 *Функции* — {escape_markdown(chat_name)}", ""]
             for cap in items:
                 state = self._cap_state(settings, cap)
                 feats = self._cap_feature_summary(cap, settings)
@@ -358,7 +365,7 @@ class SettingsFeature(Feature):
         from steward.features.registry import features_in_group
 
         def render(batch):
-            lines = [f"📦 *{cap_label}* — {chat_name}", ""]
+            lines = [f"📦 *{cap_label}* — {escape_markdown(chat_name)}", ""]
             for cls in classes:
                 slug = _slug(cls)
                 disabled = slug in settings.disabled_features
@@ -425,10 +432,10 @@ class SettingsFeature(Feature):
         def render(batch):
             chat = ctx.repository.get_chat(chat_id)
             name = chat.name if chat else str(chat_id)
-            lines = [f"*{name}*", ""]
+            lines = [f"*{escape_markdown(name)}*", ""]
             for u in batch:
                 badge = "★ chat-admin" if u.id in settings.chat_admins else ""
-                lines.append(f"• {display(u)} {badge}".rstrip())
+                lines.append(f"• {escape_markdown(display(u))} {badge}".rstrip())
             return "\n".join(lines)
 
         rows: list[list[Button]] = []
@@ -460,7 +467,7 @@ class SettingsFeature(Feature):
             for r in batch:
                 count_users = sum(1 for ur in ctx.repository.db.user_roles if ur.role_id == r.id)
                 lines.append(
-                    f"• *{r.name}* — {count_users} чел · {len(r.permissions)} прав"
+                    f"• *{escape_markdown(r.name)}* — {count_users} чел · {len(r.permissions)} прав"
                 )
             return "\n".join(lines)
 
@@ -505,10 +512,10 @@ class SettingsFeature(Feature):
 
         def render(batch):
             users_text = "\n".join(
-                f"  • @{u.username}" if u.username else f"  • id={u.id}"
+                f"  • @{escape_markdown(u.username)}" if u.username else f"  • id={u.id}"
                 for u in users_in_role
             ) or "  (никого)"
-            return f"🎭 *{role.name}*\n\nПользователи:\n{users_text}"
+            return f"🎭 *{escape_markdown(role.name)}*\n\nПользователи:\n{users_text}"
 
         rows: list[list[Button]] = []
         for perm in known:

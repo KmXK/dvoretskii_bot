@@ -8,6 +8,7 @@ from steward.data.models.curse import (
     CursePunishmentDebt,
     CursePunishmentDay,
 )
+from steward.data.models.role import Role
 from steward.data.models.user import User
 from steward.features.curse import CurseFeature
 from steward.framework.types import from_chat_context
@@ -68,7 +69,11 @@ class TestCurseWordList:
         assert "Добавлены" in reply
 
     async def test_rejects_add_for_non_admin(self):
-        reply, ok = await invoke(CurseFeature, "/curse word_list add слово", make_repository())
+        repo = make_repository()
+        # Управление матами gated на роль «Идеолог» (право curse.manage).
+        # Юзер не в роли и не глобал-админ → отказ.
+        repo.db.roles.append(Role(id=1, name="Идеолог", permissions={"curse.manage"}))
+        reply, ok = await invoke(CurseFeature, "/curse word_list add слово", repo)
         assert ok
         assert "прав" in reply.lower()
 
@@ -98,7 +103,9 @@ class TestCurseIgnoreList:
         assert "Удалены" in reply
 
     async def test_rejects_ignore_add_for_non_admin(self):
-        reply, ok = await invoke(CurseFeature, "/curse ignore_list add бляха", make_repository())
+        repo = make_repository()
+        repo.db.roles.append(Role(id=1, name="Идеолог", permissions={"curse.manage"}))
+        reply, ok = await invoke(CurseFeature, "/curse ignore_list add бляха", repo)
         assert ok
         assert "прав" in reply.lower()
 

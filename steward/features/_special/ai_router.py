@@ -211,12 +211,20 @@ class AiRouterHandler(Feature):
             return
         # action == "ok"
         await ctx.delete_or_clear_keyboard()
+        pending_chat_id = (
+            pending.context.message.chat_id if pending.context.message else None
+        )
         for command in pending.commands:
             self._patch_message(pending.context.message, command)
             for handler in self._handlers:
                 if handler is self:
                     continue
                 if handler.only_for_admin and not self.repository.is_admin(pending.user_id):
+                    continue
+                if getattr(handler, "only_for_chat_admin", False) and not (
+                    pending_chat_id is not None
+                    and self.repository.is_chat_admin(pending.user_id, pending_chat_id)
+                ):
                     continue
                 try:
                     if hasattr(handler, "chat") and await handler.chat(pending.context):
@@ -383,6 +391,10 @@ class AiRouterHandler(Feature):
 
     def _handler_visible(self, handler: Handler, user_id: int, chat_id: int | None) -> bool:
         if handler.only_for_admin and not self.repository.is_admin(user_id):
+            return False
+        if getattr(handler, "only_for_chat_admin", False) and not (
+            chat_id is not None and self.repository.is_chat_admin(user_id, chat_id)
+        ):
             return False
         if chat_id is None:
             return True

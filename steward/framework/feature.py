@@ -55,6 +55,7 @@ class Feature(Handler):
     aliases: tuple[str, ...] = ()
     description: str = ""
     only_admin: bool = False
+    only_chat_admin: bool = False
     excluded_from_ai_router: bool = False
     help_examples: list[str] = []
     custom_help: str | None = None
@@ -77,6 +78,7 @@ class Feature(Handler):
         super().__init_subclass__(**kwargs)
         cls._collect_declarations()
         cls.only_for_admin = cls.only_admin
+        cls.only_for_chat_admin = cls.only_chat_admin
 
     @classmethod
     def _collect_declarations(cls) -> None:
@@ -284,6 +286,9 @@ class Feature(Handler):
                 continue
             if sub.admin and not ctx.repository.is_admin(ctx.user_id):
                 await ctx.reply("Недостаточно прав.")
+                return True
+            if sub.chat_admin and not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
+                await ctx.reply("Только админ чата.")
                 return True
             if sub.permission and not ctx.repository.has_permission(ctx.user_id, sub.permission):
                 await ctx.reply("Недостаточно прав для этого действия.")
