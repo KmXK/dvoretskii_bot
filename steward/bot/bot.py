@@ -141,6 +141,15 @@ class Bot:
                 if init_coro := handler.init():  # type: ignore
                     await init_coro
 
+            from steward.features.db import DbFeature
+            try:
+                await application.bot.send_message(
+                    DbFeature.TARGET_CHAT_ID,
+                    "♻️ Бот перезапущен",
+                )
+            except BaseException as e:
+                logging.exception(e)
+
         application.post_init = post_init
 
         self.client = TelegramClient(
