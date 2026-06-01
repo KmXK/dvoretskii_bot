@@ -25,6 +25,22 @@ class TestCurseMetricFeature:
 
         assert not ok
         metrics.inc.assert_called_once_with("bot_curse_words_total", value=2)
+        ctx.message.set_reaction.assert_not_called()
+
+    async def test_sets_reaction_for_subscribed_user(self):
+        repo = make_repository()
+        repo.db.curse_words = {"мат"}
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=DEFAULT_USER_ID, subscribed_at=datetime.now(timezone.utc))
+        ]
+        metrics = MagicMock()
+        feature = _make_feature(repo)
+
+        ctx = make_text_context("Мат привет", repo=repo, metrics=metrics)
+        ok = await feature.chat(ctx)
+
+        assert not ok
+        metrics.inc.assert_called_once_with("bot_curse_words_total", value=1)
         ctx.message.set_reaction.assert_called_once_with("🤬")
 
     async def test_skips_forwarded_messages(self):

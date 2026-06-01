@@ -320,9 +320,9 @@ def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        lines.append(f"`{entry.name}`")
+        lines.append(entry.name)
         for title, count in entry.items:
-            lines.append(f"{count} {title}")
+            lines.append(f"{title}: {count}")
         if index != len(entries) - 1:
             lines.append("")
     return "\n".join(lines)
