@@ -13,6 +13,8 @@
 # test file
 test.py
 db.json
+db.json.bak.*
+db.json.local-backup
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
