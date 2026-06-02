@@ -43,6 +43,24 @@ class TestCurseMetricFeature:
         metrics.inc.assert_called_once_with("bot_curse_words_total", value=1)
         ctx.message.set_reaction.assert_called_once_with("🤬")
 
+    async def test_counts_curses_in_attachment_caption(self):
+        repo = make_repository()
+        repo.db.curse_words = {"мат"}
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=DEFAULT_USER_ID, subscribed_at=datetime.now(timezone.utc))
+        ]
+        metrics = MagicMock()
+        feature = _make_feature(repo)
+
+        ctx = make_text_context("", repo=repo, metrics=metrics)
+        ctx.message.text = None
+        ctx.message.caption = "Мат на картинке"
+        ok = await feature.chat(ctx)
+
+        assert not ok
+        metrics.inc.assert_called_once_with("bot_curse_words_total", value=1)
+        ctx.message.set_reaction.assert_called_once_with("🤬")
+
     async def test_skips_forwarded_messages(self):
         repo = make_repository()
         repo.db.curse_words = {"мат"}

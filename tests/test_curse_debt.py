@@ -12,8 +12,10 @@ from steward.delayed_action.context import DelayedActionContext
 from steward.delayed_action.curse_punishment_digest import CursePunishmentDigestDelayedAction
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.curse_debt import (
+    CurseDebtReportEntry,
     accrue_curse_debt,
     apply_curse_interest_until,
+    format_curse_debt_report,
     initialize_curse_debts,
     today_msk,
 )
@@ -43,6 +45,35 @@ def test_accrues_debt_only_for_selected_punishment_day():
     assert [(d.rule_id, d.punishment_count, d.last_interest_applied_date) for d in repo.db.curse_punishment_debts] == [
         (2, 6, "2026-05-30"),
     ]
+
+
+def test_debt_report_mentions_users_by_default_for_digest():
+    report = format_curse_debt_report([
+        CurseDebtReportEntry(
+            user_id=1,
+            name="@test_user",
+            items=[("Отжимания", 10)],
+        )
+    ])
+
+    assert "\n@test_user\n" in report
+    assert "`@test_user`" not in report
+
+
+def test_debt_report_can_wrap_users_in_monospace_for_manual_command():
+    report = format_curse_debt_report(
+        [
+            CurseDebtReportEntry(
+                user_id=1,
+                name="@test_user",
+                items=[("Отжимания", 10)],
+            )
+        ],
+        mention_users=False,
+    )
+
+    assert "`@test_user`" in report
+    assert "\n@test_user\n" not in report
 
 
 def test_accrue_selects_weighted_punishment_day_once_when_missing():
