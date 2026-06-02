@@ -314,13 +314,18 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
     return entries
 
 
-def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
+def format_curse_debt_report(
+    entries: list[CurseDebtReportEntry],
+    *,
+    mention_users: bool = True,
+) -> str:
     if not entries:
         return "Сегодня наказаний нет."
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        lines.append(entry.name)
+        name = entry.name if mention_users else f"`{entry.name}`"
+        lines.append(name)
         for title, count in entry.items:
             lines.append(f"{title}: {count}")
         if index != len(entries) - 1:

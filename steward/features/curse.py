@@ -28,6 +28,7 @@ from steward.helpers.curse_debt import (
     select_curse_punishment_for_day,
     today_msk,
 )
+from steward.helpers.formats import spoiler_block
 from steward.helpers.validation import Error, validate_message_text
 
 
@@ -142,7 +143,7 @@ class CurseFeature(Feature):
         if not words:
             await ctx.reply("Список матерных слов пуст.")
             return
-        await ctx.reply("Матерные слова:\n\n" + "\n".join(words))
+        await ctx.reply(spoiler_block("\n".join(words), header="Матерные слова"), html=True)
 
     @subcommand("word_list add <words:rest>", description="Добавить слова")
     async def add_words(self, ctx: FeatureContext, words: str):
@@ -178,7 +179,7 @@ class CurseFeature(Feature):
         if not words:
             await ctx.reply("Список исключений пуст.")
             return
-        await ctx.reply("Исключения:\n\n" + "\n".join(words))
+        await ctx.reply(spoiler_block("\n".join(words), header="Исключения"), html=True)
 
     @subcommand("ignore_list add <words:rest>", description="Добавить исключения")
     async def add_ignore_words(self, ctx: FeatureContext, words: str):
@@ -231,7 +232,7 @@ class CurseFeature(Feature):
         if day_changed or interest_changed:
             await self.repository.save()
         entries = build_curse_debt_report_entries(self.repository, ctx.chat_id)
-        report = format_curse_debt_report(entries)
+        report = format_curse_debt_report(entries, mention_users=False)
         if punishment is None:
             await ctx.reply(
                 "Наказание дня не выбрано: нет наказаний с положительным весом.\n\n"

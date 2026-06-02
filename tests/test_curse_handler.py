@@ -70,6 +70,24 @@ class TestCurseWordList:
         assert ok
         assert "пуст" in reply.lower()
 
+    async def test_word_list_uses_expandable_quote(self):
+        repo = make_repository()
+        repo.db.curse_words = {"мат", "слово"}
+        handler = CurseFeature()
+        handler.repository = repo
+        handler.bot = MagicMock()
+        ctx = make_context("curse", args="word_list", repo=repo)
+
+        handled = await handler.chat(ctx)
+
+        assert handled is True
+        reply = get_reply_text(ctx.message.reply_text)
+        assert "<blockquote expandable>" in reply
+        assert "<b>Матерные слова</b>" in reply
+        assert "мат" in reply
+        assert "слово" in reply
+        assert ctx.message.reply_text.call_args.kwargs["parse_mode"] == "HTML"
+
     async def test_adds_words_for_admin(self):
         repo = make_repository()
         repo.db.admin_ids = {DEFAULT_USER_ID}
@@ -107,6 +125,24 @@ class TestCurseIgnoreList:
         assert ok
         assert "исключ" in reply.lower()
         assert "пуст" in reply.lower()
+
+    async def test_ignore_list_uses_expandable_quote(self):
+        repo = make_repository()
+        repo.db.curse_ignore_words = {"бляха", "бляшка"}
+        handler = CurseFeature()
+        handler.repository = repo
+        handler.bot = MagicMock()
+        ctx = make_context("curse", args="ignore_list", repo=repo)
+
+        handled = await handler.chat(ctx)
+
+        assert handled is True
+        reply = get_reply_text(ctx.message.reply_text)
+        assert "<blockquote expandable>" in reply
+        assert "<b>Исключения</b>" in reply
+        assert "бляха" in reply
+        assert "бляшка" in reply
+        assert ctx.message.reply_text.call_args.kwargs["parse_mode"] == "HTML"
 
     async def test_adds_ignore_words_for_admin(self):
         repo = make_repository()
@@ -169,6 +205,31 @@ class TestCurseIncrement:
         ]
         assert "@testuser" in reply
         assert "Отжимания: 10" in reply
+
+    async def test_root_command_wraps_usernames_in_monospace(self):
+        repo = make_repository()
+        today = today_msk().isoformat()
+        repo.db.users = [
+            User(id=DEFAULT_USER_ID, username="test_user", chat_ids=[CHAT_ID])
+        ]
+        repo.db.curse_punishments = [
+            CursePunishment(id=1, coeff=5, title="Отжимания", selection_weight=1.0)
+        ]
+        repo.db.curse_punishment_debts = [
+            CursePunishmentDebt(
+                id=1,
+                user_id=DEFAULT_USER_ID,
+                rule_id=1,
+                punishment_count=10,
+                last_interest_applied_date=today,
+            )
+        ]
+
+        reply, ok = await invoke(CurseFeature, "/curse", repo)
+
+        assert ok
+        assert "`@test_user`" in reply
+        assert "\n@test_user\n" not in reply
 
     async def test_root_command_explains_when_no_punishments_configured(self):
         reply, ok = await invoke(CurseFeature, "/curse", make_repository())
