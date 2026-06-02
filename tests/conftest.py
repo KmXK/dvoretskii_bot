@@ -130,6 +130,7 @@ def _make_message_mock(
 ) -> MagicMock:
     message = MagicMock()
     message.text = text
+    message.caption = None
     message.chat.type = "group"
     message.chat.id = chat_id
     message.chat_id = chat_id
