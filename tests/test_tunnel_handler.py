@@ -271,6 +271,42 @@ class TestSendReply:
         assert "не найден" in reply_of(ctx)
         assert repo.db.tunnel_messages == []
 
+    async def test_reply_to_album_forwards_all_parts(self):
+        """Bug 2: реплай-командой на альбом (несколько фото) пересылает весь
+        альбом одним copy_messages, а не одну картинку."""
+        repo = self._repo_with_tunnel()
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MagicMock(message_id=200))
+        bot.copy_messages = AsyncMock(return_value=[
+            MagicMock(message_id=201),
+            MagicMock(message_id=202),
+            MagicMock(message_id=203),
+        ])
+        bot.set_message_reaction = AsyncMock()
+        feature = make_feature(repo, bot)
+
+        client = MagicMock()
+        # Соседние id, из них part альбома — те, у кого grouped_id совпадает.
+        client.get_messages = AsyncMock(return_value=[
+            MagicMock(id=41, grouped_id=555),
+            MagicMock(id=42, grouped_id=555),
+            MagicMock(id=43, grouped_id=555),
+            MagicMock(id=44, grouped_id=999),  # сосед из другой группы — отсев
+        ])
+
+        ctx = make_context("tunnel", args="1", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.client = client
+        ctx.message.reply_to_message = MagicMock(message_id=42, media_group_id="555")
+
+        result = await feature.chat(ctx)
+        assert result is True
+        bot.copy_messages.assert_awaited_once()
+        assert bot.copy_messages.call_args.kwargs["message_ids"] == [41, 42, 43]
+        # На каждую часть альбома записан маппинг — реплай на любую уйдёт назад.
+        recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
+        assert len(recorded) == 3
+        assert {m.dst_msg_id for m in recorded} == {201, 202, 203}
+
 
 class TestCaptionSend:
     """Медиа с командой в подписи: «/tunnel <id> [текст]» на фото/видео."""
@@ -396,6 +432,36 @@ class TestReplyForwarding:
         back = [m for m in repo.db.tunnel_messages if m.src_chat == CHAT_B]
         assert len(back) == 1
         assert back[0].dst_chat == CHAT_A
+
+    async def test_reply_to_own_sent_continues_tunnel(self):
+        """Bug 1: реплай на своё же отправленное в туннель сообщение продолжает
+        туннель в ту же сторону — без повторной команды /tunnel <id>."""
+        repo = base_repo()
+        repo.db.chat_tunnels.append(
+            ChatTunnel(id=1, chat_a=CHAT_A, chat_b=CHAT_B, chat_a_name="Чат А", chat_b_name="Чат Б", created_by=USER)
+        )
+        # USER из CHAT_A раньше отправил msg 10 → доставлено в CHAT_B как msg 20.
+        repo.db.tunnel_messages.append(
+            TunnelMessage(tunnel_id=1, src_chat=CHAT_A, src_msg_id=10, dst_chat=CHAT_B, dst_msg_id=20, sender_id=USER)
+        )
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+
+        update = make_text_update("дописка", user_id=USER, chat_id=CHAT_A)
+        update.message.message_id = 30
+        update.message.reply_to_message = MagicMock(message_id=10, media_group_id=None)
+        from steward.bot.context import ChatBotContext
+
+        ctx = ChatBotContext(
+            repository=repo, bot=bot, client=MagicMock(), update=update,
+            tg_context=MagicMock(), metrics=MagicMock(), message=update.message,
+        )
+        result = await feature.chat(ctx)
+        assert result is True
+        # Новая пара: из A в B (то же направление, что и исходное сообщение).
+        extra = [m for m in repo.db.tunnel_messages if m.src_msg_id == 30]
+        assert len(extra) == 1
+        assert extra[0].src_chat == CHAT_A and extra[0].dst_chat == CHAT_B
 
     async def test_non_reply_ignored(self):
         repo = base_repo()
