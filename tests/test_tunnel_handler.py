@@ -188,12 +188,46 @@ class TestSend:
         bot, _ = await make_bot()
         feature = make_feature(repo, bot)
         ctx = make_context("tunnel", args="1 привет", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.message.reply_to_message = None  # обычный текст, не reply
         result = await feature.chat(ctx)
         assert result is True
         recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
         assert len(recorded) == 1
         assert recorded[0].src_chat == CHAT_A
         assert recorded[0].dst_chat == CHAT_B
+
+    async def test_reply_to_album_with_extra_text_forwards_album(self):
+        """Bug: /tunnel <id> <текст> в реплае на альбом должен переслать весь
+        альбом + текст, а не только текст без новости."""
+        repo = self._repo_with_tunnel()
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MagicMock(message_id=200))
+        bot.copy_messages = AsyncMock(return_value=[
+            MagicMock(message_id=201),
+            MagicMock(message_id=202),
+        ])
+        bot.set_message_reaction = AsyncMock()
+        feature = make_feature(repo, bot)
+
+        client = MagicMock()
+        client.get_messages = AsyncMock(return_value=[
+            MagicMock(id=41, grouped_id=555),
+            MagicMock(id=42, grouped_id=555),
+        ])
+
+        ctx = make_context("tunnel", args="1 смотри какая новость", repo=repo, bot=bot, user_id=USER, chat_id=CHAT_A)
+        ctx.client = client
+        ctx.message.reply_to_message = MagicMock(message_id=41, media_group_id="555")
+
+        result = await feature.chat(ctx)
+        assert result is True
+        bot.copy_messages.assert_awaited_once()
+        assert bot.copy_messages.call_args.kwargs["message_ids"] == [41, 42]
+        # Приписанный текст ушёл в шапку перед альбомом.
+        header_text = bot.send_message.call_args.kwargs.get("text") or bot.send_message.call_args.args[1]
+        assert "смотри какая новость" in header_text
+        recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
+        assert len(recorded) == 2
 
     async def test_send_unknown_tunnel(self):
         repo = self._repo_with_tunnel()

@@ -348,6 +348,13 @@ class TunnelFeature(Feature):
             await ctx.reply("Туннель не найден в этом чате.")
             return
 
+        # /tunnel <id> <текст> в реплае: пересылаем сообщение-реплай целиком
+        # (альбом — всеми частями), а текст команды добавляем припиской.
+        reply = ctx.message.reply_to_message if ctx.message else None
+        if reply is not None:
+            await self._relay_replied(ctx, tunnel_id=id, target=target, reply=reply, extra=message)
+            return
+
         try:
             sent = await ctx.send_to(
                 target,
@@ -390,20 +397,38 @@ class TunnelFeature(Feature):
             await ctx.reply("Туннель не найден в этом чате.")
             return
 
-        header = self._header(ctx, "💬")
+        await self._relay_replied(ctx, tunnel_id=id, target=target, reply=reply, extra=None)
+
+    async def _relay_replied(
+        self,
+        ctx: FeatureContext,
+        *,
+        tunnel_id: int,
+        target: int,
+        reply,
+        extra: str | None,
+    ) -> None:
+        """Переслать в туннель сообщение, на которое сделан reply (альбом —
+        всеми частями), с опциональной припиской `extra` из текста команды.
+        Пишет маппинг(и), ставит 👌. Используется и из `send` (есть текст), и
+        из `send_reply` (текста нет)."""
+        base_header = self._header(ctx, "💬")
         try:
             if self._album_id(reply) is not None:
                 # Реплай на альбом (несколько фото/видео одной новостью): тянем
-                # все части и пересылаем группой, сохраняя их подписи.
+                # все части и пересылаем группой, сохраняя их подписи. Приписку
+                # уносим в шапку перед альбомом.
                 ids = await self._album_message_ids(ctx, reply)
                 dst_ids = await self._relay_album(
-                    ctx, target, header, src_chat=ctx.chat_id, message_ids=ids
+                    ctx, target, base_header, src_chat=ctx.chat_id,
+                    message_ids=ids, body=extra or None,
                 )
-                self._record_album(id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
+                self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
             else:
+                header = f"{base_header}\n{extra}" if extra else base_header
                 dst_msg_id = await self._relay(ctx, target, header, copy_from=reply)
                 self._record_message(
-                    tunnel_id=id,
+                    tunnel_id=tunnel_id,
                     src_chat=ctx.chat_id,
                     src_msg_id=reply.message_id,
                     dst_chat=target,
@@ -411,12 +436,12 @@ class TunnelFeature(Feature):
                     sender_id=ctx.user_id,
                 )
         except Exception:
-            logger.exception("tunnel %s: failed to forward replied message to %s", id, target)
+            logger.exception("tunnel %s: failed to forward replied message to %s", tunnel_id, target)
             await ctx.reply("Не удалось доставить сообщение — возможно, бот выгнан из того чата.")
             return
 
         await self.tmsgs.save()
-        await self._react_ok(ctx.chat_id, msg.message_id if msg else None)
+        await self._react_ok(ctx.chat_id, ctx.message.message_id if ctx.message else None)
 
     # ------------------------------------------------------------------ #
     # Media with a command in the caption: «/tunnel 4 текст» on a photo/video
