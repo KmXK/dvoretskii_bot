@@ -149,6 +149,7 @@ class FeatureRequestFeature(Feature):
         "<fr_id:int> priority <p:int>",
         description="Сменить приоритет",
         permission="feature_request.priority",
+        self_enforced=True,
     )
     async def set_priority(self, ctx: FeatureContext, fr_id: int, p: int):
         if p < 1 or p > 5:
@@ -159,7 +160,9 @@ class FeatureRequestFeature(Feature):
             await ctx.reply("Фича-реквеста с таким номером не существует")
             return
         fr = items[fr_id - 1]
-        if fr.author_id != ctx.user_id and not ctx.repository.is_admin(ctx.user_id):
+        if fr.author_id != ctx.user_id and not ctx.repository.has_permission(
+            ctx.user_id, "feature_request.priority"
+        ):
             await ctx.reply("Вы не можете изменять приоритет этого фича-реквеста")
             return
         fr.priority = p
@@ -171,6 +174,7 @@ class FeatureRequestFeature(Feature):
         "<fr_id:int> note <text:rest>",
         description="Добавить примечание",
         permission="feature_request.note",
+        self_enforced=True,
     )
     async def add_note(self, ctx: FeatureContext, fr_id: int, text: str):
         text = text.strip()
@@ -182,7 +186,9 @@ class FeatureRequestFeature(Feature):
             await ctx.reply("Фича-реквеста с таким номером не существует")
             return
         fr = items[fr_id - 1]
-        if fr.author_id != ctx.user_id and not ctx.repository.is_admin(ctx.user_id):
+        if fr.author_id != ctx.user_id and not ctx.repository.has_permission(
+            ctx.user_id, "feature_request.note"
+        ):
             await ctx.reply("Вы не можете добавлять примечания к этому фича-реквесту")
             return
         fr.notes.append(text)
@@ -201,6 +207,7 @@ class FeatureRequestFeature(Feature):
         "done <ids:rest>",
         description="Сменить статус: done",
         permission="feature_request.status",
+        self_enforced=True,
     )
     async def cmd_done(self, ctx, ids):
         await self._batch_status(ctx, "done", ids.split())
@@ -209,6 +216,7 @@ class FeatureRequestFeature(Feature):
         "deny <ids:rest>",
         description="Сменить статус: deny",
         permission="feature_request.status",
+        self_enforced=True,
     )
     async def cmd_deny(self, ctx, ids):
         await self._batch_status(ctx, "deny", ids.split())
@@ -217,6 +225,7 @@ class FeatureRequestFeature(Feature):
         "reopen <ids:rest>",
         description="Сменить статус: reopen",
         permission="feature_request.status",
+        self_enforced=True,
     )
     async def cmd_reopen(self, ctx, ids):
         await self._batch_status(ctx, "reopen", ids.split())
@@ -225,6 +234,7 @@ class FeatureRequestFeature(Feature):
         "inprogress <ids:rest>",
         description="Сменить статус: inprogress",
         permission="feature_request.status",
+        self_enforced=True,
     )
     async def cmd_inprogress(self, ctx, ids):
         await self._batch_status(ctx, "inprogress", ids.split())
@@ -233,6 +243,7 @@ class FeatureRequestFeature(Feature):
         "testing <ids:rest>",
         description="Сменить статус: testing",
         permission="feature_request.status",
+        self_enforced=True,
     )
     async def cmd_testing(self, ctx, ids):
         await self._batch_status(ctx, "testing", ids.split())
@@ -463,7 +474,9 @@ class FeatureRequestFeature(Feature):
         for i, status in enumerate(statuses):
             if fr.status == status and messages[i] is not None:
                 return messages[i]
-        if fr.author_id != user_id and not self.repository.is_admin(user_id):
+        if fr.author_id != user_id and not self.repository.has_permission(
+            user_id, "feature_request.status"
+        ):
             return "Вы не можете редактировать статус этого фича-реквеста"
         return None
 

@@ -290,7 +290,11 @@ class Feature(Handler):
             if sub.chat_admin and not ctx.repository.is_chat_admin(ctx.user_id, ctx.chat_id):
                 await ctx.reply("Только админ чата.")
                 return True
-            if sub.permission and not ctx.repository.has_permission(ctx.user_id, sub.permission):
+            if (
+                sub.permission
+                and not sub.self_enforced
+                and not ctx.repository.has_permission(ctx.user_id, sub.permission)
+            ):
                 await ctx.reply("Недостаточно прав для этого действия.")
                 return True
             try:
