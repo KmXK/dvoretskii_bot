@@ -236,6 +236,20 @@ async def handle_feature_request_update(request: web.Request):
     fr = repository.db.feature_requests[fr_id - 1]
     body = await request.json()
 
+    # Управлять чужим fr может автор, носитель пермишена или глобал-админ
+    # (has_permission уже пропускает админа). Проверяем по каждому полю.
+    uid = session_user_id(request)
+
+    def _can(perm: str) -> bool:
+        return uid == fr.author_id or repository.has_permission(uid, perm)
+
+    if "status" in body and not _can("feature_request.status"):
+        return web.json_response({"error": "forbidden"}, status=403)
+    if "priority" in body and not _can("feature_request.priority"):
+        return web.json_response({"error": "forbidden"}, status=403)
+    if str(body.get("note", "")).strip() and not _can("feature_request.note"):
+        return web.json_response({"error": "forbidden"}, status=403)
+
     changes: list[tuple[str, str]] = []
 
     if "status" in body:
@@ -245,7 +259,7 @@ async def handle_feature_request_update(request: web.Request):
         if int(fr.status) != new_status:
             fr.history.append(
                 FeatureRequestChange(
-                    author_id=0,
+                    author_id=uid or 0,
                     timestamp=datetime.datetime.now().timestamp(),
                     message_id=0,
                     status=FeatureRequestStatus(new_status),

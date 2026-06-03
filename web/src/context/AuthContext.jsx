@@ -95,6 +95,7 @@ export function AuthProvider({ children }) {
       lastName: tgUser?.last_name ?? '',
       photoUrl,
       isAdmin: !!me?.is_admin,
+      permissions: me?.permissions ?? [],
       isPremium: tgUser?.is_premium ?? false,
       initData: WebApp?.initData ?? '',
       webApp: WebApp,

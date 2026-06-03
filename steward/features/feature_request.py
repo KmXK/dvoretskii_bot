@@ -145,6 +145,10 @@ class FeatureRequestFeature(Feature):
     async def list_alias(self, ctx: FeatureContext):
         await self.paginate(ctx, "frs", metadata=_ListState().encode())
 
+    @subcommand("help", description="Справка по командам")
+    async def help_cmd(self, ctx: FeatureContext):
+        await ctx.reply(self.help() or "Нет описания", markdown=False)
+
     @subcommand(
         "<fr_id:int> priority <p:int>",
         description="Сменить приоритет",

@@ -214,7 +214,17 @@ function StatusFilter({ selected, onChange }) {
   )
 }
 
-function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin }) {
+const FR_MANAGE_PERMS = [
+  'feature_request.status',
+  'feature_request.priority',
+  'feature_request.note',
+]
+
+function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin, permissions = [], userId = null }) {
+  const canManage =
+    isAdmin ||
+    (feature != null && feature.author_id === userId) ||
+    FR_MANAGE_PERMS.some(p => permissions.includes(p))
   const [status, setStatus] = useState(feature?.status ?? STATUS.OPEN)
   const [priority, setPriority] = useState(feature?.priority ?? 5)
   const [newNote, setNewNote] = useState('')
@@ -280,7 +290,7 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin }) {
             <div className="text-white">{formatDate(feature.creation_timestamp)}</div>
           </div>
 
-          {isAdmin ? (
+          {canManage ? (
             <div className="space-y-3 mb-4">
               <div>
                 <label className="text-spotify-text text-xs mb-1 block">Статус</label>
@@ -346,7 +356,7 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin }) {
             </div>
           )}
 
-          {isAdmin && (
+          {canManage && (
             <div className="mb-4">
               <label className="text-spotify-text text-xs mb-1 block">Новое примечание</label>
               <textarea
@@ -377,7 +387,7 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin }) {
             </div>
           )}
 
-          {isAdmin ? (
+          {canManage ? (
             <button
               onClick={handleSave}
               disabled={saving}
@@ -457,7 +467,7 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
 }
 
 export default function FeaturesPage() {
-  const { firstName, lastName, username, isAdmin } = useAuth()
+  const { firstName, lastName, username, isAdmin, permissions, userId } = useAuth()
   const toast = useToast()
   const authorName = username || [firstName, lastName].filter(Boolean).join(' ') || ''
 
@@ -698,6 +708,8 @@ export default function FeaturesPage() {
         onSave={handleSave}
         onVote={() => selectedFeature && handleVote(selectedFeature.id, !selectedFeature.voted)}
         isAdmin={isAdmin}
+        permissions={permissions}
+        userId={userId}
       />
 
       <CreateFeatureModal

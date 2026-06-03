@@ -248,6 +248,7 @@ async def handle_auth_me(request: web.Request):
         "username": user.username if user else None,
         "first_name": user.first_name if user else None,
         "is_admin": uid in repository.db.admin_ids,
+        "permissions": sorted(repository.permissions_of(uid)),
     })
 
 
