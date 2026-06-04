@@ -2,7 +2,7 @@ import asyncio
 import logging
 from os import environ
 from typing import Any, Awaitable, Callable
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from pyrate_limiter import BucketFullException
 from telegram import (
@@ -22,7 +22,7 @@ from telegram.ext import (
     MessageReactionHandler,
     filters,
 )
-from telethon import TelegramClient
+from telethon import TelegramClient, connection
 
 from steward.bot.context import (
     BotActionContext,
@@ -52,17 +52,46 @@ from steward.session.session_registry import (
 logger = logging.getLogger(__name__)
 
 
-def _telethon_proxy() -> dict[str, Any] | None:
-    """Прокси для прямого MTProto-соединения Telethon в формате python-socks.
+def _telethon_proxy() -> tuple[Any, type | None] | None:
+    """Прокси для MTProto-соединения Telethon.
 
-    Берём TELETHON_PROXY, иначе падаем на DOWNLOAD_PROXY (тот же socks5, что
-    использует yt-dlp). Нужно, когда прямой путь до Telegram DC с хоста
-    заблокирован/недоступен и client.start() иначе крэшит весь процесс.
+    Поддерживает два формата TELETHON_PROXY / DOWNLOAD_PROXY:
+    - SOCKS5/SOCKS4/HTTP: `socks5://user:pass@host:port` — обычные прокси,
+      возвращаем dict для python-socks, connection_class=None (Telethon
+      использует ConnectionTcpFull по умолчанию).
+    - MTProxy: `tg://proxy?server=...&port=...&secret=...` или
+      `https://t.me/proxy?...` — родной Telegram-овский прокси,
+      нужен ConnectionTcpMTProxyRandomizedIntermediate.
+
+    SOCKS-прокси «общего назначения» нередко фильтруют raw-TCP к DC Telegram
+    по IP — в таком случае MTProxy единственный рабочий вариант.
     """
     raw = environ.get("TELETHON_PROXY") or environ.get("DOWNLOAD_PROXY")
     if not raw:
         return None
     parsed = urlparse(raw)
+
+    is_mtproxy_tg = parsed.scheme == "tg" and (
+        parsed.netloc == "proxy" or parsed.path.lstrip("/") == "proxy"
+    )
+    is_mtproxy_https = (
+        parsed.scheme in ("http", "https")
+        and parsed.netloc == "t.me"
+        and parsed.path.lstrip("/") == "proxy"
+    )
+    if is_mtproxy_tg or is_mtproxy_https:
+        q = parse_qs(parsed.query)
+        server = (q.get("server") or [None])[0]
+        port_raw = (q.get("port") or [None])[0]
+        secret = (q.get("secret") or [None])[0]
+        if not server or not port_raw or not secret:
+            logger.warning("MTProxy URL без server/port/secret: %s", raw)
+            return None
+        return (
+            (server, int(port_raw), secret),
+            connection.ConnectionTcpMTProxyRandomizedIntermediate,
+        )
+
     if not parsed.hostname or not parsed.port:
         logger.warning("Не удалось разобрать прокси для Telethon: %s", raw)
         return None
@@ -83,7 +112,7 @@ def _telethon_proxy() -> dict[str, Any] | None:
         proxy["username"] = unquote(parsed.username)
     if parsed.password:
         proxy["password"] = unquote(parsed.password)
-    return proxy
+    return (proxy, None)
 
 
 async def _safe_post_action(func: Callable[[], Awaitable[Any]]) -> None:
@@ -187,18 +216,25 @@ class Bot:
 
         application.post_init = post_init
 
+        client_kwargs: dict[str, Any] = {}
         telethon_proxy = _telethon_proxy()
         if telethon_proxy is not None:
-            logger.info(
-                "Telethon идёт через прокси %s:%s",
-                telethon_proxy["addr"],
-                telethon_proxy["port"],
-            )
+            proxy, conn_cls = telethon_proxy
+            client_kwargs["proxy"] = proxy
+            if conn_cls is not None:
+                client_kwargs["connection"] = conn_cls
+                logger.info("Telethon идёт через MTProxy %s:%s", proxy[0], proxy[1])
+            else:
+                logger.info(
+                    "Telethon идёт через прокси %s:%s",
+                    proxy["addr"],
+                    proxy["port"],
+                )
         self.client = TelegramClient(
             ".steward_session",
             api_id=int(environ.get("TELEGRAM_API_ID", "")),
             api_hash=environ.get("TELEGRAM_API_HASH", ""),
-            proxy=telethon_proxy,
+            **client_kwargs,
         )
         self.client.start(bot_token=environ.get("TELEGRAM_BOT_TOKEN", ""))
 
