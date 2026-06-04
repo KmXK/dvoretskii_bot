@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from os import environ
 from typing import Any, Awaitable, Callable
@@ -87,6 +88,16 @@ def _telethon_proxy() -> tuple[Any, type | None] | None:
         if not server or not port_raw or not secret:
             logger.warning("MTProxy URL без server/port/secret: %s", raw)
             return None
+        # tg://proxy?secret=... может быть в hex или base64url (современные
+        # fake-TLS share-ссылки чаще base64url). Telethon ожидает hex —
+        # сами конвертируем, если в строке есть символы вне hex-алфавита.
+        if any(ch not in "0123456789abcdefABCDEF" for ch in secret):
+            try:
+                padded = secret + "=" * (-len(secret) % 4)
+                secret = base64.urlsafe_b64decode(padded).hex()
+            except (ValueError, base64.binascii.Error) as e:
+                logger.warning("MTProxy secret не парсится ни как hex, ни как base64url: %s", e)
+                return None
         return (
             (server, int(port_raw), secret),
             connection.ConnectionTcpMTProxyRandomizedIntermediate,
