@@ -20,6 +20,7 @@ from telegram import (
     InputFile,
     Message,
 )
+from telegram.error import TimedOut
 
 from steward.data.repository import Repository
 from steward.features.download.callbacks import (
@@ -302,15 +303,25 @@ def make_video_loader(
             caption = _make_caption(info)
 
             with open(filepath, "rb") as file:
-                sent_video = await message.reply_video(
-                    InputFile(file, filename=f"{type_name} Video"),
-                    supports_streaming=True,
-                    width=int(width) if width is not None else None,
-                    height=int(height) if height is not None else None,
-                    reply_markup=reply_markup,
-                    caption=caption,
-                    parse_mode="HTML" if caption else None,
-                )
+                try:
+                    sent_video = await message.reply_video(
+                        InputFile(file, filename=f"{type_name} Video"),
+                        supports_streaming=True,
+                        width=int(width) if width is not None else None,
+                        height=int(height) if height is not None else None,
+                        reply_markup=reply_markup,
+                        caption=caption,
+                        parse_mode="HTML" if caption else None,
+                    )
+                except TimedOut:
+                    # Видео почти наверняка уже залито локальным Bot API сервером,
+                    # ответ просто не успел вернуться за таймаут. Не пробрасываем
+                    # исключение — иначе диспатчер до-отправит пост картинками
+                    # (gallery-dl) и получится дубль видео + фото.
+                    logger.warning(
+                        "reply_video for %s timed out; assuming delivered", type_name
+                    )
+                    return
 
             logger.info(f"video {type_name} downloaded successfully")
 
