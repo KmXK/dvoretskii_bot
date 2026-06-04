@@ -13,7 +13,6 @@ from telegram import (
     InputMediaVideo,
     Message,
 )
-from telegram.error import TimedOut
 
 from steward.data.repository import Repository
 from steward.helpers import morphy
@@ -129,14 +128,6 @@ async def download_and_send_medias(
                         await message.reply_media_group(
                             medias[i : i + 10],
                             disable_notification=True,
-                        )
-                        break
-                    except TimedOut:
-                        # Локальный Bot API сервер почти наверняка уже доставил
-                        # группу — ответ просто не успел вернуться за таймаут.
-                        # Ретрай создал бы дубликаты, поэтому считаем доставленным.
-                        logging.warning(
-                            "reply_media_group timed out; assuming delivered"
                         )
                         break
                     except Exception as e:
