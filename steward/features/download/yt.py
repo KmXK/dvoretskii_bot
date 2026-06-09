@@ -229,6 +229,7 @@ def make_video_loader(
     cookie_file: str | None = None,
     pre_call: Callable[[], Any] = lambda: None,
     auto_transcribe_short: bool = False,
+    video_format: str = "(bv+ba)/best",
 ):
     async def wrapper(repository: Repository, url: str, message: Message) -> None:
         pre_call()
@@ -243,7 +244,7 @@ def make_video_loader(
                 "outtmpl": filepath,
                 "logger": yt_logger,
                 "cookiefile": cookie_file,
-                "format": "(bv+ba)/best",
+                "format": video_format,
                 "format_sort": ["ext:mp4", "res:1080"],
                 "max_filesize": 250 * 1024 * 1024,
             }
@@ -384,7 +385,17 @@ def build_dispatch(repository: Repository) -> dict[str, list]:
 
     return {
         "tiktok": [
-            _bind(make_video_loader("tiktok", auto_transcribe_short=True)),
+            _bind(make_video_loader(
+                "tiktok",
+                auto_transcribe_short=True,
+                # TikTok-экстрактор yt-dlp помечает ВСЕ форматы как acodec=aac,
+                # поэтому (bv+ba) схлопывается в один формат без слияния звука,
+                # а format_sort выбирает gear-формат bytevc1, который часто
+                # отдаётся без аудиодорожки → немой ролик. play_addr/play —
+                # каноничный проигрываемый файл, в нём звук есть всегда;
+                # gear/bv+ba оставляем только как fallback.
+                video_format="play_addr/play/download_addr/download/(bv*+ba)/b",
+            )),
             _bind(make_images_loader("tiktok")),
         ],
         "instagram.com": [
