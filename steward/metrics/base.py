@@ -14,6 +14,12 @@ class MetricSample:
     value: float
 
 
+@dataclass
+class MetricSeries:
+    labels: dict[str, str]
+    points: list[tuple[float, float]]
+
+
 class MetricsEngine(ABC):
     @abstractmethod
     def inc(self, name: str, labels: Labels, value: float = 1) -> None: ...
@@ -29,6 +35,17 @@ class MetricsEngine(ABC):
 
     @abstractmethod
     async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]: ...
+
+    @abstractmethod
+    async def query_range(
+        self,
+        promql: str,
+        start: float,
+        end: float,
+        step: float,
+        *,
+        strict: bool = False,
+    ) -> list[MetricSeries]: ...
 
 
 class ContextMetrics:
@@ -47,3 +64,14 @@ class ContextMetrics:
 
     async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]:
         return await self._engine.query(promql, strict=strict)
+
+    async def query_range(
+        self,
+        promql: str,
+        start: float,
+        end: float,
+        step: float,
+        *,
+        strict: bool = False,
+    ) -> list[MetricSeries]:
+        return await self._engine.query_range(promql, start, end, step, strict=strict)

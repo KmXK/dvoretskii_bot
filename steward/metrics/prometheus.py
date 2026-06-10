@@ -3,7 +3,13 @@ import logging
 import aiohttp
 from prometheus_client import Counter, Gauge, Histogram, REGISTRY, start_http_server
 
-from steward.metrics.base import Labels, MetricQueryError, MetricSample, MetricsEngine
+from steward.metrics.base import (
+    Labels,
+    MetricQueryError,
+    MetricSample,
+    MetricSeries,
+    MetricsEngine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,4 +82,58 @@ class PrometheusMetricsEngine(MetricsEngine):
             logger.exception("VM query error: %s", e)
             if strict:
                 raise MetricQueryError("VictoriaMetrics query error") from e
+            return []
+
+    async def query_range(
+        self,
+        promql: str,
+        start: float,
+        end: float,
+        step: float,
+        *,
+        strict: bool = False,
+    ) -> list[MetricSeries]:
+        if not self._vm_url:
+            if strict:
+                raise MetricQueryError("VictoriaMetrics URL is not configured")
+            return []
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self._vm_url}/api/v1/query_range",
+                    params={
+                        "query": promql,
+                        "start": f"{start}",
+                        "end": f"{end}",
+                        "step": f"{step}",
+                    },
+                ) as resp:
+                    data = await resp.json()
+                    if data.get("status") != "success":
+                        logger.warning("VM range query failed: %s", data)
+                        if strict:
+                            raise MetricQueryError(f"VictoriaMetrics range query failed: {data}")
+                        return []
+                    results: list[MetricSeries] = []
+                    for item in data.get("data", {}).get("result", []):
+                        labels = item.get("metric", {})
+                        points: list[tuple[float, float]] = []
+                        for ts, val in item.get("values", []) or []:
+                            try:
+                                points.append((float(ts), float(val)))
+                            except (TypeError, ValueError):
+                                continue
+                        results.append(MetricSeries(labels=labels, points=points))
+                    return results
+        except aiohttp.ClientConnectorError as e:
+            logger.warning("VM unreachable: %s", e)
+            if strict:
+                raise MetricQueryError("VictoriaMetrics is unreachable") from e
+            return []
+        except MetricQueryError:
+            raise
+        except Exception as e:
+            logger.exception("VM range query error: %s", e)
+            if strict:
+                raise MetricQueryError("VictoriaMetrics range query error") from e
             return []

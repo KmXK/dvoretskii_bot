@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import BackButton from '../components/BackButton'
+import MessagesTimeseries from '../components/stats/MessagesTimeseries'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -247,6 +248,13 @@ export default function StatsPage() {
               </motion.div>
             ))}
           </AnimatePresence>
+
+          {(scope === 'all' || selectedChat) && (
+            <MessagesTimeseries
+              scope={scope}
+              chatId={scope === 'chat' ? selectedChat : undefined}
+            />
+          )}
         </div>
       )}
     </motion.div>

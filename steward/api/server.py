@@ -1807,6 +1807,115 @@ async def handle_chat_stats(request: web.Request):
     })
 
 
+_TIMESERIES_WINDOWS = {
+    "day": (24 * 3600, 3600),
+    "week": (7 * 86400, 86400),
+    "month": (30 * 86400, 86400),
+}
+
+
+async def handle_messages_timeseries(request: web.Request):
+    """Per-user message timeseries, restricted to chats the viewer belongs to.
+
+    Params:
+      period   day|week|month   (default: day)
+      scope    chat|all         (default: chat)
+      chat_id  required when scope=chat
+      top      max series       (default: 8)
+      action_type chat|reaction (default: chat)
+    """
+    repository: Repository = request.app["repository"]
+    metrics: MetricsEngine = request.app["metrics"]
+
+    viewer_id = session_user_id(request)
+    if viewer_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    allowed = _user_chat_ids(repository, viewer_id)
+    if not allowed:
+        return web.json_response({
+            "period": "day", "scope": "chat", "step_seconds": 3600,
+            "buckets": [], "series": [],
+        })
+
+    period = request.query.get("period", "day")
+    if period not in _TIMESERIES_WINDOWS:
+        period = "day"
+    scope = request.query.get("scope", "chat")
+    action_type = request.query.get("action_type", "chat")
+    if action_type not in ("chat", "reaction"):
+        action_type = "chat"
+    try:
+        top_n = max(1, min(int(request.query.get("top", "8")), 20))
+    except ValueError:
+        top_n = 8
+
+    if scope == "chat":
+        raw_chat = request.query.get("chat_id", "").strip()
+        try:
+            chat_id_int = int(raw_chat)
+        except ValueError:
+            return web.json_response({"error": "chat_id required"}, status=400)
+        if chat_id_int not in allowed:
+            return web.json_response({"error": "forbidden"}, status=403)
+        target_chats = [chat_id_int]
+    else:
+        target_chats = sorted(allowed)
+
+    window_seconds, step_seconds = _TIMESERIES_WINDOWS[period]
+    now = datetime.datetime.now(tz=timezone.utc).timestamp()
+    end = (int(now) // step_seconds) * step_seconds
+    start = end - window_seconds + step_seconds
+
+    chat_regex = "|".join(str(c) for c in target_chats)
+    promql = (
+        f'sum by (user_name, user_id) '
+        f'(increase(bot_messages_total{{chat_id=~"{chat_regex}",action_type="{action_type}"}}[{step_seconds}s]))'
+    )
+
+    try:
+        series = await metrics.query_range(promql, start, end, step_seconds)
+    except Exception:
+        logger.exception("messages-timeseries query failed")
+        series = []
+
+    buckets = list(range(start, end + 1, step_seconds))
+    bucket_index = {ts: i for i, ts in enumerate(buckets)}
+
+    aggregated: list[dict] = []
+    for s in series:
+        user_id_lbl = s.labels.get("user_id", "")
+        user_name_lbl = s.labels.get("user_name") or user_id_lbl or "?"
+        values = [0.0] * len(buckets)
+        for ts, val in s.points:
+            idx = bucket_index.get(int(ts))
+            if idx is None:
+                continue
+            if val and val > 0:
+                values[idx] = val
+        total = sum(values)
+        if total <= 0:
+            continue
+        aggregated.append({
+            "user_id": user_id_lbl,
+            "user_name": user_name_lbl,
+            "total": int(total) if total == int(total) else round(total, 1),
+            "values": [int(v) if v == int(v) else round(v, 1) for v in values],
+        })
+
+    aggregated.sort(key=lambda x: x["total"], reverse=True)
+    aggregated = aggregated[:top_n]
+
+    return web.json_response({
+        "period": period,
+        "scope": scope,
+        "action_type": action_type,
+        "step_seconds": step_seconds,
+        "buckets": buckets,
+        "series": aggregated,
+    })
+
+
 def _session_user_id(request: web.Request) -> int | None:
     """Helper alias for handlers — middleware already enforces 401 if absent."""
     return session_user_id(request)
@@ -2421,6 +2530,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/birthdays", handle_birthday_create)
     app.router.add_delete("/api/birthdays", handle_birthday_delete)
     app.router.add_get("/api/chat-stats", handle_chat_stats)
+    app.router.add_get("/api/messages-timeseries", handle_messages_timeseries)
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)

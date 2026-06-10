@@ -1,4 +1,10 @@
-from steward.metrics.base import Labels, MetricQueryError, MetricSample, MetricsEngine
+from steward.metrics.base import (
+    Labels,
+    MetricQueryError,
+    MetricSample,
+    MetricSeries,
+    MetricsEngine,
+)
 
 
 class NoopMetricsEngine(MetricsEngine):
@@ -15,6 +21,19 @@ class NoopMetricsEngine(MetricsEngine):
         pass
 
     async def query(self, promql: str, *, strict: bool = False) -> list[MetricSample]:
+        if strict:
+            raise MetricQueryError("Metrics query requested while metrics engine is disabled")
+        return []
+
+    async def query_range(
+        self,
+        promql: str,
+        start: float,
+        end: float,
+        step: float,
+        *,
+        strict: bool = False,
+    ) -> list[MetricSeries]:
         if strict:
             raise MetricQueryError("Metrics query requested while metrics engine is disabled")
         return []
