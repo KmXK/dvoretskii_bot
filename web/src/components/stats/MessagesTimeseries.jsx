@@ -8,13 +8,17 @@ import { useToast } from '../../context/useToast'
 
 const TIMESERIES_PERIODS = [
   { key: 'day', label: 'Сутки' },
+  { key: '3d', label: '3 дня' },
   { key: 'week', label: 'Неделя' },
   { key: 'month', label: 'Месяц' },
+  { key: 'quarter', label: '3 месяца' },
 ]
 
-const ACTIONS = [
-  { key: 'chat', label: '💬 Сообщения' },
-  { key: 'reaction', label: '❤️ Реакции' },
+const METRICS = [
+  { key: 'messages', label: '💬 Сообщения' },
+  { key: 'reactions', label: '❤️ Реакции' },
+  { key: 'videos', label: '🎬 Видосики' },
+  { key: 'curses', label: '🤬 Мат' },
 ]
 
 const LINE_COLORS = [
@@ -28,12 +32,17 @@ const LINE_COLORS = [
   '#84cc16',
 ]
 
-function formatBucketTs(ts, period) {
+function formatBucketTs(ts, period, stepSeconds) {
   const d = new Date(ts * 1000)
   if (period === 'day') {
     return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   }
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+  const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+  if (stepSeconds < 86400) {
+    const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    return `${date} ${time}`
+  }
+  return date
 }
 
 function CustomTooltip({ active, payload, label }) {
@@ -58,7 +67,7 @@ function CustomTooltip({ active, payload, label }) {
 export default function MessagesTimeseries({ scope, chatId }) {
   const toast = useToast()
   const [period, setPeriod] = useState('day')
-  const [actionType, setActionType] = useState('chat')
+  const [metric, setMetric] = useState('messages')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [hiddenUsers, setHiddenUsers] = useState(() => new Set())
@@ -70,7 +79,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
     const params = new URLSearchParams({
       period,
       scope,
-      action_type: actionType,
+      metric,
       top: '8',
     })
     if (scope === 'chat') params.set('chat_id', chatId)
@@ -88,12 +97,12 @@ export default function MessagesTimeseries({ scope, chatId }) {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [period, scope, chatId, actionType, toast])
+  }, [period, scope, chatId, metric, toast])
 
   const chartData = useMemo(() => {
     if (!data?.buckets?.length || !data?.series?.length) return []
     return data.buckets.map((ts, i) => {
-      const row = { label: formatBucketTs(ts, data.period) }
+      const row = { label: formatBucketTs(ts, data.period, data.step_seconds) }
       data.series.forEach(s => {
         row[s.user_name] = s.values[i] || 0
       })
@@ -119,39 +128,38 @@ export default function MessagesTimeseries({ scope, chatId }) {
       animate={{ opacity: 1, y: 0 }}
       className="bg-spotify-dark rounded-xl p-4"
     >
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h3 className="text-white font-semibold text-sm">📈 Динамика по времени</h3>
-        <div className="flex gap-1 bg-spotify-black/50 rounded-lg p-0.5">
-          {TIMESERIES_PERIODS.map(p => (
-            <motion.button
-              key={p.key}
-              whileTap={{ scale: 0.93 }}
-              onClick={() => setPeriod(p.key)}
-              className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
-                period === p.key
-                  ? 'bg-spotify-green text-black'
-                  : 'text-spotify-text hover:text-white'
-              }`}
-            >
-              {p.label}
-            </motion.button>
-          ))}
-        </div>
+      <h3 className="text-white font-semibold text-sm mb-3">📈 Динамика по времени</h3>
+
+      <div className="flex gap-1 mb-2 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
+        {TIMESERIES_PERIODS.map(p => (
+          <motion.button
+            key={p.key}
+            whileTap={{ scale: 0.93 }}
+            onClick={() => setPeriod(p.key)}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+              period === p.key
+                ? 'bg-spotify-green text-black'
+                : 'text-spotify-text hover:text-white'
+            }`}
+          >
+            {p.label}
+          </motion.button>
+        ))}
       </div>
 
-      <div className="flex gap-1 mb-3 bg-spotify-black/50 rounded-lg p-0.5 w-fit">
-        {ACTIONS.map(a => (
+      <div className="flex gap-1 mb-3 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
+        {METRICS.map(m => (
           <motion.button
-            key={a.key}
+            key={m.key}
             whileTap={{ scale: 0.93 }}
-            onClick={() => setActionType(a.key)}
-            className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors ${
-              actionType === a.key
+            onClick={() => setMetric(m.key)}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+              metric === m.key
                 ? 'bg-white text-black'
                 : 'text-spotify-text hover:text-white'
             }`}
           >
-            {a.label}
+            {m.label}
           </motion.button>
         ))}
       </div>
@@ -180,7 +188,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
           </motion.div>
         ) : (
           <motion.div
-            key={`${period}-${actionType}`}
+            key={`${period}-${metric}`}
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
@@ -188,7 +196,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
           >
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 5, right: 8, bottom: 0, left: -20 }}>
+                <LineChart data={chartData} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid stroke="#282828" strokeDasharray="3 3" vertical={false} />
                   <XAxis
                     dataKey="label"
@@ -199,11 +207,11 @@ export default function MessagesTimeseries({ scope, chatId }) {
                     minTickGap={28}
                   />
                   <YAxis
-                    tick={{ fill: '#b3b3b3', fontSize: 9 }}
+                    tick={{ fill: '#b3b3b3', fontSize: 10 }}
                     tickLine={false}
                     axisLine={false}
                     allowDecimals={false}
-                    width={32}
+                    width={36}
                   />
                   <Tooltip
                     content={<CustomTooltip />}
@@ -215,7 +223,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
                     return (
                       <Line
                         key={s.user_name}
-                        type="monotone"
+                        type="linear"
                         dataKey={s.user_name}
                         stroke={color}
                         strokeWidth={2}

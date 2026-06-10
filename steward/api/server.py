@@ -1809,20 +1809,29 @@ async def handle_chat_stats(request: web.Request):
 
 _TIMESERIES_WINDOWS = {
     "day": (24 * 3600, 3600),
-    "week": (7 * 86400, 86400),
+    "3d": (3 * 86400, 3 * 3600),
+    "week": (7 * 86400, 6 * 3600),
     "month": (30 * 86400, 86400),
+    "quarter": (90 * 86400, 3 * 86400),
+}
+
+_TIMESERIES_METRICS = {
+    "messages": ("bot_messages_total", {"action_type": "chat"}),
+    "reactions": ("bot_messages_total", {"action_type": "reaction"}),
+    "videos": ("bot_downloads_total", {}),
+    "curses": ("bot_curse_words_total", {}),
 }
 
 
 async def handle_messages_timeseries(request: web.Request):
-    """Per-user message timeseries, restricted to chats the viewer belongs to.
+    """Per-user metric timeseries, restricted to chats the viewer belongs to.
 
     Params:
-      period   day|week|month   (default: day)
-      scope    chat|all         (default: chat)
+      period   day|3d|week|month|quarter        (default: day)
+      scope    chat|all                         (default: chat)
       chat_id  required when scope=chat
-      top      max series       (default: 8)
-      action_type chat|reaction (default: chat)
+      top      max series                       (default: 8)
+      metric   messages|reactions|videos|curses (default: messages)
     """
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
@@ -1842,9 +1851,10 @@ async def handle_messages_timeseries(request: web.Request):
     if period not in _TIMESERIES_WINDOWS:
         period = "day"
     scope = request.query.get("scope", "chat")
-    action_type = request.query.get("action_type", "chat")
-    if action_type not in ("chat", "reaction"):
-        action_type = "chat"
+    metric_key = request.query.get("metric", "messages")
+    if metric_key not in _TIMESERIES_METRICS:
+        metric_key = "messages"
+    metric_name, metric_filters = _TIMESERIES_METRICS[metric_key]
     try:
         top_n = max(1, min(int(request.query.get("top", "8")), 20))
     except ValueError:
@@ -1868,9 +1878,11 @@ async def handle_messages_timeseries(request: web.Request):
     start = end - window_seconds + step_seconds
 
     chat_regex = "|".join(str(c) for c in target_chats)
+    label_parts = [f'chat_id=~"{chat_regex}"']
+    label_parts += [f'{k}="{v}"' for k, v in metric_filters.items()]
     promql = (
         f'sum by (user_name, user_id) '
-        f'(increase(bot_messages_total{{chat_id=~"{chat_regex}",action_type="{action_type}"}}[{step_seconds}s]))'
+        f'(increase({metric_name}{{{", ".join(label_parts)}}}[{step_seconds}s]))'
     )
 
     try:
@@ -1909,7 +1921,7 @@ async def handle_messages_timeseries(request: web.Request):
     return web.json_response({
         "period": period,
         "scope": scope,
-        "action_type": action_type,
+        "metric": metric_key,
         "step_seconds": step_seconds,
         "buckets": buckets,
         "series": aggregated,
