@@ -1815,23 +1815,28 @@ _TIMESERIES_WINDOWS = {
     "quarter": (90 * 86400, 3 * 86400),
 }
 
-_TIMESERIES_METRICS = {
-    "messages": ("bot_messages_total", {"action_type": "chat"}),
-    "reactions": ("bot_messages_total", {"action_type": "reaction"}),
-    "videos": ("bot_downloads_total", {}),
-    "curses": ("bot_curse_words_total", {}),
-}
+_TIMESERIES_STEPS = [600, 1800, 3600, 6 * 3600, 86400]
+_TIMESERIES_MAX_BUCKETS = 500
+
+
+def _timeseries_metrics() -> dict[str, "object"]:
+    from steward.features.stats import _STATS
+    return {s.key: s for s in _STATS if not s.is_db}
 
 
 async def handle_messages_timeseries(request: web.Request):
     """Per-user metric timeseries, restricted to chats the viewer belongs to.
 
+    The metric list is derived from steward.features.stats._STATS, so new
+    bot stats show up here automatically.
+
     Params:
-      period   day|3d|week|month|quarter        (default: day)
-      scope    chat|all                         (default: chat)
+      period   day|3d|week|month|quarter  (default: day)
+      scope    chat|all                   (default: chat)
       chat_id  required when scope=chat
-      top      max series                       (default: 8)
-      metric   messages|reactions|videos|curses (default: messages)
+      top      max series                 (default: 8)
+      metric   key from _STATS            (default: first stat)
+      step     bucket seconds, one of _TIMESERIES_STEPS (default: auto by period)
     """
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
@@ -1843,18 +1848,20 @@ async def handle_messages_timeseries(request: web.Request):
     allowed = _user_chat_ids(repository, viewer_id)
     if not allowed:
         return web.json_response({
-            "period": "day", "scope": "chat", "step_seconds": 3600,
-            "buckets": [], "series": [],
+            "period": "day", "scope": "chat", "metric": "", "available_metrics": [],
+            "step_seconds": 3600, "buckets": [], "series": [],
         })
 
     period = request.query.get("period", "day")
     if period not in _TIMESERIES_WINDOWS:
         period = "day"
     scope = request.query.get("scope", "chat")
-    metric_key = request.query.get("metric", "messages")
-    if metric_key not in _TIMESERIES_METRICS:
-        metric_key = "messages"
-    metric_name, metric_filters = _TIMESERIES_METRICS[metric_key]
+    available = _timeseries_metrics()
+    metric_key = request.query.get("metric", "")
+    if metric_key not in available:
+        metric_key = next(iter(available))
+    stat = available[metric_key]
+    metric_name, metric_filters = stat.metric_name, stat.filters
     try:
         top_n = max(1, min(int(request.query.get("top", "8")), 20))
     except ValueError:
@@ -1873,6 +1880,17 @@ async def handle_messages_timeseries(request: web.Request):
         target_chats = sorted(allowed)
 
     window_seconds, step_seconds = _TIMESERIES_WINDOWS[period]
+    try:
+        requested_step = int(request.query.get("step", "0"))
+    except ValueError:
+        requested_step = 0
+    if requested_step in _TIMESERIES_STEPS:
+        step_seconds = requested_step
+        while window_seconds // step_seconds > _TIMESERIES_MAX_BUCKETS:
+            bigger = [s for s in _TIMESERIES_STEPS if s > step_seconds]
+            if not bigger:
+                break
+            step_seconds = bigger[0]
     now = datetime.datetime.now(tz=timezone.utc).timestamp()
     end = (int(now) // step_seconds) * step_seconds
     start = end - window_seconds + step_seconds
@@ -1916,15 +1934,25 @@ async def handle_messages_timeseries(request: web.Request):
         })
 
     aggregated.sort(key=lambda x: x["total"], reverse=True)
-    aggregated = aggregated[:top_n]
+    viewer_key = str(viewer_id)
+    top = aggregated[:top_n]
+    if not any(s["user_id"] == viewer_key for s in top):
+        mine = next((s for s in aggregated if s["user_id"] == viewer_key), None)
+        if mine is not None:
+            top.append(mine)
+    for s in top:
+        s["is_me"] = s["user_id"] == viewer_key
 
     return web.json_response({
         "period": period,
         "scope": scope,
         "metric": metric_key,
+        "available_metrics": [
+            {"key": k, "label": v.short or v.label} for k, v in available.items()
+        ],
         "step_seconds": step_seconds,
         "buckets": buckets,
-        "series": aggregated,
+        "series": top,
     })
 
 

@@ -14,11 +14,13 @@ const TIMESERIES_PERIODS = [
   { key: 'quarter', label: '3 месяца' },
 ]
 
-const METRICS = [
-  { key: 'messages', label: '💬 Сообщения' },
-  { key: 'reactions', label: '❤️ Реакции' },
-  { key: 'videos', label: '🎬 Видосики' },
-  { key: 'curses', label: '🤬 Мат' },
+const STEP_OPTIONS = [
+  { key: 'auto', label: 'Авто' },
+  { key: '600', label: '10м' },
+  { key: '1800', label: '30м' },
+  { key: '3600', label: '1ч' },
+  { key: '21600', label: '6ч' },
+  { key: '86400', label: '1д' },
 ]
 
 const LINE_COLORS = [
@@ -67,7 +69,8 @@ function CustomTooltip({ active, payload, label }) {
 export default function MessagesTimeseries({ scope, chatId }) {
   const toast = useToast()
   const [period, setPeriod] = useState('day')
-  const [metric, setMetric] = useState('messages')
+  const [metric, setMetric] = useState(null)
+  const [step, setStep] = useState('auto')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [hiddenUsers, setHiddenUsers] = useState(() => new Set())
@@ -79,9 +82,10 @@ export default function MessagesTimeseries({ scope, chatId }) {
     const params = new URLSearchParams({
       period,
       scope,
-      metric,
       top: '8',
     })
+    if (metric) params.set('metric', metric)
+    if (step !== 'auto') params.set('step', step)
     if (scope === 'chat') params.set('chat_id', chatId)
     api.get(`/api/messages-timeseries?${params}`)
       .then(d => {
@@ -97,7 +101,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [period, scope, chatId, metric, toast])
+  }, [period, scope, chatId, metric, step, toast])
 
   const chartData = useMemo(() => {
     if (!data?.buckets?.length || !data?.series?.length) return []
@@ -120,6 +124,8 @@ export default function MessagesTimeseries({ scope, chatId }) {
   }
 
   const hasData = !loading && chartData.length > 0 && (data?.series?.length || 0) > 0
+  const availableMetrics = data?.available_metrics || []
+  const activeMetric = metric ?? data?.metric
 
   return (
     <motion.div
@@ -147,19 +153,39 @@ export default function MessagesTimeseries({ scope, chatId }) {
         ))}
       </div>
 
-      <div className="flex gap-1 mb-3 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
-        {METRICS.map(m => (
+      {availableMetrics.length > 0 && (
+        <div className="flex gap-1 mb-2 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
+          {availableMetrics.map(m => (
+            <motion.button
+              key={m.key}
+              whileTap={{ scale: 0.93 }}
+              onClick={() => setMetric(m.key)}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors whitespace-nowrap shrink-0 ${
+                activeMetric === m.key
+                  ? 'bg-white text-black'
+                  : 'text-spotify-text hover:text-white'
+              }`}
+            >
+              {m.label}
+            </motion.button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1 mb-3 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
+        <span className="text-spotify-text text-[10px] px-1.5 shrink-0">Шаг:</span>
+        {STEP_OPTIONS.map(s => (
           <motion.button
-            key={m.key}
+            key={s.key}
             whileTap={{ scale: 0.93 }}
-            onClick={() => setMetric(m.key)}
+            onClick={() => setStep(s.key)}
             className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors whitespace-nowrap shrink-0 ${
-              metric === m.key
-                ? 'bg-white text-black'
+              step === s.key
+                ? 'bg-spotify-green/80 text-black'
                 : 'text-spotify-text hover:text-white'
             }`}
           >
-            {m.label}
+            {s.label}
           </motion.button>
         ))}
       </div>
@@ -188,7 +214,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
           </motion.div>
         ) : (
           <motion.div
-            key={`${period}-${metric}`}
+            key={`${period}-${activeMetric}-${step}`}
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
@@ -226,7 +252,7 @@ export default function MessagesTimeseries({ scope, chatId }) {
                         type="linear"
                         dataKey={s.user_name}
                         stroke={color}
-                        strokeWidth={2}
+                        strokeWidth={s.is_me ? 3.5 : 2}
                         dot={false}
                         activeDot={{ r: 4, fill: color }}
                         animationDuration={500}
@@ -249,13 +275,13 @@ export default function MessagesTimeseries({ scope, chatId }) {
                     onClick={() => toggleUser(s.user_name)}
                     className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] bg-spotify-black/40 hover:bg-spotify-black/70 transition-opacity ${
                       hidden ? 'opacity-40' : 'opacity-100'
-                    }`}
+                    } ${s.is_me ? 'ring-1 ring-spotify-green/60' : ''}`}
                   >
                     <span
                       className="w-2 h-2 rounded-full"
                       style={{ background: hidden ? '#666' : color }}
                     />
-                    <span className="text-white">@{s.user_name}</span>
+                    <span className="text-white">{s.is_me ? '⭐ ' : ''}@{s.user_name}</span>
                     <span className="text-spotify-text">{s.total}</span>
                   </motion.button>
                 )

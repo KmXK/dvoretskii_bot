@@ -29,17 +29,23 @@ class _StatMetric:
     metric_name: str
     filters: dict[str, str] = field(default_factory=dict)
     is_db: bool = False
+    short: str | None = None
+
+    @property
+    def key(self) -> str:
+        parts = [self.metric_name] + [f"{k}={v}" for k, v in sorted(self.filters.items())]
+        return "|".join(parts)
 
 
-def _stat(label: str, metric_name: str, **filters) -> _StatMetric:
-    return _StatMetric(label=label, metric_name=metric_name, filters=filters)
+def _stat(label: str, metric_name: str, short: str | None = None, **filters) -> _StatMetric:
+    return _StatMetric(label=label, metric_name=metric_name, short=short, filters=filters)
 
 
 _STATS = [
-    _stat("💬 Топ по сообщениям", "bot_messages_total", action_type="chat"),
-    _stat("❤️ Топ по реакциям", "bot_messages_total", action_type="reaction"),
-    _stat("🤬 Топ по мату", "bot_curse_words_total"),
-    _stat("🎬 Топ по видосикам", "bot_downloads_total"),
+    _stat("💬 Топ по сообщениям", "bot_messages_total", short="💬 Сообщения", action_type="chat"),
+    _stat("❤️ Топ по реакциям", "bot_messages_total", short="❤️ Реакции", action_type="reaction"),
+    _stat("🤬 Топ по мату", "bot_curse_words_total", short="🤬 Мат"),
+    _stat("🎬 Топ по видосикам", "bot_downloads_total", short="🎬 Видосики"),
     _StatMetric(label="🐵 Топ по обезьянкам", metric_name="", is_db=True),
 ]
 
