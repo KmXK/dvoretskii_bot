@@ -105,20 +105,6 @@ def _validate_probs(vals: list[int], n: int) -> str | None:
     return None
 
 
-def _resp_short(r: Response) -> str:
-    if r.reaction_emoji:
-        return f"реакция {r.reaction_emoji}"
-    if r.text:
-        return (r.text[:24] + "…") if len(r.text) > 24 else r.text
-    return "сообщение"
-
-
-def _responses_list(responses: list[Response]) -> str:
-    if not responses:
-        return "(пока пусто)"
-    return "\n".join(f"{i + 1}. {_resp_short(r)}" for i, r in enumerate(responses))
-
-
 async def _safe_delete(msg) -> None:
     if msg is None:
         return
@@ -128,13 +114,58 @@ async def _safe_delete(msg) -> None:
         pass
 
 
+async def _safe_delete_id(bot, chat_id: int, message_id: int) -> None:
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
 def _chat_name(repository, cid: int) -> str:
+    # Личка с ботом: положительный chat_id == user_id. У таких чатов нет записи
+    # в db.chats (get_chat вернёт None → раньше показывалось «unknown»/число).
+    if cid > 0:
+        u = (
+            next((u for u in repository.db.users if u.id == cid), None)
+            if repository is not None
+            else None
+        )
+        if u is not None:
+            if u.username:
+                return f"личка @{u.username}"
+            if u.first_name:
+                return f"личка {u.first_name}"
+        return "личка"
     chat = repository.get_chat(cid) if repository is not None else None
     return chat.name if chat else str(cid)
 
 
-def _render_rule(rule: Rule, repository=None) -> str:
-    chats = ", ".join(_chat_name(repository, c) for c in rule.chats) or "—"
+def _current_chat_participants(repository, chat_id: int, viewer_id: int) -> list:
+    """Пользователи, состоящие в текущем чате (откуда вызвали /rules). В личке
+    участников в db нет — сужаем до самого зрителя, чтобы он видел только свои
+    чаты."""
+    parts = [u for u in repository.db.users if chat_id in (u.chat_ids or [])]
+    if parts:
+        return parts
+    viewer = next((u for u in repository.db.users if u.id == viewer_id), None)
+    return [viewer] if viewer is not None else []
+
+
+def _visible_rule_chats(repository, rule: Rule, participants: list) -> list[int]:
+    """Чаты правила, которые можно показать: только те, где состоят ВСЕ участники
+    текущего чата (иначе светили бы чужие чаты тому, кого там нет)."""
+    if not participants:
+        return list(rule.chats)
+    out: list[int] = []
+    for c in rule.chats:
+        if all(c in (u.chat_ids or []) for u in participants):
+            out.append(c)
+    return out
+
+
+def _render_rule(rule: Rule, repository=None, chats_override: list[int] | None = None) -> str:
+    src = rule.chats if chats_override is None else chats_override
+    chats = ", ".join(_chat_name(repository, c) for c in src) or "—"
     if 0 in rule.from_users:
         froms = "все"
     else:
@@ -228,11 +259,13 @@ class _ChatPickerStep(Step):
                     context.update.effective_chat.id, "Выбери хотя бы один чат"
                 )
                 return False
+            await _safe_delete(self.msg)
             return True
         return False
 
     def stop(self):
         self.is_waiting = False
+        self.msg = None
 
 
 class _FromUsersStep(Step):
@@ -361,118 +394,207 @@ class _PatternStep(Step):
 
 
 class _CheckRegexpStep(Step):
-    """Проверка шаблона: пользователь шлёт примеры, бот отвечает подходит/нет."""
+    """Проверка шаблона: пользователь шлёт примеры, бот отвечает подходит/нет.
+    Весь мусор (приглашение, примеры, ответы бота) подчищается на «Закончить»."""
 
     PREFIX = "rule_check"
 
     def __init__(self):
         self.is_first = True
+        self.msgs = []  # сообщения для удаления при завершении
 
     async def chat(self, context):
         if self.is_first:
             kb = Keyboard([[Button("Закончить", callback_data=f"{self.PREFIX}|done")]])
-            await context.message.reply_text(
-                "Проверка шаблона: пришли примеры сообщений, а потом жми «Закончить».",
+            m = await context.bot.send_message(
+                context.update.effective_chat.id,
+                "Проверка шаблона: пришли примеры сообщений, чтобы убедиться, что"
+                " шаблон срабатывает, потом жми «Закончить».",
                 reply_markup=kb.to_markup(),
             )
+            self.msgs.append(m)
             self.is_first = False
             return False
         if not context.message.text:
-            await context.message.reply_text("Пустое сообщение")
+            r = await context.message.reply_text("Пустое сообщение")
+            self.msgs.extend([context.message, r])
             return False
         result = re.search(context.session_context["pattern"], context.message.text)
-        await context.message.reply_text("Подходит" if result else "Не подходит")
+        r = await context.message.reply_text("Подходит ✅" if result else "Не подходит ❌")
+        self.msgs.extend([context.message, r])
         return False
 
     async def callback(self, context):
         if context.callback_query.data == f"{self.PREFIX}|done":
             await context.callback_query.answer()
+            for m in self.msgs:
+                await _safe_delete(m)
+            self.msgs = []
             return True
         return False
 
     def stop(self):
         self.is_first = True
+        self.msgs = []
 
 
 class _ResponsesStep(Step):
-    """Сбор/редактирование ответов: список с номерами, кнопки удаления, реакция."""
+    """Сбор/редактирование ответов «как раньше»: на каждый присланный ответ бот
+    сразу копирует его обратно (проверка, как он будет отвечать) и шлёт служебное
+    сообщение с номером ответа и кнопкой удаления. Реакция — одно сообщение,
+    которое служит и приглашением, и подтверждением номера. На «Готово» весь
+    мусор подчищается, остаются только исходные сообщения-источники ответов."""
 
     PREFIX = "rule_resp"
 
     def __init__(self):
         self.is_waiting = False
         self.is_waiting_for_reaction = False
-        self.control_msg = None
+        self.prompt = None  # сообщение с инструкцией + кнопками
+        self.reaction_prompt = None  # «поставь реакцию» (потом станет контролом)
+        self.entries: list[dict] = []
+        self._next_uid = 0
 
-    def _keyboard(self, responses: list[Response]) -> Keyboard:
-        rows = [
-            [Button(f"🗑 #{i + 1} {_resp_short(r)}", callback_data=f"{self.PREFIX}|del|{i}")]
-            for i, r in enumerate(responses)
-        ]
-        rows.append([
+    def _del_kb(self, uid: int) -> Keyboard:
+        return Keyboard([[Button("🗑 Удалить", callback_data=f"{self.PREFIX}|del|{uid}")]])
+
+    def _sync(self, context) -> None:
+        context.session_context["responses"] = [e["response"] for e in self.entries]
+
+    async def _init(self, context) -> None:
+        # В режиме редактирования ответы уже лежат в session_context — поднимаем их
+        # как entries с тем же интерфейсом (копия + контрол / реакция-контрол).
+        existing = list(context.session_context.get("responses") or [])
+        chat_id = context.update.effective_chat.id
+        for r in existing:
+            uid = self._next_uid
+            self._next_uid += 1
+            if r.reaction_emoji:
+                label = f"Реакция #{len(self.entries) + 1}: {r.reaction_emoji}"
+                control = await context.bot.send_message(
+                    chat_id, label, reply_markup=self._del_kb(uid).to_markup()
+                )
+                self.entries.append({
+                    "uid": uid, "response": r, "kind": "reaction",
+                    "emoji": r.reaction_emoji, "label": label,
+                    "control": (control.chat_id, control.message_id), "extra": [],
+                })
+            else:
+                extra: list[tuple[int, int]] = []
+                try:
+                    copied = await context.bot.copy_message(
+                        chat_id, r.from_chat_id, r.message_id
+                    )
+                    extra.append((chat_id, copied.message_id))
+                except Exception:
+                    pass
+                label = f"Ответ #{len(self.entries) + 1}"
+                control = await context.bot.send_message(
+                    chat_id, label, reply_markup=self._del_kb(uid).to_markup()
+                )
+                self.entries.append({
+                    "uid": uid, "response": r, "kind": "copy", "label": label,
+                    "control": (control.chat_id, control.message_id), "extra": extra,
+                })
+        kb = Keyboard([[
             Button("➕ Реакция", callback_data=f"{self.PREFIX}|react"),
             Button("💾 Готово", callback_data=f"{self.PREFIX}|done"),
-        ])
-        return Keyboard(rows)
-
-    async def _render(self, context, edit: bool = False) -> None:
-        responses = context.session_context.setdefault("responses", [])
-        text = (
-            "Ответы на сообщение. Присылай сообщения / стикеры / медиа — каждое станет"
-            " ответом. Реакцию добавь кнопкой. Лишнее удаляй кнопками 🗑.\n\n"
-            + _responses_list(responses)
+        ]])
+        self.prompt = await context.bot.send_message(
+            chat_id,
+            "Ответы на сообщение. Присылай сообщения / стикеры / медиа — каждое"
+            " станет ответом, и я сразу пришлю его обратно для проверки. Реакцию"
+            " добавь кнопкой. Лишнее убирай кнопкой 🗑 под нужным ответом.",
+            reply_markup=kb.to_markup(),
         )
-        markup = self._keyboard(responses).to_markup()
-        if edit and self.control_msg is not None:
+        self._sync(context)
+
+    async def _renumber(self, context) -> None:
+        """После удаления номера сдвигаются — переписываем контрол-сообщения."""
+        for i, e in enumerate(self.entries):
+            if e["kind"] == "reaction":
+                label = f"Реакция #{i + 1}: {e['emoji']}"
+            else:
+                label = f"Ответ #{i + 1}"
+            if e.get("label") == label:
+                continue
+            cid, mid = e["control"]
             try:
-                await self.control_msg.edit_text(text, reply_markup=markup)
-                return
+                await context.bot.edit_message_text(
+                    text=label,
+                    chat_id=cid,
+                    message_id=mid,
+                    reply_markup=self._del_kb(e["uid"]).to_markup(),
+                )
             except Exception:
                 pass
-        self.control_msg = await context.bot.send_message(
-            context.update.effective_chat.id, text, reply_markup=markup
-        )
+            e["label"] = label
+        self._sync(context)
+
+    async def _delete_entry_msgs(self, context, e: dict) -> None:
+        await _safe_delete_id(context.bot, *e["control"])
+        for m in e["extra"]:
+            await _safe_delete_id(context.bot, *m)
 
     async def chat(self, context):
         if not self.is_waiting:
-            context.session_context.setdefault("responses", [])
-            await self._render(context)
+            await self._init(context)
             self.is_waiting = True
             return False
         msg = context.message
-        context.session_context["responses"].append(
-            Response(msg.chat_id, msg.message_id, 100)
+        uid = self._next_uid
+        self._next_uid += 1
+        extra: list[tuple[int, int]] = []
+        try:
+            copied = await context.bot.copy_message(msg.chat_id, msg.chat_id, msg.message_id)
+            extra.append((msg.chat_id, copied.message_id))
+        except Exception:
+            pass
+        label = f"Ответ #{len(self.entries) + 1}"
+        control = await context.bot.send_message(
+            msg.chat_id, label, reply_markup=self._del_kb(uid).to_markup()
         )
-        await self._render(context, edit=True)
+        self.entries.append({
+            "uid": uid,
+            "response": Response(msg.chat_id, msg.message_id, 100),
+            "kind": "copy", "label": label,
+            "control": (control.chat_id, control.message_id), "extra": extra,
+        })
+        self._sync(context)
         return False
 
     async def callback(self, context):
         if not self.is_waiting:
-            context.session_context.setdefault("responses", [])
-            await self._render(context)
+            await self._init(context)
             self.is_waiting = True
             return False
         data = context.callback_query.data
         await context.callback_query.answer()
         if data == f"{self.PREFIX}|react":
             self.is_waiting_for_reaction = True
-            await context.bot.send_message(
-                context.update.effective_chat.id, "Поставь реакцию на это сообщение:"
+            self.reaction_prompt = await context.bot.send_message(
+                context.update.effective_chat.id, "Поставь реакцию на это сообщение 👇"
             )
             return False
         if data.startswith(f"{self.PREFIX}|del|"):
-            idx = int(data.rsplit("|", 1)[1])
-            responses = context.session_context.get("responses", [])
-            if 0 <= idx < len(responses):
-                responses.pop(idx)
-                await self._render(context, edit=True)
+            uid = int(data.rsplit("|", 1)[1])
+            idx = next((i for i, e in enumerate(self.entries) if e["uid"] == uid), None)
+            if idx is not None:
+                e = self.entries.pop(idx)
+                await self._delete_entry_msgs(context, e)
+                await self._renumber(context)
             return False
         if data == f"{self.PREFIX}|done":
-            if not context.session_context.get("responses"):
+            if not self.entries:
                 await context.bot.send_message(
                     context.update.effective_chat.id, "Нужен хотя бы один ответ"
                 )
                 return False
+            await _safe_delete(self.prompt)
+            await _safe_delete(self.reaction_prompt)
+            for e in self.entries:
+                await self._delete_entry_msgs(context, e)
+            self._sync(context)
             return True
         return False
 
@@ -488,38 +610,84 @@ class _ResponsesStep(Step):
                 context.message_reaction.chat.id, "Поддерживаются только обычные эмодзи"
             )
             return False
-        context.session_context.setdefault("responses", []).append(
-            Response(0, 0, 100, reaction_emoji=first.emoji)
-        )
+        uid = self._next_uid
+        self._next_uid += 1
+        rp = self.reaction_prompt
+        label = f"Реакция #{len(self.entries) + 1}: {first.emoji}"
+        # То же сообщение «поставь реакцию» становится контролом (номер + проверка).
+        try:
+            await context.bot.edit_message_text(
+                text=label,
+                chat_id=rp.chat_id,
+                message_id=rp.message_id,
+                reply_markup=self._del_kb(uid).to_markup(),
+            )
+        except Exception:
+            pass
+        self.entries.append({
+            "uid": uid,
+            "response": Response(0, 0, 100, reaction_emoji=first.emoji),
+            "kind": "reaction", "emoji": first.emoji, "label": label,
+            "control": (rp.chat_id, rp.message_id), "extra": [],
+        })
         self.is_waiting_for_reaction = False
-        await self._render(context, edit=True)
+        self.reaction_prompt = None
+        self._sync(context)
         return False
 
     def stop(self):
         self.is_waiting = False
         self.is_waiting_for_reaction = False
+        self.prompt = None
+        self.reaction_prompt = None
+        self.entries = []
+        self._next_uid = 0
 
 
 class _ProbabilitiesStep(Step):
-    """Промилле для ответов: ввод текстом или пресет «Равновероятно»."""
+    """Вероятности для ответов: ввод текстом или пресет «Равновероятно».
+    Единицы переключаются процентами/промилле (по умолчанию проценты),
+    внутри всегда хранятся промилле (0–1000)."""
 
     PREFIX = "rule_prob"
 
     def __init__(self):
         self.is_waiting = False
         self.prompt_msg = None
+        self.unit = "percent"  # "percent" | "permille"
+
+    def _n(self, context) -> int:
+        return len(context.session_context.get("responses", []))
 
     def _text(self, context) -> str:
-        n = len(context.session_context.get("responses", []))
+        n = self._n(context)
+        if self.unit == "percent":
+            unit_lbl, example, limit = "процентах (%)", "напр. «10 25» — это 10% и 25%", "Сумма ≤ 100."
+        else:
+            unit_lbl, example, limit = "промилле (‰)", "напр. «100 250» — это 100‰ и 250‰", "Сумма ≤ 1000."
         return (
-            f"Промилле для {n} ответов через пробел (100 = 10%, сумма ≤ 1000)."
-            " Или жми «Равновероятно»."
+            f"Напишите вероятности, с которыми бот ответит каждым из {n} ответов"
+            f" (через пробел, по одному числу на ответ), в {unit_lbl}. {limit}\n"
+            f"{example}\nИли жми «Равновероятно»."
         )
 
-    async def _render(self, context) -> None:
-        kb = Keyboard([[Button("⚖ Равновероятно", callback_data=f"{self.PREFIX}|equal")]])
+    def _keyboard(self) -> Keyboard:
+        switch = "Переключить на ‰" if self.unit == "percent" else "Переключить на %"
+        return Keyboard([
+            [Button(switch, callback_data=f"{self.PREFIX}|unit")],
+            [Button("⚖ Равновероятно", callback_data=f"{self.PREFIX}|equal")],
+        ])
+
+    async def _render(self, context, edit: bool = False) -> None:
+        markup = self._keyboard().to_markup()
+        if edit and self.prompt_msg is not None:
+            try:
+                await self.prompt_msg.edit_text(self._text(context), reply_markup=markup)
+                return
+            except Exception:
+                pass
         self.prompt_msg = await context.bot.send_message(
-            context.update.effective_chat.id, self._text(context), reply_markup=kb.to_markup()
+            context.update.effective_chat.id, self._text(context), reply_markup=markup
         )
 
     async def chat(self, context):
@@ -531,13 +699,29 @@ class _ProbabilitiesStep(Step):
         try:
             vals = [int(p) for p in parts]
         except ValueError:
-            await context.message.reply_text("Промилле — целые числа")
+            await context.message.reply_text("Вероятности — целые числа")
             return False
-        err = _validate_probs(vals, len(context.session_context.get("responses", [])))
-        if err:
-            await context.message.reply_text(err)
+        n = self._n(context)
+        if len(vals) != n:
+            await context.message.reply_text("Количество значений не совпадает с числом ответов")
             return False
-        context.session_context["probabilities"] = vals
+        if self.unit == "percent":
+            if any(v < 0 or v > 100 for v in vals):
+                await context.message.reply_text("Каждый процент — от 0 до 100")
+                return False
+            if sum(vals) > 100:
+                await context.message.reply_text("Сумма процентов не должна превышать 100")
+                return False
+            permille = [v * 10 for v in vals]
+        else:
+            err = _validate_probs(vals, n)
+            if err:
+                await context.message.reply_text(err)
+                return False
+            permille = vals
+        context.session_context["probabilities"] = permille
+        await _safe_delete(self.prompt_msg)
+        await _safe_delete(context.message)
         return True
 
     async def callback(self, context):
@@ -545,15 +729,22 @@ class _ProbabilitiesStep(Step):
             await self._render(context)
             self.is_waiting = True
             return False
-        if context.callback_query.data == f"{self.PREFIX}|equal":
+        data = context.callback_query.data
+        if data == f"{self.PREFIX}|unit":
             await context.callback_query.answer()
-            n = len(context.session_context.get("responses", []))
-            context.session_context["probabilities"] = _equal_probabilities(n)
+            self.unit = "permille" if self.unit == "percent" else "percent"
+            await self._render(context, edit=True)
+            return False
+        if data == f"{self.PREFIX}|equal":
+            await context.callback_query.answer()
+            context.session_context["probabilities"] = _equal_probabilities(self._n(context))
+            await _safe_delete(self.prompt_msg)
             return True
         return False
 
     def stop(self):
         self.is_waiting = False
+        self.unit = "percent"
 
 
 class _IgnoreCaseStep(Step):
@@ -563,13 +754,14 @@ class _IgnoreCaseStep(Step):
 
     def __init__(self):
         self.is_waiting = False
+        self.msg = None
 
     async def _render(self, context) -> None:
         kb = Keyboard([[
             Button("Да", callback_data=f"{self.PREFIX}|1"),
             Button("Нет", callback_data=f"{self.PREFIX}|0"),
         ]])
-        await context.bot.send_message(
+        self.msg = await context.bot.send_message(
             context.update.effective_chat.id, "Игнорировать регистр?", reply_markup=kb.to_markup()
         )
 
@@ -588,11 +780,13 @@ class _IgnoreCaseStep(Step):
         if data in (f"{self.PREFIX}|1", f"{self.PREFIX}|0"):
             await context.callback_query.answer()
             context.session_context["ignore_case_flag"] = int(data.rsplit("|", 1)[1])
+            await _safe_delete(self.msg)
             return True
         return False
 
     def stop(self):
         self.is_waiting = False
+        self.msg = None
 
 
 # ── Фича ─────────────────────────────────────────────────────────────────────
@@ -607,14 +801,55 @@ class RuleFeature(Feature):
 
     # ── Команды ──────────────────────────────────────────────────────────────
 
+    LIST_PER_PAGE = 5
+
     @subcommand("", description="Список правил", permission="rules.manage")
     async def list_(self, ctx: FeatureContext):
-        rules = list(self.rules)
-        if not rules:
+        if not list(self.rules):
             await ctx.reply("Правил нет")
             return
-        text = "\n\n".join(_render_rule(r, ctx.repository) for r in rules)
-        await ctx.reply(text, markdown=False)
+        await self._render_list(ctx, 0, edit=False)
+
+    async def _render_list(self, ctx: FeatureContext, page: int, edit: bool) -> None:
+        rules = sorted(self.rules, key=lambda r: r.id)
+        if not rules:
+            if edit:
+                await ctx.edit("Правил нет")
+            else:
+                await ctx.reply("Правил нет")
+            return
+        participants = _current_chat_participants(ctx.repository, ctx.chat_id, ctx.user_id)
+        per = self.LIST_PER_PAGE
+        pages = max(1, (len(rules) + per - 1) // per)
+        page = max(0, min(page, pages - 1))
+        chunk = rules[page * per : (page + 1) * per]
+        text = "\n\n".join(
+            _render_rule(r, ctx.repository, chats_override=_visible_rule_chats(
+                ctx.repository, r, participants
+            ))
+            for r in chunk
+        )
+        rows = [[
+            Button(f"✏ {r.id}", callback_data=self._cb("edit_root", rule_id=r.id))
+            for r in chunk
+        ]]
+        if pages > 1:
+            nav: list[Button] = []
+            if page > 0:
+                nav.append(Button("‹", callback_data=self._cb("list", page=page - 1)))
+            nav.append(Button(f"{page + 1}/{pages}", callback_data=self._cb("list", page=page)))
+            if page < pages - 1:
+                nav.append(Button("›", callback_data=self._cb("list", page=page + 1)))
+            rows.append(nav)
+        kb = Keyboard(rows)
+        if edit:
+            await ctx.edit(text, keyboard=kb, markdown=False)
+        else:
+            await ctx.reply(text, keyboard=kb, markdown=False)
+
+    @on_callback("rules:list", schema="<page:int>")
+    async def cb_list(self, ctx: FeatureContext, page: int):
+        await self._render_list(ctx, page, edit=True)
 
     @subcommand("add", description="Добавить правило (сессия)", permission="rules.manage")
     async def add(self, ctx: FeatureContext):
