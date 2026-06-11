@@ -18,9 +18,6 @@ class CursePunishmentDigestDelayedAction(DelayedAction):
     generator: ConstantGenerator
 
     async def execute(self, context: DelayedActionContext):
-        if apply_curse_interest_until(context.repository, today_msk()):
-            await context.repository.save()
-
         if not context.repository.db.curse_punishments:
             return
 
@@ -42,3 +39,13 @@ class CursePunishmentDigestDelayedAction(DelayedAction):
 
             text = format_curse_debt_report(entries)
             await context.bot.send_message(chat_id, text)
+
+
+@dataclass(kw_only=True)
+@class_mark("delayed_action/curse_interest")
+class CurseInterestDelayedAction(DelayedAction):
+    generator: ConstantGenerator
+
+    async def execute(self, context: DelayedActionContext):
+        if apply_curse_interest_until(context.repository, today_msk()):
+            await context.repository.save()

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
 from steward.delayed_action.curse_punishment_digest import (
+    CurseInterestDelayedAction,
     CursePunishmentDigestDelayedAction,
 )
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
@@ -116,17 +117,33 @@ class CurseFeature(Feature):
             isinstance(a, CursePunishmentDigestDelayedAction)
             for a in self.delayed_actions
         )
-        if has_digest:
-            return
-        self.delayed_actions.add(
-            CursePunishmentDigestDelayedAction(
-                generator=ConstantGenerator(
-                    start=datetime(2025, 1, 1, 22, 22, tzinfo=_MSK),
-                    period=timedelta(days=1),
+        has_interest = any(
+            isinstance(a, CurseInterestDelayedAction)
+            for a in self.delayed_actions
+        )
+        changed = False
+        if not has_digest:
+            self.delayed_actions.add(
+                CursePunishmentDigestDelayedAction(
+                    generator=ConstantGenerator(
+                        start=datetime(2025, 1, 1, 22, 22, tzinfo=_MSK),
+                        period=timedelta(days=1),
+                    )
                 )
             )
-        )
-        await self.delayed_actions.save()
+            changed = True
+        if not has_interest:
+            self.delayed_actions.add(
+                CurseInterestDelayedAction(
+                    generator=ConstantGenerator(
+                        start=datetime(2025, 1, 1, 0, 0, tzinfo=_MSK),
+                        period=timedelta(days=1),
+                    )
+                )
+            )
+            changed = True
+        if changed:
+            await self.delayed_actions.save()
 
     @subcommand("<n:int>", description="Добавить N матов")
     async def increment(self, ctx: FeatureContext, n: int):
@@ -228,8 +245,7 @@ class CurseFeature(Feature):
             self.repository,
             today_msk(),
         )
-        interest_changed = apply_curse_interest_until(self.repository, today_msk())
-        if day_changed or interest_changed:
+        if day_changed:
             await self.repository.save()
         entries = build_curse_debt_report_entries(self.repository, ctx.chat_id)
         report = format_curse_debt_report(entries, mention_users=False)

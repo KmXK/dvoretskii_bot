@@ -15,6 +15,7 @@ import steward.delayed_action.bill_payment_reminder  # noqa: F401
 import steward.delayed_action.bill_suggestion_lifecycle  # noqa: F401
 import steward.delayed_action.bill_draft_expire  # noqa: F401
 import steward.delayed_action.bill_incomplete_nudge  # noqa: F401
+import steward.delayed_action.curse_punishment_digest  # noqa: F401
 from steward.helpers.class_mark import try_get_class_by_mark
 import steward.delayed_action.holiday_fetch  # noqa: F401
 
