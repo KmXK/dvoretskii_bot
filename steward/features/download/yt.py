@@ -22,6 +22,7 @@ from telegram import (
 )
 
 from steward.data.repository import Repository
+from steward.features.download import video_cache
 from steward.features.download.callbacks import (
     download_and_send_medias,
     send_images,
@@ -362,6 +363,15 @@ def make_video_loader(
                     reply_markup=reply_markup,
                     caption=caption,
                     parse_mode="HTML" if caption else None,
+                )
+
+            if sent_video is not None and sent_video.video is not None:
+                video_cache.put(
+                    url,
+                    video_cache.CachedVideo(
+                        file_id=sent_video.video.file_id,
+                        caption=caption,
+                    ),
                 )
 
             logger.info(f"video {type_name} downloaded successfully")

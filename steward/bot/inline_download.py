@@ -11,7 +11,6 @@ import asyncio
 import logging
 import re
 import tempfile
-from dataclasses import dataclass
 from os import environ
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -27,6 +26,8 @@ from telegram import (
 from telegram.error import BadRequest
 from telegram.ext import ExtBot
 
+from steward.features.download import video_cache
+from steward.features.download.video_cache import CachedVideo
 from steward.features.download.yt import (
     TIKTOK_FALLBACK_FORMAT,
     TIKTOK_VIDEO_FORMAT,
@@ -38,16 +39,6 @@ from steward.metrics import ContextMetrics
 
 logger = logging.getLogger(__name__)
 
-_CACHE_MAX = 200
-
-
-@dataclass
-class _CachedVideo:
-    file_id: str
-    caption: str | None
-
-
-_cache: dict[str, _CachedVideo] = {}
 _inflight: dict[str, asyncio.Task] = {}
 
 
@@ -68,7 +59,7 @@ def _upload_chat_id() -> int:
     return DbFeature.TARGET_CHAT_ID
 
 
-async def _download_and_upload(url: str, bot: ExtBot) -> _CachedVideo:
+async def _download_and_upload(url: str, bot: ExtBot) -> CachedVideo:
     with tempfile.TemporaryDirectory(prefix="inline_tiktok_") as dir:
         info, filepath = await download_video_file(
             url,
@@ -104,12 +95,13 @@ async def _download_and_upload(url: str, bot: ExtBot) -> _CachedVideo:
     except Exception as e:
         logger.warning("не удалось удалить служебное видео: %s", e)
 
-    return _CachedVideo(file_id=msg.video.file_id, caption=caption)
+    return CachedVideo(file_id=msg.video.file_id, caption=caption)
 
 
-async def _get_video(url: str, bot: ExtBot) -> _CachedVideo:
-    if url in _cache:
-        return _cache[url]
+async def _get_video(url: str, bot: ExtBot) -> CachedVideo:
+    cached = video_cache.get(url)
+    if cached is not None:
+        return cached
 
     # Telegram шлёт inline query на каждое изменение текста — дедупим,
     # чтобы одна ссылка не качалась параллельно несколько раз.
@@ -120,10 +112,7 @@ async def _get_video(url: str, bot: ExtBot) -> _CachedVideo:
         task.add_done_callback(lambda _: _inflight.pop(url, None))
 
     video = await task
-
-    if len(_cache) >= _CACHE_MAX:
-        _cache.pop(next(iter(_cache)))
-    _cache[url] = video
+    video_cache.put(url, video)
     return video
 
 
