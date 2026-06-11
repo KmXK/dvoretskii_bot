@@ -679,6 +679,17 @@ class Repository:
                 })
             data["version"] = 40
 
+        if data.get("version") == 40:
+            # Правила-ответы стали пер-чатовыми (Rule.chats). Существующие
+            # глобальные правила скоупим в сервисный чат (тот, куда падает
+            # «♻️ Бот перезапущен» — DbFeature.TARGET_CHAT_ID); дальше админ
+            # распространит их по чатам сам.
+            SERVICE_CHAT_ID = -1003876657662
+            for rule in data.get("rules", []):
+                if isinstance(rule, dict) and not rule.get("chats"):
+                    rule["chats"] = [SERVICE_CHAT_ID]
+            data["version"] = 41
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):

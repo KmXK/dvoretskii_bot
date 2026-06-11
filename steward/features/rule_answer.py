@@ -20,15 +20,17 @@ class RuleAnswerFeature(Feature):
         rules_list = list(self.rules)
 
         def matches(rule: Rule) -> bool:
+            # Правило срабатывает только в чатах из своего скоупа.
+            if ctx.chat_id not in rule.chats:
+                return False
             if not re.search(
                 rule.pattern.regex,
                 ctx.message.text,
                 re.IGNORECASE if rule.pattern.ignore_case_flag == 1 else 0,
             ):
                 return False
-            return any(
-                ctx.user_id in x.from_users or 0 in x.from_users for x in rules_list
-            )
+            # from_users пуст => не от кого; {0} => от всех.
+            return ctx.user_id in rule.from_users or 0 in rule.from_users
 
         available = [r for r in rules_list if matches(r)]
         if not available:

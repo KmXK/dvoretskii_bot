@@ -25,3 +25,6 @@ class Rule:
     responses: list[Response]
     tags: list[str]
     id: int = 0
+    # Чаты, в которых правило срабатывает. Пустой набор => правило молчит везде.
+    # Распространение правила = добавление чатов сюда (см. чат-пикер в rule.py).
+    chats: set[int] = field(default_factory=set)

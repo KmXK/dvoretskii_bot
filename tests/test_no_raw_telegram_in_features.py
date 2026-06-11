@@ -62,7 +62,6 @@ BASELINE: dict[str, set[str]] = {
     },
     "subscribe/__init__.py": {"raw_telegram_send"},
     "rule.py": {
-        "raw_inline_keyboard",
         "raw_telegram_send",
         "raw_session_import",
         "raw_callback_data_pipe",
