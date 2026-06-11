@@ -10,7 +10,9 @@ aiofiles
 pymorphy3
 crosstem
 pyrate-limiter==3.9.0
-yt-dlp
+# curl-cffi — impersonation для tiktok: без него extractor получает JS-челлендж,
+# решает его питоном по 10-30 сек и inline-запросы протухают.
+yt-dlp[default,curl-cffi]
 gallery-dl
 PySocks
 aiohttp_socks
