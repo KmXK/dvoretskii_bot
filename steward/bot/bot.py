@@ -275,6 +275,22 @@ class Bot:
         if query is None:
             return
 
+        from steward.bot.inline_download import handle_inline_download
+
+        user = query.from_user
+        metrics = ContextMetrics(self.metrics, {
+            "chat_id": "inline",
+            "chat_name": "inline",
+            "user_id": str(user.id),
+            "user_name": user.username or user.first_name or str(user.id),
+        })
+        try:
+            if await handle_inline_download(query, self.bot, metrics):
+                return
+        except BaseException as e:
+            logger.exception(e)
+            return
+
         button = get_webapp_inline_button()
         await query.answer([], button=button, cache_time=300)
 

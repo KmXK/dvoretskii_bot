@@ -43,6 +43,17 @@ URL_REGEX = (
 
 YT_LIMIT = "YT_LIMIT_OBJECT"
 
+# Primary: только форматы БЕЗ ватермарки, h264 в приоритете
+# (bytevc1/h265-гиры часто отдаются без аудиодорожки). Водяной
+# download_addr сюда НЕ включаем. После закачки download_video_file
+# пробит аудио ffprobe'ом и, если звука нет, перекачивает
+# fallback'ом — водяным, но гарантированно озвученным.
+TIKTOK_VIDEO_FORMAT = (
+    "play_addr_h264/play_addr/play/"
+    "bv*[vcodec*=h264]+ba/b[vcodec*=h264]/bv*+ba/b"
+)
+TIKTOK_FALLBACK_FORMAT = "download_addr/download/b"
+
 _CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
 
 
@@ -225,6 +236,57 @@ async def load_yandex_music(_repository: Repository, url: str, message: Message)
             await message.reply_audio(file, filename=file.name)
 
 
+async def download_video_file(
+    url: str,
+    dir: str,
+    *,
+    type_name: str = "video",
+    cookie_file: str | None = None,
+    video_format: str = "(bv+ba)/best",
+    fallback_format: str | None = None,
+    get_comments: bool = False,
+) -> tuple[Any, str]:
+    """Качает видео в `dir` через yt-dlp, возвращает (info, путь к файлу)."""
+    base_opts: dict[str, Any] = {
+        "proxy": os.environ.get("DOWNLOAD_PROXY"),
+        "verbose": True,
+        "outtmpl": dir + "/file",
+        "logger": yt_logger,
+        "cookiefile": cookie_file,
+        "format_sort": ["ext:mp4", "res:1080"],
+        "max_filesize": 250 * 1024 * 1024,
+    }
+    if get_comments:
+        base_opts["getcomments"] = True
+
+    def _download(fmt: str) -> tuple[Any, str]:
+        # Чистим каталог, чтобы повторная закачка не подхватила
+        # файл от предыдущей попытки.
+        for f in os.listdir(dir):
+            os.remove(os.path.join(dir, f))
+        opts = {**base_opts, "format": fmt}
+        info = yt_dlp.YoutubeDL(opts).extract_info(url)  # type: ignore
+        files = os.listdir(dir)
+        logging.info(files)
+        return info, dir + "/" + files[0]
+
+    info, filepath = await asyncio.to_thread(_download, video_format)
+
+    # Водяная версия (download_addr) — последний резерв: некоторые
+    # форматы без ватермарки помечены acodec=aac, но физически немые.
+    # Если в скачанном файле нет реальной аудиодорожки — перекачиваем
+    # гарантированно озвученным (но водяным) форматом.
+    if fallback_format and not await has_audio_stream(Path(filepath)):
+        logger.info(
+            "%s: no audio stream in no-watermark file, "
+            "retrying with watermarked fallback",
+            type_name,
+        )
+        info, filepath = await asyncio.to_thread(_download, fallback_format)
+
+    return info, filepath
+
+
 def make_video_loader(
     type_name: str,
     cookie_file: str | None = None,
@@ -239,44 +301,15 @@ def make_video_loader(
         logger.info(f"trying get video from {type_name}...")
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
-            base_opts: dict[str, Any] = {
-                "proxy": os.environ.get("DOWNLOAD_PROXY"),
-                "verbose": True,
-                "outtmpl": dir + "/file",
-                "logger": yt_logger,
-                "cookiefile": cookie_file,
-                "format_sort": ["ext:mp4", "res:1080"],
-                "max_filesize": 250 * 1024 * 1024,
-            }
-            if auto_transcribe_short:
-                base_opts["getcomments"] = True
-
-            def _download(fmt: str) -> tuple[Any, str]:
-                # Чистим каталог, чтобы повторная закачка не подхватила
-                # файл от предыдущей попытки.
-                for f in os.listdir(dir):
-                    os.remove(os.path.join(dir, f))
-                opts = {**base_opts, "format": fmt}
-                info = yt_dlp.YoutubeDL(opts).extract_info(url)  # type: ignore
-                files = os.listdir(dir)
-                logging.info(files)
-                return info, dir + "/" + files[0]
-
-            info, filepath = await asyncio.to_thread(_download, video_format)
-
-            # Водяная версия (download_addr) — последний резерв: некоторые
-            # форматы без ватермарки помечены acodec=aac, но физически немые.
-            # Если в скачанном файле нет реальной аудиодорожки — перекачиваем
-            # гарантированно озвученным (но водяным) форматом.
-            if fallback_format and not await has_audio_stream(Path(filepath)):
-                logger.info(
-                    "%s: no audio stream in no-watermark file, "
-                    "retrying with watermarked fallback",
-                    type_name,
-                )
-                info, filepath = await asyncio.to_thread(
-                    _download, fallback_format
-                )
+            info, filepath = await download_video_file(
+                url,
+                dir,
+                type_name=type_name,
+                cookie_file=cookie_file,
+                video_format=video_format,
+                fallback_format=fallback_format,
+                get_comments=auto_transcribe_short,
+            )
 
             width: Any = None
             height: Any = None
@@ -406,16 +439,8 @@ def build_dispatch(repository: Repository) -> dict[str, list]:
             _bind(make_video_loader(
                 "tiktok",
                 auto_transcribe_short=True,
-                # Primary: только форматы БЕЗ ватермарки, h264 в приоритете
-                # (bytevc1/h265-гиры часто отдаются без аудиодорожки). Водяной
-                # download_addr сюда НЕ включаем. После закачки make_video_loader
-                # пробит аудио ffprobe'ом и, если звука нет, перекачивает
-                # fallback'ом ниже — водяным, но гарантированно озвученным.
-                video_format=(
-                    "play_addr_h264/play_addr/play/"
-                    "bv*[vcodec*=h264]+ba/b[vcodec*=h264]/bv*+ba/b"
-                ),
-                fallback_format="download_addr/download/b",
+                video_format=TIKTOK_VIDEO_FORMAT,
+                fallback_format=TIKTOK_FALLBACK_FORMAT,
             )),
             _bind(make_images_loader("tiktok")),
         ],
