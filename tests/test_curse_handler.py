@@ -206,6 +206,37 @@ class TestCurseIncrement:
         assert "@testuser" in reply
         assert "Отжимания: 10" in reply
 
+    async def test_root_command_does_not_apply_interest(self):
+        repo = make_repository()
+        today_date = today_msk()
+        yesterday = (today_date - timedelta(days=1)).isoformat()
+        repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID])]
+        repo.db.curse_punishments = [
+            CursePunishment(
+                id=1,
+                coeff=5,
+                title="Отжимания",
+                interest_percent=5.0,
+                selection_weight=1.0,
+            )
+        ]
+        repo.db.curse_punishment_debts = [
+            CursePunishmentDebt(
+                id=1,
+                user_id=DEFAULT_USER_ID,
+                rule_id=1,
+                punishment_count=325,
+                last_interest_applied_date=yesterday,
+            )
+        ]
+
+        reply, ok = await invoke(CurseFeature, "/curse", repo)
+
+        assert ok
+        assert "Отжимания: 325" in reply
+        assert repo.db.curse_punishment_debts[0].punishment_count == 325
+        assert repo.db.curse_punishment_debts[0].last_interest_applied_date == yesterday
+
     async def test_root_command_wraps_usernames_in_monospace(self):
         repo = make_repository()
         today = today_msk().isoformat()

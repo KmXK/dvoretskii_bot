@@ -9,7 +9,10 @@ from steward.data.models.curse import (
     CursePunishmentDay,
 )
 from steward.delayed_action.context import DelayedActionContext
-from steward.delayed_action.curse_punishment_digest import CursePunishmentDigestDelayedAction
+from steward.delayed_action.curse_punishment_digest import (
+    CurseInterestDelayedAction,
+    CursePunishmentDigestDelayedAction,
+)
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.curse_debt import (
     CurseDebtReportEntry,
@@ -254,7 +257,7 @@ async def test_initialize_keeps_backfill_pending_when_metrics_fail():
     assert repo.db.curse_punishment_debts == []
 
 
-async def test_digest_action_applies_interest_before_reporting():
+async def test_digest_action_does_not_apply_interest_before_reporting():
     repo = make_repository()
     repo.db.users = []
     repo.db.curse_punishments = [
@@ -272,6 +275,34 @@ async def test_digest_action_applies_interest_before_reporting():
         )
     ]
     action = CursePunishmentDigestDelayedAction(
+        generator=ConstantGenerator(start=datetime.now(timezone.utc), period=date.resolution)
+    )
+    context = DelayedActionContext(repo, MagicMock(), MagicMock(), MagicMock())
+
+    await action.execute(context)
+
+    assert repo.db.curse_punishment_debts[0].punishment_count == 100
+    assert repo.db.curse_punishment_debts[0].last_interest_applied_date == yesterday
+
+
+async def test_interest_action_applies_interest():
+    repo = make_repository()
+    repo.db.users = []
+    repo.db.curse_punishments = [
+        CursePunishment(id=1, coeff=10, title="приседаний", interest_percent=10.0)
+    ]
+    today_date = today_msk()
+    yesterday = (today_date - date.resolution).isoformat()
+    repo.db.curse_punishment_debts = [
+        CursePunishmentDebt(
+            id=1,
+            user_id=DEFAULT_USER_ID,
+            rule_id=1,
+            punishment_count=100,
+            last_interest_applied_date=yesterday,
+        )
+    ]
+    action = CurseInterestDelayedAction(
         generator=ConstantGenerator(start=datetime.now(timezone.utc), period=date.resolution)
     )
     context = DelayedActionContext(repo, MagicMock(), MagicMock(), MagicMock())
