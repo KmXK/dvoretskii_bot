@@ -101,7 +101,7 @@ class SettingsFeature(Feature):
         else:
             chat_name = chat.title or chat.username or str(chat.id)
         text_lines = [
-            f"⚙ *Настройки* — {chat_name}",
+            f"⚙ *Настройки* — {escape_markdown(chat_name)}",
             "",
             f"Включено: {on_caps}/{total_caps} функций",
             f"Вы: {role_label}",
