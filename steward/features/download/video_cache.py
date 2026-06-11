@@ -1,4 +1,4 @@
-"""Кэш url -> file_id скачанных видео. Общий для чатового и inline-флоу:
+"""Кэш url -> file_id скачанных медиа. Общий для чатового и inline-флоу:
 ссылка, уже скачанная в чате, отвечает на inline-запрос мгновенно
 (и наоборот)."""
 
@@ -8,19 +8,20 @@ _CACHE_MAX = 200
 
 
 @dataclass
-class CachedVideo:
+class CachedMedia:
     file_id: str
     caption: str | None
+    is_video: bool = True
 
 
-_cache: dict[str, CachedVideo] = {}
+_cache: dict[str, list[CachedMedia]] = {}
 
 
-def get(url: str) -> CachedVideo | None:
+def get(url: str) -> list[CachedMedia] | None:
     return _cache.get(url)
 
 
-def put(url: str, video: CachedVideo) -> None:
+def put(url: str, medias: list[CachedMedia]) -> None:
     if url not in _cache and len(_cache) >= _CACHE_MAX:
         _cache.pop(next(iter(_cache)))
-    _cache[url] = video
+    _cache[url] = medias

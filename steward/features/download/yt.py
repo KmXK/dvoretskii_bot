@@ -170,47 +170,54 @@ DOWNLOAD_TYPE_MAP = {
 }
 
 
-async def load_instagram(repository: Repository, url: str, message: Message) -> None:
+async def resolve_instagram_medias(url: str) -> list[tuple[str, bool]]:
+    """Список (media_url, is_video) поста инсты через igdl-прокси."""
     proxy_url = f"https://download.proxy.nigger.by/igdl?url={url}"
-
-    meta_task = asyncio.create_task(_extract_info_only(url))
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(connect=2)
     ) as session:
         async with session.get(proxy_url) as response:
             if response.status != 200:
-                meta_task.cancel()
                 raise Exception(f"invalid response: {response}")
-
             json_resp = await response.json()
 
-            medias: list[tuple[str, bool]] = []
+    medias: list[tuple[str, bool]] = []
+    for x in json_resp["url"]["data"]:
+        media_url = x["url"]
+        token = parse_qs(urlparse(media_url).query)["token"][0]
+        payload = token.split(".")[1]
+        json_data = base64.urlsafe_b64decode(
+            payload + ("=" * (4 - (len(payload) % 4)))
+        )
+        filename = json.loads(json_data)["filename"]
+        medias.append((media_url, filename.endswith("mp4")))
 
-            for x in json_resp["url"]["data"]:
-                media_url = x["url"]
-                token = parse_qs(urlparse(media_url).query)["token"][0]
-                payload = token.split(".")[1]
-                json_data = base64.urlsafe_b64decode(
-                    payload + ("=" * (4 - (len(payload) % 4)))
-                )
-                filename = json.loads(json_data)["filename"]
-                medias.append((media_url, filename.endswith("mp4")))
+    return sorted(set(medias), key=lambda x: medias.index(x))
 
-            medias = sorted(set(medias), key=lambda x: medias.index(x))
 
-            if len(medias) > 0:
-                caption = None
-                try:
-                    info = await meta_task
-                    caption = _make_caption(info)
-                except Exception as e:
-                    logger.warning("instagram description fetch failed: %s", e)
-                await download_and_send_medias(
-                    repository, message, medias, use_proxy=True, caption=caption,
-                )
-            else:
-                meta_task.cancel()
+async def load_instagram(repository: Repository, url: str, message: Message) -> None:
+    meta_task = asyncio.create_task(_extract_info_only(url))
+
+    try:
+        medias = await resolve_instagram_medias(url)
+    except BaseException:
+        meta_task.cancel()
+        raise
+
+    if len(medias) == 0:
+        meta_task.cancel()
+        return
+
+    caption = None
+    try:
+        info = await meta_task
+        caption = _make_caption(info)
+    except Exception as e:
+        logger.warning("instagram description fetch failed: %s", e)
+    await download_and_send_medias(
+        repository, message, medias, use_proxy=True, caption=caption,
+    )
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
@@ -368,10 +375,10 @@ def make_video_loader(
             if sent_video is not None and sent_video.video is not None:
                 video_cache.put(
                     url,
-                    video_cache.CachedVideo(
+                    [video_cache.CachedMedia(
                         file_id=sent_video.video.file_id,
                         caption=caption,
-                    ),
+                    )],
                 )
 
             logger.info(f"video {type_name} downloaded successfully")
