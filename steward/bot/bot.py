@@ -41,7 +41,6 @@ from steward.handlers.handler import Handler
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.curse_debt import initialize_curse_debts, today_msk
 from steward.helpers.tg_update_helpers import UnsupportedUpdateType, get_from_user
-from steward.helpers.webapp import get_webapp_inline_button
 from steward.metrics import ContextMetrics, MetricsEngine
 from steward.session.session_registry import (
     cleanup_stale_sessions,
@@ -291,8 +290,7 @@ class Bot:
             logger.exception(e)
             return
 
-        button = get_webapp_inline_button()
-        await query.answer([], button=button, cache_time=300)
+        await query.answer([], cache_time=300)
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("Got update")

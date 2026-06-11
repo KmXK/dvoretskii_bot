@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultsButton, WebAppInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ExtBot
 
 _TUNNEL_FILE = Path("/shared/tunnel_url")
@@ -55,13 +55,3 @@ def get_webapp_keyboard(
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🤡", url=link)]
     ])
-
-
-def get_webapp_inline_button() -> InlineQueryResultsButton | None:
-    direct_url = _get_direct_url()
-    if not direct_url:
-        return None
-    return InlineQueryResultsButton(
-        text="📱 Открыть приложение",
-        web_app=WebAppInfo(url=direct_url),
-    )
