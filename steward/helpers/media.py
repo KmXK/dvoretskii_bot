@@ -79,6 +79,27 @@ async def ffprobe_duration(path: Path) -> float:
     return float(out)
 
 
+async def has_audio_stream(path: Path) -> bool:
+    """True if the file contains at least one audio stream.
+
+    Some TikTok formats (notably bytevc1/h265 gear variants) are tagged
+    `acodec=aac` by yt-dlp but ship without a real audio track, so the metadata
+    can't be trusted — probe the actual file instead.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a",
+        "-show_entries", "stream=codec_type",
+        "-of", "csv=p=0",
+        str(path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    return bool(stdout.decode().strip())
+
+
 async def run_ffmpeg(*args: str) -> None:
     """Run `ffmpeg -y <args>`. Raises RuntimeError with stderr on non-zero exit."""
     proc = await asyncio.create_subprocess_exec(

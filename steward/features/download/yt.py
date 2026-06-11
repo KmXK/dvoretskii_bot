@@ -28,6 +28,7 @@ from steward.features.download.callbacks import (
 )
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.media import has_audio_stream
 
 _TIKTOK_AUTO_LIMIT = "TIKTOK_AUTO_TRANSCRIBE"
 _TIKTOK_AUTO_MAX_DURATION_SEC = 5 * 60
@@ -230,6 +231,7 @@ def make_video_loader(
     pre_call: Callable[[], Any] = lambda: None,
     auto_transcribe_short: bool = False,
     video_format: str = "(bv+ba)/best",
+    fallback_format: str | None = None,
 ):
     async def wrapper(repository: Repository, url: str, message: Message) -> None:
         pre_call()
@@ -237,34 +239,50 @@ def make_video_loader(
         logger.info(f"trying get video from {type_name}...")
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
-            filepath = dir + "/file"
-            ydl_opts: dict[str, Any] = {
+            base_opts: dict[str, Any] = {
                 "proxy": os.environ.get("DOWNLOAD_PROXY"),
                 "verbose": True,
-                "outtmpl": filepath,
+                "outtmpl": dir + "/file",
                 "logger": yt_logger,
                 "cookiefile": cookie_file,
-                "format": video_format,
                 "format_sort": ["ext:mp4", "res:1080"],
                 "max_filesize": 250 * 1024 * 1024,
             }
             if auto_transcribe_short:
-                ydl_opts["getcomments"] = True
+                base_opts["getcomments"] = True
 
-            info = await asyncio.to_thread(
-                lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(url)  # type: ignore
-            )
+            def _download(fmt: str) -> tuple[Any, str]:
+                # Чистим каталог, чтобы повторная закачка не подхватила
+                # файл от предыдущей попытки.
+                for f in os.listdir(dir):
+                    os.remove(os.path.join(dir, f))
+                opts = {**base_opts, "format": fmt}
+                info = yt_dlp.YoutubeDL(opts).extract_info(url)  # type: ignore
+                files = os.listdir(dir)
+                logging.info(files)
+                return info, dir + "/" + files[0]
+
+            info, filepath = await asyncio.to_thread(_download, video_format)
+
+            # Водяная версия (download_addr) — последний резерв: некоторые
+            # форматы без ватермарки помечены acodec=aac, но физически немые.
+            # Если в скачанном файле нет реальной аудиодорожки — перекачиваем
+            # гарантированно озвученным (но водяным) форматом.
+            if fallback_format and not await has_audio_stream(Path(filepath)):
+                logger.info(
+                    "%s: no audio stream in no-watermark file, "
+                    "retrying with watermarked fallback",
+                    type_name,
+                )
+                info, filepath = await asyncio.to_thread(
+                    _download, fallback_format
+                )
 
             width: Any = None
             height: Any = None
             if isinstance(info, dict):
                 width = info.get("width", 0)
                 height = info.get("height", 0)
-
-            files = os.listdir(dir)
-            logging.info(files)
-
-            filepath = dir + "/" + files[0]
 
             duration = info.get("duration") if isinstance(info, dict) else None
 
@@ -388,13 +406,16 @@ def build_dispatch(repository: Repository) -> dict[str, list]:
             _bind(make_video_loader(
                 "tiktok",
                 auto_transcribe_short=True,
-                # TikTok-экстрактор yt-dlp помечает ВСЕ форматы как acodec=aac,
-                # поэтому (bv+ba) схлопывается в один формат без слияния звука,
-                # а format_sort выбирает gear-формат bytevc1, который часто
-                # отдаётся без аудиодорожки → немой ролик. play_addr/play —
-                # каноничный проигрываемый файл, в нём звук есть всегда;
-                # gear/bv+ba оставляем только как fallback.
-                video_format="play_addr/play/download_addr/download/(bv*+ba)/b",
+                # Primary: только форматы БЕЗ ватермарки, h264 в приоритете
+                # (bytevc1/h265-гиры часто отдаются без аудиодорожки). Водяной
+                # download_addr сюда НЕ включаем. После закачки make_video_loader
+                # пробит аудио ffprobe'ом и, если звука нет, перекачивает
+                # fallback'ом ниже — водяным, но гарантированно озвученным.
+                video_format=(
+                    "play_addr_h264/play_addr/play/"
+                    "bv*[vcodec*=h264]+ba/b[vcodec*=h264]/bv*+ba/b"
+                ),
+                fallback_format="download_addr/download/b",
             )),
             _bind(make_images_loader("tiktok")),
         ],
