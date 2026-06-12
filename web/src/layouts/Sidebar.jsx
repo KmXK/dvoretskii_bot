@@ -59,7 +59,7 @@ export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
   return (
     <aside
       className={`flex flex-col bg-spotify-dark border-r border-white/5 transition-[width] duration-200 h-screen ${
-        isDrawer ? 'w-64' : collapsed ? 'w-16' : 'w-60'
+        isDrawer ? 'w-full' : collapsed ? 'w-16' : 'w-60'
       }`}
     >
       <div className={`flex items-center h-14 border-b border-white/5 ${collapsed ? 'justify-center' : 'justify-between px-3'}`}>

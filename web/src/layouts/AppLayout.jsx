@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useLocation } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
@@ -23,6 +25,11 @@ export default function AppLayout({ children }) {
   const isWide = useIsWide()
   const [open, toggle] = useSidebar()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const location = useLocation()
+
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [location.pathname])
 
   if (mode === 'miniapp') {
     return (
@@ -65,17 +72,19 @@ export default function AppLayout({ children }) {
         <ThemeToggle />
       </header>
 
-      {drawerOpen && (
-        <div className="fixed inset-0 z-40 flex">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setDrawerOpen(false)}
-          />
-          <div className="relative z-10">
+      <AnimatePresence>
+        {drawerOpen && (
+          <motion.div
+            initial={{ x: '-100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-100%' }}
+            transition={{ type: 'spring', stiffness: 400, damping: 38 }}
+            className="fixed inset-0 z-40"
+          >
             <Sidebar isDrawer onClose={() => setDrawerOpen(false)} />
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <main>{children}</main>
     </div>
