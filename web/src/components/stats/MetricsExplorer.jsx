@@ -232,7 +232,11 @@ function SearchList({ items, selected, onToggle, footer, emptyAction }) {
 }
 
 function parseInitialParams(sp) {
-  const nums = raw => (raw || '').split(',').map(Number).filter(Number.isFinite)
+  const nums = raw => (raw || '')
+    .split(',')
+    .filter(Boolean)
+    .map(Number)
+    .filter(Number.isFinite)
   const from = Number(sp.get('from'))
   const to = Number(sp.get('to'))
   return {
@@ -245,6 +249,7 @@ function parseInitialParams(sp) {
     limit: LIMIT_OPTIONS.includes(Number(sp.get('l'))) ? Number(sp.get('l')) : 5,
     rank: RANK_OPTIONS.some(r => r.key === sp.get('r')) ? sp.get('r') : 'max',
     cumulative: sp.get('cum') === '1',
+    hidden: new Set((sp.get('h') || '').split(',').filter(Boolean)),
   }
 }
 
@@ -273,9 +278,10 @@ export default function MetricsExplorer() {
   const [openPanel, setOpenPanel] = useState(null)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [hidden, setHidden] = useState(() => new Set())
+  const [hidden, setHidden] = useState(() => initialRef.current.hidden)
   const [drag, setDrag] = useState(null)
   const [sharing, setSharing] = useState(false)
+  const firstModeRender = useRef(true)
 
   const gridColor = theme === 'light' ? '#d9d9d6' : '#282828'
   const tickColor = theme === 'light' ? '#6b6b6b' : '#b3b3b3'
@@ -299,17 +305,21 @@ export default function MetricsExplorer() {
   }, [])
 
   useEffect(() => {
+    if (firstModeRender.current) {
+      firstModeRender.current = false
+      return
+    }
     setHidden(new Set())
   }, [mode])
 
   const buildShareParams = useCallback(() => {
     const p = new URLSearchParams()
     if (selected.length) p.set('m', selected.join(','))
-    if (mode !== 'metric') p.set('g', mode)
+    p.set('g', mode)
     if (custom) {
       p.set('from', String(custom.from))
       p.set('to', String(custom.to))
-    } else if (period !== 'week') {
+    } else {
       p.set('p', period)
     }
     if (chatsSel.length) p.set('c', chatsSel.join(','))
@@ -317,8 +327,9 @@ export default function MetricsExplorer() {
     if (limit !== 5) p.set('l', String(limit))
     if (rank !== 'max') p.set('r', rank)
     if (cumulative) p.set('cum', '1')
+    if (hidden.size) p.set('h', [...hidden].join(','))
     return p
-  }, [selected, mode, custom, period, chatsSel, usersSel, limit, rank, cumulative])
+  }, [selected, mode, custom, period, chatsSel, usersSel, limit, rank, cumulative, hidden])
 
   useEffect(() => {
     setSearchParams(buildShareParams(), { replace: true })
