@@ -9,6 +9,15 @@ from steward.helpers.avatars import has_cached_avatar, try_fetch_from_bot
 
 logger = logging.getLogger(__name__)
 
+_JUNK_CHAT_NAMES = (None, "", "Unknown", "@None")
+
+
+def _chat_display_name(chat) -> str:
+    if chat.type == "private":
+        who = chat.first_name or (f"@{chat.username}" if chat.username else str(chat.id))
+        return f"ЛС: {who}"
+    return chat.title or (f"@{chat.username}" if chat.username else str(chat.id))
+
 
 class ChatCollectFeature(Feature):
     chats = collection("chats")
@@ -52,18 +61,12 @@ class ChatCollectFeature(Feature):
 
         if chat_id not in self._chat_ids:
             existing_chat = next((c for c in self.chats if c.id == chat_id), None)
-            if existing_chat is None or existing_chat.name == "Unknown":
+            if existing_chat is None or existing_chat.name in _JUNK_CHAT_NAMES:
+                name = _chat_display_name(message.chat)
                 if existing_chat is None:
-                    self.chats.add(
-                        Chat(
-                            chat_id,
-                            message.chat.title or f"@{message.chat.username}",
-                        )
-                    )
+                    self.chats.add(Chat(chat_id, name))
                 else:
-                    existing_chat.name = (
-                        message.chat.title or f"@{message.chat.username}"
-                    )
+                    existing_chat.name = name
                 changed = True
 
         from_user = message.from_user

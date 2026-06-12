@@ -690,6 +690,25 @@ class Repository:
                     rule["chats"] = [SERVICE_CHAT_ID]
             data["version"] = 41
 
+        if data.get("version") == 41:
+            # Безымянные приватные чаты (ЛС с ботом) записывались как
+            # "Unknown"/"@None". Положительный chat_id == user_id собеседника.
+            users_by_id = {
+                u.get("id"): u for u in data.get("users", []) if isinstance(u, dict)
+            }
+            for chat in data.get("chats", []):
+                if not isinstance(chat, dict):
+                    continue
+                if chat.get("name") in (None, "", "Unknown", "@None") and chat.get("id", 0) > 0:
+                    user = users_by_id.get(chat["id"])
+                    who = None
+                    if user:
+                        who = user.get("first_name") or (
+                            f"@{user['username']}" if user.get("username") else None
+                        )
+                    chat["name"] = f"ЛС: {who or chat['id']}"
+            data["version"] = 42
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
