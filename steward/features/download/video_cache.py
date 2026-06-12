@@ -3,15 +3,19 @@
 (и наоборот)."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 _CACHE_MAX = 200
+
+MediaKind = Literal["video", "photo", "audio"]
 
 
 @dataclass
 class CachedMedia:
     file_id: str
-    caption: str | None
-    is_video: bool = True
+    caption: str | None = None
+    kind: MediaKind = "video"
+    duration: float | None = None
 
 
 _cache: dict[str, list[CachedMedia]] = {}

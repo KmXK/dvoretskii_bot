@@ -1,12 +1,11 @@
 import logging
-import re
 
 from steward.features.download.transcribe import make_transcribation
 from steward.features.download.yt import (
     DOWNLOAD_TYPE_MAP,
-    URL_REGEX,
     YT_LIMIT,
     build_dispatch,
+    find_download_urls,
 )
 from steward.framework import (
     Feature,
@@ -26,35 +25,29 @@ class DownloadFeature(Feature):
     async def on_url(self, ctx: FeatureContext) -> bool:
         if ctx.message is None or not ctx.message.text:
             return False
-        urls = re.findall(URL_REGEX, ctx.message.text)
-        if not urls:
+        found = find_download_urls(ctx.message.text)
+        if not found:
             return False
 
         dispatch = build_dispatch(self.repository)
-        handled = False
-        for url in urls:
-            for handler_path, handlers in dispatch.items():
-                if handler_path not in url:
-                    continue
-                check_limit(YT_LIMIT, 15, Duration.MINUTE)
-                logger.info(f"Получен url: {url}")
-                success = False
-                for handler in handlers:
-                    try:
-                        await handler(url, ctx.message)
-                        success = True
-                        break
-                    except Exception as e:
-                        logger.exception(e)
-                if success:
-                    download_type = DOWNLOAD_TYPE_MAP.get(handler_path, handler_path)
-                    ctx.metrics.inc(
-                        "bot_downloads_total",
-                        {"download_type": download_type},
-                    )
-                handled = True
-                break
-        return handled
+        for url, handler_path in found:
+            check_limit(YT_LIMIT, 15, Duration.MINUTE)
+            logger.info(f"Получен url: {url}")
+            success = False
+            for handler in dispatch[handler_path]:
+                try:
+                    await handler(url, ctx.message)
+                    success = True
+                    break
+                except Exception as e:
+                    logger.exception(e)
+            if success:
+                download_type = DOWNLOAD_TYPE_MAP.get(handler_path, handler_path)
+                ctx.metrics.inc(
+                    "bot_downloads_total",
+                    {"download_type": download_type},
+                )
+        return True
 
     @on_callback("download:trans", schema="<url:str>")
     async def on_transcribe(self, ctx: FeatureContext, url: str):

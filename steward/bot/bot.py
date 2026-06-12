@@ -15,6 +15,7 @@ from telegram.ext import (
     Application,
     CallbackQueryHandler,
     ChatMemberHandler,
+    ChosenInlineResultHandler,
     ContextTypes,
     ExtBot,
     InlineQueryHandler,
@@ -183,6 +184,9 @@ class Bot:
         application.add_handler(CallbackQueryHandler(self._callback, block=False))
         application.add_handler(InlineQueryHandler(self._inline_query, block=False))
         application.add_handler(
+            ChosenInlineResultHandler(self._chosen_inline_result, block=False)
+        )
+        application.add_handler(
             ChatMemberHandler(self._my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER, block=False)
         )
 
@@ -291,6 +295,18 @@ class Bot:
             return
 
         await query.answer([], cache_time=300)
+
+    async def _chosen_inline_result(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chosen = update.chosen_inline_result
+        if chosen is None:
+            return
+
+        from steward.bot.inline_download import handle_chosen_inline_result
+
+        try:
+            await handle_chosen_inline_result(chosen, self.bot, self.repository)
+        except BaseException as e:
+            logger.exception(e)
 
     async def _chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("Got update")

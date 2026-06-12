@@ -4,6 +4,7 @@ import html as _html
 import json
 import logging
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -170,6 +171,22 @@ DOWNLOAD_TYPE_MAP = {
 }
 
 
+def find_download_urls(text: str) -> list[tuple[str, str]]:
+    """Все поддерживаемые ссылки в тексте: список (url, dispatch_key).
+    Единственное место, где текст матчится на загружаемые ссылки — им
+    пользуются и чатовый DownloadFeature, и inline-режим. Ключ матчится
+    по границам доменных меток: vm.tiktok.com и music.yandex.ru подходят,
+    nottiktok.example.com — нет."""
+    found: list[tuple[str, str]] = []
+    for url in re.findall(URL_REGEX, text):
+        dotted_host = f".{urlparse(url).hostname or ''}."
+        for key in DOWNLOAD_TYPE_MAP:
+            if f".{key}." in dotted_host:
+                found.append((url, key))
+                break
+    return found
+
+
 async def resolve_instagram_medias(url: str) -> list[tuple[str, bool]]:
     """Список (media_url, is_video) поста инсты через igdl-прокси."""
     proxy_url = f"https://download.proxy.nigger.by/igdl?url={url}"
@@ -220,26 +237,34 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
     )
 
 
-async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
+async def download_yandex_audio(url: str, dir: str) -> str:
+    """Качает трек Яндекс.Музыки в `dir`, возвращает путь к файлу."""
     logger.info("Yandex Music пошла")
     logger.info(url.split("?")[0])
 
+    def _run():
+        youtube_dl.YoutubeDL(
+            {
+                "verbose": True,
+                "outtmpl": dir + "/%(title)s",
+                "logger": yt_logger,
+                "retries": 0,
+            }
+        ).download([url.split("?")[0]])
+
+    await asyncio.to_thread(_run)
+    return os.path.join(dir, os.listdir(dir)[0])
+
+
+async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
-        filepath = dir + "/%(title)s"
         try:
-            youtube_dl.YoutubeDL(
-                {
-                    "verbose": True,
-                    "outtmpl": filepath,
-                    "logger": yt_logger,
-                    "retries": 0,
-                }
-            ).download([url.split("?")[0]])
+            filepath = await download_yandex_audio(url, dir)
         except youtube_dl.DownloadError:
             logger.error("Ошибка авторизации, попробуй позже =(")
             return
 
-        with open(os.path.join(dir, os.listdir(dir)[0]), "rb") as file:
+        with open(filepath, "rb") as file:
             logger.info(file)
             await message.reply_audio(file, filename=file.name)
 
@@ -378,6 +403,7 @@ def make_video_loader(
                     [video_cache.CachedMedia(
                         file_id=sent_video.video.file_id,
                         caption=caption,
+                        duration=float(duration) if duration else None,
                     )],
                 )
 
@@ -391,6 +417,48 @@ def make_video_loader(
     return wrapper
 
 
+async def download_image_files(
+    url: str,
+    dir: str,
+    cookie_file: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Качает медиа поста через gallery-dl в `dir`.
+    Возвращает (картинки, аудио) — отсортированные пути."""
+    args: list[str] = []
+    if os.environ.get("DOWNLOAD_PROXY"):
+        args += ["--proxy", os.environ.get("DOWNLOAD_PROXY") or ""]
+    args += ["--verbose", "-f", "{num}.{extension}", "-D", dir]
+    if cookie_file:
+        args += ["-C", cookie_file]
+    args.append(url)
+
+    process = await asyncio.create_subprocess_exec(
+        "gallery-dl",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    logger.info(
+        "gallery-dl process done: stdout=%s, stderr=%s",
+        stdout.decode(errors="replace"),
+        stderr.decode(errors="replace"),
+    )
+
+    if process.returncode != 0:
+        raise Exception(f"gallery-dl exited with error {process.returncode}")
+
+    all_files = [
+        os.path.join(dir, x)
+        for x in sorted(
+            os.listdir(dir), key=lambda x: f"{int(x.split('.')[0]):03d}"
+        )
+    ]
+    images = [x for x in all_files if not x.endswith(".mp3")]
+    audios = [x for x in all_files if x.endswith(".mp3")]
+    return images, audios
+
+
 def make_images_loader(
     type_name: str,
     cookie_file: str | None = None,
@@ -399,40 +467,7 @@ def make_images_loader(
         logger.info(f"trying get images from {type_name}...")
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
-            args: list[str] = []
-            if os.environ.get("DOWNLOAD_PROXY"):
-                args += ["--proxy", os.environ.get("DOWNLOAD_PROXY") or ""]
-            args += ["--verbose", "-f", "{num}.{extension}", "-D", dir]
-            if cookie_file:
-                args += ["-C", cookie_file]
-            args.append(url)
-
-            process = await asyncio.create_subprocess_exec(
-                "gallery-dl",
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await process.communicate()
-            logger.info(
-                "gallery-dl process done: stdout=%s, stderr=%s",
-                stdout.decode(errors="replace"),
-                stderr.decode(errors="replace"),
-            )
-
-            if process.returncode != 0:
-                raise Exception(
-                    f"gallery-dl exited with error {process.returncode}"
-                )
-
-            all_files = [
-                os.path.join(dir, x)
-                for x in sorted(
-                    os.listdir(dir), key=lambda x: f"{int(x.split('.')[0]):03d}"
-                )
-            ]
-            images = [x for x in all_files if not x.endswith(".mp3")]
-            audios = [x for x in all_files if x.endswith(".mp3")]
+            images, audios = await download_image_files(url, dir, cookie_file)
 
             await send_images(message, images)
 
