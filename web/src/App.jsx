@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
+import { ThemeProvider } from './context/ThemeContext'
 import AuthGate from './layouts/AuthGate'
 import AppLayout from './layouts/AppLayout'
 import HomePage from './pages/HomePage'
@@ -38,6 +39,7 @@ function PageFallback() {
 
 export default function App() {
   return (
+    <ThemeProvider>
     <AuthProvider>
       <ToastProvider>
         <BrowserRouter>
@@ -77,5 +79,6 @@ export default function App() {
         </BrowserRouter>
       </ToastProvider>
     </AuthProvider>
+    </ThemeProvider>
   )
 }

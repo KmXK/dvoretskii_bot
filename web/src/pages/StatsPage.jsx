@@ -43,26 +43,16 @@ function CustomTooltip({ active, payload }) {
   )
 }
 
-function StatsSection({ section, color }) {
+function SectionBody({ section, color }) {
   const [expanded, setExpanded] = useState(false)
   const displayItems = expanded ? section.items : section.items.slice(0, 5)
 
   if (section.items.length === 0) {
-    return (
-      <div className="bg-spotify-dark rounded-xl p-4">
-        <h3 className="text-white font-semibold text-sm mb-2">{section.label}</h3>
-        <p className="text-spotify-text text-xs">Нет данных</p>
-      </div>
-    )
+    return <p className="text-spotify-text text-xs">Нет данных</p>
   }
 
   return (
-    <motion.div
-      layout
-      className="bg-spotify-dark rounded-xl p-4"
-    >
-      <h3 className="text-white font-semibold text-sm mb-3">{section.label}</h3>
-
+    <motion.div layout>
       {section.items.length >= 3 && (
         <div className="h-32 mb-3">
           <ResponsiveContainer width="100%" height="100%">
@@ -110,6 +100,63 @@ function StatsSection({ section, color }) {
   )
 }
 
+function SectionPicker({ sections, selectedLabel, onSelect }) {
+  const [open, setOpen] = useState(false)
+  const current = sections.find(s => s.label === selectedLabel) || sections[0]
+
+  return (
+    <div className="mb-3">
+      <motion.button
+        whileTap={{ scale: 0.98 }}
+        onClick={() => setOpen(v => !v)}
+        className={`w-full flex items-center justify-between bg-spotify-black/50 rounded-lg px-3 py-2.5 border transition-colors ${
+          open ? 'border-spotify-green/60' : 'border-transparent'
+        }`}
+      >
+        <span className="text-white text-xs font-medium">
+          Топ по: <span className="text-spotify-green">{current?.label}</span>
+        </span>
+        <motion.span
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+          className="text-spotify-text text-[10px]"
+        >
+          ▼
+        </motion.span>
+      </motion.button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-1.5 bg-spotify-gray/60 rounded-xl border border-white/10 p-1">
+              {sections.map(s => (
+                <motion.button
+                  key={s.label}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => { onSelect(s.label); setOpen(false) }}
+                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
+                    s.label === current?.label
+                      ? 'bg-spotify-green/10 text-white'
+                      : 'text-spotify-text hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <span>{s.label}</span>
+                  <span className="text-spotify-text text-[10px]">{s.items.length}</span>
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 export default function StatsPage() {
   const { userId } = useAuth()
   const [chats, setChats] = useState([])
@@ -119,6 +166,7 @@ export default function StatsPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [sectionLabel, setSectionLabel] = useState(null)
 
   useEffect(() => {
     if (!userId) return
@@ -239,18 +287,33 @@ export default function StatsPage() {
 
       {data && (
         <div className="space-y-3">
-          <AnimatePresence>
-            {data.sections.map((section, i) => (
+          {data.sections.length > 0 && (() => {
+            const current = data.sections.find(s => s.label === sectionLabel) || data.sections[0]
+            return (
               <motion.div
-                key={section.label}
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.08 }}
+                className="bg-spotify-dark rounded-xl p-4"
               >
-                <StatsSection section={section} color={getSectionColor(section.label)} />
+                <SectionPicker
+                  sections={data.sections}
+                  selectedLabel={current.label}
+                  onSelect={setSectionLabel}
+                />
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={current.label}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <SectionBody section={current} color={getSectionColor(current.label)} />
+                  </motion.div>
+                </AnimatePresence>
               </motion.div>
-            ))}
-          </AnimatePresence>
+            )
+          })()}
 
           {(scope === 'all' || selectedChat) && (
             <MessagesTimeseries

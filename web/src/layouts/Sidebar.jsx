@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { NAV_GROUPS } from './navigation'
+import ThemeToggle from '../components/ThemeToggle'
 
 function NavItem({ item, collapsed }) {
   return (
@@ -68,6 +69,7 @@ export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
             <span className="text-white font-semibold tracking-tight truncate">Dvoretskiy</span>
           </div>
         )}
+        {!collapsed && <ThemeToggle className="ml-auto" />}
         <button
           onClick={isDrawer ? onClose : onToggle}
           className="p-1.5 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"

@@ -10,6 +10,18 @@
   --color-spotify-green-hover: #1ed760;
 }
 
+/* Светлая тема: перекрашиваем токены, включая --color-white —
+   так захардкоженные text-white/border-white/* становятся тёмными. */
+html.light {
+  --color-spotify-black: #f3f3f0;
+  --color-spotify-dark: #ffffff;
+  --color-spotify-gray: #e7e7e3;
+  --color-spotify-light-gray: #c9c9c5;
+  --color-spotify-text: #5f6360;
+  --color-white: #16181a;
+  color-scheme: light;
+}
+
 html, body, #root {
   min-height: 100vh;
   margin: 0;
@@ -18,7 +30,8 @@ html, body, #root {
 
 body {
   background-color: var(--color-spotify-black);
-  color: white;
+  color: var(--color-white, #fff);
+  transition: background-color 0.25s ease, color 0.25s ease;
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

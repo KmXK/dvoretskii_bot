@@ -3,6 +3,8 @@ import { useAuth } from '../context/useAuth'
 import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
 import { useSidebar } from './useSidebar'
+import ThemeToggle from '../components/ThemeToggle'
+import LightThemeJoke from '../components/LightThemeJoke'
 
 function useIsWide(breakpoint = 768) {
   const [wide, setWide] = useState(() =>
@@ -26,6 +28,7 @@ export default function AppLayout({ children }) {
   if (mode === 'miniapp') {
     return (
       <div className="min-h-screen bg-spotify-black pb-16">
+        <LightThemeJoke />
         {children}
         <BottomNav />
       </div>
@@ -35,6 +38,7 @@ export default function AppLayout({ children }) {
   if (isWide) {
     return (
       <div className="flex min-h-screen bg-spotify-black">
+        <LightThemeJoke />
         <div className="sticky top-0 self-start">
           <Sidebar open={open} onToggle={toggle} />
         </div>
@@ -57,11 +61,13 @@ export default function AppLayout({ children }) {
             <path d="M3 6h18M3 12h18M3 18h18" />
           </svg>
         </button>
-        <div className="ml-3 flex items-center gap-2">
+        <div className="ml-3 flex items-center gap-2 flex-1 min-w-0">
           <span className="text-lg">🤖</span>
           <span className="text-white font-semibold">Dvoretskiy</span>
         </div>
+        <ThemeToggle />
       </header>
+      <LightThemeJoke />
 
       {drawerOpen && (
         <div className="fixed inset-0 z-40 flex">

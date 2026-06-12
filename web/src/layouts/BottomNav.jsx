@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import { NAV_GROUPS } from './navigation'
+import ThemeToggle from '../components/ThemeToggle'
 
 const PRIMARY = [
   { to: '/', label: 'Главная', icon: '🏠' },
@@ -48,7 +49,10 @@ export default function BottomNav() {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" />
           <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto bg-spotify-dark rounded-t-2xl shadow-2xl p-4 pb-8">
-            <Dialog.Title className="text-white text-base font-semibold mb-4">Все разделы</Dialog.Title>
+            <div className="flex items-center justify-between mb-4">
+              <Dialog.Title className="text-white text-base font-semibold">Все разделы</Dialog.Title>
+              <ThemeToggle />
+            </div>
             <div className="space-y-5">
               {NAV_GROUPS.map((group) => (
                 <div key={group.label}>

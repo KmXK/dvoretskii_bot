@@ -174,30 +174,94 @@ async def handle_metrics_catalog(request: web.Request):
             "has_chat": info[name]["has_chat"],
             "has_user": info[name]["has_user"],
         })
-    return web.json_response({"metrics": items, "is_admin": admin})
+
+    def _user_label(u) -> str:
+        return u.first_name or (f"@{u.username}" if u.username else str(u.id))
+
+    chat_items = [
+        {"id": c.id, "name": c.name}
+        for c in repository.db.chats
+        if admin or c.id in chats
+    ]
+    chat_items.sort(key=lambda c: c["name"].lower())
+    user_items = [
+        {"id": u.id, "name": _user_label(u)}
+        for u in repository.db.users
+        if admin or u.id in users
+    ]
+    user_items.sort(key=lambda u: u["name"].lower())
+
+    return web.json_response({
+        "metrics": items,
+        "chats": chat_items,
+        "users": user_items,
+        "is_admin": admin,
+    })
+
+
+def _ids_regex(ids: set[int]) -> str:
+    return "|".join(str(i) for i in sorted(ids))
+
+
+def _parse_ids(raw: str) -> set[int]:
+    out = set()
+    for token in raw.split(","):
+        try:
+            out.add(int(token))
+        except ValueError:
+            continue
+    return out
 
 
 def _metric_exprs(
     name: str,
     entry: dict,
-    chats: set[int],
-    users: set[int],
+    eff_chats: set[int] | None,
+    eff_users: set[int] | None,
     viewer_id: int,
     admin: bool,
     step_seconds: int,
+    chat_filtered: bool,
+    user_filtered: bool,
 ) -> list[str]:
+    """eff_* == None — без ограничения (только у админа), пустой set — пусто."""
     rng = f"[{step_seconds}s]"
-    if admin:
+    if chat_filtered and not entry["has_chat"]:
+        return []
+    if user_filtered and not entry["has_user"]:
+        return []
+    if admin and eff_chats is None and eff_users is None:
         return [f"increase({name}{rng})"]
+
     exprs = []
     if entry["has_chat"]:
-        if chats:
-            chat_re = "|".join(str(c) for c in sorted(chats))
-            exprs.append(f'increase({name}{{chat_id=~"{chat_re}"}}{rng})')
-        exprs.append(f'increase({name}{{chat_id="inline",user_id="{viewer_id}"}}{rng})')
+        parts = []
+        skip_main = False
+        if eff_chats is not None:
+            if eff_chats:
+                parts.append(f'chat_id=~"{_ids_regex(eff_chats)}"')
+            else:
+                skip_main = True
+        if eff_users is not None and user_filtered:
+            if eff_users:
+                parts.append(f'user_id=~"{_ids_regex(eff_users)}"')
+            else:
+                skip_main = True
+        if not skip_main:
+            sel = "{" + ", ".join(parts) + "}" if parts else ""
+            exprs.append(f"increase({name}{sel}{rng})")
+        if not chat_filtered and not admin:
+            if not user_filtered or (eff_users and viewer_id in eff_users):
+                exprs.append(
+                    f'increase({name}{{chat_id="inline",user_id="{viewer_id}"}}{rng})'
+                )
     elif entry["has_user"]:
-        user_re = "|".join(str(u) for u in sorted(users))
-        exprs.append(f'increase({name}{{user_id=~"{user_re}"}}{rng})')
+        if eff_users is None:
+            exprs.append(f"increase({name}{rng})")
+        elif eff_users:
+            exprs.append(f'increase({name}{{user_id=~"{_ids_regex(eff_users)}"}}{rng})')
+    elif admin:
+        exprs.append(f"increase({name}{rng})")
     return exprs
 
 
@@ -213,7 +277,11 @@ async def handle_metrics_range(request: web.Request):
       mode     metric|chat|user   (metric — линия на метрику; chat/user —
                линия на чат/человека, значения суммируются по всем метрикам)
       period   day|3d|week|month|quarter|year
-      step     секунды из _STEPS (default: auto by period)
+      start    unix-секунды — произвольный интервал (вместе с end, важнее period)
+      end      unix-секунды
+      step     секунды из _STEPS (default: auto by period/интервалу)
+      chats    comma-separated chat_id — сузить до этих чатов (пересекается с ACL)
+      users    comma-separated user_id — сузить до этих людей (пересекается с ACL)
       limit    максимум линий, 1..20 (default 10)
       rank     max|avg|min — критерий отбора топа (default max)
     """
@@ -242,23 +310,55 @@ async def handle_metrics_range(request: web.Request):
     if rank not in ("max", "avg", "min"):
         rank = "max"
 
+    now = int(datetime.datetime.now(tz=timezone.utc).timestamp())
+
     period = request.query.get("period", "week")
-    if period not in _WINDOWS:
-        period = "week"
-    window_seconds, step_seconds = _WINDOWS[period]
+    custom = None
+    try:
+        custom_start = int(request.query.get("start", "0"))
+        custom_end = int(request.query.get("end", "0"))
+        if custom_start > 0 and custom_end > custom_start:
+            custom = (custom_start, min(custom_end, now))
+    except ValueError:
+        pass
+
+    if custom is not None:
+        period = "custom"
+        window_seconds = min(custom[1] - custom[0], 400 * 86400)
+        end_ts = custom[1]
+        step_seconds = next(
+            (s for s in _STEPS if window_seconds // s <= 200), _STEPS[-1]
+        )
+    else:
+        if period not in _WINDOWS:
+            period = "week"
+        window_seconds, step_seconds = _WINDOWS[period]
+        end_ts = now
+
     try:
         requested_step = int(request.query.get("step", "0"))
     except ValueError:
         requested_step = 0
     if requested_step in _STEPS:
         step_seconds = requested_step
-        while window_seconds // step_seconds > _MAX_BUCKETS:
-            bigger = [s for s in _STEPS if s > step_seconds]
-            if not bigger:
-                break
-            step_seconds = bigger[0]
+    while window_seconds // step_seconds > _MAX_BUCKETS:
+        bigger = [s for s in _STEPS if s > step_seconds]
+        if not bigger:
+            step_seconds *= 2
+            continue
+        step_seconds = bigger[0]
 
     chats, users, admin = _viewer_acl(repository, viewer_id)
+
+    chat_filter = _parse_ids(request.query.get("chats", ""))
+    user_filter = _parse_ids(request.query.get("users", ""))
+    if admin:
+        eff_chats = chat_filter if chat_filter else None
+        eff_users = user_filter if user_filter else None
+    else:
+        eff_chats = chats & chat_filter if chat_filter else chats
+        eff_users = users & user_filter if user_filter else users
+
     name_regex = "^(" + "|".join(requested) + ")$"
     try:
         samples = await _discover(metrics, name_regex)
@@ -268,9 +368,8 @@ async def handle_metrics_range(request: web.Request):
     info = _collect_metric_info(samples, chats, users, viewer_id, admin)
     visible_metrics = [m for m in requested if m in info]
 
-    now = datetime.datetime.now(tz=timezone.utc).timestamp()
-    end = (int(now) // step_seconds) * step_seconds
-    start = end - window_seconds + step_seconds
+    end = (end_ts // step_seconds) * step_seconds
+    start = end - (window_seconds // step_seconds) * step_seconds + step_seconds
     buckets = list(range(start, end + 1, step_seconds))
     bucket_index = {ts: i for i, ts in enumerate(buckets)}
 
@@ -281,7 +380,10 @@ async def handle_metrics_range(request: web.Request):
     }[mode]
 
     async def _query_metric(name: str):
-        exprs = _metric_exprs(name, info[name], chats, users, viewer_id, admin, step_seconds)
+        exprs = _metric_exprs(
+            name, info[name], eff_chats, eff_users, viewer_id, admin,
+            step_seconds, bool(chat_filter), bool(user_filter),
+        )
         if not exprs:
             return name, []
         promql = f"{group_by} ({' or '.join(exprs)})"
