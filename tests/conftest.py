@@ -230,9 +230,14 @@ def make_context(
     chat_id: int = CHAT_ID,
 ) -> ChatBotContext:
     update = make_update(command, args, user_id=user_id, chat_id=chat_id)
+    if bot is None:
+        bot = MagicMock()
+        # Сырые вызовы Bot API (e.g. sendRichMessage) идут через do_api_request —
+        # он async, поэтому подменяем на AsyncMock, иначе await падает.
+        bot.do_api_request = AsyncMock(return_value=MagicMock())
     return ChatBotContext(
         repository=repo or make_repository(),
-        bot=bot or MagicMock(),
+        bot=bot,
         client=MagicMock(),
         update=update,
         tg_context=MagicMock(),

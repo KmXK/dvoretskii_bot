@@ -3,7 +3,7 @@ import datetime
 
 from steward.data.models.army import Army
 from steward.features.army import ArmyFeature
-from tests.conftest import DEFAULT_USER_ID, invoke, make_repository
+from tests.conftest import DEFAULT_USER_ID, invoke, make_context, make_repository
 
 
 def _army(name: str, days_left: int = 100) -> Army:
@@ -23,10 +23,19 @@ class TestArmyView:
     async def test_shows_army_members(self):
         repo = make_repository()
         repo.db.army = [_army("Иван"), _army("Пётр")]
-        reply, ok = await invoke(ArmyFeature, "/army", repo)
-        assert ok
-        assert "Иван" in reply
-        assert "Пётр" in reply
+        ctx = make_context("army", repo=repo)
+        handler = ArmyFeature()
+        handler.repository = repo
+        handler.bot = ctx.bot
+        handled = await handler.chat(ctx)
+        assert handled
+        # /army шлёт нативную таблицу через sendRichMessage (Bot API 10.1)
+        call = ctx.bot.do_api_request.call_args
+        assert call.args[0] == "sendRichMessage"
+        markdown = call.kwargs["api_kwargs"]["rich_message"]["markdown"]
+        assert "Иван" in markdown
+        assert "Пётр" in markdown
+        assert "| Имя | Осталось | % |" in markdown
 
 
 class TestArmyAdd:
