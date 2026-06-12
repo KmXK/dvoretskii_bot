@@ -60,7 +60,7 @@ _WINDOWS = {
 _STEPS = [600, 1800, 3600, 6 * 3600, 86400, 7 * 86400]
 _MAX_BUCKETS = 500
 _MAX_METRICS = 8
-_MAX_SERIES = 10
+_MAX_SERIES = 20
 
 
 def _is_noise(name: str) -> bool:
@@ -210,10 +210,12 @@ async def handle_metrics_range(request: web.Request):
 
     Params:
       metrics  comma-separated имена метрик (обязателен)
-      mode     metric|chat|user   (metric — линия на метрику; иначе берётся
-               первая метрика и разбивается по чатам/людям)
+      mode     metric|chat|user   (metric — линия на метрику; chat/user —
+               линия на чат/человека, значения суммируются по всем метрикам)
       period   day|3d|week|month|quarter|year
       step     секунды из _STEPS (default: auto by period)
+      limit    максимум линий, 1..20 (default 10)
+      rank     max|avg|min — критерий отбора топа (default max)
     """
     repository: Repository = request.app["repository"]
     metrics: MetricsEngine = request.app["metrics"]
@@ -231,8 +233,14 @@ async def handle_metrics_range(request: web.Request):
     mode = request.query.get("mode", "metric")
     if mode not in ("metric", "chat", "user"):
         mode = "metric"
-    if mode != "metric":
-        requested = requested[:1]
+
+    try:
+        limit = max(1, min(int(request.query.get("limit", "10")), _MAX_SERIES))
+    except ValueError:
+        limit = 10
+    rank = request.query.get("rank", "max")
+    if rank not in ("max", "avg", "min"):
+        rank = "max"
 
     period = request.query.get("period", "week")
     if period not in _WINDOWS:
@@ -315,20 +323,25 @@ async def handle_metrics_range(request: web.Request):
                 if idx is not None and val and val > 0:
                     entry["values"][idx] += val
 
+    def _score(values: list[float]) -> float:
+        if rank == "max":
+            return max(values)
+        if rank == "min":
+            return min(values)
+        return sum(values) / len(values)
+
     aggregated = []
     for entry in merged.values():
         total = sum(entry["values"])
-        if total <= 0 and mode != "metric":
+        if total <= 0:
             continue
         entry["total"] = _round(total)
+        entry["score"] = _score(entry["values"])
         entry["values"] = [_round(v) for v in entry["values"]]
         aggregated.append(entry)
 
-    aggregated.sort(key=lambda e: e["total"], reverse=True)
-    if mode == "metric":
-        order = {m: i for i, m in enumerate(visible_metrics)}
-        aggregated.sort(key=lambda e: order.get(e["key"], 99))
-    top = aggregated[:_MAX_SERIES]
+    aggregated.sort(key=lambda e: (e["score"], e["total"]), reverse=True)
+    top = aggregated[:limit]
     if mode == "user":
         viewer_key = str(viewer_id)
         if not any(e["key"] == viewer_key for e in top):
@@ -338,12 +351,16 @@ async def handle_metrics_range(request: web.Request):
         for e in top:
             e["is_me"] = e["key"] == viewer_key
 
+    for e in top:
+        e.pop("score", None)
+
     return web.json_response({
         "mode": mode,
         "period": period,
         "step_seconds": step_seconds,
         "buckets": buckets,
         "series": top,
+        "series_total": len(aggregated),
     })
 
 

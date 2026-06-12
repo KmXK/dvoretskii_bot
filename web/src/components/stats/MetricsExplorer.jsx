@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -21,6 +21,16 @@ const PERIODS = [
   { key: 'year', label: 'Год' },
 ]
 
+const LIMIT_OPTIONS = [5, 10, 20]
+
+const RANK_OPTIONS = [
+  { key: 'max', label: 'макс' },
+  { key: 'avg', label: 'сред' },
+  { key: 'min', label: 'мин' },
+]
+
+const MAX_SELECTED = 8
+
 const LINE_COLORS = [
   '#1DB954',
   '#3b82f6',
@@ -32,6 +42,16 @@ const LINE_COLORS = [
   '#84cc16',
   '#fb7185',
   '#38bdf8',
+  '#facc15',
+  '#4ade80',
+  '#c084fc',
+  '#fb923c',
+  '#2dd4bf',
+  '#f472b6',
+  '#a3e635',
+  '#60a5fa',
+  '#fbbf24',
+  '#34d399',
 ]
 
 const spring = { type: 'spring', stiffness: 500, damping: 35 }
@@ -52,6 +72,14 @@ function formatBucketTs(ts, period, stepSeconds) {
 function formatNum(v) {
   if (v >= 10000) return `${Math.round(v / 100) / 10}k`
   return Math.round(v * 10) / 10
+}
+
+function pluralMetrics(n) {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return 'метрика'
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'метрики'
+  return 'метрик'
 }
 
 function ExplorerTooltip({ active, payload, label, seriesByKey }) {
@@ -94,12 +122,146 @@ function ChartSkeleton() {
   )
 }
 
+function MetricMultiSelect({ catalog, selected, onToggle }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (open) {
+      setSearch('')
+      const t = setTimeout(() => inputRef.current?.focus(), 80)
+      return () => clearTimeout(t)
+    }
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return catalog
+    return catalog.filter(m =>
+      m.label.toLowerCase().includes(q) || m.name.toLowerCase().includes(q),
+    )
+  }, [catalog, search])
+
+  const selectedMeta = selected
+    .map(name => catalog.find(m => m.name === name))
+    .filter(Boolean)
+
+  return (
+    <div className="relative mb-2">
+      <motion.button
+        whileTap={{ scale: 0.98 }}
+        onClick={() => setOpen(v => !v)}
+        className={`w-full flex items-center gap-2 bg-spotify-black/50 rounded-lg px-3 py-2.5 text-left border transition-colors ${
+          open ? 'border-spotify-green/60' : 'border-transparent'
+        }`}
+      >
+        <span className="flex-1 min-w-0 flex items-center gap-1.5 text-xs text-white">
+          {selectedMeta.length === 1 ? (
+            <>
+              <span>{selectedMeta[0].emoji}</span>
+              <span className="truncate">{selectedMeta[0].label}</span>
+            </>
+          ) : (
+            <>
+              <span className="shrink-0">{selectedMeta.slice(0, 4).map(m => m.emoji).join('')}</span>
+              <span className="text-spotify-text">
+                {selectedMeta.length} {pluralMetrics(selectedMeta.length)}
+              </span>
+            </>
+          )}
+        </span>
+        <motion.span
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={spring}
+          className="text-spotify-text text-[10px] shrink-0"
+        >
+          ▼
+        </motion.span>
+      </motion.button>
+
+      <AnimatePresence>
+        {open && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+            <motion.div
+              initial={{ opacity: 0, y: -8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+              className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-spotify-gray rounded-xl shadow-xl border border-white/10 overflow-hidden"
+            >
+              <div className="p-2 border-b border-white/5">
+                <input
+                  ref={inputRef}
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="🔍 Поиск метрики..."
+                  className="w-full bg-spotify-black/60 rounded-lg px-3 py-2 text-xs text-white placeholder-spotify-text outline-none focus:ring-1 focus:ring-spotify-green/50"
+                />
+              </div>
+              <div className="max-h-56 overflow-y-auto p-1">
+                {filtered.length === 0 ? (
+                  <div className="py-6 text-center text-spotify-text text-xs">
+                    Ничего не нашлось
+                  </div>
+                ) : (
+                  filtered.map(m => {
+                    const active = selected.includes(m.name)
+                    return (
+                      <motion.button
+                        key={m.name}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => onToggle(m.name)}
+                        className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
+                          active ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
+                        }`}
+                      >
+                        <span className="shrink-0">{m.emoji}</span>
+                        <span className="flex-1 truncate">{m.label}</span>
+                        <span className={`w-4 h-4 rounded shrink-0 flex items-center justify-center border transition-colors ${
+                          active
+                            ? 'bg-spotify-green border-spotify-green'
+                            : 'border-spotify-text/40'
+                        }`}>
+                          <AnimatePresence>
+                            {active && (
+                              <motion.span
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                exit={{ scale: 0 }}
+                                transition={spring}
+                                className="text-black text-[9px] font-bold"
+                              >
+                                ✓
+                              </motion.span>
+                            )}
+                          </AnimatePresence>
+                        </span>
+                      </motion.button>
+                    )
+                  })
+                )}
+              </div>
+              <div className="px-3 py-1.5 border-t border-white/5 text-[9px] text-spotify-text">
+                Выбрано: {selected.length} / {MAX_SELECTED}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 export default function MetricsExplorer() {
   const toast = useToast()
   const [catalog, setCatalog] = useState(null)
   const [selected, setSelected] = useState([])
   const [mode, setMode] = useState('metric')
   const [period, setPeriod] = useState('week')
+  const [limit, setLimit] = useState(5)
+  const [rank, setRank] = useState('max')
   const [cumulative, setCumulative] = useState(false)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -128,6 +290,8 @@ export default function MetricsExplorer() {
       metrics: selected.join(','),
       mode,
       period,
+      limit: String(limit),
+      rank,
     })
     api.get(`/api/metrics/range?${params}`)
       .then(d => {
@@ -143,7 +307,7 @@ export default function MetricsExplorer() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [selected, mode, period, toast])
+  }, [selected, mode, period, limit, rank, toast])
 
   const metricByName = useMemo(
     () => Object.fromEntries((catalog || []).map(m => [m.name, m])),
@@ -174,21 +338,16 @@ export default function MetricsExplorer() {
   }, [data, cumulative])
 
   const toggleMetric = (name) => {
-    if (mode === 'metric') {
-      setSelected(prev => {
-        if (prev.includes(name)) {
-          return prev.length > 1 ? prev.filter(n => n !== name) : prev
-        }
-        return [...prev, name]
-      })
-    } else {
-      setSelected([name])
-    }
-  }
-
-  const switchMode = (key) => {
-    setMode(key)
-    if (key !== 'metric' && selected.length > 1) setSelected([selected[0]])
+    setSelected(prev => {
+      if (prev.includes(name)) {
+        return prev.length > 1 ? prev.filter(n => n !== name) : prev
+      }
+      if (prev.length >= MAX_SELECTED) {
+        toast.info(`Максимум ${MAX_SELECTED} метрик за раз`)
+        return prev
+      }
+      return [...prev, name]
+    })
   }
 
   const toggleSeries = (key) => {
@@ -203,7 +362,7 @@ export default function MetricsExplorer() {
   const visibleSeries = (data?.series || []).filter(s => !hidden.has(s.key))
   const grandTotal = visibleSeries.reduce((acc, s) => acc + (s.total || 0), 0)
   const hasData = !loading && chartData.length > 0 && visibleSeries.length > 0
-  const activeMetricChips = mode === 'metric' ? selected : selected.slice(0, 1)
+  const beyondTop = Math.max(0, (data?.series_total || 0) - (data?.series?.length || 0))
 
   if (catalog !== null && catalog.length === 0) return null
 
@@ -211,12 +370,14 @@ export default function MetricsExplorer() {
     <motion.div
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-spotify-dark rounded-xl p-4 mb-3 relative overflow-hidden"
+      className="bg-spotify-dark rounded-xl p-4 mb-3 relative"
     >
-      <div
-        className="absolute -top-20 -right-20 w-56 h-56 rounded-full pointer-events-none"
-        style={{ background: 'radial-gradient(circle, rgba(29,185,84,0.12) 0%, transparent 70%)' }}
-      />
+      <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
+        <div
+          className="absolute -top-20 -right-20 w-56 h-56 rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(29,185,84,0.12) 0%, transparent 70%)' }}
+        />
+      </div>
 
       <div className="flex items-start justify-between mb-3">
         <div>
@@ -246,7 +407,7 @@ export default function MetricsExplorer() {
         {MODES.map(m => (
           <button
             key={m.key}
-            onClick={() => switchMode(m.key)}
+            onClick={() => setMode(m.key)}
             className="relative flex-1 py-1.5 text-[10px] font-medium"
           >
             {mode === m.key && (
@@ -280,40 +441,39 @@ export default function MetricsExplorer() {
         ))}
       </div>
 
-      <div className="flex gap-1.5 mb-2 overflow-x-auto pb-0.5">
-        {(catalog || []).map(m => {
-          const active = activeMetricChips.includes(m.name)
-          return (
-            <motion.button
-              key={m.name}
-              layout
-              whileTap={{ scale: 0.9 }}
-              onClick={() => toggleMetric(m.name)}
-              transition={spring}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0 border transition-colors ${
-                active
-                  ? 'bg-spotify-green/15 border-spotify-green/60 text-white'
-                  : 'bg-spotify-black/40 border-transparent text-spotify-text hover:text-white'
-              }`}
-            >
-              <span>{m.emoji}</span>
-              <span>{m.label}</span>
-              <AnimatePresence>
-                {active && mode === 'metric' && (
-                  <motion.span
-                    initial={{ scale: 0, width: 0 }}
-                    animate={{ scale: 1, width: 'auto' }}
-                    exit={{ scale: 0, width: 0 }}
-                    transition={spring}
-                    className="text-spotify-green"
-                  >
-                    ✓
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </motion.button>
-          )
-        })}
+      <MetricMultiSelect
+        catalog={catalog || []}
+        selected={selected}
+        onToggle={toggleMetric}
+      />
+
+      <div className="flex items-center gap-1 mb-2 bg-spotify-black/50 rounded-lg p-0.5 overflow-x-auto">
+        <span className="text-spotify-text text-[10px] px-1.5 shrink-0">Линий:</span>
+        {LIMIT_OPTIONS.map(n => (
+          <motion.button
+            key={n}
+            whileTap={{ scale: 0.93 }}
+            onClick={() => setLimit(n)}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors shrink-0 ${
+              limit === n ? 'bg-spotify-green/80 text-black' : 'text-spotify-text hover:text-white'
+            }`}
+          >
+            {n}
+          </motion.button>
+        ))}
+        <span className="text-spotify-text text-[10px] px-1.5 shrink-0 ml-2">топ по:</span>
+        {RANK_OPTIONS.map(r => (
+          <motion.button
+            key={r.key}
+            whileTap={{ scale: 0.93 }}
+            onClick={() => setRank(r.key)}
+            className={`px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors shrink-0 ${
+              rank === r.key ? 'bg-white text-black' : 'text-spotify-text hover:text-white'
+            }`}
+          >
+            {r.label}
+          </motion.button>
+        ))}
       </div>
 
       <div className="flex items-center justify-between mb-3">
@@ -365,7 +525,7 @@ export default function MetricsExplorer() {
           </motion.div>
         ) : (
           <motion.div
-            key={`${mode}-${period}-${cumulative}-${selected.join()}`}
+            key={`${mode}-${period}-${cumulative}-${limit}-${rank}-${selected.join()}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
@@ -453,6 +613,11 @@ export default function MetricsExplorer() {
                   </motion.button>
                 )
               })}
+              {beyondTop > 0 && (
+                <span className="flex items-center px-2 py-1 rounded-md text-[10px] text-spotify-text border border-dashed border-spotify-text/30">
+                  +{beyondTop} за топом
+                </span>
+              )}
             </div>
           </motion.div>
         )}
