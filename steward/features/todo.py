@@ -1,4 +1,4 @@
-from steward.data.models.reward import Reward, UserReward
+from steward.data.models.reward import Reward
 from steward.data.models.todo_item import TodoItem
 from steward.framework import (
     INITIATOR_ONLY,
@@ -30,7 +30,6 @@ class TodoFeature(Feature):
 
     todos = collection("todo_items")
     rewards = collection("rewards")
-    user_rewards = collection("user_rewards")
     users = collection("users")
 
     @subcommand("", description="Список")
@@ -127,8 +126,8 @@ class TodoFeature(Feature):
         assigned = 0
         for identifier in state["reward_users"]:
             user = self._resolve_user(identifier)
-            if user is not None:
-                self.user_rewards.add(UserReward(user_id=user.id, reward_id=reward.id))
+            if user is not None and reward.id not in user.reward_ids:
+                user.reward_ids.append(reward.id)
                 assigned += 1
         await self.rewards.save()
         message = get_message(ctx.update)

@@ -432,15 +432,18 @@ async def handle_profile(request: web.Request):
 
     rewards_map = {r.id: r for r in repository.db.rewards}
     users_map = {u.id: u for u in repository.db.users}
+    profile_user = users_map.get(int(user_id))
 
     def _reward_holder_name(reward) -> str | None:
         if not reward.dynamic_key:
             return None
-        ur = next((x for x in repository.db.user_rewards if x.reward_id == reward.id), None)
-        if ur is None:
+        holder = next(
+            (u for u in repository.db.users if reward.id in (u.reward_ids or [])),
+            None,
+        )
+        if holder is None:
             return None
-        holder = users_map.get(ur.user_id)
-        return f"@{holder.username}" if holder and holder.username else str(ur.user_id)
+        return f"@{holder.username}" if holder.username else str(holder.id)
 
     user_rewards = [
         {
@@ -452,13 +455,11 @@ async def handle_profile(request: web.Request):
             "dynamic_key": r.dynamic_key,
             "holder": _reward_holder_name(r),
         }
-        for ur in repository.db.user_rewards
-        if ur.user_id == int(user_id)
-        and (r := rewards_map.get(ur.reward_id)) is not None
+        for rid in (profile_user.reward_ids if profile_user else [])
+        if (r := rewards_map.get(rid)) is not None
     ]
 
     stats = await _query_stats(metrics, user_id, _period_range(period))
-    profile_user = users_map.get(int(user_id))
     stand = None
     if (
         profile_user is not None
