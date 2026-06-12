@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _CATALOG_LOOKBACK = "180d"
 _NOISE_PREFIXES = ("python_", "process_", "go_", "scrape_", "vm", "flag")
+# *_created — авто-близнецы счётчиков prometheus_client со значением-таймстампом
+_NOISE_SUFFIXES = ("_created", "_bucket")
 _NOISE_EXACT = {"up"}
 _NAME_RE = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
 
@@ -62,7 +64,11 @@ _MAX_SERIES = 10
 
 
 def _is_noise(name: str) -> bool:
-    return name in _NOISE_EXACT or name.startswith(_NOISE_PREFIXES)
+    return (
+        name in _NOISE_EXACT
+        or name.startswith(_NOISE_PREFIXES)
+        or name.endswith(_NOISE_SUFFIXES)
+    )
 
 
 def _metric_meta(name: str) -> tuple[str, str, bool]:
