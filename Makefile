@@ -7,6 +7,7 @@ dev-metrics:
 	METRICS_ENABLED=true docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile metrics watch
 
 prod:
+	-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile metrics pull --ignore-buildable
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile metrics up -d --build
 
 down:
