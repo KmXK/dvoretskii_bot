@@ -180,17 +180,16 @@ function MetricMultiSelect({ catalog, selected, onToggle }) {
         </motion.span>
       </motion.button>
 
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {open && (
-          <>
-            <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, y: -8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -6, scale: 0.98 }}
-              transition={{ type: 'spring', stiffness: 500, damping: 32 }}
-              className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-spotify-gray rounded-xl shadow-xl border border-white/10 overflow-hidden"
-            >
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-1.5 bg-spotify-gray rounded-xl border border-white/10 overflow-hidden">
               <div className="p-2 border-b border-white/5">
                 <input
                   ref={inputRef}
@@ -246,8 +245,8 @@ function MetricMultiSelect({ catalog, selected, onToggle }) {
               <div className="px-3 py-1.5 border-t border-white/5 text-[9px] text-spotify-text">
                 Выбрано: {selected.length} / {MAX_SELECTED}
               </div>
-            </motion.div>
-          </>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -361,7 +360,7 @@ export default function MetricsExplorer() {
 
   const visibleSeries = (data?.series || []).filter(s => !hidden.has(s.key))
   const grandTotal = visibleSeries.reduce((acc, s) => acc + (s.total || 0), 0)
-  const hasData = !loading && chartData.length > 0 && visibleSeries.length > 0
+  const hasSeries = !loading && chartData.length > 0 && (data?.series?.length || 0) > 0
   const beyondTop = Math.max(0, (data?.series_total || 0) - (data?.series?.length || 0))
 
   if (catalog !== null && catalog.length === 0) return null
@@ -506,7 +505,7 @@ export default function MetricsExplorer() {
           <motion.div key="skeleton" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <ChartSkeleton />
           </motion.div>
-        ) : !hasData ? (
+        ) : !hasSeries ? (
           <motion.div
             key="empty"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -531,6 +530,25 @@ export default function MetricsExplorer() {
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.25 }}
           >
+            {visibleSeries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-60 text-spotify-text text-sm gap-3">
+                <motion.span
+                  className="text-3xl"
+                  animate={{ rotate: [0, -10, 10, 0] }}
+                  transition={{ duration: 1.6, repeat: Infinity, repeatDelay: 1 }}
+                >
+                  🙈
+                </motion.span>
+                <span>Все линии выключены</span>
+                <motion.button
+                  whileTap={{ scale: 0.93 }}
+                  onClick={() => setHidden(new Set())}
+                  className="bg-spotify-green text-black text-xs font-semibold px-4 py-2 rounded-full"
+                >
+                  Включить все
+                </motion.button>
+              </div>
+            ) : (
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
@@ -585,6 +603,7 @@ export default function MetricsExplorer() {
                 </AreaChart>
               </ResponsiveContainer>
             </div>
+            )}
 
             <div className="flex flex-wrap gap-1.5 mt-3">
               {data.series.map((s, i) => {
