@@ -1813,6 +1813,37 @@ async def handle_chat_stats(request: web.Request):
     })
 
 
+async def handle_shorten(request: web.Request):
+    """Короткая ссылка для шаринга. Сокращаем только ссылки на свой домен."""
+    viewer_id = session_user_id(request)
+    if viewer_id is None:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    url = str(body.get("url", ""))
+    web_app_url = environ.get("WEB_APP_URL", "").rstrip("/")
+    if not web_app_url or not (url == web_app_url or url.startswith(web_app_url + "/")):
+        return web.json_response({"error": "only own links"}, status=400)
+
+    from steward.helpers.limiter import Duration, check_limit
+    from steward.helpers.shortener import ShortenerNotConfigured, shorten_url
+
+    try:
+        check_limit("shorten_api_per_user", 3, 30 * Duration.SECOND, name=str(viewer_id))
+    except Exception:
+        return web.json_response({"error": "rate limited"}, status=429)
+    try:
+        short = await shorten_url(url)
+    except ShortenerNotConfigured:
+        return web.json_response({"error": "shortener is not configured"}, status=503)
+    except Exception:
+        logger.exception("shorten failed")
+        return web.json_response({"error": "shortener failed"}, status=502)
+    return web.json_response({"short": short})
+
+
 def _session_user_id(request: web.Request) -> int | None:
     """Helper alias for handlers — middleware already enforces 401 if absent."""
     return session_user_id(request)
@@ -2430,6 +2461,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/metrics/catalog", handle_metrics_catalog)
     app.router.add_get("/api/metrics/range", handle_metrics_range)
     app.router.add_get("/api/metrics/vm/{vm_path:.+}", handle_metrics_vm_proxy)
+    app.router.add_post("/api/shorten", handle_shorten)
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)

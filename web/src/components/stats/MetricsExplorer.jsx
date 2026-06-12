@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -230,26 +231,51 @@ function SearchList({ items, selected, onToggle, footer, emptyAction }) {
   )
 }
 
+function parseInitialParams(sp) {
+  const nums = raw => (raw || '').split(',').map(Number).filter(Number.isFinite)
+  const from = Number(sp.get('from'))
+  const to = Number(sp.get('to'))
+  return {
+    metrics: (sp.get('m') || '').split(',').filter(Boolean),
+    mode: MODES.some(m => m.key === sp.get('g')) ? sp.get('g') : 'metric',
+    period: PERIODS.some(p => p.key === sp.get('p')) ? sp.get('p') : 'week',
+    custom: from > 0 && to > from ? { from, to } : null,
+    chats: nums(sp.get('c')),
+    users: nums(sp.get('u')),
+    limit: LIMIT_OPTIONS.includes(Number(sp.get('l'))) ? Number(sp.get('l')) : 5,
+    rank: RANK_OPTIONS.some(r => r.key === sp.get('r')) ? sp.get('r') : 'max',
+    cumulative: sp.get('cum') === '1',
+  }
+}
+
 export default function MetricsExplorer() {
   const toast = useToast()
   const { theme } = useTheme()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialRef = useRef(null)
+  if (initialRef.current === null) {
+    initialRef.current = parseInitialParams(searchParams)
+  }
+  const initial = initialRef.current
+
   const [catalog, setCatalog] = useState(null)
-  const [selected, setSelected] = useState([])
-  const [mode, setMode] = useState('metric')
-  const [period, setPeriod] = useState('week')
-  const [custom, setCustom] = useState(null)
+  const [selected, setSelected] = useState(initial.metrics)
+  const [mode, setMode] = useState(initial.mode)
+  const [period, setPeriod] = useState(initial.period)
+  const [custom, setCustom] = useState(initial.custom)
   const [rangeFrom, setRangeFrom] = useState('')
   const [rangeTo, setRangeTo] = useState('')
-  const [chatsSel, setChatsSel] = useState([])
-  const [usersSel, setUsersSel] = useState([])
-  const [limit, setLimit] = useState(5)
-  const [rank, setRank] = useState('max')
-  const [cumulative, setCumulative] = useState(false)
+  const [chatsSel, setChatsSel] = useState(initial.chats)
+  const [usersSel, setUsersSel] = useState(initial.users)
+  const [limit, setLimit] = useState(initial.limit)
+  const [rank, setRank] = useState(initial.rank)
+  const [cumulative, setCumulative] = useState(initial.cumulative)
   const [openPanel, setOpenPanel] = useState(null)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [hidden, setHidden] = useState(() => new Set())
   const [drag, setDrag] = useState(null)
+  const [sharing, setSharing] = useState(false)
 
   const gridColor = theme === 'light' ? '#d9d9d6' : '#282828'
   const tickColor = theme === 'light' ? '#6b6b6b' : '#b3b3b3'
@@ -260,7 +286,11 @@ export default function MetricsExplorer() {
       .then(d => {
         if (cancelled) return
         setCatalog(d)
-        setSelected((d.metrics || []).slice(0, 3).map(m => m.id))
+        setSelected(prev => {
+          const ids = new Set((d.metrics || []).map(m => m.id))
+          const valid = prev.filter(id => ids.has(id))
+          return valid.length ? valid : (d.metrics || []).slice(0, 3).map(m => m.id)
+        })
       })
       .catch(() => {
         if (!cancelled) setCatalog({ metrics: [], chats: [], users: [] })
@@ -271,6 +301,47 @@ export default function MetricsExplorer() {
   useEffect(() => {
     setHidden(new Set())
   }, [mode])
+
+  const buildShareParams = useCallback(() => {
+    const p = new URLSearchParams()
+    if (selected.length) p.set('m', selected.join(','))
+    if (mode !== 'metric') p.set('g', mode)
+    if (custom) {
+      p.set('from', String(custom.from))
+      p.set('to', String(custom.to))
+    } else if (period !== 'week') {
+      p.set('p', period)
+    }
+    if (chatsSel.length) p.set('c', chatsSel.join(','))
+    if (usersSel.length) p.set('u', usersSel.join(','))
+    if (limit !== 5) p.set('l', String(limit))
+    if (rank !== 'max') p.set('r', rank)
+    if (cumulative) p.set('cum', '1')
+    return p
+  }, [selected, mode, custom, period, chatsSel, usersSel, limit, rank, cumulative])
+
+  useEffect(() => {
+    setSearchParams(buildShareParams(), { replace: true })
+  }, [buildShareParams, setSearchParams])
+
+  const share = async () => {
+    const url = `${window.location.origin}/stats?${buildShareParams().toString()}`
+    setSharing(true)
+    try {
+      const d = await api.post('/api/shorten', { url })
+      await navigator.clipboard.writeText(d.short)
+      toast.success('Короткая ссылка скопирована')
+    } catch {
+      try {
+        await navigator.clipboard.writeText(url)
+        toast.info('Сокращатор недоступен — скопировал полную ссылку')
+      } catch {
+        toast.error('Не удалось скопировать ссылку')
+      }
+    } finally {
+      setSharing(false)
+    }
+  }
 
   useEffect(() => {
     if (!selected.length) return
@@ -471,21 +542,36 @@ export default function MetricsExplorer() {
             {cumulative ? 'накопительный рост' : 'прирост за интервал'}
           </p>
         </div>
-        <AnimatePresence mode="popLayout">
-          <motion.div
-            key={`${grandTotal}-${period}-${mode}`}
-            initial={{ scale: 0.6, opacity: 0, y: 6 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.8, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-            className="text-right"
+        <div className="flex items-start gap-2">
+          <motion.button
+            whileTap={{ scale: 0.85 }}
+            onClick={share}
+            disabled={sharing}
+            title="Скопировать короткую ссылку на этот вид"
+            className="p-1.5 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"
           >
-            <span className="text-spotify-green text-xl font-bold leading-none">
-              {formatNum(grandTotal)}
-            </span>
-            <span className="text-spotify-text text-[10px] block">за период</span>
-          </motion.div>
-        </AnimatePresence>
+            {sharing ? (
+              <span className="block w-4 h-4 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <span className="block text-base leading-none">🔗</span>
+            )}
+          </motion.button>
+          <AnimatePresence mode="popLayout">
+            <motion.div
+              key={`${grandTotal}-${period}-${mode}`}
+              initial={{ scale: 0.6, opacity: 0, y: 6 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+              className="text-right"
+            >
+              <span className="text-spotify-green text-xl font-bold leading-none">
+                {formatNum(grandTotal)}
+              </span>
+              <span className="text-spotify-text text-[10px] block">за период</span>
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-1.5">

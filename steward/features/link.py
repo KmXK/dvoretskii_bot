@@ -1,13 +1,9 @@
-import asyncio
-import json
 import logging
 import re
-import shlex
-from os import environ
-from urllib.parse import quote
 
 from steward.framework import Feature, FeatureContext, subcommand
 from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.shortener import ShortenerNotConfigured, shorten_url
 
 logger = logging.getLogger(__name__)
 
@@ -53,27 +49,11 @@ class LinkFeature(Feature):
         check_limit("link_per_user", 2, 20 * Duration.SECOND, name=str(ctx.user_id))
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
-        template = environ.get("SHORTENER_CURL_TEMPLATE")
-        if not template:
-            await ctx.reply("Сервис сокращения ссылок не настроен")
-            return
-        cmd = template.replace("{url}", quote(url, safe="")).replace(
-            "{short}", quote(short, safe="")
-        )
         try:
-            args = shlex.split(cmd)
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.error(f"Error: {stderr.decode().strip()}")
-                await ctx.reply("Ошибка сокращения ссылки")
-                return
-            result = json.loads(stdout.decode().strip())["result"]
+            result = await shorten_url(url, short)
             await ctx.reply(result)
+        except ShortenerNotConfigured:
+            await ctx.reply("Сервис сокращения ссылок не настроен")
         except Exception as e:
             logger.exception(e)
             await ctx.reply("Ошибка сокращения ссылки")
