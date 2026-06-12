@@ -295,6 +295,7 @@ export default function MetricsExplorer() {
         setSelected(prev => {
           const ids = new Set((d.metrics || []).map(m => m.id))
           const valid = prev.filter(id => ids.has(id))
+          if (valid.length === prev.length && valid.length > 0) return prev
           return valid.length ? valid : (d.metrics || []).slice(0, 3).map(m => m.id)
         })
       })
@@ -355,7 +356,7 @@ export default function MetricsExplorer() {
   }
 
   useEffect(() => {
-    if (!selected.length) return
+    if (catalog === null || !selected.length) return
     let cancelled = false
     setLoading(true)
     const params = new URLSearchParams({
@@ -385,7 +386,7 @@ export default function MetricsExplorer() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [selected, mode, period, custom, chatsSel, usersSel, limit, rank, toast])
+  }, [catalog, selected, mode, period, custom, chatsSel, usersSel, limit, rank, toast])
 
   const metricById = useMemo(
     () => Object.fromEntries((catalog?.metrics || []).map(m => [m.id, m])),
