@@ -797,7 +797,7 @@ export default function MetricsExplorer() {
                         activeDot={{ r: 4, fill: color, strokeWidth: 0 }}
                         animationDuration={600}
                         animationEasing="ease-out"
-                        isAnimationActive
+                        isAnimationActive={!drag}
                       />
                     )
                   })}
