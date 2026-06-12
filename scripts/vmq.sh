@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
 #
-# vmq.sh — query production metrics through the Grafana HTTP API (basic auth).
+# vmq.sh — query production metrics through the bot API (admin session cookie).
 #
-# Grafana proxies PromQL to its VictoriaMetrics datasource, so no SSH or direct
-# VM access is needed — just the Grafana login you already use in the browser.
+# The bot proxies PromQL to VictoriaMetrics via /api/metrics/vm/* (admin-only),
+# so no SSH or direct VM access is needed.
 #
 # Reads from ../.env:
-#   GRAFANA_URL       https://grafana.tg.kmxk.ru   (required)
-#   GRAFANA_USER      login                        (required)
-#   GRAFANA_PASSWORD  password                     (required)
-#   GRAFANA_DS_UID    datasource uid               (optional; auto-detected)
+#   PROD_API_URL      https://tg.kmxk.ru   (required; no trailing slash needed)
+#   PROD_BOT_TOKEN    prod bot token       (required; falls back to TELEGRAM_BOT_TOKEN)
+#   ADMIN_USER_ID     your telegram id     (required; must be a bot admin)
 #
 # Usage:
 #   ./vmq.sh '<promql>'                       instant query
 #   ./vmq.sh --range '<promql>' [STEP] [DUR]  range query (default last 1h, step 60s)
 #   ./vmq.sh --list                           list all metric names
 #   ./vmq.sh --labels '<metric>'              list label sets for a metric
-#   ./vmq.sh --datasources                    list datasources (debug)
 #
 # Output is raw JSON from the Prometheus/VictoriaMetrics HTTP API.
 
@@ -32,42 +30,27 @@ fi
 
 while IFS='=' read -r key val; do
   case "$key" in
-    GRAFANA_URL|GRAFANA_USER|GRAFANA_PASSWORD|GRAFANA_DS_UID)
+    PROD_API_URL|PROD_BOT_TOKEN|TELEGRAM_BOT_TOKEN|ADMIN_USER_ID)
       val="${val%$'\r'}"                 # strip trailing CR (Windows-edited .env)
       val="${val%\"}"; val="${val#\"}"   # strip surrounding quotes
       export "$key=$val"
       ;;
   esac
-done < <(grep -E '^[[:space:]]*GRAFANA_' "$ENV_FILE" | sed 's/^[[:space:]]*//')
+done < <(grep -E '^[[:space:]]*(PROD_API_URL|PROD_BOT_TOKEN|TELEGRAM_BOT_TOKEN|ADMIN_USER_ID)=' "$ENV_FILE" | sed 's/^[[:space:]]*//')
 
-: "${GRAFANA_URL:?GRAFANA_URL is not set in .env}"
-: "${GRAFANA_USER:?GRAFANA_USER is not set in .env}"
-: "${GRAFANA_PASSWORD:?GRAFANA_PASSWORD is not set in .env}"
-GRAFANA_URL="${GRAFANA_URL%/}"           # trim trailing slash
+BOT_TOKEN="${PROD_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
+: "${PROD_API_URL:?PROD_API_URL is not set in .env}"
+: "${BOT_TOKEN:?PROD_BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is not set in .env}"
+: "${ADMIN_USER_ID:?ADMIN_USER_ID is not set in .env}"
+PROD_API_URL="${PROD_API_URL%/}"         # trim trailing slash
 
-AUTH=(-u "${GRAFANA_USER}:${GRAFANA_PASSWORD}")
-CURL=(curl -fsS --max-time 30 "${AUTH[@]}")
+# Session cookie: "<user_id>:<ts>:<hmac-sha256(payload, bot_token)>" —
+# same scheme as steward/api/auth.py make_session_token().
+payload="${ADMIN_USER_ID}:$(date +%s)"
+sig="$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$BOT_TOKEN" | awk '{print $NF}')"
+COOKIE="dvoretskii_sid=${payload}:${sig}"
 
-graf() { "${CURL[@]}" "${GRAFANA_URL}$1"; }
-
-# Find the prometheus-type datasource uid once, unless pinned in .env.
-# Pass the parser via -c so curl's piped output stays on python's stdin.
-resolve_ds() {
-  [[ -n "${GRAFANA_DS_UID:-}" ]] && { printf '%s' "$GRAFANA_DS_UID"; return; }
-  graf "/api/datasources" | "$PY" -c 'import json,sys
-data=json.load(sys.stdin)
-uid=next((d["uid"] for d in data if d.get("type")=="prometheus"), None)
-print(uid) if uid else sys.exit("no prometheus datasource found")'
-}
-
-# Pick a python interpreter (only used to parse the datasource list).
-PY="$(command -v python3 || command -v python || true)"
-[[ -z "$PY" ]] && { echo "error: python not found (needed to parse datasource list)" >&2; exit 1; }
-
-vm() {
-  local uid; uid="$(resolve_ds)"
-  graf "/api/datasources/proxy/uid/${uid}$1"
-}
+vm() { curl -fsS --max-time 30 -H "Cookie: ${COOKIE}" "${PROD_API_URL}/api/metrics/vm$1"; }
 
 urlenc() {
   local s="$1" out="" c i
@@ -83,19 +66,18 @@ urlenc() {
 
 mode="${1:-}"
 case "$mode" in
-  --datasources) graf "/api/datasources" ;;
-  --list)        vm "/api/v1/label/__name__/values" ;;
+  --list)        vm "/label/__name__/values" ;;
   --labels)
     metric="${2:?usage: vmq.sh --labels <metric>}"
-    vm "/api/v1/series?match[]=$(urlenc "$metric")" ;;
+    vm "/series?match[]=$(urlenc "$metric")" ;;
   --range)
     q="${2:?usage: vmq.sh --range <promql> [step] [duration]}"
     step="${3:-60}"; dur="${4:-3600}"
     end="$(date +%s)"; start="$((end - dur))"
-    vm "/api/v1/query_range?query=$(urlenc "$q")&start=${start}&end=${end}&step=${step}" ;;
+    vm "/query_range?query=$(urlenc "$q")&start=${start}&end=${end}&step=${step}" ;;
   "")
-    echo "usage: vmq.sh '<promql>' | --range '<promql>' [step] [dur] | --list | --labels <metric> | --datasources" >&2
+    echo "usage: vmq.sh '<promql>' | --range '<promql>' [step] [dur] | --list | --labels <metric>" >&2
     exit 1 ;;
-  *) vm "/api/v1/query?query=$(urlenc "$mode")" ;;
+  *) vm "/query?query=$(urlenc "$mode")" ;;
 esac
 echo

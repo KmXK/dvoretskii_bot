@@ -177,7 +177,6 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 Caddy маршрутизация:
 
 - `${DOMAIN}` → `web:5173` (Mini App)
-- `grafana.${DOMAIN}` → `grafana:3000` (мониторинг)
 
 ## Модели данных (для API)
 

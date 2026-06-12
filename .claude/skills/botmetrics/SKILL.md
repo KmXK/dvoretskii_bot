@@ -1,17 +1,19 @@
 ---
 name: botmetrics
-description: Query dvoretskii_bot production metrics (Prometheus/VictoriaMetrics) through the Grafana HTTP API. Use when the user asks about metrics, traffic, message/handler/download counts, per-chat or per-user activity, or wants a PromQL query run against prod ("сколько сообщений", "посмотри метрики", "график по хендлерам", "how many downloads"). Optional args: a raw PromQL expression, or a metric name to inspect.
+description: Query dvoretskii_bot production metrics (Prometheus/VictoriaMetrics) through the bot's admin API. Use when the user asks about metrics, traffic, message/handler/download counts, per-chat or per-user activity, or wants a PromQL query run against prod ("сколько сообщений", "посмотри метрики", "график по хендлерам", "how many downloads"). Optional args: a raw PromQL expression, or a metric name to inspect.
 ---
 
-# Bot metrics (Prometheus → VictoriaMetrics → Grafana)
+# Bot metrics (Prometheus → VictoriaMetrics → bot API)
 
 The bot exposes Prometheus metrics on `:9090` (`steward/metrics/`, enabled via
 `METRICS_ENABLED=true`). VictoriaMetrics scrapes them every 15s and keeps 18
-months; Grafana (`grafana.<DOMAIN>`) reads from it.
+months.
 
 VictoriaMetrics is **only reachable inside the prod docker network** — there is
-no public route and no SSH for it. So we query through Grafana's HTTP API, which
-proxies PromQL to the VictoriaMetrics datasource and accepts basic auth.
+no public route and no SSH for it. We query through the bot's admin-only proxy
+endpoint `/api/metrics/vm/*` (`steward/api/metrics_explorer.py`,
+`handle_metrics_vm_proxy`), authenticated with a signed session cookie built
+from the bot token (same scheme as `scripts/api_admin.py`).
 
 ## Required `.env` data (what another dev must add)
 
@@ -19,23 +21,20 @@ The query script reads these from the project `.env` (gitignored — never commi
 real values). Without them the skill cannot run:
 
 ```sh
-GRAFANA_URL=https://grafana.tg.kmxk.ru   # Grafana base URL (no trailing slash needed)
-GRAFANA_USER=<login>                     # your Grafana login
-GRAFANA_PASSWORD=<password>              # your Grafana password
-# GRAFANA_DS_UID=<uid>                   # optional: pin datasource uid; auto-detected otherwise
+PROD_API_URL=https://tg.kmxk.ru   # prod webapp base URL
+PROD_BOT_TOKEN=<token>            # prod bot token (falls back to TELEGRAM_BOT_TOKEN)
+ADMIN_USER_ID=<telegram id>       # must be a bot admin (repo.db.admin_ids)
 ```
 
-These are the same credentials you use to log into Grafana in the browser.
-`GRAFANA_USER`/`GRAFANA_PASSWORD` already appear in `example.env` (they also seed
-the prod Grafana admin). If a query fails with HTTP 401, the password is wrong or
-missing; if `.env not found`, you're not in the project root.
+These are the same values `scripts/api_admin.py` uses. If a query fails with
+HTTP 401, the token is wrong; with 403, the user id is not a bot admin; if
+`.env not found`, you're not in the project root.
 
 ## How to query
 
 Use `scripts/vmq.sh` (bash). Output is raw JSON from the Prometheus HTTP API.
 
 ```sh
-bash scripts/vmq.sh --datasources         # sanity check: auth works, lists datasources
 bash scripts/vmq.sh --list                # all metric names currently stored
 bash scripts/vmq.sh --labels <metric>     # every label set (series) for a metric
 bash scripts/vmq.sh '<promql>'            # instant query
@@ -100,9 +99,8 @@ recently", and `sum by (...)` to aggregate away `user_id`/`chat_id` cardinality.
 
 ## What NOT to do
 
-- This is **read-only**. Only hit `/api/v1/query`, `/query_range`, `/series`,
-  `/label/.../values`, `/api/datasources`. Never POST, create, or edit anything
-  in Grafana or VictoriaMetrics.
+- This is **read-only**. The proxy only allows GET on `query`, `query_range`,
+  `series`, `labels`, `label/.../values`. Never try to POST or write anything.
 - Don't put credentials on the command line or in committed files — they live in
   `.env` only.
 - Metric names/labels evolve; trust `--list`/`--labels` over this table, and the

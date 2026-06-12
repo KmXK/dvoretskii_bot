@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import BackButton from '../components/BackButton'
 import MessagesTimeseries from '../components/stats/MessagesTimeseries'
+import MetricsExplorer from '../components/stats/MetricsExplorer'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -171,18 +171,12 @@ export default function StatsPage() {
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
-      <div className="flex items-start justify-between mb-1">
-        <h1 className="text-2xl font-bold text-white">Статистика</h1>
-        <Link
-          to="/grafana"
-          className="flex items-center gap-1.5 bg-spotify-dark hover:bg-spotify-gray text-spotify-text hover:text-white text-xs font-medium px-3 py-2 rounded-full transition-colors"
-        >
-          <span>📊</span> Grafana
-        </Link>
-      </div>
+      <h1 className="text-2xl font-bold text-white mb-1">Статистика</h1>
       <p className="text-spotify-text text-sm mb-4">
         {data ? `${data.scope} · ${data.period}` : 'Загрузка...'}
       </p>
+
+      <MetricsExplorer />
 
       {chats.length > 1 && (
         <div className="flex gap-1 mb-3 bg-spotify-dark rounded-xl p-1 overflow-x-auto">

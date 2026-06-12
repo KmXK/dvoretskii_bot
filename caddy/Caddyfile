@@ -32,9 +32,3 @@
     import logging
     tls {$ACME_EMAIL}
 }
-
-grafana.{$DOMAIN:localhost} {
-    reverse_proxy grafana:3000
-    import logging
-    tls {$ACME_EMAIL}
-}

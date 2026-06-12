@@ -20,7 +20,6 @@ const FeaturesPage = lazy(() => import('./pages/FeaturesPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const RemindersPage = lazy(() => import('./pages/RemindersPage'))
 const StatsPage = lazy(() => import('./pages/StatsPage'))
-const GrafanaPage = lazy(() => import('./pages/GrafanaPage'))
 const ToolsPage = lazy(() => import('./pages/ToolsPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 const TodoPage = lazy(() => import('./pages/TodoPage'))
@@ -64,7 +63,6 @@ export default function App() {
                     <Route path="/birthdays" element={<BirthdaysPage />} />
                     <Route path="/bills" element={<BillsPage />} />
                     <Route path="/stats" element={<StatsPage />} />
-                    <Route path="/grafana" element={<GrafanaPage />} />
                     <Route path="/fuck/assets" element={<FuckAssetsPage />} />
                     <Route path="/fuck/new" element={<FuckCreatePage />} />
                     <Route path="/fuck/assets/:id/edit" element={<FuckCreatePage />} />

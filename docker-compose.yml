@@ -12,7 +12,6 @@ services:
       - ./db.json:/app/db.json
       - telegram_data:/data:ro
       - ./data:/app/data
-      - grafana_jwt:/jwt:ro
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_LOGIN_CLIENT_ID=${TELEGRAM_LOGIN_CLIENT_ID:-}
@@ -41,7 +40,7 @@ services:
       - METRICS_PORT=${METRICS_PORT:-9090}
       - API_PORT=${API_PORT:-8080}
       - FLARESOLVERR_URL=http://flaresolverr:8191/v1
-      - GRAFANA_JWT_KEY_FILE=/jwt/private.pem
+      - VICTORIAMETRICS_URL=http://victoriametrics:8428
     expose:
       - "${API_PORT:-8080}"
     depends_on:
@@ -147,55 +146,10 @@ services:
       - bot
     restart: on-failure
 
-  grafana-jwt-keygen:
-    build: .
-    profiles:
-      - metrics
-    command: ["python", "scripts/gen_grafana_jwt_keys.py"]
-    volumes:
-      - grafana_jwt:/jwt
-    networks:
-      - bot
-    restart: "no"
-
-  grafana:
-    image: grafana/grafana:main-ubuntu
-    container_name: grafana
-    profiles:
-      - metrics
-    environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SECURITY_ALLOW_EMBEDDING=true
-      - GF_AUTH_JWT_ENABLED=true
-      - GF_AUTH_JWT_URL_LOGIN=true
-      - GF_AUTH_JWT_AUTO_SIGN_UP=true
-      - GF_AUTH_JWT_USERNAME_CLAIM=login
-      - GF_AUTH_JWT_EMAIL_CLAIM=email
-      - GF_AUTH_JWT_JWK_SET_FILE=/jwt/jwks.json
-      - GF_AUTH_JWT_EXPECT_CLAIMS={"iss":"dvoretskii-bot"}
-      - GF_AUTH_JWT_ROLE_ATTRIBUTE_PATH=role
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana_jwt:/jwt:ro
-    networks:
-      - bot
-    depends_on:
-      victoriametrics:
-        condition: service_started
-      grafana-jwt-keygen:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
 volumes:
   telegram_data:
   bot_logs:
   victoriametrics_data:
-  grafana_data:
-  grafana_jwt:
 
 networks:
   bot:

@@ -45,8 +45,6 @@ services:
     depends_on:
       web:
         condition: service_completed_successfully
-      grafana:
-        condition: service_started
 
   config-generator:
     build:
@@ -78,12 +76,6 @@ services:
         condition: service_completed_successfully
     volumes:
       - config-volume:/fluent-bit/etc:ro
-
-  grafana:
-    environment:
-      - GF_SERVER_ROOT_URL=https://grafana.${DOMAIN}
-    expose:
-      - "3000"
 
 volumes:
   web_dist:

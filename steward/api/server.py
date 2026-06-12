@@ -14,6 +14,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from steward.data.repository import Repository
 from steward.helpers.webapp import get_webapp_deep_link
+from steward.api.metrics_explorer import (
+    handle_metrics_catalog,
+    handle_metrics_range,
+    handle_metrics_vm_proxy,
+)
 from steward.metrics.base import MetricsEngine
 from steward.poker.room_manager import poker_ws_handler, _manager as poker_manager
 from steward.blackjack.room_manager import blackjack_ws_handler
@@ -686,7 +691,7 @@ import time as _time
 import uuid
 import re
 from os import environ
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl
 
 from aiohttp import ClientSession
 
@@ -1956,72 +1961,6 @@ async def handle_messages_timeseries(request: web.Request):
     })
 
 
-_GRAFANA_JWT_TTL = 600
-_GRAFANA_JWT_KID = "dvoretskii-bot-1"
-_grafana_jwt_key: str | None = None
-
-
-def _grafana_private_key() -> str | None:
-    global _grafana_jwt_key
-    if _grafana_jwt_key is None:
-        path = environ.get("GRAFANA_JWT_KEY_FILE", "/jwt/private.pem")
-        try:
-            with open(path) as f:
-                _grafana_jwt_key = f.read()
-        except OSError:
-            return None
-    return _grafana_jwt_key
-
-
-def _grafana_url() -> str:
-    web_app_url = environ.get("WEB_APP_URL", "")
-    parts = urlsplit(web_app_url)
-    if not parts.netloc:
-        return ""
-    return f"{parts.scheme or 'https'}://grafana.{parts.netloc}"
-
-
-async def handle_grafana_token(request: web.Request):
-    """Короткоживущий JWT для входа в Grafana (auth.jwt + url_login).
-
-    Выдаётся только юзерам, состоящим хотя бы в одном чате бота.
-    Админы бота получают роль Admin, остальные — Viewer.
-    """
-    repository: Repository = request.app["repository"]
-    viewer_id = session_user_id(request)
-    if viewer_id is None:
-        return web.json_response({"error": "unauthorized"}, status=401)
-    user = next((u for u in repository.db.users if u.id == viewer_id), None)
-    if user is None or not user.chat_ids:
-        return web.json_response({"error": "not a member"}, status=403)
-
-    key = _grafana_private_key()
-    grafana_url = _grafana_url()
-    if not key or not grafana_url:
-        return web.json_response({"error": "grafana auth is not configured"}, status=503)
-
-    import jwt as pyjwt
-
-    now = int(_time.time())
-    role = "Admin" if viewer_id in getattr(repository.db, "admin_ids", set()) else "Viewer"
-    claims = {
-        "iss": "dvoretskii-bot",
-        "sub": str(viewer_id),
-        "login": user.username or f"tg{viewer_id}",
-        "name": user.first_name or user.username or str(viewer_id),
-        "email": f"{viewer_id}@tg.local",
-        "role": role,
-        "iat": now,
-        "exp": now + _GRAFANA_JWT_TTL,
-    }
-    token = pyjwt.encode(claims, key, algorithm="RS256", headers={"kid": _GRAFANA_JWT_KID})
-    return web.json_response({
-        "token": token,
-        "url": grafana_url,
-        "expires_in": _GRAFANA_JWT_TTL,
-    })
-
-
 def _session_user_id(request: web.Request) -> int | None:
     """Helper alias for handlers — middleware already enforces 401 if absent."""
     return session_user_id(request)
@@ -2637,7 +2576,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_delete("/api/birthdays", handle_birthday_delete)
     app.router.add_get("/api/chat-stats", handle_chat_stats)
     app.router.add_get("/api/messages-timeseries", handle_messages_timeseries)
-    app.router.add_get("/api/grafana/token", handle_grafana_token)
+    app.router.add_get("/api/metrics/catalog", handle_metrics_catalog)
+    app.router.add_get("/api/metrics/range", handle_metrics_range)
+    app.router.add_get("/api/metrics/vm/{vm_path:.+}", handle_metrics_vm_proxy)
     app.router.add_get("/api/army", handle_army)
     app.router.add_get("/api/todos", handle_todos)
     app.router.add_patch("/api/todos/{id}", handle_todo_toggle)
