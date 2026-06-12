@@ -29,6 +29,12 @@ _NOISE_PREFIXES = ("python_", "process_", "go_", "scrape_", "vm", "flag")
 _NOISE_SUFFIXES = ("_created", "_bucket")
 _NOISE_EXACT = {"up"}
 _NAME_RE = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
+_LABEL_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_VALUE_RE = re.compile(r"^[\w .,:@/+-]{1,64}$")
+
+# Лейблы, которые не являются «измерениями» метрики
+_STD_LABELS = {"__name__", "chat_id", "chat_name", "user_id", "user_name", "instance", "job"}
+_MAX_DIM_VALUES = 10
 
 _METRIC_META = {
     "bot_messages_total": ("Сообщения", "💬"),
@@ -48,6 +54,15 @@ _METRIC_META = {
     "casino_bonus_total": ("Казино: бонусы", "🎁"),
     "bot_handler_calls_total": ("Вызовы хендлеров", "⚙️"),
 }
+
+# Известные значения лейблов-измерений: (метрика, лейбл, значение) -> (имя, эмодзи)
+_SUB_META = {
+    ("bot_messages_total", "action_type", "chat"): ("Сообщения: текст", "💬"),
+    ("bot_messages_total", "action_type", "reaction"): ("Реакции", "❤️"),
+    ("bot_messages_total", "action_type", "callback"): ("Кнопки", "🔘"),
+    ("bot_messages_total", "action_type", "message_edited"): ("Правки", "✏️"),
+}
+_SUB_ORDER = {k: i for i, k in enumerate(_SUB_META)}
 
 _WINDOWS = {
     "day": (86400, 1800),
@@ -116,10 +131,8 @@ def _sample_visible(
 
 
 async def _discover(metrics: MetricsEngine, name_regex: str):
-    promql = (
-        f"group by (__name__, chat_id, user_id) "
-        f'(last_over_time({{__name__=~"{name_regex}"}}[{_CATALOG_LOOKBACK}]))'
-    )
+    # Без group by — нужны все лейблы, чтобы раскрыть измерения (action_type и т.п.)
+    promql = f'last_over_time({{__name__=~"{name_regex}"}}[{_CATALOG_LOOKBACK}])'
     return await metrics.query(promql)
 
 
@@ -135,13 +148,19 @@ def _collect_metric_info(
         name = s.labels.get("__name__", "")
         if not name or _is_noise(name):
             continue
-        entry = info.setdefault(name, {"has_chat": False, "has_user": False, "visible": False})
+        entry = info.setdefault(
+            name, {"has_chat": False, "has_user": False, "visible": False, "dims": {}}
+        )
         if s.labels.get("chat_id"):
             entry["has_chat"] = True
         if s.labels.get("user_id"):
             entry["has_user"] = True
         if _sample_visible(s.labels, chats, users, viewer_id, admin):
             entry["visible"] = True
+            for k, v in s.labels.items():
+                if k in _STD_LABELS or not v:
+                    continue
+                entry["dims"].setdefault(k, set()).add(v)
     return {name: e for name, e in info.items() if e["visible"]}
 
 
@@ -166,14 +185,29 @@ async def handle_metrics_catalog(request: web.Request):
     items = []
     for name in sorted(info, key=lambda n: (known_order.get(n, len(known_order)), n)):
         label, emoji, known = _metric_meta(name)
-        items.append({
+        base = {
             "name": name,
-            "label": label,
-            "emoji": emoji,
             "known": known,
             "has_chat": info[name]["has_chat"],
             "has_user": info[name]["has_user"],
-        })
+        }
+        items.append({**base, "id": name, "label": label, "emoji": emoji})
+        for dim in sorted(info[name]["dims"]):
+            values = info[name]["dims"][dim]
+            if not _LABEL_RE.match(dim) or len(values) > _MAX_DIM_VALUES:
+                continue
+            sub_sort = lambda v: (_SUB_ORDER.get((name, dim, v), len(_SUB_ORDER)), v)
+            for value in sorted(values, key=sub_sort):
+                if not _VALUE_RE.match(value):
+                    continue
+                sub = _SUB_META.get((name, dim, value))
+                items.append({
+                    **base,
+                    "id": f"{name}|{dim}={value}",
+                    "label": sub[0] if sub else f"{label} · {value}",
+                    "emoji": sub[1] if sub else emoji,
+                    "known": bool(sub),
+                })
 
     def _user_label(u) -> str:
         return u.first_name or (f"@{u.username}" if u.username else str(u.id))
@@ -213,6 +247,19 @@ def _parse_ids(raw: str) -> set[int]:
     return out
 
 
+def _parse_metric_id(raw: str) -> tuple[str, tuple[str, str] | None] | None:
+    """\"bot_messages_total|action_type=reaction\" -> (имя, (лейбл, значение))."""
+    base, _, flt = raw.partition("|")
+    if not _NAME_RE.match(base) or _is_noise(base):
+        return None
+    if not flt:
+        return base, None
+    key, sep, value = flt.partition("=")
+    if not sep or not _LABEL_RE.match(key) or key in _STD_LABELS or not _VALUE_RE.match(value):
+        return None
+    return base, (key, value)
+
+
 def _metric_exprs(
     name: str,
     entry: dict,
@@ -223,15 +270,22 @@ def _metric_exprs(
     step_seconds: int,
     chat_filtered: bool,
     user_filtered: bool,
+    extra: tuple[str, str] | None = None,
 ) -> list[str]:
     """eff_* == None — без ограничения (только у админа), пустой set — пусто."""
     rng = f"[{step_seconds}s]"
+    extra_parts = [f'{extra[0]}="{extra[1]}"'] if extra else []
+
+    def sel(parts: list[str]) -> str:
+        allp = extra_parts + parts
+        return "{" + ", ".join(allp) + "}" if allp else ""
+
     if chat_filtered and not entry["has_chat"]:
         return []
     if user_filtered and not entry["has_user"]:
         return []
     if admin and eff_chats is None and eff_users is None:
-        return [f"increase({name}{rng})"]
+        return [f"increase({name}{sel([])}{rng})"]
 
     exprs = []
     if entry["has_chat"]:
@@ -248,20 +302,19 @@ def _metric_exprs(
             else:
                 skip_main = True
         if not skip_main:
-            sel = "{" + ", ".join(parts) + "}" if parts else ""
-            exprs.append(f"increase({name}{sel}{rng})")
+            exprs.append(f"increase({name}{sel(parts)}{rng})")
         if not chat_filtered and not admin:
             if not user_filtered or (eff_users and viewer_id in eff_users):
-                exprs.append(
-                    f'increase({name}{{chat_id="inline",user_id="{viewer_id}"}}{rng})'
-                )
+                inline_parts = ['chat_id="inline"', f'user_id="{viewer_id}"']
+                exprs.append(f"increase({name}{sel(inline_parts)}{rng})")
     elif entry["has_user"]:
         if eff_users is None:
-            exprs.append(f"increase({name}{rng})")
+            exprs.append(f"increase({name}{sel([])}{rng})")
         elif eff_users:
-            exprs.append(f'increase({name}{{user_id=~"{_ids_regex(eff_users)}"}}{rng})')
+            user_parts = [f'user_id=~"{_ids_regex(eff_users)}"']
+            exprs.append(f"increase({name}{sel(user_parts)}{rng})")
     elif admin:
-        exprs.append(f"increase({name}{rng})")
+        exprs.append(f"increase({name}{sel([])}{rng})")
     return exprs
 
 
@@ -291,10 +344,12 @@ async def handle_metrics_range(request: web.Request):
     if viewer_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    requested = [
-        m for m in request.query.get("metrics", "").split(",")
-        if m and _NAME_RE.match(m) and not _is_noise(m)
-    ][:_MAX_METRICS]
+    requested = []
+    for raw in request.query.get("metrics", "").split(","):
+        parsed = _parse_metric_id(raw) if raw else None
+        if parsed is not None:
+            requested.append((raw, parsed[0], parsed[1]))
+    requested = requested[:_MAX_METRICS]
     if not requested:
         return web.json_response({"error": "metrics required"}, status=400)
 
@@ -359,14 +414,14 @@ async def handle_metrics_range(request: web.Request):
         eff_chats = chats & chat_filter if chat_filter else chats
         eff_users = users & user_filter if user_filter else users
 
-    name_regex = "^(" + "|".join(requested) + ")$"
+    name_regex = "^(" + "|".join(sorted({base for _, base, _ in requested})) + ")$"
     try:
         samples = await _discover(metrics, name_regex)
     except Exception:
         logger.exception("metrics range discovery failed")
         samples = []
     info = _collect_metric_info(samples, chats, users, viewer_id, admin)
-    visible_metrics = [m for m in requested if m in info]
+    visible_metrics = [(mid, base, extra) for mid, base, extra in requested if base in info]
 
     end = (end_ts // step_seconds) * step_seconds
     start = end - (window_seconds // step_seconds) * step_seconds + step_seconds
@@ -379,26 +434,33 @@ async def handle_metrics_range(request: web.Request):
         "metric": "sum",
     }[mode]
 
-    async def _query_metric(name: str):
+    async def _query_metric(item):
+        mid, base, extra = item
         exprs = _metric_exprs(
-            name, info[name], eff_chats, eff_users, viewer_id, admin,
-            step_seconds, bool(chat_filter), bool(user_filter),
+            base, info[base], eff_chats, eff_users, viewer_id, admin,
+            step_seconds, bool(chat_filter), bool(user_filter), extra,
         )
         if not exprs:
-            return name, []
+            return mid, base, extra, []
         promql = f"{group_by} ({' or '.join(exprs)})"
         try:
-            return name, await metrics.query_range(promql, start, end, step_seconds)
+            return mid, base, extra, await metrics.query_range(promql, start, end, step_seconds)
         except Exception:
-            logger.exception("metrics range query failed: %s", name)
-            return name, []
+            logger.exception("metrics range query failed: %s", mid)
+            return mid, base, extra, []
 
     results = await asyncio.gather(*(_query_metric(m) for m in visible_metrics))
 
     chat_names = {str(c.id): c.name for c in repository.db.chats}
     merged: dict[str, dict] = {}
-    for metric_name, series_list in results:
-        m_label, m_emoji, _ = _metric_meta(metric_name)
+    for mid, base, extra, series_list in results:
+        base_label, base_emoji, _ = _metric_meta(base)
+        if extra and (base, extra[0], extra[1]) in _SUB_META:
+            m_label, m_emoji = _SUB_META[(base, extra[0], extra[1])]
+        elif extra:
+            m_label, m_emoji = f"{base_label} · {extra[1]}", base_emoji
+        else:
+            m_label, m_emoji = base_label, base_emoji
         for s in series_list:
             if mode == "chat":
                 cid = s.labels.get("chat_id", "")
@@ -413,7 +475,7 @@ async def handle_metrics_range(request: web.Request):
                 label = s.labels.get("user_name") or key
                 emoji = "👤"
             else:
-                key, label, emoji = metric_name, m_label, m_emoji
+                key, label, emoji = mid, m_label, m_emoji
             entry = merged.setdefault(key, {
                 "key": key,
                 "label": label,

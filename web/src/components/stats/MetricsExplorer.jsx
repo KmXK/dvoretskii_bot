@@ -260,7 +260,7 @@ export default function MetricsExplorer() {
       .then(d => {
         if (cancelled) return
         setCatalog(d)
-        setSelected((d.metrics || []).slice(0, 3).map(m => m.name))
+        setSelected((d.metrics || []).slice(0, 3).map(m => m.id))
       })
       .catch(() => {
         if (!cancelled) setCatalog({ metrics: [], chats: [], users: [] })
@@ -305,8 +305,8 @@ export default function MetricsExplorer() {
     return () => { cancelled = true }
   }, [selected, mode, period, custom, chatsSel, usersSel, limit, rank, toast])
 
-  const metricByName = useMemo(
-    () => Object.fromEntries((catalog?.metrics || []).map(m => [m.name, m])),
+  const metricById = useMemo(
+    () => Object.fromEntries((catalog?.metrics || []).map(m => [m.id, m])),
     [catalog],
   )
 
@@ -372,6 +372,14 @@ export default function MetricsExplorer() {
     })
   }
 
+  const soloSeries = (key) => {
+    const others = (data?.series || []).map(s => s.key).filter(k => k !== key)
+    setHidden(prev => {
+      const isSolo = !prev.has(key) && others.every(k => prev.has(k))
+      return isSolo ? new Set() : new Set(others)
+    })
+  }
+
   const togglePanel = key => {
     setOpenPanel(p => (p === key ? null : key))
     if (key === 'range' && data?.buckets?.length) {
@@ -423,7 +431,7 @@ export default function MetricsExplorer() {
   const hasSeries = !loading && chartData.length > 0 && (data?.series?.length || 0) > 0
   const beyondTop = Math.max(0, (data?.series_total || 0) - (data?.series?.length || 0))
 
-  const selectedMeta = selected.map(n => metricByName[n]).filter(Boolean)
+  const selectedMeta = selected.map(n => metricById[n]).filter(Boolean)
   const rangeLabel = custom
     ? `${formatShortDate(custom.from)} – ${formatShortDate(custom.to)}`
     : PERIODS.find(p => p.key === period)?.label
@@ -437,7 +445,11 @@ export default function MetricsExplorer() {
 
   const chatItems = (catalog?.chats || []).map(c => ({ key: c.id, label: c.name, emoji: '💬' }))
   const userItems = (catalog?.users || []).map(u => ({ key: u.id, label: u.name, emoji: '👤' }))
-  const metricItems = (catalog?.metrics || []).map(m => ({ key: m.name, label: m.label, emoji: m.emoji }))
+  const metricItems = (catalog?.metrics || []).map(m => ({
+    key: m.id,
+    label: m.id.includes('|') ? `· ${m.label}` : m.label,
+    emoji: m.emoji,
+  }))
 
   return (
     <motion.div
@@ -476,30 +488,10 @@ export default function MetricsExplorer() {
         </AnimatePresence>
       </div>
 
-      <div className="relative flex bg-spotify-black/50 rounded-lg p-0.5 mb-2">
-        {MODES.map(m => (
-          <button
-            key={m.key}
-            onClick={() => setMode(m.key)}
-            className="relative flex-1 py-1.5 text-[10px] font-medium"
-          >
-            {mode === m.key && (
-              <motion.div
-                layoutId="mx-mode-pill"
-                className="absolute inset-0 bg-spotify-green rounded-md"
-                transition={spring}
-              />
-            )}
-            <span className={`relative z-10 transition-colors ${
-              mode === m.key ? 'text-black font-semibold' : 'text-spotify-text'
-            }`}>
-              {m.label}
-            </span>
-          </button>
-        ))}
-      </div>
-
       <div className="flex flex-wrap gap-1.5">
+        <ToolbarButton active={openPanel === 'mode'} onClick={() => togglePanel('mode')}>
+          ↔ {MODES.find(m => m.key === mode)?.label}
+        </ToolbarButton>
         <ToolbarButton active={openPanel === 'range' || !!custom} onClick={() => togglePanel('range')}>
           🕐 {rangeLabel}
         </ToolbarButton>
@@ -525,6 +517,25 @@ export default function MetricsExplorer() {
       </div>
 
       <AnimatePresence initial={false} mode="wait">
+        {openPanel === 'mode' && (
+          <PanelShell key="mode">
+            <div className="p-1">
+              {MODES.map(m => (
+                <motion.button
+                  key={m.key}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => { setMode(m.key); setOpenPanel(null) }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
+                    mode === m.key ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <span className="flex-1">{m.label}</span>
+                  {mode === m.key && <span className="text-spotify-green text-[10px]">✓</span>}
+                </motion.button>
+              ))}
+            </div>
+          </PanelShell>
+        )}
         {openPanel === 'range' && (
           <PanelShell key="range">
             <div className="p-2 space-y-2">
@@ -810,22 +821,38 @@ export default function MetricsExplorer() {
               <table className="w-full text-[10px]">
                 <thead>
                   <tr className="text-spotify-text text-left">
-                    <th className="font-medium pb-1 pr-2"></th>
+                    <th className="font-medium pb-1 pr-2">
+                      <AnimatePresence>
+                        {hidden.size > 0 && (
+                          <motion.button
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -6 }}
+                            whileTap={{ scale: 0.93 }}
+                            onClick={() => setHidden(new Set())}
+                            className="text-spotify-green font-medium normal-case"
+                          >
+                            ↺ Показать все
+                          </motion.button>
+                        )}
+                      </AnimatePresence>
+                    </th>
                     <th className="font-medium pb-1 pr-2 text-right">Сумма</th>
                     <th className="font-medium pb-1 pr-2 text-right">Сред</th>
-                    <th className="font-medium pb-1 text-right">Макс</th>
+                    <th className="font-medium pb-1 pr-2 text-right">Макс</th>
+                    <th className="font-medium pb-1 text-right"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {legendRows.map((s, i) => {
                     const color = LINE_COLORS[i % LINE_COLORS.length]
                     const isHidden = hidden.has(s.key)
-                    const meta = mode === 'metric' ? metricByName[s.key] : null
+                    const meta = mode === 'metric' ? metricById[s.key] : null
                     return (
                       <tr
                         key={s.key}
                         onClick={() => toggleSeries(s.key)}
-                        className={`cursor-pointer border-t border-white/5 transition-opacity hover:bg-white/5 ${
+                        className={`group cursor-pointer border-t border-white/5 transition-opacity hover:bg-white/5 ${
                           isHidden ? 'opacity-40' : 'opacity-100'
                         }`}
                       >
@@ -842,7 +869,16 @@ export default function MetricsExplorer() {
                         </td>
                         <td className="py-1.5 pr-2 text-right text-white font-medium">{formatNum(s.total)}</td>
                         <td className="py-1.5 pr-2 text-right text-spotify-text">{formatNum(s.avg)}</td>
-                        <td className="py-1.5 text-right text-spotify-text">{formatNum(s.max)}</td>
+                        <td className="py-1.5 pr-2 text-right text-spotify-text">{formatNum(s.max)}</td>
+                        <td className="py-1.5 text-right">
+                          <button
+                            onClick={e => { e.stopPropagation(); soloSeries(s.key) }}
+                            className="text-spotify-text hover:text-spotify-green opacity-60 group-hover:opacity-100 transition-opacity"
+                            title="Показать только эту линию"
+                          >
+                            только
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
