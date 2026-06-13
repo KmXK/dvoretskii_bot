@@ -708,6 +708,50 @@ class BillsFeature(Feature):
 
     # -- Common dispatch helpers --
 
+    async def _send_view(
+        self,
+        ctx: FeatureContext,
+        rich_md: str,
+        fallback_md: str,
+        *,
+        keyboard: Keyboard | None = None,
+        edit: bool,
+    ) -> None:
+        """Render a /bills view as a native sendRichMessage table, falling back to
+        the monospace Markdown body on any failure (old API / unsupported client).
+
+        Editing in place uses editMessageText with a rich_message (works with a
+        reply_markup, like /army); a fresh send uses sendRichMessage. Either way,
+        any TelegramError drops to ctx.edit/ctx.reply so the keyboard is preserved.
+        """
+        import telegram
+
+        markup = keyboard.to_markup().to_dict() if keyboard is not None else None
+        cq = ctx.callback_query
+        if edit and cq is not None and cq.message is not None:
+            api_kwargs: dict = {
+                "chat_id": cq.message.chat_id,
+                "message_id": cq.message.message_id,
+                "rich_message": {"markdown": rich_md},
+            }
+            if markup is not None:
+                api_kwargs["reply_markup"] = markup
+            try:
+                await ctx.bot.do_api_request("editMessageText", api_kwargs=api_kwargs)
+            except telegram.error.TelegramError as e:
+                logger.warning("bills rich edit failed, fallback to markdown: %s", e)
+                await ctx.edit(fallback_md, keyboard=keyboard)
+            return
+
+        api_kwargs = {"chat_id": ctx.chat_id, "rich_message": {"markdown": rich_md}}
+        if markup is not None:
+            api_kwargs["reply_markup"] = markup
+        try:
+            await ctx.bot.do_api_request("sendRichMessage", api_kwargs=api_kwargs)
+        except telegram.error.TelegramError as e:
+            logger.warning("bills rich send failed, fallback to markdown: %s", e)
+            await ctx.reply(fallback_md, keyboard=keyboard)
+
     async def _show_overview(self, ctx: FeatureContext, all_mode: bool):
         await self._render_overview(ctx, all_mode=all_mode, edit=False)
 
@@ -769,10 +813,11 @@ class BillsFeature(Feature):
             self.cb("bills:new").button("➕ Новый счёт"),
         ])
         keyboard = Keyboard.grid(rows)
-        if edit:
-            await ctx.edit(text, keyboard=keyboard)
-        else:
-            await ctx.reply(text, keyboard=keyboard)
+        rich = fmt.format_overview_rich(
+            bills, person.id if person else None, by_id,
+            self.repository.db.bill_payments_v2, all_mode=all_mode,
+        )
+        await self._send_view(ctx, rich, text, keyboard=keyboard, edit=edit)
 
     def _page_nav_factory(self, view: str):
         def make(p: int, label: str, *, noop: bool = False):
@@ -827,9 +872,12 @@ class BillsFeature(Feature):
             return
         by_id = self._persons()
         payments = self.repository.db.bill_payments_v2
-        await ctx.reply(
+        await self._send_view(
+            ctx,
+            fmt.format_bill_detail_rich(bill, pid, by_id, payments),
             fmt.format_bill_detail(bill, pid, by_id, payments),
             keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
+            edit=False,
         )
 
     async def _start_create(self, ctx: FeatureContext, name: str):
@@ -1042,12 +1090,16 @@ class BillsFeature(Feature):
         if not bills:
             await ctx.edit("Нет открытых счетов.")
             return
-        text = fmt.format_pairs(
-            bills, self._persons(), self.repository.db.bill_payments_v2,
-            all_mode=False,
-        )
+        by_id = self._persons()
+        payments = self.repository.db.bill_payments_v2
         kb = Keyboard.row(self.cb("bills:overview").button("« Назад"))
-        await ctx.edit(text, keyboard=kb)
+        await self._send_view(
+            ctx,
+            fmt.format_pairs_rich(bills, by_id, payments, all_mode=False),
+            fmt.format_pairs(bills, by_id, payments, all_mode=False),
+            keyboard=kb,
+            edit=True,
+        )
 
     @on_callback("bills:page", schema="<view:str>|<page:int>")
     async def on_page(self, ctx: FeatureContext, view: str, page: int):
@@ -1119,9 +1171,12 @@ class BillsFeature(Feature):
             return
         by_id = self._persons()
         payments = self.repository.db.bill_payments_v2
-        await ctx.edit(
+        await self._send_view(
+            ctx,
+            fmt.format_bill_detail_rich(bill, pid, by_id, payments),
             fmt.format_bill_detail(bill, pid, by_id, payments),
             keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
+            edit=True,
         )
 
     @on_callback(
@@ -1220,9 +1275,12 @@ class BillsFeature(Feature):
             pid = person.id if person else None
             by_id = self._persons()
             payments = self.repository.db.bill_payments_v2
-            await ctx.edit(
+            await self._send_view(
+                ctx,
+                fmt.format_bill_detail_rich(bill, pid, by_id, payments),
                 fmt.format_bill_detail(bill, pid, by_id, payments),
                 keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
+                edit=True,
             )
 
     @on_callback("bills:pay_start", schema="<bill_id:int>")

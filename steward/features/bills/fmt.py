@@ -141,19 +141,33 @@ def _short_name(person_id: str, by_id: dict[str, BillPerson], max_len: int = 14)
     return name[:max_len] if len(name) > max_len else name
 
 
-def _debt_table(debts: dict[str, dict[str, int]], by_id: dict[str, BillPerson], currency: str = "BYN") -> str:
+def _rich_table(headers: list[str], rows: list[list[str]]) -> str:
+    """CommonMark pipe table for native sendRichMessage. Cells escaped via cell_md
+    (handles the | row-separator + markdown specials + newlines)."""
+    head = "| " + " | ".join(cell_md(h) for h in headers) + " |"
+    sep = "|" + "|".join("---" for _ in headers) + "|"
+    body = ["| " + " | ".join(cell_md(str(c)) for c in r) + " |" for r in rows]
+    return "\n".join([head, sep, *body])
+
+
+def _debt_rows(debts: dict[str, dict[str, int]], by_id: dict[str, BillPerson], currency: str) -> list[list[str]]:
     rows = []
     for debtor, creds in sorted(debts.items()):
         for creditor, amount in sorted(creds.items(), key=lambda x: -x[1]):
             if amount <= 0:
                 continue
             rows.append([pname(debtor, by_id), "→", pname(creditor, by_id), minor_to_display(amount, currency)])
+    return rows
+
+
+def _debt_table(debts: dict[str, dict[str, int]], by_id: dict[str, BillPerson], currency: str = "BYN") -> str:
+    rows = _debt_rows(debts, by_id, currency)
     if not rows:
         return ""
     return _mono_table(["Кто", "", "Кому", "Сумма"], rows)
 
 
-def _tx_table(txs: list, by_id: dict[str, BillPerson], currency: str = "BYN") -> str:
+def _tx_rows(txs: list, by_id: dict[str, BillPerson], currency: str) -> list[list[str]]:
     rows = []
     for tx in txs:
         total = minor_to_display(tx.unit_price_minor * tx.quantity, currency)
@@ -169,7 +183,11 @@ def _tx_table(txs: list, by_id: dict[str, BillPerson], currency: str = "BYN") ->
         name = tx.item_name[:20]
         flag = " ⚠" if tx.incomplete else ""
         rows.append([f"{name}{flag}", total, cred, debts_str])
-    return _mono_table(["Позиция", "Сумма", "Платил", "Должник"], rows)
+    return rows
+
+
+def _tx_table(txs: list, by_id: dict[str, BillPerson], currency: str = "BYN") -> str:
+    return _mono_table(["Позиция", "Сумма", "Платил", "Должник"], _tx_rows(txs, by_id, currency))
 
 
 def _compute_balances(bills: list[BillV2], person_id: str | None, payments: list):
@@ -355,6 +373,102 @@ def format_bill_created(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
         lines.append(_debt_table(net, by_id, bill.currency))
 
     return "\n".join(lines)
+
+
+def format_overview_rich(
+    bills: list[BillV2],
+    person_id: str | None,
+    by_id: dict[str, BillPerson],
+    payments: list,
+    *,
+    all_mode: bool = False,
+) -> str:
+    """Native-table (sendRichMessage) variant of format_overview."""
+    owe, owed, _ = _compute_balances(bills, person_id, payments)
+    open_count = sum(1 for b in bills if not b.closed)
+    closed_count = sum(1 for b in bills if b.closed)
+    title = "Все счета" if all_mode else "Мои счета"
+    counts = f"{open_count} открытых" + (f", {closed_count} закрытых" if all_mode and closed_count else "")
+    parts = [f"# 🧾 {cell_md(title)}", f"_{cell_md(counts)}_"]
+    if owed:
+        parts.append("## 🔪 Тебе должны")
+        parts.append(_rich_table(["Кто", "Сумма"], [
+            [pname(pid, by_id), minor_to_display(amt)] for pid, amt in sorted(owed.items(), key=lambda x: -x[1])
+        ]))
+    if owe:
+        parts.append("## 🥺 Ты должен")
+        parts.append(_rich_table(["Кому", "Сумма"], [
+            [pname(pid, by_id), minor_to_display(amt)] for pid, amt in sorted(owe.items(), key=lambda x: -x[1])
+        ]))
+    if not owe and not owed and not all_mode:
+        parts.append("_Нет открытых долгов_ ✨")
+    return "\n\n".join(parts)
+
+
+def format_pairs_rich(
+    bills: list[BillV2],
+    by_id: dict[str, BillPerson],
+    payments: list,
+    *,
+    all_mode: bool = False,
+) -> str:
+    _, _, pair_totals = _compute_balances(bills, None, payments)
+    scope = "по всем счетам" if all_mode else "в твоих счетах"
+    parts = [f"# ⚖️ Общие долги ({cell_md(scope)})"]
+    if not pair_totals:
+        parts.append("_Нет открытых долгов_ ✨")
+        return "\n\n".join(parts)
+    rows = [
+        [pname(d, by_id), "→", pname(c, by_id), minor_to_display(a)]
+        for (d, c), a in sorted(pair_totals.items(), key=lambda x: -x[1])
+    ]
+    parts.append(_rich_table(["Кто", "", "Кому", "Сумма"], rows))
+    return "\n\n".join(parts)
+
+
+def format_bill_detail_rich(
+    bill: BillV2,
+    person_id: str | None,
+    by_id: dict[str, BillPerson],
+    payments: list,
+) -> str:
+    status = "🔒 Закрыт" if bill.closed else "🔓 Открыт"
+    incomplete = sum(1 for tx in bill.transactions if tx.incomplete)
+    inc = f" · ⚠️ {incomplete} не назначены" if incomplete else ""
+    parts = [
+        f"# 🧾 {cell_md(bill.name)} #{bill.id}",
+        f"{status} · **Автор:** {cell_md(pname(bill.author_person_id, by_id))} · {bill.currency}",
+        f"**Позиций:** {len(bill.transactions)}{inc}",
+    ]
+    if bill.transactions:
+        parts.append("## Позиции")
+        parts.append(_rich_table(
+            ["Позиция", "Сумма", "Платил", "Должник"],
+            _tx_rows(bill.transactions[:30], by_id, bill.currency),
+        ))
+        if len(bill.transactions) > 30:
+            parts.append(f"_…и ещё {len(bill.transactions) - 30}_")
+
+    raw = compute_bill_debts(bill.transactions, bill.currency)
+    net = net_debts(raw)
+    bp = [p for p in payments if bill.id in p.bill_ids]
+    after = apply_payments(net, bp, clamp_zero=True)
+    drows = _debt_rows(after, by_id, bill.currency)
+    if drows:
+        parts.append("## ⚖️ Кто кому")
+        parts.append(_rich_table(["Кто", "", "Кому", "Сумма"], drows))
+
+    if person_id:
+        my_debts = {c: a for c, a in after.get(person_id, {}).items() if a > 0}
+        owed_to_me = {d: v.get(person_id, 0) for d, v in after.items() if v.get(person_id, 0) > 0}
+        if my_debts or owed_to_me:
+            lines = ["## 👤 Лично ты"]
+            for cid, amt in my_debts.items():
+                lines.append(f"- → {cell_md(pname(cid, by_id))}: {minor_to_display(amt, bill.currency)}")
+            for did, amt in owed_to_me.items():
+                lines.append(f"- ← {cell_md(pname(did, by_id))}: {minor_to_display(amt, bill.currency)}")
+            parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def format_preview(
