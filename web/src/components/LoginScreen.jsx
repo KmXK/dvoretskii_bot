@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Dices, Receipt, Bell, ChartColumn } from 'lucide-react'
+import { Dices, Receipt, Bell, ChartColumn, Bot } from 'lucide-react'
 import { api } from '../api/client'
-import mascot from '../assets/mascot_idle.png'
 
 const FEATURES = [
   { Icon: Dices, label: 'Казино и игры' },
@@ -86,9 +85,11 @@ export default function LoginScreen({ onLoginWidget, onLoginOidc }) {
       </div>
 
       <div className="max-w-md w-full text-center">
-        <div className="relative mx-auto mb-5 grid h-28 w-28 place-items-center">
+        <div className="relative mx-auto mb-5 grid h-24 w-24 place-items-center">
           <div className="absolute h-24 w-24 rounded-full bg-gold/25 blur-2xl" />
-          <img src={mascot} alt="Дворецкий" className="relative h-28 drop-shadow-[0_10px_18px_rgba(0,0,0,0.5)]" />
+          <div className="relative grid h-20 w-20 place-items-center rounded-3xl bg-gradient-to-br from-gold to-gold-2 shadow-xl">
+            <Bot size={40} className="text-black" />
+          </div>
         </div>
         <h1 className="text-4xl font-bold mb-3 tracking-tight">Dvoretskiy</h1>
         <p className="text-spotify-text text-base mb-2">

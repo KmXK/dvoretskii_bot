@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CircleAlert, CircleCheck, ClipboardList, Check, RotateCcw } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { api } from '../api/client'
 
 
@@ -171,7 +171,7 @@ export default function IncidentsPage() {
 
       {loading ? (
         <div className="flex items-center justify-center h-40">
-          <MascotLoader scale={0.6} />
+          <Loader scale={0.6} />
         </div>
       ) : error ? (
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">

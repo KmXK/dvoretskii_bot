@@ -8,7 +8,7 @@ import {
 import CheckersBoard from '../components/boardgames/CheckersBoard'
 import ChessBoard from '../components/boardgames/ChessBoard'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
 import { useToast } from '../context/useToast'
 import useCasinoSounds from '../hooks/useCasinoSounds'
@@ -422,7 +422,7 @@ export default function BoardGamesPage() {
 
       {!connected && (
         <div className="flex flex-col items-center justify-center h-64 gap-3">
-          <MascotLoader scale={0.7} />
+          <Loader scale={0.7} />
           <p className="text-spotify-text text-sm">Подключение…</p>
         </div>
       )}

@@ -6,7 +6,7 @@ import {
   Drama, Trash2, Plus, Package, Users, Settings,
 } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { api } from '../api/client'
 
 const NOTIFICATION_TOGGLES = [
@@ -541,7 +541,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <MascotLoader scale={0.7} />
+        <Loader scale={0.7} />
       </div>
     )
   }

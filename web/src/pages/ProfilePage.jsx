@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { MessageCircle, Heart, Video, Lock } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { api } from '../api/client'
 
 const PERIODS = [
@@ -229,7 +229,7 @@ export default function ProfilePage() {
 
         {statsLoading || !history ? (
           <div className="h-[180px] flex items-center justify-center">
-            <MascotLoader scale={0.5} />
+            <Loader scale={0.5} />
           </div>
         ) : (
           <AnimatePresence mode="wait">

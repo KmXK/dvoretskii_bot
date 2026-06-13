@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ListChecks } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { api } from '../api/client'
 
 function TodoItem({ todo, onToggle }) {
@@ -76,7 +76,7 @@ export default function TodoPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <MascotLoader scale={0.7} />
+        <Loader scale={0.7} />
       </div>
     )
   }

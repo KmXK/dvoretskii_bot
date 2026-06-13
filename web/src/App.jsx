@@ -7,7 +7,7 @@ import { ThemeProvider } from './context/ThemeContext'
 import AuthGate from './layouts/AuthGate'
 import AppLayout from './layouts/AppLayout'
 import HomePage from './pages/HomePage'
-import MascotLoader from './components/MascotLoader'
+import Loader from './components/Loader'
 import WatchApproveGate from './watch/WatchApproveGate'
 
 const ArmyPage = lazy(() => import('./pages/ArmyPage'))
@@ -33,7 +33,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 function PageFallback() {
   return (
     <div className="min-h-[50vh] flex items-center justify-center">
-      <MascotLoader scale={0.6} />
+      <Loader scale={0.6} />
     </div>
   )
 }

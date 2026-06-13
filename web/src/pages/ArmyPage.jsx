@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Medal } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { api } from '../api/client'
 
 function formatRemaining(seconds) {
@@ -105,7 +105,7 @@ export default function ArmyPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <MascotLoader scale={0.7} />
+        <Loader scale={0.7} />
       </div>
     )
   }

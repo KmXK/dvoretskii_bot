@@ -1,6 +1,6 @@
 import { useAuth } from '../context/useAuth'
 import LoginScreen from '../components/LoginScreen'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 
 export default function AuthGate({ children }) {
   const { isAuthenticated, loading, loginWithWidget, loginWithOidc } = useAuth()
@@ -8,7 +8,7 @@ export default function AuthGate({ children }) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-spotify-black">
-        <MascotLoader label="Дворецкий проверяет, кто пришёл…" />
+        <Loader label="Дворецкий проверяет, кто пришёл…" />
       </div>
     )
   }

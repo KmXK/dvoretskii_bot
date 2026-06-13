@@ -4,7 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Cake, Gift, Lock, Trash2 } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
 import { api, ApiError } from '../api/client'
 
@@ -246,7 +246,7 @@ export default function BirthdaysPage() {
   if (loading && birthdays.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <MascotLoader scale={0.7} />
+        <Loader scale={0.7} />
       </div>
     )
   }

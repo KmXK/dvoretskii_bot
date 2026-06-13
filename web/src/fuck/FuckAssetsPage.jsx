@@ -4,7 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Link } from 'react-router-dom'
 import { Globe, Users, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { fuckApi as api } from './api'
 import { useAuth } from '../context/useAuth'
 
@@ -176,7 +176,7 @@ export default function FuckAssetsPage() {
         )}
 
         {loading && assets.length === 0 ? (
-          <div className="flex items-center justify-center py-12"><MascotLoader scale={0.6} /></div>
+          <div className="flex items-center justify-center py-12"><Loader scale={0.6} /></div>
         ) : assets.length === 0 ? (
           <div className="text-center py-16 bg-spotify-dark rounded-2xl">
             <div className="text-6xl mb-4">🤷</div>

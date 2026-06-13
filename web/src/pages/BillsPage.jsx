@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
-import MascotLoader from '../components/MascotLoader'
+import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -706,7 +706,7 @@ export default function BillsPage() {
         {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
         {loading && bills.length === 0 ? (
-          <div className="flex items-center justify-center py-10"><MascotLoader scale={0.6} /></div>
+          <div className="flex items-center justify-center py-10"><Loader scale={0.6} /></div>
         ) : filteredBills.length === 0 ? (
           <div className="text-spotify-text text-center py-8">
             {tab === 'open' ? 'Нет открытых счетов' : 'Нет закрытых счетов'}
