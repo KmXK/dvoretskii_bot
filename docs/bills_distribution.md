@@ -243,6 +243,7 @@ spring-ом доезжает в новую позу — нет ремоунта,
 - Итер. 5 — экранирование + нативные таблицы для overview/detail/pairs.
 - UI-полировка — стопка карт, физика-наклон, долёт в человека, митоз/склейка,
   плавное повышение, кнопки вниз экрана.
+- Итер. 7 — сбор без распределения + создание счёта с нуля в вебе (см. §8).
 
 **НЕ сделано / на будущее:**
 - **Итерация 6** (пользователь сам пометил «это потом»): сущность **ресторан** +
@@ -275,3 +276,75 @@ spring-ом доезжает в новую позу — нет ремоунта,
 - Тюнинг ощущения: пороги/пружины в `BillDistribute.jsx` — `POSE_SPRING`,
   `lean` useSpring (`[-220,220]→[-22,22]`), порог свайпа `90`, дальность fling
   `±480`, тайминги fly (`scale 0.18`, `opacity 0.34s`).
+
+---
+
+## 8. Итерация 7 — сбор без распределения + создание счёта с нуля в вебе
+
+Две связанные доработки. Распределение по людям **только** в вебе; чат и веб-сбор
+лишь собирают людей и позиции.
+
+### Бот больше не спрашивает «кто что брал»
+Раньше фаза сбора гоняла полный `bill_ocr` (consumption-splitting, вопросы про доли,
+дизамбигуация должников) и лишь при сохранении выбрасывала должников. Теперь для
+**нового счёта** (не editing, не suggestion) работает отдельный slim-пайплайн:
+- `prompts/bill_collect.txt` — извлекает `[ОБЩЕЕ]` (позиции БЕЗ должников:
+  `Наименование | Цена_за_ед | Кол-во | Кредитор | Источник`) и явный `[УЧАСТНИКИ]`.
+  Вопросы — **только** про недостающую сумму и неоднозначного кредитора (кто платил);
+  спрашивать «кто что потреблял» запрещено промтом. Есть режим коррекции
+  (`[ТЕКУЩИЕ ПОЗИЦИИ]` + `[ИСПРАВЛЕНИЕ]`).
+- `parse.parse_collect_response` → `(currency, item_rows, participant_names,
+  new_persons, questions)`; `parse.collect_rows_to_undistributed_transactions`
+  (всё `incomplete`, `assignments=[]`, резолвится только кредитор);
+  `parse.collect_rows_to_block` — пере-эмит для коррекции.
+- `steward/features/bills/collect.py` — общий сервис `run_collect(repo, *, caller_tid,
+  origin_chat_id, context_items, resolved_map, current_block, correction_text)` →
+  `CollectResult`. Внутри: directory-блок (вынесён сюда из session как
+  `build_directory_block(repo, …)` + `chat_persons_for`/`match_kwargs_for`),
+  `make_openrouter_query(bill_collect)`, парс, резолв имён (`match_name`).
+  Сервис **не** создаёт персон и **не** строит tx — это делает вызыватель после
+  резолва. Используется и сессией, и веб-API.
+- `session.py`: `_is_new_collect(st)` ветвит `_run_ai`→`_run_collect_ai`,
+  `_apply_correction`→`_apply_collect_correction`, и new-bill ветку `_show_preview`
+  (участники = `[УЧАСТНИКИ]` ∪ кредиторы). Editing/suggestion (`bill_ocr`/`bill_correct`,
+  `_ingest_ai_rows`) **не тронуты**. `_build_directory_block` теперь тонкая обёртка
+  над `collect.build_directory_block`.
+
+### Создание счёта с нуля в мини-аппе
+- Модель: `BillV2.collection_context: list[str]` — накопленный веб-контекст (формат
+  чанков `[Текст]/[Фото]/[Голосовое]`, как `context_items`). Миграция —
+  идемпотентный `setdefault("collection_context", [])` в `repository.py`. Сериализация
+  отдаёт поле.
+- API (`server.py`):
+  - `GET /api/bills/circle` — близкое окружение: BillPerson из общих чатов +
+    со-участники прошлых счетов (ранжированы), форма `{people:[{id,name,username,count}]}`
+    (зеркало `tennis_routes.list_opponents`).
+  - `POST /api/bills` расширен: `participants:[{person_id}|{name}|{username}]` +
+    `draft:true` → создаёт draft с выбранными людьми. Старый name-only путь цел.
+  - `POST /api/bills/{id}/collect` — multipart `kind=text|photo|voice`; OCR/STT по
+    байтам напрямую (`helpers/ocr.extract_text_from_image`,
+    `helpers/stt.transcribe_audio_bytes` — телеграм не нужен), аппендит в
+    `collection_context`.
+  - `POST /api/bills/{id}/parse` — `collect.run_collect` по контексту, авто-резолв
+    (веб без интерактивной дизамбигуации: новые имена → анонимные персоны),
+    **заменяет** `bill.transactions` нераспределёнными позициями, дополняет участников,
+    статус `draft`.
+  - `PUT /api/bills/{id}/creditor` `{person_id}` — один плательщик на весь счёт:
+    ставит `creditor` на ВСЕ позиции (пустой → UNKNOWN), добавляет в участников.
+- Веб: `web/src/pages/BillCreate.jsx` — мастер в 2 шага (люди: чипсы окружения +
+  ручной ввод; позиции: текст/фото/`MediaRecorder`-голос → «Распознать» → селектор
+  **«Кто платил за всё»** (один на счёт; по умолчанию автор, но если AI распознал
+  плательщика из голоса/текста — подставляется доминирующий) → предпросмотр →
+  существующая доска `BillDistribute`). Подключён в `BillsPage` через `showCreate`
+  (заменил инлайновый name-only create).
+
+**Грабли итер. 7.**
+- `parse` **заменяет** все транзакции из контекста — не вызывать повторно после
+  ручной правки/распределения (затрёт). Источник истины — `collection_context`.
+- `MediaRecorder` пишет ogg/webm/mp4 (не MP3); Yandex STT настроен на MP3 и почти
+  всегда не возьмёт веб-запись — расшифровывает ElevenLabs-fallback (тот же путь, что
+  голосовые из телеграма). При отсутствии mic-доступа `BillCreate` падает на
+  прикрепление аудиофайла.
+- Тесты: `tests/test_bills_parse.py::TestParseCollectResponse` (нет должников,
+  участники, дедуп, undistributed, round-trip). Живьём чат-флоу/веб-запись не
+  прогонялись (нет Telegram/AI-среды) — гонять через `/run-bot-local`.
