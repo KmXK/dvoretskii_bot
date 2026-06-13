@@ -116,13 +116,17 @@ const PileCard = forwardRef(function PileCard(
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Spring to the resting pose for the current depth (skip while the top is held).
+  // Also restore opacity — a card sent to the bottom was faded out by flingDown,
+  // so when it re-poses at the back of the deck it must fade back in (otherwise
+  // it stays invisible and looks like it vanished).
   useEffect(() => {
     if (isTop && dragging.current) return
     const cs = animate(scale, isTop ? 1 : 1 - depth * 0.05, POSE_SPRING)
     const ct = animate(tilt, isTop ? 0 : (depth % 2 ? 1 : -1) * depth * 2, POSE_SPRING)
     const cy = animate(y, depth * 9, POSE_SPRING)
     const cx = animate(x, 0, POSE_SPRING)
-    return () => { cs.stop(); ct.stop(); cy.stop(); cx.stop() }
+    const co = animate(opacity, 1, POSE_SPRING)
+    return () => { cs.stop(); ct.stop(); cy.stop(); cx.stop(); co.stop() }
   }, [depth, isTop]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const springHome = () => {
