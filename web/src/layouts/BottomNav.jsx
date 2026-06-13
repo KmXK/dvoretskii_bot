@@ -70,12 +70,18 @@ export default function BottomNav() {
       <Dialog.Root open={menuOpen} onOpenChange={setMenuOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" />
-          <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl bg-spotify-dark p-4 pb-8 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
+          <Dialog.Content
+            className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] flex-col rounded-t-2xl bg-spotify-dark shadow-2xl"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
+          >
+            <div className="flex justify-center pt-2.5 pb-1">
+              <div className="h-1 w-9 rounded-full bg-white/15" />
+            </div>
+            <div className="flex items-center justify-between px-4 pb-3">
               <Dialog.Title className="text-base font-semibold text-white">Все разделы</Dialog.Title>
               <ThemeToggle />
             </div>
-            <div className="space-y-5">
+            <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-5 overscroll-contain">
               {NAV_GROUPS.map((group) => (
                 <div key={group.label}>
                   <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-spotify-text/60">
