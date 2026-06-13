@@ -1,9 +1,11 @@
 import logging
 import re
 
+from pyrate_limiter import BucketFullException
 from telegram import ReactionTypeEmoji
 
 from steward.data.models.chat_tunnel import ChatTunnel, TunnelMessage
+from steward.helpers.limiter import Duration, check_limit
 from steward.framework import (
     INITIATOR_ONLY,
     Feature,
@@ -376,6 +378,7 @@ class TunnelFeature(Feature):
         )
         await self.tmsgs.save()
         await self._react_ok(ctx.chat_id, ctx.message.message_id if ctx.message else None)
+        await self._hydrate_links(sent)
 
     @subcommand("<id:int>", description="Reply на сообщение → переслать его по туннелю")
     async def send_reply(self, ctx: FeatureContext, id: int):
@@ -419,14 +422,14 @@ class TunnelFeature(Feature):
                 # все части и пересылаем группой, сохраняя их подписи. Приписку
                 # уносим в шапку перед альбомом.
                 ids = await self._album_message_ids(ctx, reply)
-                dst_ids = await self._relay_album(
+                dst_ids, anchor = await self._relay_album(
                     ctx, target, base_header, src_chat=ctx.chat_id,
                     message_ids=ids, body=extra or None,
                 )
                 self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
             else:
                 header = f"{base_header}\n{extra}" if extra else base_header
-                dst_msg_id = await self._relay(ctx, target, header, copy_from=reply)
+                dst_msg_id, anchor = await self._relay(ctx, target, header, copy_from=reply)
                 self._record_message(
                     tunnel_id=tunnel_id,
                     src_chat=ctx.chat_id,
@@ -442,6 +445,7 @@ class TunnelFeature(Feature):
 
         await self.tmsgs.save()
         await self._react_ok(ctx.chat_id, ctx.message.message_id if ctx.message else None)
+        await self._hydrate_links(anchor)
 
     # ------------------------------------------------------------------ #
     # Media with a command in the caption: «/tunnel 4 текст» on a photo/video
@@ -473,13 +477,13 @@ class TunnelFeature(Feature):
                 # команда, поэтому подписи частей убираем (remove_caption), а
                 # текст пользователя уносим в шапку.
                 ids = await self._album_message_ids(ctx, msg)
-                dst_ids = await self._relay_album(
+                dst_ids, anchor = await self._relay_album(
                     ctx, target, header, src_chat=ctx.chat_id, message_ids=ids,
                     body=body or None, strip_captions=True,
                 )
                 self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
             else:
-                dst_msg_id = await self._relay(ctx, target, header, copy_from=msg, text=body)
+                dst_msg_id, anchor = await self._relay(ctx, target, header, copy_from=msg, text=body)
                 self._record_message(
                     tunnel_id=tunnel_id,
                     src_chat=ctx.chat_id,
@@ -495,6 +499,7 @@ class TunnelFeature(Feature):
 
         await self.tmsgs.save()
         await self._react_ok(ctx.chat_id, msg.message_id)
+        await self._hydrate_links(anchor)
         return True
 
     # ------------------------------------------------------------------ #
@@ -538,7 +543,7 @@ class TunnelFeature(Feature):
         try:
             if self._album_id(msg) is not None:
                 ids = await self._album_message_ids(ctx, msg)
-                dst_ids = await self._relay_album(
+                dst_ids, anchor = await self._relay_album(
                     ctx, target_chat, header,
                     src_chat=ctx.chat_id, message_ids=ids, reply_to=reply_to,
                 )
@@ -546,7 +551,7 @@ class TunnelFeature(Feature):
                     mapping.tunnel_id, ctx.chat_id, ids, target_chat, dst_ids, ctx.user_id
                 )
             else:
-                dst_msg_id = await self._relay(
+                dst_msg_id, anchor = await self._relay(
                     ctx, target_chat, header, copy_from=msg, reply_to=reply_to
                 )
                 # Цепочка реплаев работает в обе стороны: запоминаем новую пару.
@@ -568,6 +573,7 @@ class TunnelFeature(Feature):
 
         await self.tmsgs.save()
         await self._react_ok(ctx.chat_id, msg.message_id)
+        await self._hydrate_links(anchor)
         return True
 
     # ------------------------------------------------------------------ #
@@ -750,23 +756,23 @@ class TunnelFeature(Feature):
         body: str | None = None,
         strip_captions: bool = False,
         reply_to: int | None = None,
-    ) -> list[int]:
+    ) -> tuple[list[int], object | None]:
         """Доставить альбом одним вызовом copy_messages, сохранив группировку.
 
         Шапку (и `body`, если есть) шлём отдельным сообщением перед альбомом.
         `strip_captions=True` убирает подписи частей (для случая, когда подпись
-        была командой `/tunnel N text`). Возвращает id доставленных сообщений
-        в порядке `message_ids`.
+        была командой `/tunnel N text`). Возвращает (id доставленных сообщений
+        в порядке `message_ids`, сообщение-шапку как якорь для хидрации ссылок).
         """
         head = f"{header}\n{body}" if body else header
-        await self._send_text(ctx, dst_chat, head, reply_to)
+        head_msg = await self._send_text(ctx, dst_chat, head, reply_to)
         copied = await self.bot.copy_messages(
             chat_id=dst_chat,
             from_chat_id=src_chat,
             message_ids=message_ids,
             remove_caption=strip_captions,
         )
-        return [m.message_id for m in copied]
+        return [m.message_id for m in copied], head_msg
 
     async def _relay(
         self,
@@ -777,13 +783,18 @@ class TunnelFeature(Feature):
         copy_from=None,
         text: str | None = None,
         reply_to: int | None = None,
-    ) -> int:
-        """Доставить контент в dst_chat и вернуть id доставленного сообщения.
+    ) -> tuple[int, object | None]:
+        """Доставить контент в dst_chat и вернуть (id доставленного сообщения,
+        якорь для хидрации ссылок).
 
         copy_from — исходное сообщение. Если оно нетекстовое (медиа/стикер/
         голос/…), оно копируется через copy_message; иначе пересылается текст.
         text — для медиа это новая подпись (override; "" убирает подпись,
         None оставляет оригинальную); для текста — тело под шапкой.
+
+        Якорь — реальное текстовое сообщение в чате-получателе (на него потом
+        реплаит качалка видео по ссылке). Для медиа-ветки якоря нет (copy_to
+        отдаёт лишь MessageId, а ссылку и так несёт само присланное медиа).
         """
         is_media = copy_from is not None and copy_from.text is None
         if is_media:
@@ -792,12 +803,78 @@ class TunnelFeature(Feature):
             copied = await ctx.copy_to(
                 dst_chat, ctx.chat_id, copy_from.message_id, caption=text
             )
-            return copied.message_id
+            return copied.message_id, None
 
         body = text if text is not None else (copy_from.text if copy_from is not None else None)
         full = f"{header}\n{body}" if body else header
         sent = await self._send_text(ctx, dst_chat, full, reply_to)
-        return sent.message_id
+        return sent.message_id, sent
+
+    # ------------------------------------------------------------------ #
+    # Link hydration: качаем видео по ссылке на стороне приёмника
+    # ------------------------------------------------------------------ #
+
+    async def _hydrate_links(self, anchor) -> None:
+        """Если в доставленном по туннелю тексте есть скачиваемая ссылка —
+        скачать медиа на стороне приёмника и подвесить его reply'ем под
+        `anchor`.
+
+        Сначала пробуем video_cache (готовый file_id — мгновенно, без
+        повторной закачки), иначе гоняем тот же download-пайплайн, что и в
+        обычных чатах. `anchor` — уже доставленное в чат-получатель сообщение
+        с текстом; на него же качалка реплаит результат. Любая ошибка только
+        логируется: текст со ссылкой у приёмника уже есть, видео — бонус.
+        """
+        if anchor is None:
+            return
+        text = getattr(anchor, "text", None) or getattr(anchor, "caption", None)
+        if not isinstance(text, str) or "http" not in text.lower():
+            return
+
+        # Ленивый импорт: download-пакет тянет voice_video и нативные модули —
+        # не грузим их, пока в тексте нет ссылки (и в тестах туннеля без ссылок).
+        from steward.features.download import video_cache
+        from steward.features.download.yt import (
+            YT_LIMIT,
+            build_dispatch,
+            find_download_urls,
+        )
+
+        found = find_download_urls(text)
+        if not found:
+            return
+
+        dispatch = None
+        for url, key in found:
+            try:
+                cached = video_cache.get(url)
+                if cached:
+                    await self._send_cached(anchor, cached)
+                    continue
+                check_limit(YT_LIMIT, 15, Duration.MINUTE)
+                if dispatch is None:
+                    dispatch = build_dispatch(self.repository)
+                for handler in dispatch.get(key, []):
+                    try:
+                        await handler(url, anchor)
+                        break
+                    except Exception:
+                        logger.exception("tunnel: download handler failed for %s", url)
+            except BucketFullException:
+                logger.info("tunnel: download rate-limited, skipping %s", url)
+            except Exception:
+                logger.exception("tunnel: link hydration failed for %s", url)
+
+    async def _send_cached(self, anchor, medias) -> None:
+        """Отправить уже скачанное медиа из кэша по file_id reply'ем под `anchor`."""
+        for m in medias:
+            parse_mode = "HTML" if m.caption else None
+            if m.kind == "photo":
+                await anchor.reply_photo(m.file_id, caption=m.caption, parse_mode=parse_mode)
+            elif m.kind == "audio":
+                await anchor.reply_audio(m.file_id, caption=m.caption, parse_mode=parse_mode)
+            else:
+                await anchor.reply_video(m.file_id, caption=m.caption, parse_mode=parse_mode)
 
     def _user_name(self, user_id: int) -> str:
         user = self.users.find_by(id=user_id)
