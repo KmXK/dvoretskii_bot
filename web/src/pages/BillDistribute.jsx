@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { motion } from 'framer-motion'
+import { motion, useMotionValue, useTransform, useSpring } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw } from 'lucide-react'
 import { api } from '../api/client'
@@ -143,6 +143,45 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
 
 const SPLIT_OPTIONS = [2, 3, 4]
 const CARD_W = 220
+
+// Top card of the pile: draggable with physics — it leans into the drag
+// direction (x→rotate) and the lean is spring-damped, plus a touch of vertical
+// lean, so the card feels weighted rather than rigidly pinned to the cursor.
+function TopCard({ card, tx, currency, remaining, onDragEnd, onRename }) {
+  const x = useMotionValue(0)
+  const y = useMotionValue(0)
+  const rotateX = useTransform(x, [-220, 220], [-22, 22])
+  const rotateY = useTransform(y, [-220, 220], [4, -4])
+  const rotateRaw = useTransform([rotateX, rotateY], ([rx, ry]) => rx + ry)
+  const rotate = useSpring(rotateRaw, { stiffness: 260, damping: 18, mass: 0.6 })
+
+  return (
+    <motion.div
+      drag
+      dragSnapToOrigin
+      onDragEnd={onDragEnd}
+      whileDrag={{ scale: 1.06, cursor: 'grabbing' }}
+      dragTransition={{ bounceStiffness: 320, bounceDamping: 22 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      style={{ x, y, rotate, background: cardGradient(card.txId, 0) }}
+      className="touch-none select-none cursor-grab rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onRename(card.txId, tx?.item_name || '') }}
+          className="shrink-0 opacity-70 hover:opacity-100"
+        ><Pencil size={13} /></button>
+      </div>
+      <div className="text-3xl font-bold tabular-nums my-2">{fracLabel(card.den)}</div>
+      <div className="text-[11px] opacity-80 tabular-nums">
+        {formatMinor(card.den > 1 ? piecesCost(tx?.unit_price_minor || 0, 1, card.den) : (tx?.unit_price_minor || 0), currency)}
+        {' · '}{remaining} в колоде
+      </div>
+    </motion.div>
+  )
+}
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
@@ -372,30 +411,14 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
               if (isTop) {
                 return (
                   <div key={card.id} style={wrap}>
-                    <motion.div
-                      layout
-                      drag
-                      dragSnapToOrigin
+                    <TopCard
+                      card={card}
+                      tx={tx}
+                      currency={currency}
+                      remaining={remaining}
                       onDragEnd={onTopDragEnd}
-                      whileDrag={{ scale: 1.05, rotate: 3, cursor: 'grabbing' }}
-                      initial={{ opacity: 0, y: 16 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      style={{ background: cardGradient(card.txId, 0) }}
-                      className="touch-none select-none cursor-grab rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setRenaming({ txId: card.txId, name: tx?.item_name || '' }) }}
-                          className="shrink-0 opacity-70 hover:opacity-100"
-                        ><Pencil size={13} /></button>
-                      </div>
-                      <div className="text-3xl font-bold tabular-nums my-2">{fracLabel(card.den)}</div>
-                      <div className="text-[11px] opacity-80 tabular-nums">
-                        {formatMinor(card.den > 1 ? piecesCost(tx?.unit_price_minor || 0, 1, card.den) : (tx?.unit_price_minor || 0), currency)}
-                        {' · '}{remaining} в колоде
-                      </div>
-                    </motion.div>
+                      onRename={(txId, name) => setRenaming({ txId, name })}
+                    />
                   </div>
                 )
               }
