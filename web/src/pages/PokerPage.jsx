@@ -4,6 +4,24 @@ import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
+const HAND_NAMES_RU = {
+  'High Card': 'Старшая карта',
+  'Pair': 'Пара',
+  'Two Pair': 'Две пары',
+  'Three of a Kind': 'Тройка',
+  'Straight': 'Стрит',
+  'Flush': 'Флеш',
+  'Full House': 'Фулл-хаус',
+  'Four of a Kind': 'Каре',
+  'Straight Flush': 'Стрит-флеш',
+}
+const handNameRu = (name) => HAND_NAMES_RU[name] || name
+
+function triggerHaptic(kind = 'warning') {
+  try {
+    window?.Telegram?.WebApp?.HapticFeedback?.notificationOccurred(kind)
+  } catch { /* not in telegram */ }
+}
 const DIFFICULTY_OPTIONS = [
   { value: 'easy', label: 'Легко', color: 'text-green-400' },
   { value: 'medium', label: 'Средне', color: 'text-yellow-400' },
@@ -28,11 +46,15 @@ function PokerCard({ rank, suit, hidden = false, small = false }) {
   )
 }
 
-function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, actionBadge }) {
+function PlayerSeat({ player, isDealer, isSmallBlind, isBigBlind, isCurrent, isMe, showdown, index, actionBadge, secondsLeft, turnTotal }) {
   let border = 'border-zinc-700'
   if (player.folded) border = 'border-zinc-800'
   if (isMe) border = 'border-green-500/60'
   if (isCurrent) border = 'border-yellow-400'
+
+  const showTimer = isCurrent && secondsLeft != null && !player.folded
+  const timerFrac = showTimer && turnTotal > 0 ? Math.max(0, Math.min(1, secondsLeft / turnTotal)) : 0
+  const timerLow = showTimer && secondsLeft <= 5
 
   let bg = 'bg-zinc-800/80'
   if (player.folded) bg = 'bg-zinc-900/60'
@@ -61,10 +83,24 @@ function PlayerSeat({ player, isDealer, isCurrent, isMe, showdown, index, action
       {isDealer && (
         <span className="absolute -top-2 -left-2 bg-yellow-400 text-black text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">D</span>
       )}
+      {(isSmallBlind || isBigBlind) && (
+        <span className={`absolute -bottom-2 -left-2 text-black text-[9px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow ${isBigBlind ? 'bg-indigo-400' : 'bg-zinc-300'}`}>
+          {isBigBlind ? 'BB' : 'SB'}
+        </span>
+      )}
       {isCurrent && (
-        <span className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5 shadow">
+        <span className="absolute -top-2 -right-2 bg-yellow-400 text-black text-[9px] font-bold rounded-full px-1.5 py-0.5 shadow flex items-center gap-0.5">
+          {showTimer && <span className="tabular-nums">{secondsLeft}</span>}
           ХОД
         </span>
+      )}
+      {showTimer && (
+        <div className="absolute bottom-0 left-0 right-0 h-1 rounded-b-xl bg-black/30 overflow-hidden">
+          <div
+            className={`h-full transition-[width] duration-1000 ease-linear ${timerLow ? 'bg-red-500' : 'bg-yellow-400'}`}
+            style={{ width: `${timerFrac * 100}%` }}
+          />
+        </div>
       )}
       <span className={`text-xs font-semibold truncate max-w-[90px] ${isMe ? 'text-green-400' : player.isBot ? 'text-blue-300' : 'text-white'}`}>
         {player.name}
@@ -815,12 +851,15 @@ function GameTable({ state, send, userId, onLeave }) {
 
   if (!state) return null
 
-  const { phase, community, pot, currentBet, dealerIndex, currentIndex, myIndex,
-    myCards, players, actions, results, lastAction, handNum, callAmount, minRaiseTo,
-    readyPlayers, smallBlind, bigBlind, blindIncreaseEnabled, blindLevel,
-    blindIncreaseInterval, blindNextIncreaseIn } = state
+  const { phase, community, pot, pots, myHand, currentBet, dealerIndex, currentIndex, myIndex,
+    smallBlindIndex, bigBlindIndex, myCards, players, actions, results, lastAction, handNum,
+    callAmount, minRaiseTo, readyPlayers, smallBlind, bigBlind, blindIncreaseEnabled, blindLevel,
+    blindIncreaseInterval, blindNextIncreaseIn, turnTimeLeft, turnTimeout } = state
 
   const [blindCountdown, setBlindCountdown] = useState(blindNextIncreaseIn || 0)
+  const [turnLeft, setTurnLeft] = useState(null)
+  const [foldArmed, setFoldArmed] = useState(false)
+  const foldTimerRef = useRef(null)
 
   useEffect(() => {
     if (!blindIncreaseEnabled || blindNextIncreaseIn == null) {
@@ -834,8 +873,27 @@ function GameTable({ state, send, userId, onLeave }) {
     return () => clearInterval(interval)
   }, [blindNextIncreaseIn, blindIncreaseEnabled, handNum])
 
+  useEffect(() => {
+    if (turnTimeLeft == null) {
+      setTurnLeft(null)
+      return
+    }
+    setTurnLeft(Math.ceil(turnTimeLeft))
+    const t = setInterval(() => setTurnLeft(prev => (prev == null ? null : Math.max(0, prev - 1))), 1000)
+    return () => clearInterval(t)
+  }, [turnTimeLeft, currentIndex, handNum])
+
   const isShowdown = phase === 'showdown'
   const isMyTurn = actions && actions.length > 0
+
+  useEffect(() => {
+    if (isMyTurn) triggerHaptic('warning')
+  }, [isMyTurn, handNum, phase])
+
+  useEffect(() => {
+    setFoldArmed(false)
+    clearTimeout(foldTimerRef.current)
+  }, [currentIndex, handNum, phase])
   const me = myIndex >= 0 ? players[myIndex] : null
   const myChips = me ? me.chips : 0
   const maxRaise = me ? me.chips + me.bet : 0
@@ -896,7 +954,7 @@ function GameTable({ state, send, userId, onLeave }) {
 
       {smallBlind && (
         <div className="text-zinc-500 text-[10px] text-center -mt-2 flex items-center justify-center gap-2">
-          <span>Бლაინды {smallBlind}/{bigBlind}</span>
+          <span>Блайнды {smallBlind}/{bigBlind}</span>
           {blindIncreaseEnabled && blindLevel > 0 && (
             <span className="text-yellow-500/70">Ур. {blindLevel + 1}</span>
           )}
@@ -914,11 +972,15 @@ function GameTable({ state, send, userId, onLeave }) {
             key={p.id}
             player={p}
             isDealer={p.idx === dealerIndex}
+            isSmallBlind={p.idx === smallBlindIndex}
+            isBigBlind={p.idx === bigBlindIndex}
             isCurrent={p.idx === currentIndex}
             isMe={false}
             showdown={isShowdown}
             index={p.idx}
             actionBadge={visibleAction && visibleAction.player === p.idx ? visibleAction : null}
+            secondsLeft={p.idx === currentIndex ? turnLeft : null}
+            turnTotal={turnTimeout}
           />
         ))}
       </div>
@@ -939,14 +1001,25 @@ function GameTable({ state, send, userId, onLeave }) {
             ))}
             {community.length > 0 && community.length < 5 && (
               Array.from({ length: 5 - community.length }).map((_, i) => (
-                <div key={`empty-${i}`} className="w-12 h-17 rounded-lg border-2 border-dashed border-zinc-700" />
+                <div key={`empty-${i}`} className="w-14 h-20 rounded-lg border-2 border-dashed border-zinc-700" />
               ))
             )}
           </div>
         </AnimatePresence>
-        <div className="flex items-center gap-3">
-          <span className="text-yellow-400 font-bold text-lg">Банк: {pot}</span>
-          {currentBet > 0 && <span className="text-zinc-400 text-xs">Текущая ставка: {currentBet}</span>}
+        <div className="flex flex-col items-center gap-1">
+          <div className="flex items-center gap-3">
+            <span className="text-spotify-green font-bold text-lg tabular-nums">Банк: {pot}</span>
+            {currentBet > 0 && <span className="text-zinc-400 text-xs tabular-nums">Ставка: {currentBet}</span>}
+          </div>
+          {pots && pots.length > 1 && (
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              {pots.map((amt, i) => (
+                <span key={i} className="text-[10px] tabular-nums rounded-full px-2 py-0.5 bg-spotify-green/15 text-spotify-green">
+                  {i === 0 ? 'Основной' : `Сайд ${i}`}: {amt}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -965,29 +1038,40 @@ function GameTable({ state, send, userId, onLeave }) {
       {myIndex >= 0 && (
         <div
           style={myIndex === currentIndex ? { boxShadow: '0 0 20px 3px rgba(250,204,21,0.3)' } : undefined}
-          className="bg-zinc-900/80 rounded-xl p-3 transition-shadow duration-400"
+          className="bg-zinc-900/95 backdrop-blur rounded-xl p-3 transition-shadow duration-400 sticky bottom-2 z-20"
         >
           <div className="flex items-center justify-between mb-2">
             <PlayerSeat
               player={players[myIndex]}
               isDealer={myIndex === dealerIndex}
+              isSmallBlind={myIndex === smallBlindIndex}
+              isBigBlind={myIndex === bigBlindIndex}
               isCurrent={myIndex === currentIndex}
               isMe={true}
               showdown={isShowdown}
               index={myIndex}
               actionBadge={visibleAction && visibleAction.player === myIndex ? visibleAction : null}
+              secondsLeft={myIndex === currentIndex ? turnLeft : null}
+              turnTotal={turnTimeout}
             />
-            <div className="flex gap-1.5">
-              {myCards.map((c, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.15, duration: 0.4 }}
-                >
-                  <PokerCard rank={c.rank} suit={c.suit} />
-                </motion.div>
-              ))}
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="flex gap-1.5">
+                {myCards.map((c, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.15, duration: 0.4 }}
+                  >
+                    <PokerCard rank={c.rank} suit={c.suit} />
+                  </motion.div>
+                ))}
+              </div>
+              {myHand && !players[myIndex].folded && (
+                <span className="text-[11px] text-spotify-green font-medium">
+                  У вас: {handNameRu(myHand.name)}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1004,8 +1088,19 @@ function GameTable({ state, send, userId, onLeave }) {
               <div className="flex flex-col gap-2 mt-2">
               <div className="flex gap-2">
                 {actions.includes('fold') && (
-                  <button onClick={() => doAction('fold')} className="flex-1 bg-red-600/80 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
-                    Фолд
+                  <button
+                    onClick={() => {
+                      if (actions.includes('check') && !foldArmed) {
+                        setFoldArmed(true)
+                        clearTimeout(foldTimerRef.current)
+                        foldTimerRef.current = setTimeout(() => setFoldArmed(false), 3000)
+                        return
+                      }
+                      doAction('fold')
+                    }}
+                    className={`flex-1 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors ${foldArmed ? 'bg-red-500 animate-pulse' : 'bg-red-600/80 hover:bg-red-500'}`}
+                  >
+                    {foldArmed ? 'Точно фолд?' : 'Фолд'}
                   </button>
                 )}
                 {actions.includes('check') && (
@@ -1026,6 +1121,7 @@ function GameTable({ state, send, userId, onLeave }) {
                       type="range"
                       min={minRaiseTo}
                       max={maxRaise}
+                      step={bigBlind || 1}
                       value={raiseAmount}
                       onChange={e => handleRaiseSlider(Number(e.target.value))}
                       className="flex-1 accent-green-500"
@@ -1049,17 +1145,22 @@ function GameTable({ state, send, userId, onLeave }) {
                       Рейз
                     </button>
                   </div>
-                  <div className="flex gap-1.5 justify-center">
-                    {[minRaiseTo, Math.floor(pot / 2 + (me?.bet || 0)), pot + (me?.bet || 0)].filter((v, i, a) => v <= maxRaise && a.indexOf(v) === i && v >= minRaiseTo).map(v => (
-                      <button key={v} onClick={() => handleRaiseSlider(v)}
-                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded transition-colors">
-                        {v === minRaiseTo ? 'Мин' : v >= maxRaise ? 'Макс' : v}
-                      </button>
-                    ))}
-                    <button onClick={() => handleRaiseSlider(maxRaise)}
-                      className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded transition-colors">
-                      Макс
-                    </button>
+                  <div className="flex gap-1.5 justify-center flex-wrap">
+                    {[
+                      { v: minRaiseTo, label: 'Мин' },
+                      { v: currentBet + (bigBlind || 0) * 2, label: '2ББ' },
+                      { v: currentBet + (bigBlind || 0) * 3, label: '3ББ' },
+                      { v: Math.floor(pot / 2) + (me?.bet || 0), label: '½ банк' },
+                      { v: pot + (me?.bet || 0), label: 'Банк' },
+                      { v: maxRaise, label: 'Макс' },
+                    ]
+                      .filter((o, i, a) => o.v >= minRaiseTo && o.v <= maxRaise && a.findIndex(x => x.v === o.v) === i)
+                      .map(o => (
+                        <button key={o.label} onClick={() => handleRaiseSlider(o.v)}
+                          className={`text-[10px] px-2 py-1 rounded transition-colors ${raiseAmount === o.v ? 'bg-spotify-green/20 text-spotify-green' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>
+                          {o.label}
+                        </button>
+                      ))}
                   </div>
                 </div>
               )}

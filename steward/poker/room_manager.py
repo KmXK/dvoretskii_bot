@@ -22,6 +22,7 @@ _NEXT_HAND_DELAY = 30
 _BOT_ACTION_DELAY = (0.8, 2.0)
 _BOT_ID_BASE = -1_000_000
 _DISCONNECT_GRACE = 60
+_TURN_TIMEOUT = 30
 
 _BLIND_MULTIPLIERS = [1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 50, 100]
 MONKEY_CHIP_RATE = 10
@@ -65,6 +66,9 @@ class Room:
         self._next_hand_task: asyncio.Task | None = None
         self._bot_task: asyncio.Task | None = None
         self._blind_task: asyncio.Task | None = None
+        self._turn_task: asyncio.Task | None = None
+        self._turn_key: tuple[int, int] | None = None
+        self._turn_deadline: float | None = None
         self.ready_players: set[int] = set()
         self.chip_bank: dict[int, int] = {}
         self.small_blind = small_blind
@@ -162,9 +166,16 @@ class Room:
             interval_sec = self.blind_increase_interval * 60
             next_in = max(0, interval_sec - (elapsed % interval_sec))
             state["blindNextIncreaseIn"] = int(next_in)
+        state["turnTimeout"] = _TURN_TIMEOUT
+        state["turnTimeLeft"] = (
+            max(0, self._turn_deadline - time.time())
+            if self._turn_deadline is not None
+            else None
+        )
         return state
 
     async def send_states(self):
+        self._arm_turn_timer()
         for uid, ws in list(self.connections.items()):
             try:
                 state = self.game.state_for(uid)
@@ -298,6 +309,7 @@ class Room:
             self._bot_task.cancel()
         if self._blind_task and not self._blind_task.done():
             self._blind_task.cancel()
+        self._cancel_turn_timer()
 
     def transfer_ownership(self):
         for uid in self.connections:
@@ -310,6 +322,76 @@ class Room:
         for p in self.game.players:
             if p.is_bot and not p.sitting_out and p.chips > 0:
                 self.ready_players.add(p.user_id)
+
+    def _cancel_turn_timer(self):
+        self._turn_key = None
+        self._turn_deadline = None
+        if self._turn_task and not self._turn_task.done():
+            self._turn_task.cancel()
+
+    def _arm_turn_timer(self):
+        """Запускает таймер хода для текущего живого игрока-человека.
+
+        Боты ходят по собственному таймеру, отключившиеся авто-фолдятся при
+        разрыве — для них таймер не нужен. Если ход того же игрока уже идёт,
+        отсчёт не сбрасывается.
+        """
+        g = self.game
+        if g.phase in (PHASE_WAITING, PHASE_SHOWDOWN):
+            self._cancel_turn_timer()
+            return
+        idx = g.current_idx
+        if idx < 0 or idx >= len(g.players):
+            self._cancel_turn_timer()
+            return
+        p = g.players[idx]
+        if p.is_bot or p.user_id not in self.connections:
+            self._cancel_turn_timer()
+            return
+        key = (g.hand_num, idx)
+        if key == self._turn_key and self._turn_task and not self._turn_task.done():
+            return
+        self._cancel_turn_timer()
+        self._turn_key = key
+        self._turn_deadline = time.time() + _TURN_TIMEOUT
+        self._turn_task = asyncio.create_task(self._turn_timeout_fire(key))
+
+    async def _turn_timeout_fire(self, key: tuple[int, int]):
+        try:
+            delay = max(0.0, (self._turn_deadline or time.time()) - time.time())
+            await asyncio.sleep(delay)
+            g = self.game
+            if g.phase in (PHASE_WAITING, PHASE_SHOWDOWN):
+                return
+            if (g.hand_num, g.current_idx) != key:
+                return
+            await self._auto_act_current()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("room=%s _turn_timeout_fire error", self.id)
+
+    async def _auto_act_current(self):
+        """Авто-ход за просрочившего игрока: чек если можно бесплатно, иначе фолд."""
+        g = self.game
+        idx = g.current_idx
+        if idx < 0 or idx >= len(g.players):
+            return
+        p = g.players[idx]
+        to_call = g.current_bet - p.bet
+        act = "check" if to_call <= 0 else "fold"
+        ok, _ = g.action(p.user_id, act)
+        if not ok:
+            g.action(p.user_id, "fold")
+        logger.info("room=%s turn timeout: uid=%s auto-%s", self.id, p.user_id, act)
+        await self.send_states()
+        if g.phase == PHASE_SHOWDOWN:
+            self.ready_players.clear()
+            self._mark_bots_ready()
+            self.queue_next_hand()
+            await self._check_all_ready()
+        else:
+            self._schedule_bot_if_needed()
 
     def _schedule_bot_if_needed(self):
         if self.game.phase in (PHASE_WAITING, PHASE_SHOWDOWN):

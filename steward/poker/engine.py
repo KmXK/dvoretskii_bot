@@ -120,6 +120,30 @@ def _hand_description(score):
     return "High Card (" + ", ".join(rn(r) for r in score[1:]) + ")"
 
 
+def hand_label(hole, community):
+    """Название и описание текущей лучшей комбинации для подсказки игроку.
+
+    Работает на любой улице: при 5+ доступных картах считает полноценно через
+    best_hand, на префлопе (2 карты) определяет карманную пару / старшую карту.
+    """
+    cards = hole + community
+    if not cards:
+        return "", ""
+    if len(cards) >= 5:
+        score, _ = best_hand(hole, community)
+        return HAND_NAMES.get(score[0], ""), _hand_description(score)
+
+    ranks = sorted((c.rank for c in cards), reverse=True)
+    counts = Counter(ranks)
+    groups = sorted(counts.items(), key=lambda x: (x[1], x[0]), reverse=True)
+    rn = lambda r: RANK_SYMBOLS.get(r, str(r))
+    if groups[0][1] == 3:
+        return HAND_NAMES[3], f"Three of a Kind, {rn(groups[0][0])}s"
+    if groups[0][1] == 2:
+        return HAND_NAMES[1], f"Pair of {rn(groups[0][0])}s"
+    return HAND_NAMES[0], f"{rn(ranks[0])} high"
+
+
 def best_hand(hole, community):
     all_cards = hole + community
     if len(all_cards) < 5:
@@ -182,6 +206,8 @@ class PokerGame:
         self.current_bet = 0
         self.min_raise = big_blind
         self.dealer_idx = -1
+        self.sb_idx = -1
+        self.bb_idx = -1
         self.current_idx = -1
         self.hand_num = 0
         self.results: dict | None = None
@@ -268,11 +294,9 @@ class PokerGame:
         self.last_action = None
 
         for p in self.players:
+            p.reset_hand()
             if p.chips <= 0 or p.sitting_out:
                 p.folded = True
-                p.hole_cards = []
-            else:
-                p.reset_hand()
 
         active = self._active()
         if len(active) < 2:
@@ -296,6 +320,8 @@ class PokerGame:
             sb_idx = self._next(self.dealer_idx)
             bb_idx = self._next(sb_idx)
 
+        self.sb_idx = sb_idx
+        self.bb_idx = bb_idx
         self._post_blind(sb_idx, self.small_blind)
         self._post_blind(bb_idx, self.big_blind)
         self.current_bet = self.big_blind
@@ -521,6 +547,10 @@ class PokerGame:
             score, combo = best_hand(p.hole_cards, self.community)
             evals[i] = (score, combo)
 
+        # Only players who actually contributed to THIS hand count toward the
+        # pots. Guards against a stale total_bet (e.g. a busted player carried
+        # over from a previous hand) injecting phantom chips into the pot.
+        contributors = [p for p in self.players if p.total_bet > 0]
         bet_levels = sorted(set(self.players[i].total_bet for i in active))
         pots = []
         prev = 0
@@ -528,7 +558,7 @@ class PokerGame:
             if level <= prev:
                 continue
             pot_amount = 0
-            for p in self.players:
+            for p in contributors:
                 contrib = min(p.total_bet, level) - min(p.total_bet, prev)
                 pot_amount += contrib
             eligible = [i for i in active if self.players[i].total_bet >= level]
@@ -564,6 +594,38 @@ class PokerGame:
             },
         }
         self.pot = 0
+
+    def _build_side_pots(self):
+        """Разбивка текущего банка на основной/сайд-поты для отображения.
+
+        Возвращает список сумм (первый элемент — основной банк). Имеет смысл
+        показывать разбивку, когда элементов больше одного (есть олл-ины).
+        """
+        contributors = [p for p in self.players if p.total_bet > 0]
+        if not contributors:
+            return []
+        in_hand = [p for p in self.players if not p.folded and not p.sitting_out]
+        ref = in_hand if in_hand else contributors
+        levels = sorted(set(p.total_bet for p in ref))
+        pots = []
+        prev = 0
+        for level in levels:
+            if level <= prev:
+                continue
+            amt = 0
+            for p in contributors:
+                amt += min(p.total_bet, level) - min(p.total_bet, prev)
+            if amt > 0:
+                pots.append(amt)
+            prev = level
+        top = levels[-1] if levels else 0
+        extra = sum(p.total_bet - top for p in contributors if p.total_bet > top)
+        if extra > 0:
+            if pots:
+                pots[-1] += extra
+            else:
+                pots.append(extra)
+        return pots
 
     def state_for(self, user_id):
         idx = next((i for i, p in enumerate(self.players) if p.user_id == user_id), -1)
@@ -610,12 +672,22 @@ class PokerGame:
         call_amount = max(0, self.current_bet - me.bet) if me else 0
         min_raise_to = self.current_bet + self.min_raise
 
+        my_hand = None
+        if me and me.hole_cards and self.phase != PHASE_WAITING:
+            name, descr = hand_label(me.hole_cards, self.community)
+            if name:
+                my_hand = {"name": name, "description": descr}
+
         return {
             "phase": self.phase,
             "community": [c.to_dict() for c in self.community],
             "pot": self.pot,
+            "pots": self._build_side_pots(),
+            "myHand": my_hand,
             "currentBet": self.current_bet,
             "dealerIndex": self.dealer_idx,
+            "smallBlindIndex": self.sb_idx,
+            "bigBlindIndex": self.bb_idx,
             "currentIndex": self.current_idx
             if self.phase not in (PHASE_WAITING, PHASE_SHOWDOWN)
             else -1,
