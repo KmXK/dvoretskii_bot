@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Play, X } from 'lucide-react'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 import { SPORT_LIST, DEFAULT_SPORT, sportMeta } from './sports'
@@ -110,7 +111,7 @@ export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 26, stiffness: 280 }}
-        className="bg-zinc-900 border-t border-zinc-700 w-full max-w-2xl rounded-t-2xl shadow-2xl overflow-y-auto"
+        className="bg-spotify-gray border-t border-white/10 w-full max-w-2xl rounded-t-2xl shadow-2xl overflow-y-auto"
         style={{
           maxHeight,
           // 14px (зазор) + safe-area-inset-bottom + 56px (высота BottomNav h-14)
@@ -119,9 +120,9 @@ export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-zinc-900 z-10 flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-          <h2 className="text-white font-semibold">{title}</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none">×</button>
+        <div className="sticky top-0 bg-spotify-gray z-10 flex items-center justify-between px-4 py-3 border-b border-white/5">
+          <h2 className="font-display text-white font-extrabold text-lg">{title}</h2>
+          <button onClick={onClose} className="text-spotify-text hover:text-white transition-colors p-1 -mr-1"><X size={20} /></button>
         </div>
         <div className="px-4 py-3">{children}</div>
       </motion.div>
@@ -134,26 +135,27 @@ export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
 // Компактный выбор игрока: чипсы из общих чатов + ручной ввод @username/id.
 function PlayerPicker({ label, opponents, selectedId, customRaw, onPick, onCustom, accent = 'rose' }) {
   const activeCls = accent === 'sky'
-    ? 'bg-sky-700 border-sky-500 text-white'
+    ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
     : accent === 'indigo'
-      ? 'bg-indigo-700 border-indigo-500 text-white'
-      : 'bg-rose-700 border-rose-500 text-white'
+      ? 'bg-indigo-soft border-indigo/60 text-indigo'
+      : 'bg-rose-500/20 border-rose-400/60 text-rose-200'
   return (
     <div className="mb-3">
-      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">{label}</div>
       {opponents.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {opponents.slice(0, 12).map((o) => (
-            <button
+            <motion.button
               key={o.id}
+              whileTap={{ scale: 0.95 }}
               onClick={() => onPick(o.id)}
-              className={`px-3 py-1.5 rounded-full text-sm border ${
-                selectedId === o.id ? activeCls : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:border-zinc-500'
+              className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                selectedId === o.id ? activeCls : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
               }`}
             >
               {o.name}
               {o.played_against > 0 && <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>}
-            </button>
+            </motion.button>
           ))}
         </div>
       )}
@@ -162,7 +164,7 @@ function PlayerPicker({ label, opponents, selectedId, customRaw, onPick, onCusto
         value={customRaw}
         onChange={(e) => onCustom(e.target.value)}
         placeholder="@username или id"
-        className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700"
+        className="w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors"
       />
     </div>
   )
@@ -242,7 +244,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
   return (
     <AnimatePresence>
       <SheetShell title="Новая сессия" onClose={onClose}>
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Вид спорта</div>
+        <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Вид спорта</div>
         <div className="grid grid-cols-2 gap-2 mb-4">
           {SPORT_LIST.map((sp) => {
             const active = sport === sp.key
@@ -251,16 +253,16 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
                 key={sp.key}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => setSport(sp.key)}
-                className={`relative py-3 rounded-xl text-base font-semibold border overflow-hidden ${
+                className={`relative py-3 rounded-xl text-base font-semibold border overflow-hidden transition-colors ${
                   active
-                    ? 'border-emerald-500 text-white'
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                    ? 'border-transparent text-spotify-black'
+                    : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                 }`}
               >
                 {active && (
                   <motion.span
                     layoutId="sport-pill"
-                    className="absolute inset-0 bg-gradient-to-br from-emerald-600 to-emerald-800"
+                    className="absolute inset-0 bg-gradient-to-br from-gold to-gold-2"
                     transition={{ type: 'spring', stiffness: 500, damping: 32 }}
                   />
                 )}
@@ -273,26 +275,27 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           })}
         </div>
 
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Оппонент</div>
+        <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Оппонент</div>
         {opponents.length === 0 ? (
-          <p className="text-zinc-500 text-sm mb-3">Кандидатов из общих чатов не нашлось — впиши @username вручную.</p>
+          <p className="text-spotify-text text-sm mb-3">Кандидатов из общих чатов не нашлось — впиши @username вручную.</p>
         ) : (
           <div className="flex flex-wrap gap-2 mb-3">
             {opponents.slice(0, 12).map((o) => (
-              <button
+              <motion.button
                 key={o.id}
+                whileTap={{ scale: 0.95 }}
                 onClick={() => { setSelectedId(o.id); setCustomRaw('') }}
-                className={`px-3 py-1.5 rounded-full text-sm border ${
+                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                   selectedId === o.id
-                    ? 'bg-rose-700 border-rose-500 text-white'
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:border-zinc-500'
+                    ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
+                    : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                 }`}
               >
                 {o.name}
                 {o.played_against > 0 && (
                   <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>
                 )}
-              </button>
+              </motion.button>
             ))}
           </div>
         )}
@@ -301,7 +304,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           value={customRaw}
           onChange={(e) => { setCustomRaw(e.target.value); setSelectedId(null) }}
           placeholder={isPadel ? 'Соперник (@username или id)' : '@username или id'}
-          className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 mb-4"
+          className="w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors mb-4"
         />
 
         <AnimatePresence initial={false}>
@@ -334,24 +337,26 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           )}
         </AnimatePresence>
 
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Кто подаёт первым</div>
+        <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Кто подаёт первым</div>
         <div className="grid grid-cols-2 gap-2 mb-4">
-          <button
+          <motion.button
+            whileTap={{ scale: 0.97 }}
             onClick={() => setFirstServer('a')}
-            className={`py-2.5 rounded-lg text-sm font-medium ${
-              firstServer === 'a' ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+            className={`py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+              firstServer === 'a' ? 'bg-rose-500/20 border-rose-400/60 text-rose-200' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
             }`}
           >
             {isPadel ? '🎾 Моя пара' : '🏓 Я'}
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.97 }}
             onClick={() => setFirstServer('b')}
-            className={`py-2.5 rounded-lg text-sm font-medium ${
-              firstServer === 'b' ? 'bg-sky-700 text-white' : 'bg-zinc-800 text-zinc-300'
+            className={`py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+              firstServer === 'b' ? 'bg-sky-500/20 border-sky-400/60 text-sky-200' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
             }`}
           >
             {isPadel ? '🎾 Соперники' : '🏓 Оппонент'}
-          </button>
+          </motion.button>
         </div>
 
         <AnimatePresence initial={false}>
@@ -363,37 +368,40 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">При 40:40</div>
+              <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">При 40:40</div>
               <div className="grid grid-cols-2 gap-2 mb-4">
-                <button
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
                   onClick={() => setGoldenPoint(true)}
-                  className={`py-2.5 rounded-lg text-sm font-medium ${
-                    goldenPoint ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                  className={`py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                    goldenPoint ? 'bg-indigo-soft border-indigo/60 text-indigo' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                   }`}
                 >
                   🟡 Золотой мяч
-                </button>
-                <button
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
                   onClick={() => setGoldenPoint(false)}
-                  className={`py-2.5 rounded-lg text-sm font-medium ${
-                    !goldenPoint ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                  className={`py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                    !goldenPoint ? 'bg-indigo-soft border-indigo/60 text-indigo' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                   }`}
                 >
                   ♻️ Преимущество
-                </button>
+                </motion.button>
               </div>
-              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Формат матча</div>
+              <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Формат матча</div>
               <div className="flex items-center gap-2 mb-4">
                 {[{ n: 1, l: '1 сет' }, { n: 2, l: 'До 2 (bo3)' }, { n: 3, l: 'До 3 (bo5)' }].map((o) => (
-                  <button
+                  <motion.button
                     key={o.n}
+                    whileTap={{ scale: 0.96 }}
                     onClick={() => setSetsToWin(o.n)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-                      setsToWin === o.n ? 'bg-indigo-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                      setsToWin === o.n ? 'bg-indigo-soft border-indigo/60 text-indigo' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                     }`}
                   >
                     {o.l}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             </motion.div>
@@ -403,7 +411,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="text-zinc-400 text-xs mb-4 bg-zinc-800/50 rounded-lg px-3 py-2 overflow-hidden"
+              className="text-spotify-text text-xs mb-4 bg-white/5 rounded-lg px-3 py-2 overflow-hidden"
             >
               🎾 В сквоше следующую партию подаёт победитель предыдущей — переключать вручную не нужно.
             </motion.p>
@@ -415,28 +423,29 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Партий за одну подачу</div>
-              <p className="text-zinc-500 text-[11px] mb-2">
+              <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Партий за одну подачу</div>
+              <p className="text-spotify-text/80 text-[11px] mb-2">
                 Каждые N партий первая подача переходит к другому игроку.
               </p>
               <div className="flex items-center gap-2 mb-4">
                 {[1, 2, 5].map((n) => (
-                  <button
+                  <motion.button
                     key={n}
+                    whileTap={{ scale: 0.95 }}
                     onClick={() => setServeStreak(n)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                      serveStreak === n ? 'bg-rose-700 text-white' : 'bg-zinc-800 text-zinc-300'
+                    className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                      serveStreak === n ? 'bg-rose-500/20 border-rose-400/60 text-rose-200' : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                     }`}
                   >
                     {n}
-                  </button>
+                  </motion.button>
                 ))}
                 <input
                   type="number"
                   min={1}
                   value={serveStreak}
                   onChange={(e) => setServeStreak(Math.max(1, parseInt(e.target.value || '1', 10)))}
-                  className="w-16 bg-zinc-800 text-white text-sm px-2 py-1.5 rounded-lg border border-zinc-700 ml-auto"
+                  className="w-16 rounded-lg bg-white/5 px-2 py-1.5 text-sm text-white tabular-nums outline-none focus:bg-white/10 transition-colors ml-auto"
                 />
               </div>
             </motion.div>
@@ -447,13 +456,15 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           <p className="text-red-400 text-sm mb-3">{error}</p>
         )}
 
-        <button
+        <motion.button
+          whileTap={{ scale: 0.98 }}
           onClick={submit}
           disabled={submitting}
-          className="w-full bg-gradient-to-br from-rose-600 to-rose-800 text-white py-3 rounded-xl font-semibold text-lg disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gold py-3.5 font-display font-extrabold text-lg text-spotify-black transition-colors hover:bg-gold-2 disabled:opacity-50"
         >
+          <Play size={18} strokeWidth={2.5} fill="currentColor" />
           {submitting ? 'Создаём…' : 'Начать'}
-        </button>
+        </motion.button>
       </SheetShell>
     </AnimatePresence>
   )
