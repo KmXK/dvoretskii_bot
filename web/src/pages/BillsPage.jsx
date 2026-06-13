@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
@@ -428,6 +428,15 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
     onChange()
   }
 
+  const handleRedistribute = async () => {
+    try {
+      await api(`/api/bills/${bill.id}/redistribute`, { method: 'PUT' })
+      onChange()
+    } catch (e) {
+      alert(e.status === 409 ? 'По счёту уже есть подтверждённые платежи — распределение заблокировано.' : e.message)
+    }
+  }
+
   const handleSuggestionDecide = async (sid, action) => {
     try {
       await api(`/api/bills/suggestions/${sid}/${action}`, { method: 'POST' })
@@ -461,6 +470,13 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
           </div>
           {isAuthor && (
             <div className="flex gap-2">
+              {!bill.closed && bill.transactions.length > 0 && (
+                <button
+                  onClick={handleRedistribute}
+                  className="bg-spotify-gray rounded px-2 py-1.5 text-white hover:bg-spotify-light-gray transition-colors"
+                  title="Распределить по людям"
+                ><LayoutGrid size={14} /></button>
+              )}
               <button
                 onClick={handleClose}
                 className="bg-spotify-gray rounded px-2 py-1.5 text-white hover:bg-spotify-light-gray transition-colors"

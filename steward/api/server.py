@@ -2278,6 +2278,38 @@ async def handle_bills_finalize(request: web.Request):
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
 
 
+async def handle_bills_redistribute(request: web.Request):
+    """Re-open a finalized bill on the board: move it back to `distributing`.
+
+    Blocked once any payment has settled — the same guard the chat editor uses,
+    so confirmed money is never silently re-split.
+    """
+    from steward.data.models.bill_v2 import PaymentStatus
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+    settled = any(
+        bill.id in p.bill_ids and p.status in PaymentStatus.SETTLED
+        for p in repository.db.bill_payments_v2
+    )
+    if settled:
+        return web.json_response({"error": "bill has settled payments"}, status=409)
+    bill.distribution_status = "distributing"
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
 async def handle_bills_suggestions_list(request: web.Request):
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -2588,6 +2620,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_delete("/api/bills/{id}/transactions/{tid}", handle_bills_tx_delete)
     app.router.add_put("/api/bills/{id}/distribution", handle_bills_distribute)
     app.router.add_put("/api/bills/{id}/finalize", handle_bills_finalize)
+    app.router.add_put("/api/bills/{id}/redistribute", handle_bills_redistribute)
     app.router.add_get("/api/bills/{id}/suggestions", handle_bills_suggestions_list)
     app.router.add_post("/api/bills/{id}/suggestions", handle_bills_suggestion_create)
     app.router.add_get("/ws/poker", poker_ws_handler)
