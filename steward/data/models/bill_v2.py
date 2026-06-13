@@ -46,8 +46,13 @@ class BillPerson:
 
 @dataclass
 class BillItemAssignment:
-    unit_count: int                                 # how many units this row covers
+    unit_count: int                                 # numerator: how many `1/denominator` pieces this row covers
     debtors: list[str]                              # BillPerson.id; split equally; empty = unassigned
+    denominator: int = 1
+    # Fractional split: this row covers `unit_count / denominator` units of the item,
+    # shared equally by `debtors`. denominator=1 → whole units (legacy/default).
+    # A "разделить на 4" card that one person took 3 of → unit_count=3, denominator=4
+    # (i.e. "3/4"). Used by the web distribution board.
 
 
 @dataclass

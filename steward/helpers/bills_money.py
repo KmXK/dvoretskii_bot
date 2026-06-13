@@ -80,7 +80,11 @@ def compute_bill_debts(
         for asg in tx.assignments:
             if not asg.debtors:
                 continue
-            asg_total = tx.unit_price_minor * asg.unit_count
+            # This row covers unit_count/denominator units of the item. Round the
+            # row's cost to whole minor units half-up so per-row totals reconcile
+            # with the position cost within a kopeck.
+            den = getattr(asg, "denominator", 1) or 1
+            asg_total = (tx.unit_price_minor * asg.unit_count + den // 2) // den
             # Non-payers first → get rounded up; payer last → absorbs rounding
             ordered = sorted(asg.debtors, key=lambda d: d == tx.creditor)
             shares = split_minor(asg_total, len(ordered))

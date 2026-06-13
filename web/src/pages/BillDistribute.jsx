@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors } from 'lucide-react'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -19,42 +19,74 @@ function formatMinor(minor, currency = 'BYN') {
   return CURRENCY_PREFIX.has(currency) ? `${sign}${sym}${amt}` : `${sign}${amt} ${sym}`
 }
 
-// ── Slot ↔ assignment conversion ───────────────────────────────────────────────
-// Whole-unit model: each transaction owns `quantity` slots, each holding one
-// person_id or null. Fractions ("разделить на N") arrive in iteration 3.
-
-function billToSlots(bill) {
-  const slots = {}
-  for (const tx of bill.transactions) {
-    const arr = new Array(tx.quantity).fill(null)
-    let i = 0
-    for (const asg of tx.assignments || []) {
-      const owner = asg.debtors && asg.debtors.length ? asg.debtors[0] : null
-      for (let k = 0; k < asg.unit_count && i < arr.length; k++, i++) arr[i] = owner
-    }
-    slots[tx.id] = arr
-  }
-  return slots
+// Round a fractional cost (unit_price · count / den) to whole minor units,
+// half-up — must match steward/helpers/bills_money.compute_bill_debts.
+function piecesCost(unitPrice, count, den) {
+  return Math.floor((unitPrice * count + Math.floor(den / 2)) / den)
 }
 
-function slotsToAssignments(arr) {
-  const byPerson = {}
-  let unassigned = 0
-  for (const pid of arr) {
-    if (pid) byPerson[pid] = (byPerson[pid] || 0) + 1
-    else unassigned += 1
+const fracLabel = (den) => (den > 1 ? `1/${den}` : '1 шт')
+
+// ── Pieces model ────────────────────────────────────────────────────────────────
+// Each transaction is a bag of "pieces", each a 1/den fraction of one unit owned
+// by one person (or null = in the deck). Σ(1/den) === quantity. "Разделить на N"
+// turns a piece into N pieces of 1/(den·N). A person holding K pieces of the same
+// den shows as "K/N". Persisted as BillItemAssignment{unit_count, debtors, denominator}.
+
+let _seq = 0
+const nextPieceId = () => `pc${++_seq}`
+
+function billToPieces(bill) {
+  const out = {}
+  for (const tx of bill.transactions) {
+    const pieces = []
+    let covered = 0 // in whole units
+    for (const asg of tx.assignments || []) {
+      const den = asg.denominator || 1
+      const debtors = asg.debtors || []
+      if (debtors.length === 0) {
+        for (let k = 0; k < asg.unit_count; k++) pieces.push({ id: nextPieceId(), den, owner: null })
+        covered += asg.unit_count / den
+      } else if (debtors.length === 1) {
+        for (let k = 0; k < asg.unit_count; k++) pieces.push({ id: nextPieceId(), den, owner: debtors[0] })
+        covered += asg.unit_count / den
+      } else {
+        // Legacy equal-split: u/den shared by k people → each owns u pieces of 1/(den·k).
+        const subDen = den * debtors.length
+        for (const d of debtors) {
+          for (let k = 0; k < asg.unit_count; k++) pieces.push({ id: nextPieceId(), den: subDen, owner: d })
+        }
+        covered += asg.unit_count / den
+      }
+    }
+    const remainder = Math.round(tx.quantity - covered)
+    for (let k = 0; k < Math.max(0, remainder); k++) pieces.push({ id: nextPieceId(), den: 1, owner: null })
+    out[tx.id] = pieces
   }
-  const out = Object.entries(byPerson).map(([pid, c]) => ({ unit_count: c, debtors: [pid] }))
-  if (unassigned > 0) out.push({ unit_count: unassigned, debtors: [] })
   return out
 }
 
-// ── Draggable unit card ─────────────────────────────────────────────────────────
+function piecesToAssignments(arr) {
+  // group by owner|den → one assignment per (person, denominator)
+  const groups = {}
+  for (const p of arr) {
+    const key = `${p.owner || ''}|${p.den}`
+    if (!groups[key]) groups[key] = { owner: p.owner, den: p.den, count: 0 }
+    groups[key].count += 1
+  }
+  return Object.values(groups).map((g) => ({
+    unit_count: g.count,
+    debtors: g.owner ? [g.owner] : [],
+    denominator: g.den,
+  }))
+}
 
-function UnitCard({ tx, currency, onDropOnPerson }) {
+// ── Draggable piece card ──────────────────────────────────────────────────────
+
+function PieceCard({ tx, piece, onDropOnPerson }) {
   const handleDragEnd = useCallback((_e, info) => {
-    onDropOnPerson(tx.id, info.point.x, info.point.y)
-  }, [tx.id, onDropOnPerson])
+    onDropOnPerson(tx.id, piece.id, info.point.x, info.point.y)
+  }, [tx.id, piece.id, onDropOnPerson])
 
   return (
     <motion.button
@@ -70,10 +102,10 @@ function UnitCard({ tx, currency, onDropOnPerson }) {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.5 }}
       className="relative touch-none select-none cursor-grab rounded-xl bg-gradient-to-br from-gold to-gold-2
-        text-black px-3 py-2 shadow-lg shadow-black/40 text-left min-w-[88px]"
+        text-black px-3 py-2 shadow-lg shadow-black/40 text-left min-w-[72px]"
     >
-      <div className="text-xs font-semibold leading-tight line-clamp-2">{tx.item_name}</div>
-      <div className="text-[10px] opacity-80 tabular-nums">{formatMinor(tx.unit_price_minor, currency)}</div>
+      <div className="text-xs font-semibold leading-tight line-clamp-1">{tx.item_name}</div>
+      <div className="text-[10px] opacity-80 tabular-nums">{fracLabel(piece.den)}</div>
     </motion.button>
   )
 }
@@ -92,9 +124,7 @@ function PersonSlot({ person, total, count, currency, registerRef, hot, onOpen }
       }`}
     >
       <div className="text-white text-sm font-medium truncate">{person.display_name}</div>
-      <div className="text-[11px] text-spotify-text">
-        {count > 0 ? `${count} поз.` : 'пусто'}
-      </div>
+      <div className="text-[11px] text-spotify-text">{count > 0 ? `${count} поз.` : 'пусто'}</div>
       {total > 0 && (
         <div className="text-gold text-sm font-semibold tabular-nums mt-0.5">{formatMinor(total, currency)}</div>
       )}
@@ -119,14 +149,11 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
               <div key={ln.txId} className="flex items-center justify-between bg-spotify-gray rounded-lg px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-white text-sm truncate">{ln.name}</div>
-                  <div className="text-[11px] text-spotify-text tabular-nums">
-                    {ln.count} × {formatMinor(ln.unitPrice, currency)} = {formatMinor(ln.count * ln.unitPrice, currency)}
-                  </div>
+                  <div className="text-[11px] text-spotify-text tabular-nums">{ln.portion} · {formatMinor(ln.amount, currency)}</div>
                 </div>
-                <button
-                  onClick={() => onRemove(ln.txId)}
-                  className="ml-2 shrink-0 inline-flex items-center gap-1 text-xs text-red-400"
-                ><Undo2 size={14} /> вернуть</button>
+                <button onClick={() => onRemove(ln.txId)} className="ml-2 shrink-0 inline-flex items-center gap-1 text-xs text-red-400">
+                  <Undo2 size={14} /> вернуть
+                </button>
               </div>
             ))}
           </div>
@@ -136,6 +163,8 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
     </Dialog.Root>
   )
 }
+
+const SPLIT_OPTIONS = [2, 3, 4, 6]
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
@@ -148,10 +177,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   const txById = useMemo(() => Object.fromEntries(bill.transactions.map((t) => [t.id, t])), [bill.transactions])
   const currency = bill.currency
 
-  const [slots, setSlots] = useState(() => billToSlots(bill))
-  const [hotPerson, setHotPerson] = useState(null)
+  const [pieces, setPieces] = useState(() => billToPieces(bill))
+  const [hotPerson] = useState(null)
   const [openPerson, setOpenPerson] = useState(null)
-  const [renaming, setRenaming] = useState(null) // {txId, name}
+  const [renaming, setRenaming] = useState(null)
   const [finishing, setFinishing] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -161,99 +190,122 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     else delete slotRefs.current[id]
   }, [])
 
-  // Re-seed slots if the bill identity changes (e.g. reload of a different bill).
-  useEffect(() => { setSlots(billToSlots(bill)) }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPieces(billToPieces(bill)) }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Debounced auto-save ──
   const saveTimer = useRef(null)
-  const queueSave = useCallback((nextSlots) => {
+  const buildBody = useCallback((src) => ({
+    transactions: bill.transactions.map((tx) => ({
+      id: tx.id, assignments: piecesToAssignments(src[tx.id] || []),
+    })),
+  }), [bill.transactions])
+
+  const queueSave = useCallback((next) => {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       setSaving(true)
-      try {
-        await api.put(`/api/bills/${bill.id}/distribution`, {
-          transactions: bill.transactions.map((tx) => ({
-            id: tx.id,
-            assignments: slotsToAssignments(nextSlots[tx.id] || []),
-          })),
-        })
-      } catch { /* keep local state; will retry on next drop */ }
+      try { await api.put(`/api/bills/${bill.id}/distribution`, buildBody(next)) }
+      catch { /* keep local; retry on next change */ }
       finally { setSaving(false) }
     }, 600)
-  }, [bill.id, bill.transactions])
+  }, [bill.id, buildBody])
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
-  const mutateSlots = useCallback((updater) => {
-    setSlots((prev) => {
+  const mutate = useCallback((updater) => {
+    setPieces((prev) => {
       const next = updater(prev)
       queueSave(next)
       return next
     })
   }, [queueSave])
 
-  // ── Drop a unit of `txId` at viewport point → owning person ──
-  const handleDropOnPerson = useCallback((txId, x, y) => {
-    setHotPerson(null)
+  // ── Drop a piece onto whichever person slot is under the release point ──
+  const handleDropOnPerson = useCallback((txId, pieceId, x, y) => {
     let target = null
     for (const [pid, el] of Object.entries(slotRefs.current)) {
       const r = el?.getBoundingClientRect?.()
       if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) { target = pid; break }
     }
     if (!target) return
-    mutateSlots((prev) => {
+    mutate((prev) => ({
+      ...prev,
+      [txId]: (prev[txId] || []).map((p) => (p.id === pieceId ? { ...p, owner: target } : p)),
+    }))
+  }, [mutate])
+
+  // ── Split one unassigned piece (den) of a tx into N smaller pieces ──
+  const splitPiece = useCallback((txId, den, n) => {
+    mutate((prev) => {
       const arr = [...(prev[txId] || [])]
-      const idx = arr.indexOf(null)
+      const idx = arr.findIndex((p) => p.owner === null && p.den === den)
       if (idx === -1) return prev
-      arr[idx] = target
+      const fresh = Array.from({ length: n }, () => ({ id: nextPieceId(), den: den * n, owner: null }))
+      arr.splice(idx, 1, ...fresh)
       return { ...prev, [txId]: arr }
     })
-  }, [mutateSlots])
+  }, [mutate])
 
-  const removeOne = useCallback((txId, personId) => {
-    mutateSlots((prev) => {
-      const arr = [...(prev[txId] || [])]
-      const idx = arr.indexOf(personId)
-      if (idx === -1) return prev
-      arr[idx] = null
-      return { ...prev, [txId]: arr }
-    })
-  }, [mutateSlots])
+  // ── Return a person's whole share of a tx back to the deck ──
+  const returnLine = useCallback((txId, personId) => {
+    mutate((prev) => ({
+      ...prev,
+      [txId]: (prev[txId] || []).map((p) => (p.owner === personId ? { ...p, owner: null } : p)),
+    }))
+  }, [mutate])
 
-  // ── Derived ──
-  const remainingByTx = useMemo(() => {
+  // ── Derived: deck grouped by tx → den ──
+  const deck = useMemo(() => {
     const out = []
     for (const tx of bill.transactions) {
-      const left = (slots[tx.id] || []).filter((s) => s === null).length
-      if (left > 0) out.push({ tx, left })
+      const free = (pieces[tx.id] || []).filter((p) => p.owner === null)
+      if (!free.length) continue
+      const byDen = {}
+      for (const p of free) (byDen[p.den] = byDen[p.den] || []).push(p)
+      out.push({ tx, groups: Object.entries(byDen).map(([den, ps]) => ({ den: Number(den), ps })).sort((a, b) => a.den - b.den) })
     }
     return out
-  }, [bill.transactions, slots])
+  }, [bill.transactions, pieces])
 
-  const totalRemaining = remainingByTx.reduce((s, r) => s + r.left, 0)
+  const totalRemaining = useMemo(
+    () => Object.values(pieces).reduce((s, arr) => s + arr.filter((p) => p.owner === null).length, 0),
+    [pieces],
+  )
 
+  // ── Per-person stats ──
   const personStats = useMemo(() => {
     const stat = {}
-    for (const p of participants) stat[p.id] = { total: 0, count: 0, lines: {} }
+    for (const p of participants) stat[p.id] = { total: 0, lines: {} }
     for (const tx of bill.transactions) {
-      for (const pid of slots[tx.id] || []) {
-        if (!pid || !stat[pid]) continue
-        stat[pid].total += tx.unit_price_minor
-        stat[pid].lines[tx.id] = (stat[pid].lines[tx.id] || 0) + 1
+      const byPersonDen = {}
+      for (const pc of pieces[tx.id] || []) {
+        if (!pc.owner || !stat[pc.owner]) continue
+        const key = `${pc.owner}|${pc.den}`
+        byPersonDen[key] = (byPersonDen[key] || 0) + 1
+      }
+      for (const [key, count] of Object.entries(byPersonDen)) {
+        const [owner, denStr] = key.split('|')
+        const den = Number(denStr)
+        const amount = piecesCost(tx.unit_price_minor, count, den)
+        stat[owner].total += amount
+        const line = (stat[owner].lines[tx.id] = stat[owner].lines[tx.id] || { amount: 0, parts: [] })
+        line.amount += amount
+        line.parts.push(den > 1 ? `${count}/${den}` : `${count} шт`)
       }
     }
-    for (const pid of Object.keys(stat)) stat[pid].count = Object.keys(stat[pid].lines).length
     return stat
-  }, [participants, bill.transactions, slots])
+  }, [participants, bill.transactions, pieces])
 
   const personLines = useCallback((pid) => {
     const lines = personStats[pid]?.lines || {}
-    return Object.entries(lines).map(([txId, count]) => ({
-      txId, count, name: txById[txId]?.item_name || '?', unitPrice: txById[txId]?.unit_price_minor || 0,
+    return Object.entries(lines).map(([txId, ln]) => ({
+      txId, name: txById[txId]?.item_name || '?', amount: ln.amount, portion: ln.parts.join(' + '),
     }))
   }, [personStats, txById])
 
-  // ── Rename a position ──
+  const personCount = useCallback((pid) => Object.keys(personStats[pid]?.lines || {}).length, [personStats])
+
+  // ── Rename ──
   const submitRename = useCallback(async () => {
     if (!renaming) return
     const name = renaming.name.trim()
@@ -270,20 +322,16 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     setSaving(true)
     try {
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      await api.put(`/api/bills/${bill.id}/distribution`, {
-        transactions: bill.transactions.map((tx) => ({
-          id: tx.id, assignments: slotsToAssignments(slots[tx.id] || []),
-        })),
-      })
+      await api.put(`/api/bills/${bill.id}/distribution`, buildBody(pieces))
       await api.put(`/api/bills/${bill.id}/finalize`)
       onChange?.()
       onBack()
     } catch { /* noop */ } finally { setSaving(false) }
-  }, [bill.id, bill.transactions, slots, onBack, onChange])
+  }, [bill.id, buildBody, pieces, onBack, onChange])
 
-  // ── Finish summary screen ──
+  // ── Finish summary ──
   if (finishing) {
-    const filled = participants.filter((p) => personStats[p.id]?.count > 0)
+    const filled = participants.filter((p) => personCount(p.id) > 0)
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-28">
         <button onClick={() => setFinishing(false)} className="text-spotify-text text-sm mb-3 inline-flex items-center gap-1 hover:text-white">
@@ -292,25 +340,22 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         <h2 className="text-white text-xl font-bold mb-1 inline-flex items-center gap-2"><PartyPopper size={20} className="text-gold" /> Кто что взял</h2>
         <p className="text-spotify-text text-sm mb-4">Проверьте — потом счёт станет итоговым.</p>
         <div className="space-y-3">
-          {filled.map((p) => {
-            const st = personStats[p.id]
-            return (
-              <div key={p.id} className="bg-spotify-dark rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-white font-medium">{p.display_name}</div>
-                  <div className="text-gold font-semibold tabular-nums">{formatMinor(st.total, currency)}</div>
-                </div>
-                <div className="space-y-1">
-                  {personLines(p.id).map((ln) => (
-                    <div key={ln.txId} className="text-xs text-spotify-text flex justify-between">
-                      <span className="truncate mr-2">{ln.name} ×{ln.count}</span>
-                      <span className="tabular-nums shrink-0">{formatMinor(ln.count * ln.unitPrice, currency)}</span>
-                    </div>
-                  ))}
-                </div>
+          {filled.map((p) => (
+            <div key={p.id} className="bg-spotify-dark rounded-xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-white font-medium">{p.display_name}</div>
+                <div className="text-gold font-semibold tabular-nums">{formatMinor(personStats[p.id].total, currency)}</div>
               </div>
-            )
-          })}
+              <div className="space-y-1">
+                {personLines(p.id).map((ln) => (
+                  <div key={ln.txId} className="text-xs text-spotify-text flex justify-between">
+                    <span className="truncate mr-2">{ln.name} · {ln.portion}</span>
+                    <span className="tabular-nums shrink-0">{formatMinor(ln.amount, currency)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
         <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-spotify-black via-spotify-black/95 to-transparent">
           <div className="max-w-md mx-auto flex gap-2">
@@ -336,17 +381,16 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
 
       <h2 className="text-white text-xl font-bold">{bill.name}</h2>
       <p className="text-spotify-text text-sm mb-4">
-        Перетаскивай карточки на людей. Осталось разложить: <span className="text-gold font-semibold tabular-nums">{totalRemaining}</span>
+        Перетаскивай карточки на людей. Осталось: <span className="text-gold font-semibold tabular-nums">{totalRemaining}</span>
       </p>
 
-      {/* People grid (drop targets) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-6">
         {participants.map((p) => (
           <PersonSlot
             key={p.id}
             person={p}
             total={personStats[p.id]?.total || 0}
-            count={personStats[p.id]?.count || 0}
+            count={personCount(p.id)}
             currency={currency}
             hot={hotPerson === p.id}
             registerRef={registerRef}
@@ -355,38 +399,49 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         ))}
       </div>
 
-      {/* Deck grouped by position */}
       <div className="space-y-3">
-        {remainingByTx.length === 0 ? (
-          <div className="text-center text-spotify-text text-sm py-6 bg-spotify-dark rounded-xl">
-            Все карточки разложены 🎉
-          </div>
+        {deck.length === 0 ? (
+          <div className="text-center text-spotify-text text-sm py-6 bg-spotify-dark rounded-xl">Все карточки разложены 🎉</div>
         ) : (
-          remainingByTx.map(({ tx, left }) => (
+          deck.map(({ tx, groups }) => (
             <div key={tx.id} className="bg-spotify-dark rounded-xl p-3">
-              <div className="flex items-center justify-between mb-2">
-                <button
-                  onClick={() => setRenaming({ txId: tx.id, name: tx.item_name })}
-                  className="text-white text-sm font-medium inline-flex items-center gap-1.5 min-w-0"
-                >
-                  <span className="truncate">{tx.item_name}</span>
-                  <Pencil size={12} className="text-spotify-text shrink-0" />
-                </button>
-                <span className="text-[11px] text-spotify-text tabular-nums shrink-0">{left} ост.</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <AnimatePresence>
-                  {Array.from({ length: left }).map((_, i) => (
-                    <UnitCard key={`${tx.id}-${i}`} tx={tx} currency={currency} onDropOnPerson={handleDropOnPerson} />
-                  ))}
-                </AnimatePresence>
-              </div>
+              <button
+                onClick={() => setRenaming({ txId: tx.id, name: tx.item_name })}
+                className="text-white text-sm font-medium inline-flex items-center gap-1.5 min-w-0 mb-2"
+              >
+                <span className="truncate">{tx.item_name}</span>
+                <Pencil size={12} className="text-spotify-text shrink-0" />
+                <span className="text-[11px] text-spotify-text font-normal">· {formatMinor(tx.unit_price_minor, currency)}/шт</span>
+              </button>
+              {groups.map(({ den, ps }) => (
+                <div key={den} className="mb-2 last:mb-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[11px] text-spotify-text">{fracLabel(den)} ×{ps.length}</span>
+                    <span className="inline-flex items-center gap-1 ml-auto">
+                      <Scissors size={11} className="text-spotify-text" />
+                      {SPLIT_OPTIONS.map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => splitPiece(tx.id, den, n)}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-spotify-gray text-spotify-text hover:text-white"
+                        >÷{n}</button>
+                      ))}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <AnimatePresence>
+                      {ps.map((piece) => (
+                        <PieceCard key={piece.id} tx={tx} piece={piece} onDropOnPerson={handleDropOnPerson} />
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              ))}
             </div>
           ))
         )}
       </div>
 
-      {/* Finish */}
       {totalRemaining === 0 && (
         <motion.div
           initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
@@ -406,10 +461,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         currency={currency}
         total={openPerson ? personStats[openPerson]?.total || 0 : 0}
         lines={openPerson ? personLines(openPerson) : []}
-        onRemove={(txId) => removeOne(txId, openPerson)}
+        onRemove={(txId) => returnLine(txId, openPerson)}
       />
 
-      {/* Rename dialog */}
       <Dialog.Root open={!!renaming} onOpenChange={(v) => !v && setRenaming(null)}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />

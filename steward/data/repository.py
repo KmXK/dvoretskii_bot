@@ -815,6 +815,9 @@ class Repository:
                             tx["unit_price_minor"] = int(round(total * 100))
                     else:
                         tx["assignments"] = []
+                for asg in tx.get("assignments", []):
+                    if isinstance(asg, dict):
+                        asg.setdefault("denominator", 1)
                 tx.setdefault("unit_price_minor", 0)
 
         for p in data.get("bill_payments_v2", []):

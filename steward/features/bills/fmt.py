@@ -383,7 +383,8 @@ def format_preview(
         for asg in tx.assignments:
             if not asg.debtors:
                 continue
-            asg_total = tx.unit_price_minor * asg.unit_count
+            den = getattr(asg, "denominator", 1) or 1
+            asg_total = (tx.unit_price_minor * asg.unit_count + den // 2) // den
             ordered = sorted(asg.debtors, key=lambda d: d == tx.creditor)
             shares = split_minor(asg_total, len(ordered))
             for debtor, share in zip(ordered, shares):

@@ -39,7 +39,8 @@ function computeBillDebts(bill) {
     if (tx.creditor === '__unknown__') continue
     for (const asg of tx.assignments) {
       if (!asg.debtors || asg.debtors.length === 0) continue
-      const total = tx.unit_price_minor * asg.unit_count
+      const den = asg.denominator || 1
+      const total = Math.floor((tx.unit_price_minor * asg.unit_count + Math.floor(den / 2)) / den)
       const shares = splitMinor(total, asg.debtors.length)
       asg.debtors.forEach((d, i) => {
         if (d === tx.creditor || d === '__unknown__') return
@@ -202,10 +203,12 @@ function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete 
       <div className="mt-2 space-y-1">
         {tx.assignments.map((asg, i) => {
           const names = asg.debtors.map(d => personsById[d]?.display_name || '?').join(', ')
+          const den = asg.denominator || 1
+          const portion = den > 1 ? `${asg.unit_count}/${den}` : `${asg.unit_count} ед.`
           return (
             <div key={i} className="text-xs text-spotify-text inline-flex items-center gap-1">
               {!names && <TriangleAlert size={11} className="text-yellow-400" />}
-              · {asg.unit_count} ед. → {names || 'не назначено'}
+              · {portion} → {names || 'не назначено'}
             </div>
           )
         })}

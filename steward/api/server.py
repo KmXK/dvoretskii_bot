@@ -1882,6 +1882,7 @@ def _serialize_assignment(asg) -> dict:
     return {
         "unit_count": asg.unit_count,
         "debtors": list(asg.debtors),
+        "denominator": getattr(asg, "denominator", 1) or 1,
     }
 
 
@@ -2114,7 +2115,11 @@ async def handle_bills_tx_add(request: web.Request):
     data = await request.json()
     assignments_raw = data.get("assignments", [])
     assignments = [
-        BillItemAssignment(unit_count=int(a.get("unit_count", 1)), debtors=list(a.get("debtors", [])))
+        BillItemAssignment(
+            unit_count=int(a.get("unit_count", 1)),
+            debtors=list(a.get("debtors", [])),
+            denominator=int(a.get("denominator", 1) or 1),
+        )
         for a in assignments_raw
     ]
     quantity = int(data.get("quantity", sum(a.unit_count for a in assignments) or 1))
@@ -2172,7 +2177,11 @@ async def handle_bills_tx_update(request: web.Request):
         tx.creditor = data["creditor"]
     if "assignments" in data:
         tx.assignments = [
-            BillItemAssignment(unit_count=int(a.get("unit_count", 1)), debtors=list(a.get("debtors", [])))
+            BillItemAssignment(
+                unit_count=int(a.get("unit_count", 1)),
+                debtors=list(a.get("debtors", [])),
+                denominator=int(a.get("denominator", 1) or 1),
+            )
             for a in data["assignments"]
         ]
         tx.incomplete = any(not a.debtors for a in tx.assignments)
@@ -2233,6 +2242,7 @@ async def handle_bills_distribute(request: web.Request):
             BillItemAssignment(
                 unit_count=int(a.get("unit_count", 1)),
                 debtors=list(a.get("debtors", [])),
+                denominator=int(a.get("denominator", 1) or 1),
             )
             for a in entry.get("assignments", [])
         ]
