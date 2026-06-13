@@ -86,13 +86,3 @@ h1, h2, h3, h4 {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
-
-/* Маскот-дворецкий: покадровая idle-анимация спрайт-стрипа */
-@keyframes mascot-idle {
-  to { background-position: var(--mascot-end) 0; }
-}
-
-@keyframes mascot-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
-}
