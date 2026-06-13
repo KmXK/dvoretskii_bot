@@ -170,7 +170,8 @@ function BounceNumber({ value, side, active, big = true }) {
       animate={{ y: 0, scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 520, damping: 17 }}
       className={`font-black tabular-nums leading-none ${colorCls}`}
-      style={{ fontSize: big ? 'clamp(76px, 23vw, 184px)' : 'clamp(40px, 12vw, 90px)', ...glow }}
+      // vmin — счёт масштабируется по меньшей стороне экрана, в альбоме не распирает по высоте.
+      style={{ fontSize: big ? 'clamp(60px, 22vmin, 184px)' : 'clamp(36px, 12vmin, 90px)', ...glow }}
     >
       {value}
     </motion.span>
@@ -185,7 +186,7 @@ function WinsPill({ winsA, winsB, label, celebrate }) {
         ? { scale: [1, 1.55, 1.18], y: [0, -4, 0] }
         : { scale: 1, y: 0 }}
       transition={{ duration: celebrate ? 0.9 : 0.3, ease: 'easeOut' }}
-      className={`mt-6 inline-flex items-center gap-2.5 rounded-full px-4 py-1.5 border transition-colors ${
+      className={`mt-6 landscape:mt-3 inline-flex items-center gap-2.5 rounded-full px-4 py-1.5 border transition-colors ${
         celebrate
           ? 'border-lime-400/60 bg-lime-400/10 shadow-[0_0_28px_rgba(205,250,63,0.45)]'
           : 'border-zinc-700/80 bg-zinc-900/50'
@@ -763,7 +764,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         <CourtLines />
 
         {/* Имена + мяч подачи */}
-        <div className="relative z-10 flex items-center justify-center gap-3 w-full max-w-md mb-3">
+        <div className="relative z-10 flex items-center justify-center gap-3 w-full max-w-md mb-3 landscape:mb-1.5">
           <ServeName name={nameA} side="a" isServer={!isClosed && currentServer === 'a'} />
           <span className="text-zinc-600 text-[11px] font-semibold uppercase tracking-wider shrink-0">vs</span>
           <ServeName name={nameB} side="b" isServer={!isClosed && currentServer === 'b'} />
@@ -773,7 +774,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         {isClosed ? (
           <div className="relative z-10 flex items-end justify-center gap-5">
             <BounceNumber value={winsA} side="a" active />
-            <span className="text-zinc-700 font-light pb-3" style={{ fontSize: 'clamp(40px, 11vw, 80px)' }}>:</span>
+            <span className="text-zinc-700 font-light pb-3" style={{ fontSize: 'clamp(32px, 11vmin, 80px)' }}>:</span>
             <BounceNumber value={winsB} side="b" active />
           </div>
         ) : isPadel && padel ? (
@@ -781,7 +782,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         ) : (
           <div className="relative z-10 flex items-end justify-center gap-5">
             <BounceNumber value={curA} side="a" active={currentServer !== 'b'} />
-            <span className="text-zinc-700 font-light pb-3" style={{ fontSize: 'clamp(40px, 11vw, 80px)' }}>:</span>
+            <span className="text-zinc-700 font-light pb-3" style={{ fontSize: 'clamp(32px, 11vmin, 80px)' }}>:</span>
             <BounceNumber value={curB} side="b" active={currentServer !== 'a'} />
           </div>
         )}
@@ -791,7 +792,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
           <WinsPill winsA={winsA} winsB={winsB} celebrate={winsCelebrate} label={isPadel ? 'Сеты' : 'Партии'} />
         )}
 
-        <div className="relative z-10 text-zinc-400 text-sm mt-5">
+        <div className="relative z-10 text-zinc-400 text-sm mt-5 landscape:mt-2">
           {isPadel ? 'Матч' : 'Партия'} <span className="text-white font-semibold">{currentPartyNumber}</span>
         </div>
         {!isClosed && (
@@ -805,7 +806,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
             key={state.last_commentary_seq}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="relative z-10 mt-4 text-zinc-300 text-sm max-w-md text-center italic px-4 leading-snug"
+            className="relative z-10 mt-4 landscape:mt-2 text-zinc-300 text-sm max-w-md text-center italic px-4 leading-snug landscape:hidden"
           >
             “{state.last_commentary}”
           </motion.div>
@@ -823,7 +824,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={() => handlePoint('a')}
-              className="relative overflow-hidden bg-gradient-to-br from-rose-600 to-rose-800 text-white py-6 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-rose-400/30"
+              className="relative overflow-hidden bg-gradient-to-br from-rose-600 to-rose-800 text-white py-6 landscape:py-3 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-rose-400/30"
             >
               <TennisBall size={56} className="absolute -right-3 -top-3 opacity-15 rotate-12" />
               <span className="relative text-3xl leading-none">+1</span>
@@ -832,7 +833,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={() => handlePoint('b')}
-              className="relative overflow-hidden bg-gradient-to-br from-sky-600 to-sky-800 text-white py-6 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-sky-400/30"
+              className="relative overflow-hidden bg-gradient-to-br from-sky-600 to-sky-800 text-white py-6 landscape:py-3 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-sky-400/30"
             >
               <TennisBall size={56} className="absolute -left-3 -top-3 opacity-15 -rotate-12" />
               <span className="relative text-3xl leading-none">+1</span>

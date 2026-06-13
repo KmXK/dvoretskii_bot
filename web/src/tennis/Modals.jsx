@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Play, X } from 'lucide-react'
+import { Download, Pencil, Play, Trash2, X } from 'lucide-react'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 import { SPORT_LIST, DEFAULT_SPORT, sportMeta } from './sports'
@@ -684,7 +684,7 @@ export function ImportSheet({ open, onClose, onImported }) {
   return (
     <AnimatePresence>
       <SheetShell title="Импорт истории" onClose={onClose}>
-        <p className="text-zinc-400 text-xs mb-2">
+        <p className="text-spotify-text text-xs mb-2">
           Формат: «ГГГГ-ММ-ДД @opp» (потом партии 11:7), либо «ГГГГ-ММ-ДД @opp 5:3» для агрегата.
           Пустые строки игнорятся.
         </p>
@@ -700,19 +700,19 @@ export function ImportSheet({ open, onClose, onImported }) {
             onBlur={() => window.setTimeout(() => setSuggest(null), 150)}
             placeholder={IMPORT_EXAMPLE}
             rows={10}
-            className="w-full bg-zinc-800 text-white text-sm px-3 py-2 rounded-lg border border-zinc-700 font-mono"
+            className="w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors font-mono"
             style={{ minHeight: 220 }}
           />
           {suggest && filteredOpponents.length > 0 && (
             <div
-              className="absolute z-20 bg-zinc-950 border border-zinc-700 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto min-w-[220px]"
+              className="absolute z-20 bg-spotify-dark border border-white/10 rounded-lg shadow-xl overflow-hidden max-h-60 overflow-y-auto min-w-[220px]"
               style={
                 suggest.coords
                   ? { top: suggest.coords.top + 2, left: Math.max(4, suggest.coords.left - 8) }
                   : { left: 0, bottom: -4, transform: 'translateY(100%)' }
               }
             >
-              <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-800 bg-zinc-900">
+              <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-spotify-text border-b border-white/5 bg-spotify-gray">
                 @{suggest.query || '…'}
               </div>
               {filteredOpponents.map((o, idx) => (
@@ -721,16 +721,16 @@ export function ImportSheet({ open, onClose, onImported }) {
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => applySuggestion(o)}
-                  className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${
-                    idx === suggest.highlighted ? 'bg-zinc-800' : 'hover:bg-zinc-900'
+                  className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors ${
+                    idx === suggest.highlighted ? 'bg-white/10' : 'hover:bg-white/5'
                   }`}
                 >
                   <span className="font-mono text-rose-300">@{o.username}</span>
                   {o.name && o.name !== o.username && (
-                    <span className="text-zinc-400 text-xs truncate">{o.name}</span>
+                    <span className="text-spotify-text text-xs truncate">{o.name}</span>
                   )}
                   {o.played_against > 0 && (
-                    <span className="ml-auto text-[10px] text-zinc-500">·{o.played_against}</span>
+                    <span className="ml-auto text-[10px] text-spotify-text">·{o.played_against}</span>
                   )}
                 </button>
               ))}
@@ -738,9 +738,9 @@ export function ImportSheet({ open, onClose, onImported }) {
           )}
         </div>
 
-        <div className="mt-3 mb-2 text-xs uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+        <div className="mt-3 mb-2 text-xs uppercase tracking-wider text-spotify-text flex items-center justify-between">
           <span>Превью</span>
-          {parsing && <span className="text-amber-400 normal-case tracking-normal">парсим…</span>}
+          {parsing && <span className="text-gold normal-case tracking-normal">парсим…</span>}
         </div>
         {error && (
           <p className="text-red-400 text-sm mb-3">{error}</p>
@@ -748,14 +748,14 @@ export function ImportSheet({ open, onClose, onImported }) {
         {preview && preview.length > 0 && (
           <ul className="space-y-1 mb-3 text-sm">
             {preview.map((e) => (
-              <li key={e.line_no} className={`px-2 py-1.5 rounded ${e.opponent_id ? 'bg-zinc-800/50' : 'bg-red-900/40'}`}>
-                <span className="font-mono text-zinc-400 text-xs mr-2">L{e.line_no}</span>
-                <span className="font-mono text-zinc-300 text-xs mr-2">{e.date.slice(0, 10)}</span>
-                <span className="text-zinc-200 mr-2">{e.opponent_id ? e.opponent_name : `❓ ${e.opponent_raw}`}</span>
+              <li key={e.line_no} className={`px-2.5 py-1.5 rounded-lg ${e.opponent_id ? 'bg-spotify-dark' : 'bg-red-500/15 border border-red-500/30'}`}>
+                <span className="font-mono text-spotify-text text-xs mr-2">L{e.line_no}</span>
+                <span className="font-mono text-white/80 text-xs mr-2">{e.date.slice(0, 10)}</span>
+                <span className="text-white mr-2">{e.opponent_id ? e.opponent_name : `❓ ${e.opponent_raw}`}</span>
                 {e.mode === 'aggregate' ? (
-                  <span className="text-zinc-400 text-xs">агрегат {e.wins_a}:{e.wins_b}</span>
+                  <span className="text-spotify-text text-xs tabular-nums">агрегат {e.wins_a}:{e.wins_b}</span>
                 ) : (
-                  <span className="text-zinc-400 text-xs">{e.score_pairs.length} парт.</span>
+                  <span className="text-spotify-text text-xs">{e.score_pairs.length} парт.</span>
                 )}
               </li>
             ))}
@@ -763,18 +763,20 @@ export function ImportSheet({ open, onClose, onImported }) {
         )}
 
         {unresolved.length > 0 && (
-          <p className="text-amber-400 text-sm mb-3">
+          <p className="text-gold text-sm mb-3">
             ⚠ {unresolved.length} оппонент(ов) не распознано — поправь @username и пробуй снова.
           </p>
         )}
 
-        <button
+        <motion.button
+          whileTap={{ scale: 0.98 }}
           onClick={submit}
           disabled={!canSubmit || submitting}
-          className="w-full bg-gradient-to-br from-emerald-600 to-emerald-800 text-white py-3 rounded-xl font-semibold disabled:opacity-40"
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gold py-3.5 font-display font-extrabold text-spotify-black transition-colors hover:bg-gold-2 disabled:opacity-40 disabled:hover:bg-gold"
         >
+          <Download size={18} strokeWidth={2.5} />
           {submitting ? 'Импортируем…' : `Импортировать ${preview?.length ? `(${preview.length})` : ''}`}
-        </button>
+        </motion.button>
       </SheetShell>
     </AnimatePresence>
   )
@@ -852,21 +854,21 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
     <AnimatePresence>
       <SheetShell title={data ? `Сессия #${data.id}` : 'Сессия'} onClose={onClose}>
         {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
-        {!data && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
+        {!data && !error && <p className="text-spotify-text text-sm">Загружаем…</p>}
         {data && (
           <>
-            <div className="text-zinc-300 text-sm mb-1 flex items-center gap-2">
+            <div className="text-spotify-text text-sm mb-1 flex items-center gap-2">
               <span title={sportMeta(data.sport).label}>{sportMeta(data.sport).emoji}</span>
               <span>{sportMeta(data.sport).label}</span>
-              <span className="text-zinc-500">·</span>
+              <span className="text-spotify-text/60">·</span>
               <span>{new Date(data.started_at).toLocaleString('ru-RU')}</span>
             </div>
-            <div className="text-white text-lg font-semibold mb-2">
+            <div className="font-display text-white text-lg font-extrabold mb-2">
               {data.player_a_name}{' '}
-              <span className="font-mono">{data.wins[0]}:{data.wins[1]}</span>{' '}
+              <span className="tabular-nums">{data.wins[0]}:{data.wins[1]}</span>{' '}
               {data.player_b_name}
             </div>
-            <div className="text-zinc-400 text-xs mb-4">
+            <div className="text-spotify-text text-xs mb-4">
               {data.is_aggregate_only ? 'агрегатный импорт' : `${data.matches?.length ?? 0} партий`}
               {data.duration_seconds != null && ` · ${Math.round(data.duration_seconds / 60)} мин`}
               {data.closed_reason && ` · ${data.closed_reason}`}
@@ -874,10 +876,10 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
 
             {data.matches?.length > 0 && (
               <>
-                <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2 flex items-center justify-between">
+                <div className="text-xs uppercase tracking-wider text-spotify-text mb-2 flex items-center justify-between">
                   <span>Партии</span>
                   {!data.can_edit_matches && data.ended_at && (
-                    <span className="text-[10px] normal-case text-zinc-600">окно правки закрыто</span>
+                    <span className="text-[10px] normal-case text-spotify-text/60">окно правки закрыто</span>
                   )}
                 </div>
                 <ol className="space-y-1 mb-4">
@@ -887,26 +889,26 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
                     const winnerName = m.winner === 'a' ? data.player_a_name : data.player_b_name
                     const canEdit = data.can_edit_matches
                     return (
-                      <li key={i} className="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2.5 text-sm">
-                        <span className="text-zinc-500 w-6">#{i + 1}</span>
-                        <span className="font-mono text-zinc-100 w-16">{score}</span>
-                        <span className="text-zinc-400 text-xs flex-1 truncate ml-2">{winnerName}</span>
+                      <li key={i} className="flex items-center justify-between bg-spotify-dark rounded-lg px-3 py-2.5 text-sm">
+                        <span className="text-spotify-text w-6">#{i + 1}</span>
+                        <span className="font-semibold tabular-nums text-white w-16">{score}</span>
+                        <span className="text-spotify-text text-xs flex-1 truncate ml-2">{winnerName}</span>
                         {canEdit && m.score_a != null && (
                           <button
                             onClick={() => setEditIdx(i)}
-                            className="text-amber-300 hover:text-amber-200 ml-2 text-base px-1"
+                            className="text-gold hover:text-gold-2 ml-2 p-1 transition-colors"
                             title="Поправить счёт"
                           >
-                            ✏️
+                            <Pencil size={15} />
                           </button>
                         )}
                         {canEdit && (
                           <button
                             onClick={() => handleDeleteMatch(i)}
-                            className="text-red-400 hover:text-red-300 ml-2 text-base px-1"
+                            className="text-red-400 hover:text-red-300 ml-1 p-1 transition-colors"
                             title="Удалить партию"
                           >
-                            🗑
+                            <Trash2 size={15} />
                           </button>
                         )}
                       </li>
@@ -917,12 +919,13 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
             )}
 
             {data.initiator_id === currentUserId && (
-              <button
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 onClick={handleDeleteSession}
-                className="w-full bg-red-900/60 hover:bg-red-900 text-red-100 py-2.5 rounded-xl text-sm"
+                className="w-full flex items-center justify-center gap-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-300 py-2.5 rounded-xl text-sm font-medium transition-colors"
               >
-                🗑 Удалить сессию целиком
-              </button>
+                <Trash2 size={15} /> Удалить сессию целиком
+              </motion.button>
             )}
           </>
         )}
@@ -985,10 +988,10 @@ export function StatsSheet({ open, onClose }) {
                 key={t.key ?? 'all'}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setSportFilter(t.key)}
-                className={`flex-1 py-2 rounded-lg text-sm font-medium border ${
+                className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
                   active
-                    ? 'bg-emerald-700 border-emerald-500 text-white'
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-300'
+                    ? 'bg-gold text-spotify-black border-transparent'
+                    : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
                 }`}
               >
                 <span className="mr-1">{t.emoji}</span>{t.label}
@@ -997,11 +1000,11 @@ export function StatsSheet({ open, onClose }) {
           })}
         </div>
         {error && <p className="text-red-400 text-sm">{error}</p>}
-        {!stats && !error && <p className="text-zinc-500 text-sm">Загружаем…</p>}
+        {!stats && !error && <p className="text-spotify-text text-sm">Загружаем…</p>}
         {stats && (
           <div className="space-y-3">
             {stats.matches === 0 ? (
-              <p className="text-zinc-400 text-sm">Партий пока нет.</p>
+              <p className="text-spotify-text text-sm">Партий пока нет.</p>
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-3">
@@ -1025,9 +1028,9 @@ export function StatsSheet({ open, onClose }) {
 
 function StatCard({ label, value, accent = false }) {
   return (
-    <div className={`bg-zinc-800/60 rounded-xl px-3 py-3 border ${accent ? 'border-rose-700' : 'border-zinc-800'}`}>
-      <div className="text-zinc-400 text-[10px] uppercase tracking-wider">{label}</div>
-      <div className="text-white text-xl font-semibold mt-1 tabular-nums">{value}</div>
+    <div className={`rounded-xl px-3 py-3 border ${accent ? 'border-gold/40 bg-gold-soft' : 'border-white/5 bg-spotify-dark'}`}>
+      <div className="text-spotify-text text-[10px] uppercase tracking-wider">{label}</div>
+      <div className={`font-display text-xl font-extrabold mt-1 tabular-nums ${accent ? 'text-gold' : 'text-white'}`}>{value}</div>
     </div>
   )
 }
