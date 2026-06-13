@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
+import Dropdown from '../components/Dropdown'
 import { api } from '../api/client'
 
 const NOTIFICATION_TOGGLES = [
@@ -95,18 +96,18 @@ function TabButton({ active, onClick, children }) {
 
 function ChatPicker({ chats, currentId, onChange }) {
   if (chats.length === 0) return null
+  const options = chats.map(c => ({
+    value: c.id,
+    label: `${c.name}${c.is_chat_admin ? ' · admin' : ''}`,
+  }))
   return (
-    <select
-      value={currentId ?? ''}
-      onChange={e => onChange(Number(e.target.value))}
-      className="w-full bg-spotify-dark text-white rounded-lg px-3 py-2 text-sm mb-4"
-    >
-      {chats.map(c => (
-        <option key={c.id} value={c.id}>
-          {c.name} {c.is_chat_admin ? '· admin' : ''}
-        </option>
-      ))}
-    </select>
+    <Dropdown
+      value={currentId}
+      onChange={v => onChange(Number(v))}
+      options={options}
+      placeholder="Выберите чат"
+      className="mb-4"
+    />
   )
 }
 

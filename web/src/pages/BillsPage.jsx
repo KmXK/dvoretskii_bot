@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
+import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -303,14 +304,12 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
                 className="bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
               />
             </div>
-            <select
+            <Dropdown
               value={creditor}
-              onChange={e => setCreditor(e.target.value)}
-              className="w-full bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
-            >
-              <option value="">Кто оплатил...</option>
-              {persons.map(p => <option key={p.id} value={p.id}>{p.display_name}</option>)}
-            </select>
+              onChange={v => setCreditor(v)}
+              options={persons.map(p => ({ value: p.id, label: p.display_name }))}
+              placeholder="Кто оплатил..."
+            />
 
             <div className="border border-spotify-gray rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
