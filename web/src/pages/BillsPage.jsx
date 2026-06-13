@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -648,12 +648,16 @@ export default function BillsPage() {
     return () => clearInterval(t)
   }, [reload])
 
-  // Deep link `startapp=bill_<id>` → jump straight into that bill (its board if
-  // not yet finalized). Honour it once after the first successful load.
+  // Deep link `startapp=bill_<id>` → jump into that bill once. Guard with a ref so
+  // it fires a single time: start_param persists, and every reload mutates `bills`,
+  // which would otherwise keep yanking the user back into the bill forever.
+  const deepLinkConsumed = useRef(false)
   useEffect(() => {
+    if (deepLinkConsumed.current) return
     const raw = WebApp?.initDataUnsafe?.start_param || ''
     const m = /^bill_(\d+)$/.exec(raw)
     if (m && bills.some((b) => b.id === Number(m[1]))) {
+      deepLinkConsumed.current = true
       setOpenBillId(Number(m[1]))
     }
   }, [bills])
