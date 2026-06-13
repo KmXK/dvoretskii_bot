@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { motion, useMotionValue, useTransform, useSpring } from 'framer-motion'
+import { useState, useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { motion, animate, useMotionValue, useTransform, useSpring } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge } from 'lucide-react'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -25,6 +25,9 @@ function piecesCost(unitPrice, count, den) {
 }
 
 const fracLabel = (den) => (den > 1 ? `1/${den}` : '1 шт')
+
+const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b] } return a || 1 }
+const lcm = (a, b) => (a / gcd(a, b)) * b
 
 // Stable per-position colour so a deck of the same item shares a tint, and
 // different positions read as different "suits".
@@ -144,27 +147,73 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
 const SPLIT_OPTIONS = [2, 3, 4]
 const CARD_W = 220
 
-// Top card of the pile: draggable with physics — it leans into the drag
-// direction (x→rotate) and the lean is spring-damped, plus a touch of vertical
-// lean, so the card feels weighted rather than rigidly pinned to the cursor.
-function TopCard({ card, tx, currency, remaining, onDragEnd, onRename }) {
+// Top card of the pile. Physics: leans into the drag (x→spring rotate). On
+// release it either flies into the target person (glide to slot centre + shrink
+// + fade), flings off-screen when swiped aside (then drops to the deck bottom),
+// or springs back. Motion values are driven imperatively so we own the landing.
+const TopCard = forwardRef(function TopCard({ card, tx, currency, remaining, resolveDrop, onAssign, onDefer, onRename }, ref) {
+  const nodeRef = useRef(null)
   const x = useMotionValue(0)
-  const y = useMotionValue(0)
+  // Promotion: the next card was already sitting just below/behind, so rise it
+  // into place (y, scale) with opacity already at 1 — no fade-flash, no jump.
+  const y = useMotionValue(10)
+  const scale = useMotionValue(0.93)
+  const opacity = useMotionValue(1)
   const rotateX = useTransform(x, [-220, 220], [-22, 22])
   const rotateY = useTransform(y, [-220, 220], [4, -4])
   const rotateRaw = useTransform([rotateX, rotateY], ([rx, ry]) => rx + ry)
   const rotate = useSpring(rotateRaw, { stiffness: 260, damping: 18, mass: 0.6 })
 
+  useEffect(() => {
+    const c1 = animate(y, 0, { type: 'spring', stiffness: 340, damping: 26 })
+    const c2 = animate(scale, 1, { type: 'spring', stiffness: 340, damping: 24 })
+    return () => { c1.stop(); c2.stop() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const springBack = () => {
+    animate(x, 0, { type: 'spring', stiffness: 300, damping: 24 })
+    animate(y, 0, { type: 'spring', stiffness: 300, damping: 24 })
+    animate(scale, 1, { type: 'spring', stiffness: 300, damping: 20 })
+  }
+
+  const flingDown = (dir = -1) => {
+    animate(x, dir * 460, { type: 'spring', stiffness: 200, damping: 28 })
+    animate(opacity, 0, { duration: 0.32, onComplete: onDefer })
+  }
+  useImperativeHandle(ref, () => ({ flingDown }), [onDefer]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDragEnd = (_e, info) => {
+    const drop = resolveDrop(info.point)
+    if (drop) {
+      // Glide the card so its centre lands on the person slot, then vanish.
+      const r = nodeRef.current?.getBoundingClientRect()
+      if (r) {
+        const cx = r.left + r.width / 2
+        const cy = r.top + r.height / 2
+        const tcx = drop.rect.left + drop.rect.width / 2
+        const tcy = drop.rect.top + drop.rect.height / 2
+        animate(x, x.get() + (tcx - cx), { type: 'spring', stiffness: 240, damping: 26 })
+        animate(y, y.get() + (tcy - cy), { type: 'spring', stiffness: 240, damping: 26 })
+      }
+      animate(scale, 0.18, { duration: 0.3 })
+      animate(opacity, 0, { duration: 0.34, onComplete: () => onAssign(drop.personId) })
+      return
+    }
+    if (Math.abs(info.offset.x) > 90) {
+      flingDown(Math.sign(info.offset.x) || 1)
+      return
+    }
+    springBack()
+  }
+
   return (
     <motion.div
+      ref={nodeRef}
       drag
-      dragSnapToOrigin
-      onDragEnd={onDragEnd}
-      whileDrag={{ scale: 1.06, cursor: 'grabbing' }}
-      dragTransition={{ bounceStiffness: 320, bounceDamping: 22 }}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      style={{ x, y, rotate, background: cardGradient(card.txId, 0) }}
+      dragMomentum={false}
+      onDragStart={() => animate(scale, 1.06, { duration: 0.12 })}
+      onDragEnd={handleDragEnd}
+      style={{ x, y, scale, opacity, rotate, background: cardGradient(card.txId, 0) }}
       className="touch-none select-none cursor-grab rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
     >
       <div className="flex items-start justify-between gap-2">
@@ -181,7 +230,7 @@ function TopCard({ card, tx, currency, remaining, onDragEnd, onRename }) {
       </div>
     </motion.div>
   )
-}
+})
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
@@ -200,6 +249,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   const [finishing, setFinishing] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  const topCardRef = useRef(null)
   const slotRefs = useRef({})
   const registerRef = useCallback((id, el) => {
     if (el) slotRefs.current[id] = el
@@ -289,14 +339,40 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     })
   }, [top, mutate])
 
-  const onTopDragEnd = useCallback((_e, info) => {
-    const { x, y } = info.point
+  // Undo splitting: recombine all loose (unassigned) pieces of a position back
+  // into the coarsest form — whole units + a single reduced fraction. So four
+  // 1/4 → one whole, two 1/4 → one 1/2, etc.
+  const mergeTx = useCallback((txId) => {
+    mutate((prev) => {
+      const loose = prev.filter((c) => c.txId === txId && c.owner === null)
+      if (loose.length < 2) return prev
+      const L = loose.reduce((m, c) => lcm(m, c.den), 1)
+      const totalNum = loose.reduce((s, c) => s + L / c.den, 0) // units × L
+      const whole = Math.floor(totalNum / L)
+      const remNum = totalNum - whole * L
+      const g = remNum ? gcd(remNum, L) : 1
+      const rNum = remNum ? remNum / g : 0
+      const rDen = remNum ? L / g : 1
+      const rebuilt = []
+      for (let i = 0; i < whole; i++) rebuilt.push({ id: nextId(), txId, den: 1, owner: null })
+      for (let i = 0; i < rNum; i++) rebuilt.push({ id: nextId(), txId, den: rDen, owner: null })
+      if (rebuilt.length >= loose.length) return prev // already minimal — nothing to merge
+      const firstIdx = prev.findIndex((c) => c.txId === txId && c.owner === null)
+      const without = prev.filter((c) => !(c.txId === txId && c.owner === null))
+      without.splice(Math.min(firstIdx, without.length), 0, ...rebuilt)
+      return without
+    })
+  }, [mutate])
+
+  const resolveDrop = useCallback((point) => {
     for (const [pid, el] of Object.entries(slotRefs.current)) {
       const r = el?.getBoundingClientRect?.()
-      if (r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) { assignTop(pid); return }
+      if (r && point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom) {
+        return { personId: pid, rect: r }
+      }
     }
-    if (Math.abs(info.offset.x) > 90) deferTop()
-  }, [assignTop, deferTop])
+    return null
+  }, [])
 
   const returnLine = useCallback((txId, personId) => {
     mutate((prev) => prev.map((c) => (c.txId === txId && c.owner === personId ? { ...c, owner: null } : c)))
@@ -363,6 +439,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   }
 
   const remaining = deck.length
+  const topLooseCount = top ? deck.filter((c) => c.txId === top.txId).length : 0
+  const canMerge = topLooseCount >= 2
 
   // ── Board ──
   return (
@@ -403,43 +481,47 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         <>
           <div className="relative mx-auto mb-3" style={{ height: 200, maxWidth: CARD_W }}>
             {deck.slice(0, 4).map((card, i) => {
-              const tx = txById[card.txId]
-              const isTop = i === 0
-              // Centre with marginLeft (not a transform) so framer's drag x/y and
-              // dragSnapToOrigin don't fight the centring.
-              const wrap = { position: 'absolute', left: '50%', top: 8, width: CARD_W, marginLeft: -CARD_W / 2, zIndex: 40 - i }
-              if (isTop) {
+                const tx = txById[card.txId]
+                const isTop = i === 0
+                // Centre with marginLeft (not a transform) so framer's drag x/y and
+                // dragSnapToOrigin don't fight the centring.
+                const wrap = { position: 'absolute', left: '50%', top: 8, width: CARD_W, marginLeft: -CARD_W / 2, zIndex: 40 - i }
+                if (isTop) {
+                  return (
+                    <div key={card.id} style={wrap}>
+                      <TopCard
+                        ref={topCardRef}
+                        card={card}
+                        tx={tx}
+                        currency={currency}
+                        remaining={remaining}
+                        resolveDrop={resolveDrop}
+                        onAssign={assignTop}
+                        onDefer={deferTop}
+                        onRename={(txId, name) => setRenaming({ txId, name })}
+                      />
+                    </div>
+                  )
+                }
                 return (
-                  <div key={card.id} style={wrap}>
-                    <TopCard
-                      card={card}
-                      tx={tx}
-                      currency={currency}
-                      remaining={remaining}
-                      onDragEnd={onTopDragEnd}
-                      onRename={(txId, name) => setRenaming({ txId, name })}
-                    />
-                  </div>
+                  <motion.div
+                    key={card.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.6, rotate: (i % 2 ? 26 : -26), y: -10 }}
+                    animate={{ opacity: 1, scale: 1 - i * 0.05, rotate: (i % 2 ? 1 : -1) * i * 1.5, y: i * 8 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+                    style={{ ...wrap, background: cardGradient(card.txId, i) }}
+                    className="pointer-events-none rounded-2xl px-4 py-5 shadow-lg shadow-black/40 text-black/80 h-[150px]"
+                  >
+                    <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
+                    <div className="text-2xl font-bold tabular-nums my-2 opacity-70">{fracLabel(card.den)}</div>
+                  </motion.div>
                 )
-              }
-              return (
-                <motion.div
-                  key={card.id}
-                  layout
-                  initial={false}
-                  animate={{ y: i * 8, scale: 1 - i * 0.05, rotate: (i % 2 ? 1 : -1) * i * 1.5 }}
-                  style={{ ...wrap, background: cardGradient(card.txId, i) }}
-                  className="pointer-events-none rounded-2xl px-4 py-5 shadow-lg shadow-black/40 text-black/80 h-[150px]"
-                >
-                  <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
-                  <div className="text-2xl font-bold tabular-nums my-2 opacity-70">{fracLabel(card.den)}</div>
-                </motion.div>
-              )
-            })}
+              })}
           </div>
 
           {/* Top-card controls */}
-          <div className="flex items-center justify-center gap-2 mb-5">
+          <div className="flex items-center justify-center flex-wrap gap-2 mb-5">
             <span className="inline-flex items-center gap-1 text-[11px] text-spotify-text mr-1"><Scissors size={12} /> делить</span>
             {SPLIT_OPTIONS.map((n) => (
               <button
@@ -448,8 +530,14 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
                 className="text-xs px-2.5 py-1 rounded-lg bg-spotify-gray text-white hover:bg-spotify-light-gray transition-colors"
               >÷{n}</button>
             ))}
+            {canMerge && (
+              <button
+                onClick={() => mergeTx(top.txId)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-indigo/20 text-indigo hover:bg-indigo/30 transition-colors inline-flex items-center gap-1"
+              ><Merge size={12} /> собрать</button>
+            )}
             <button
-              onClick={deferTop}
+              onClick={() => (topCardRef.current ? topCardRef.current.flingDown(-1) : deferTop())}
               className="ml-1 text-xs px-2.5 py-1 rounded-lg bg-spotify-gray text-spotify-text hover:text-white inline-flex items-center gap-1"
             ><RotateCcw size={12} /> вниз</button>
           </div>
