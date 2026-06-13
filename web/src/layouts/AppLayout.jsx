@@ -7,6 +7,12 @@ import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
 import { useSidebar } from './useSidebar'
 import ThemeToggle from '../components/ThemeToggle'
+import { useTelegramBackButton } from '../hooks/useTelegramBackButton'
+
+function TelegramBackButton() {
+  useTelegramBackButton()
+  return null
+}
 
 function useIsWide(breakpoint = 768) {
   const [wide, setWide] = useState(() =>
@@ -35,6 +41,7 @@ export default function AppLayout({ children }) {
   if (mode === 'miniapp') {
     return (
       <div className="min-h-screen bg-spotify-black pb-24">
+        <TelegramBackButton />
         {children}
         <BottomNav />
       </div>
