@@ -314,7 +314,7 @@ class TestRuleProposal:
         feature.bot = AsyncMock()
         target = -555000
         ctx = _callback_ctx(repo, user_id=DEFAULT_USER_ID, chat_id=CHAT_ID, bot=AsyncMock())
-        await feature.cb_chat_propose(ctx, rule_id=1, chat_id=target)
+        await feature.cb_chat_propose(ctx, rule_id=1, chat_id=target, owner_id=DEFAULT_USER_ID)
         # запрос ушёл в целевой чат
         ctx.bot.send_message.assert_called()
         assert target not in rule.chats  # пока не подтвердили — не добавлен
