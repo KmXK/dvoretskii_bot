@@ -127,6 +127,14 @@ def pname(person_id: str, by_id: dict[str, BillPerson]) -> str:
     return p.display_name
 
 
+def mname(person_id: str, by_id: dict[str, BillPerson]) -> str:
+    """Person name escaped for an INLINE markdown context (not code-block cells).
+
+    Use this everywhere a name lands in a `*bold*`/plain Markdown line; keep raw
+    `pname` for `_mono_table` cells (code blocks need no markdown escaping)."""
+    return md_inline(pname(person_id, by_id))
+
+
 def _short_name(person_id: str, by_id: dict[str, BillPerson], max_len: int = 14) -> str:
     """Short name for table cells — truncate if needed."""
     name = pname(person_id, by_id)
@@ -272,7 +280,7 @@ def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
             amt for creds in after.values() for amt in creds.values() if amt > 0
         )
         flag = "🔒" if bill.closed else ("✅" if outstanding == 0 else "🔓")
-        name = bill.name[:32]
+        name = md_inline(bill.name[:32])
         debt_part = (
             f" · долг {minor_to_display(outstanding, bill.currency)}"
             if outstanding else " · ✓ закрыт по долгам"
@@ -298,8 +306,8 @@ def format_bill_detail(
     inc_str = f" (⚠️ {incomplete} не назначены)" if incomplete else ""
 
     lines = [
-        f"🧾 *{bill.name}* \\#{bill.id}  {status}",
-        f"Автор: {pname(bill.author_person_id, by_id)} · {bill.currency}",
+        f"🧾 *{md_inline(bill.name)}* \\#{bill.id}  {status}",
+        f"Автор: {mname(bill.author_person_id, by_id)} · {bill.currency}",
         f"📋 Позиций: {len(bill.transactions)}{inc_str}",
         "",
         _tx_table(bill.transactions[:20], by_id, bill.currency),
@@ -323,9 +331,9 @@ def format_bill_detail(
         if my_debts or owed_to_me:
             lines.append("\n👤 Лично ты:")
             for cid, amt in my_debts.items():
-                lines.append(f"  → {pname(cid, by_id)}: {minor_to_display(amt, bill.currency)}")
+                lines.append(f"  → {mname(cid, by_id)}: {minor_to_display(amt, bill.currency)}")
             for did, amt in owed_to_me.items():
-                lines.append(f"  ← {pname(did, by_id)}: {minor_to_display(amt, bill.currency)}")
+                lines.append(f"  ← {mname(did, by_id)}: {minor_to_display(amt, bill.currency)}")
 
     return "\n".join(lines)
 
@@ -362,7 +370,7 @@ def format_preview(
         for raw_key, pid in sorted(resolved_map.items()):
             p = by_id.get(pid)
             if p and raw_key != p.display_name.strip().casefold():
-                name_lines.append(f"  {raw_key.title()} → {pname(pid, by_id)} ✓")
+                name_lines.append(f"  {md_inline(raw_key.title())} → {mname(pid, by_id)} ✓")
         if name_lines:
             lines.append("👥 Участники:")
             lines.extend(name_lines)

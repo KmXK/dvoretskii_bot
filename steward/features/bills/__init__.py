@@ -1891,12 +1891,12 @@ class BillsFeature(Feature):
             self.cb("bills:pay_confirm").button("✅ Получил", payment_id=payment.id),
             self.cb("bills:pay_reject").button("❌ Не получал", payment_id=payment.id),
         )
-        mention = f"[{creditor.display_name}](tg://user?id={creditor.telegram_id})"
+        mention = f"[{fmt.md_inline(creditor.display_name)}](tg://user?id={creditor.telegram_id})"
         notif = await send_bill_notification(
             bot,
             self.repository,
             creditor,
-            f"💸 {debtor.display_name} говорит, что перевёл {mention} *{amount_str}*\nПодтверди получение:",
+            f"💸 {fmt.md_inline(debtor.display_name)} говорит, что перевёл {mention} *{amount_str}*\nПодтверди получение:",
             sender=debtor,
             reply_markup=kb.to_markup(),
             parse_mode="Markdown",
@@ -1987,7 +1987,7 @@ class BillsFeature(Feature):
             bot,
             self.repository,
             debtor,
-            f"✅ {creditor.display_name} подтвердил, что ты перевёл *{amount_str}*",
+            f"✅ {fmt.md_inline(creditor.display_name)} подтвердил, что ты перевёл *{amount_str}*",
             sender=creditor,
             parse_mode="Markdown",
             initiated_chat_id=chat_id,
