@@ -797,6 +797,7 @@ class Repository:
             bill.setdefault("participants", [])
             bill.setdefault("transactions", [])
             bill.setdefault("distribution_status", "final")
+            bill.setdefault("collection_context", [])
             for tx in bill.get("transactions", []):
                 tx.setdefault("quantity", 1)
                 tx.setdefault("added_by_person_id", None)

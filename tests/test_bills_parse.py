@@ -2,6 +2,9 @@
 from steward.features.bills.parse import (
     norm_name_key as _norm_name_key,
     parse_ai_response as _parse_ai_response,
+    parse_collect_response as _parse_collect_response,
+    collect_rows_to_undistributed_transactions as _collect_rows_to_tx,
+    collect_rows_to_block as _collect_rows_to_block,
     rows_to_transactions as _rows_to_transactions,
 )
 from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
@@ -305,3 +308,101 @@ class TestSerializers:
         parts = [p.strip() for p in line.split("|")]
         assert parts[3] == "-"  # debtors
         assert parts[4] == "-"  # creditor
+
+
+class TestParseCollectResponse:
+    """The slim collect schema: positions (no debtors) + explicit participant list."""
+
+    def test_positions_and_participants(self):
+        text = """[META]
+currency: BYN
+
+[ОБЩЕЕ]
+Пицца | 30 | 1 | Лёша | Текст
+Кола | 5 | 2 | Лёша | Текст
+
+[УЧАСТНИКИ]
+Лёша
+Дима
+Кирилл
+
+[ДАННЫЕ]
+
+[ВОПРОСЫ]
+"""
+        currency, rows, participants, new_persons, qs = _parse_collect_response(text)
+        assert currency == "BYN"
+        assert len(rows) == 2
+        assert rows[0]["name"] == "Пицца"
+        assert rows[0]["price_minor"] == 3000
+        assert rows[0]["quantity"] == 1
+        assert rows[0]["creditor_raw"] == "Лёша"
+        assert rows[1]["quantity"] == 2
+        # Crucially: no debtors / who-took-what in the collect schema.
+        assert "debtors_raw" not in rows[0]
+        assert participants == ["Лёша", "Дима", "Кирилл"]
+        assert qs == []
+
+    def test_participants_dedup_and_skip_dash(self):
+        text = """[ОБЩЕЕ]
+
+[УЧАСТНИКИ]
+Лёша
+лёша
+-
+
+"""
+        _, _, participants, _, _ = _parse_collect_response(text)
+        assert participants == ["Лёша"]
+
+    def test_skips_header_echo(self):
+        text = """[ОБЩЕЕ]
+Наименование | Цена_за_ед | Кол-во | Кредитор | Источник
+Чай | 4 | 1 | Паша | Фото
+"""
+        _, rows, _, _, _ = _parse_collect_response(text)
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Чай"
+
+    def test_question_only_amount(self):
+        text = """[ОБЩЕЕ]
+
+[ВОПРОСЫ]
+Сколько стоил кальян? | 20 | 30 | 50
+"""
+        _, _, _, _, qs = _parse_collect_response(text)
+        assert len(qs) == 1
+        assert qs[0]["options"][-1] == "Другое"
+
+    def test_collect_rows_to_undistributed(self):
+        rows = [
+            {"name": "Пицца", "price_minor": 3000, "quantity": 1,
+             "creditor_raw": "Лёша", "source": "text"},
+            {"name": "Кола", "price_minor": 500, "quantity": 2,
+             "creditor_raw": "-", "source": "text"},
+        ]
+        name_to_id = _nmap({"Лёша": "lesha_id"})
+        txs = _collect_rows_to_tx(rows, name_to_id)
+        assert len(txs) == 2
+        # Every collected position is undistributed (empty assignments, incomplete).
+        assert all(t.assignments == [] for t in txs)
+        assert all(t.incomplete for t in txs)
+        assert txs[0].creditor == "lesha_id"
+        assert txs[0].quantity == 1
+        assert txs[1].creditor == UNKNOWN_PERSON_ID
+
+    def test_block_round_trips_through_collect_parser(self):
+        rows = [
+            {"name": "Пицца", "price_minor": 3000, "quantity": 1,
+             "creditor_raw": "Лёша", "source": "text"},
+        ]
+        block = _collect_rows_to_block(rows, ["Лёша", "Дима"])
+        currency, parsed, participants, _, _ = _parse_collect_response(
+            "[META]\ncurrency: BYN\n\n" + block
+        )
+        assert currency == "BYN"
+        assert len(parsed) == 1
+        assert parsed[0]["name"] == "Пицца"
+        assert parsed[0]["price_minor"] == 3000
+        assert parsed[0]["creditor_raw"] == "Лёша"
+        assert participants == ["Лёша", "Дима"]

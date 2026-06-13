@@ -90,6 +90,142 @@ def parse_ai_response(text: str) -> tuple[str, list[dict], list[str], list[dict]
     return currency, rows, new_persons, questions
 
 
+def parse_collect_response(
+    text: str,
+) -> tuple[str, list[dict], list[str], list[str], list[dict]]:
+    """Parse the slim `bill_collect` AI output.
+
+    Returns (currency, item_rows, participant_names, new_person_names, questions).
+
+    Unlike `parse_ai_response`, the collect schema carries NO debtors and NO group
+    splitting — only positions (name, unit price, quantity, creditor) plus an explicit
+    `[УЧАСТНИКИ]` guest list. Distribution by person happens on the web board.
+
+    Each item row: {name, price_minor, quantity, creditor_raw, source}.
+    """
+    currency = "BYN"
+    rows: list[dict] = []
+    participants: list[str] = []
+    new_persons: list[str] = []
+    questions: list[dict] = []
+
+    def _section(header: str) -> str:
+        m = re.search(rf"\[{header}\](.*?)(?=\[|$)", text, re.DOTALL | re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    for line in _section("META").splitlines():
+        if line.strip().lower().startswith("currency:"):
+            currency = line.split(":", 1)[1].strip().upper() or "BYN"
+
+    for line in _section("ОБЩЕЕ").splitlines():
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 2 or not parts[0]:
+            continue
+        # Skip the header row if the model echoes it back.
+        if parts[0].lower().startswith("наименование"):
+            continue
+        price_minor = _parse_price(parts[1])
+        if price_minor is None or price_minor == 0:
+            continue
+        try:
+            quantity = max(1, round(float(parts[2]))) if len(parts) > 2 and parts[2] else 1
+        except (ValueError, TypeError):
+            quantity = 1
+        rows.append({
+            "name": parts[0],
+            "price_minor": price_minor,
+            "quantity": quantity,
+            "creditor_raw": parts[3] if len(parts) > 3 else "-",
+            "source": (parts[4] if len(parts) > 4 else "text").lower(),
+        })
+
+    seen_participants: set[str] = set()
+    for line in _section("УЧАСТНИКИ").splitlines():
+        name = line.strip().split("|")[0].strip()
+        if not name or name == "-":
+            continue
+        key = norm_name_key(name)
+        if key not in seen_participants:
+            seen_participants.add(key)
+            participants.append(name)
+
+    for line in _section("ДАННЫЕ").splitlines():
+        name = line.strip().split("|")[0].strip()
+        if name:
+            new_persons.append(name)
+
+    for line in _section("ВОПРОСЫ").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        q_text = parts[0]
+        if not q_text:
+            continue
+        options = [p for p in parts[1:] if p]
+        if not options or options[-1].lower() != "другое":
+            options.append("Другое")
+        questions.append({"text": q_text, "options": options})
+
+    return currency, rows, participants, new_persons, questions
+
+
+def collect_rows_to_block(item_rows: list[dict], participant_names: list[str]) -> str:
+    """Re-emit the current collected state as [ОБЩЕЕ] + [УЧАСТНИКИ] for the
+    correction prompt (input to `run_collect(correction_text=...)`)."""
+    lines = [
+        "[ОБЩЕЕ]",
+        "Наименование | Цена_за_ед | Кол-во | Кредитор | Источник",
+    ]
+    for r in item_rows:
+        price_minor = r.get("price_minor", 0)
+        unit_price = f"{price_minor / 100:.2f}".rstrip("0").rstrip(".") or "0"
+        src = (r.get("source", "text") or "text").capitalize()
+        lines.append(
+            f"{r.get('name','')} | {unit_price} | {r.get('quantity',1)} | "
+            f"{r.get('creditor_raw','-') or '-'} | {src}"
+        )
+    lines.append("")
+    lines.append("[УЧАСТНИКИ]")
+    for name in participant_names:
+        lines.append(name)
+    return "\n".join(lines)
+
+
+def collect_rows_to_undistributed_transactions(
+    rows: list[dict], name_to_id: dict[str, str]
+) -> list[BillTransaction]:
+    """Convert `parse_collect_response` item rows into undistributed transactions.
+
+    Like `rows_to_undistributed_transactions` but for the simpler collect-row schema
+    (no group_id, no debtors): every position comes out `incomplete` with empty
+    `assignments`; only the creditor is resolved.
+    """
+
+    def _resolve(raw: str) -> str:
+        raw = (raw or "").strip()
+        if not raw or raw == "-":
+            return UNKNOWN_PERSON_ID
+        return name_to_id.get(norm_name_key(raw), UNKNOWN_PERSON_ID)
+
+    txs: list[BillTransaction] = []
+    for row in rows:
+        txs.append(BillTransaction(
+            id=str(uuid.uuid4()),
+            item_name=row["name"],
+            creditor=_resolve(row.get("creditor_raw", "-")),
+            unit_price_minor=row["price_minor"],
+            quantity=row["quantity"],
+            assignments=[],
+            source=row.get("source", "text"),
+            incomplete=True,
+        ))
+    return txs
+
+
 def rows_to_transactions(rows: list[dict], name_to_id: dict[str, str]) -> list[BillTransaction]:
     """Convert parsed AI rows into BillTransaction objects.
 

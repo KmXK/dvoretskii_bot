@@ -22,7 +22,7 @@ from steward.helpers.bills_person_match import match_name
 from steward.session.context import CallbackStepContext, ChatStepContext
 from steward.session.step import Step
 
-from . import fmt, media, parse
+from . import collect, fmt, media, parse
 
 if TYPE_CHECKING:
     from steward.features.bills import BillsFeature
@@ -56,6 +56,7 @@ class _SessionState:
     parsed_transactions: list = field(default_factory=list)
     parsed_rows: list[dict] = field(default_factory=list)
     participants: list[str] = field(default_factory=list)
+    participant_names: list[str] = field(default_factory=list)
     new_person_names: list[str] = field(default_factory=list)
     resolve_queue: list[tuple[str, list]] = field(default_factory=list)
     resolved_map: dict[str, str] = field(default_factory=dict)
@@ -458,7 +459,51 @@ class _BillCollectStep(Step):
         else:
             await self._show_preview(context, st, feature)
 
+    @staticmethod
+    def _is_new_collect(st: _SessionState) -> bool:
+        """A brand-new bill being collected (not editing, not a suggestion).
+
+        These run the slim collect pipeline (positions + participants, no
+        distribution); editing/suggestion keep the legacy distributed flow.
+        """
+        return st.editing_bill_id is None and not st.is_suggestion
+
+    async def _run_collect_ai(self, context, st: _SessionState, feature: "BillsFeature") -> bool:
+        if not st.context_items:
+            await self._send(context, "Нет данных для анализа. Добавь фото, голосовое или текст.")
+            return False
+        result = await collect.run_collect(
+            feature.repository,
+            caller_tid=st.caller_tid,
+            origin_chat_id=st.origin_chat_id,
+            context_items=st.context_items,
+            resolved_map=st.resolved_map,
+        )
+        if result is None:
+            kb = fmt.kb_collect(feature, st.context_items)
+            await self._send(
+                context,
+                "⏱ AI не ответил или ошибка. Данные сохранены — жми «✅ Готово» ещё раз.",
+                keyboard=kb,
+            )
+            return False
+        if not result.item_rows and not result.questions:
+            kb = fmt.kb_collect(feature, st.context_items)
+            await self._send(context, "AI не нашёл позиций. Добавь ещё данных.", keyboard=kb)
+            return False
+        st.currency = result.currency
+        st.parsed_rows = result.item_rows
+        st.participant_names = result.participant_names
+        st.new_person_names = result.new_person_names
+        st.question_queue = list(result.questions)
+        st.resolved_map = result.resolved_map
+        st.resolve_queue = result.resolve_queue
+        return True
+
     async def _run_ai(self, context, st: _SessionState, feature: "BillsFeature") -> bool:
+        if self._is_new_collect(st):
+            return await self._run_collect_ai(context, st, feature)
+
         if not st.context_items:
             await self._send(context, "Нет данных для анализа. Добавь фото, голосовое или текст.")
             return False
@@ -633,10 +678,56 @@ class _BillCollectStep(Step):
             return
         await self._apply_correction(context, st, feature, text)
 
+    async def _apply_collect_correction(
+        self, context, st: _SessionState, feature: "BillsFeature", correction_text: str
+    ):
+        """Re-run the collect pipeline with a correction over the current positions."""
+        current_block = parse.collect_rows_to_block(st.parsed_rows, st.participant_names)
+        await self._send(context, "⏳ Применяю исправление...")
+        result = await collect.run_collect(
+            feature.repository,
+            caller_tid=st.caller_tid,
+            origin_chat_id=st.origin_chat_id,
+            context_items=st.context_items,
+            resolved_map=st.resolved_map,
+            current_block=current_block,
+            correction_text=correction_text,
+        )
+        if result is None:
+            await self._send(
+                context,
+                "⏱ AI не ответил вовремя. Опиши исправление ещё раз или нажми «❌ Отмена».",
+                keyboard=fmt.kb_collect_review(feature),
+            )
+            return
+        if not result.item_rows and not result.questions:
+            await self._send(
+                context,
+                "Не понял исправление — счёт остался без изменений. Переформулируй.",
+                keyboard=fmt.kb_collect_review(feature),
+            )
+            return
+        st.currency = result.currency
+        st.parsed_rows = result.item_rows
+        st.participant_names = result.participant_names
+        st.new_person_names = result.new_person_names
+        st.question_queue = list(result.questions)
+        st.resolved_map = result.resolved_map
+        st.resolve_queue = result.resolve_queue
+        if st.question_queue:
+            await self._next_question(context, st, feature)
+        elif st.resolve_queue:
+            await self._next_disambiguation(context, st, feature)
+        else:
+            await self._show_preview(context, st, feature)
+
     async def _apply_correction(
         self, context, st: _SessionState, feature: "BillsFeature", correction_text: str
     ):
         """Send the current bill state + correction to AI, ingest the revised table."""
+        if self._is_new_collect(st):
+            return await self._apply_collect_correction(context, st, feature, correction_text)
+
         if not st.parsed_rows:
             await self._send(context, "Нет распознанного счёта для исправления.")
             return
@@ -721,10 +812,18 @@ class _BillCollectStep(Step):
         # New bill: collection-only. Positions are kept undistributed — the
         # who-owes-what split happens on the web board. We just verify the
         # collected positions + participants with native tables here.
-        st.participants = parse.collect_participant_ids(st.parsed_rows, st.resolved_map)
-        st.parsed_transactions = parse.rows_to_undistributed_transactions(
+        st.parsed_transactions = parse.collect_rows_to_undistributed_transactions(
             st.parsed_rows, st.resolved_map,
         )
+        participant_ids: list[str] = []
+        for nm in st.participant_names:
+            pid = st.resolved_map.get(parse.norm_name_key(nm))
+            if pid and pid != UNKNOWN_PERSON_ID and pid not in participant_ids:
+                participant_ids.append(pid)
+        for tx in st.parsed_transactions:
+            if tx.creditor and tx.creditor != UNKNOWN_PERSON_ID and tx.creditor not in participant_ids:
+                participant_ids.append(tx.creditor)
+        st.participants = participant_ids
         rich, fb = fmt.build_collect_review(
             st.parsed_transactions, st.participants, feature._persons(),
             st.currency, st.bill_name,
@@ -1098,56 +1197,11 @@ def _build_directory_block(
     st: _SessionState,
     chat_persons: list,
 ) -> str:
-    """Build the persons directory + chats block for the AI prompt.
-
-    In a group chat: just chat_persons + their chat-scoped nicknames.
-    In DM: chat_persons + a [ИЗВЕСТНЫЕ ЧАТЫ] section listing accessible chats
-    with their members and nicks, so the AI can disambiguate cross-chat refs.
-    """
-    repo = feature.repository
-    is_dm = st.origin_chat_id == st.caller_tid
-
-    nicks_for_persons: dict[str, list[str]] = {}
-    for n in repo.db.chat_nicknames:
-        if is_dm or n.chat_id == st.origin_chat_id:
-            nicks_for_persons.setdefault(n.person_id, []).append(n.nick)
-
-    blocks: list[str] = [
-        parse.build_persons_directory(
-            chat_persons, chat_nicks_by_person=nicks_for_persons,
-        )
-    ]
-
-    if is_dm:
-        author = next(
-            (u for u in repo.db.users if u.id == st.caller_tid), None,
-        )
-        chat_ids = set(getattr(author, "chat_ids", []) or []) if author else set()
-        chats = [c for c in repo.db.chats if c.id in chat_ids]
-        if chats:
-            persons_by_id = {p.id: p for p in chat_persons}
-            members_by_chat: dict[int, list] = {}
-            for c in chats:
-                members: list = []
-                for p in chat_persons:
-                    last_chats = set(p.chat_last_seen.keys())
-                    if str(c.id) in last_chats:
-                        members.append(p)
-                members_by_chat[c.id] = members[:30]
-
-            nicks_by_chat: dict[int, list[tuple[str, str]]] = {}
-            for n in repo.db.chat_nicknames:
-                if n.chat_id in chat_ids:
-                    p = persons_by_id.get(n.person_id) or repo.get_bill_person(n.person_id)
-                    if p:
-                        nicks_by_chat.setdefault(n.chat_id, []).append(
-                            (n.nick, p.display_name)
-                        )
-
-            chats_block = parse.build_chats_directory(chats, members_by_chat, nicks_by_chat)
-            if chats_block:
-                blocks.append(chats_block)
-    return "\n\n".join(blocks)
+    """Thin wrapper over collect.build_directory_block (kept for the legacy
+    editing/correction paths that still build the distributed prompt)."""
+    return collect.build_directory_block(
+        feature.repository, st.caller_tid, st.origin_chat_id, chat_persons,
+    )
 
 
 async def _learn_chat_nick(

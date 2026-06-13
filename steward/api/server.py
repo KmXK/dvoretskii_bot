@@ -1929,6 +1929,7 @@ def _serialize_bill_v2(bill, payments: list) -> dict:
         "closed": bill.closed,
         "closed_at": bill.closed_at.isoformat() if bill.closed_at else None,
         "distribution_status": getattr(bill, "distribution_status", "final"),
+        "collection_context": list(getattr(bill, "collection_context", [])),
         "payments": [_serialize_payment_v2(p) for p in bill_payments],
     }
 
@@ -2042,17 +2043,307 @@ async def handle_bills_create(request: web.Request):
         display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
         username=tg_user.get("username"),
     )
+
+    # Optional initial guest list (web create-from-scratch wizard). Each entry is
+    # {person_id} for someone already known, or {name}/{username} to add ad-hoc.
+    participant_ids: list[str] = [caller.id]
+
+    def _add(pid: str | None):
+        if pid and pid not in participant_ids:
+            participant_ids.append(pid)
+
+    for entry in data.get("participants", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("person_id"):
+            p = repository.get_bill_person(entry["person_id"])
+            _add(p.id if p else None)
+        elif entry.get("username"):
+            uname = str(entry["username"]).lstrip("@").strip()
+            if not uname:
+                continue
+            person = repository.get_bill_person_by_username(uname)
+            if not person:
+                user = next(
+                    (u for u in repository.db.users if (u.username or "").lower() == uname.lower()),
+                    None,
+                )
+                if user:
+                    person, _ = repository.get_or_create_bill_person(
+                        telegram_id=user.id, display_name=user.username or str(user.id),
+                        username=user.username,
+                    )
+                else:
+                    person, _ = repository.get_or_create_anonymous_person(f"@{uname}")
+            _add(person.id)
+        elif entry.get("name"):
+            person, _ = repository.get_or_create_anonymous_person(str(entry["name"]).strip())
+            _add(person.id)
+
+    is_draft = bool(data.get("draft"))
     bill = BillV2(
         id=repository.get_next_bill_v2_id(),
         name=name,
         author_person_id=caller.id,
-        participants=[caller.id],
+        participants=participant_ids,
         transactions=[],
         currency=currency,
         origin_chat_id=origin_chat_id,
         updated_at=datetime.datetime.now(),
+        distribution_status="draft" if is_draft else "final",
     )
     repository.db.bills_v2.append(bill)
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_circle(request: web.Request):
+    """GET /api/bills/circle — близкое окружение для нового счёта.
+
+    Кандидаты: BillPerson из общих с тобой чатов + те, с кем уже делил счета
+    (ранжируются выше). Форма как у tennis_routes.list_opponents.
+    """
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    me_tid = int(tg_user["id"])
+    me_person = repository.get_bill_person_by_telegram_id(me_tid)
+    my_person_id = me_person.id if me_person else None
+    my_user = next((u for u in repository.db.users if u.id == me_tid), None)
+    my_chats = set(getattr(my_user, "chat_ids", []) or [])
+    users_by_id = {u.id: u for u in repository.db.users}
+
+    cand: dict[str, dict] = {}
+
+    def _ensure(p):
+        if p.id == my_person_id:
+            return None
+        c = cand.get(p.id)
+        if c is None:
+            c = {
+                "id": p.id,
+                "name": p.display_name,
+                "username": p.telegram_username or "",
+                "count": 0,
+            }
+            cand[p.id] = c
+        return c
+
+    for p in repository.db.bill_persons:
+        if not p.telegram_id:
+            continue
+        u = users_by_id.get(p.telegram_id)
+        if my_chats and (not u or not (set(getattr(u, "chat_ids", []) or []) & my_chats)):
+            continue
+        _ensure(p)
+
+    if my_person_id:
+        for b in repository.db.bills_v2:
+            if my_person_id not in b.participants:
+                continue
+            for pid in b.participants:
+                if pid == my_person_id:
+                    continue
+                p = repository.get_bill_person(pid)
+                if p:
+                    c = _ensure(p)
+                    if c:
+                        c["count"] += 1
+
+    ordered = sorted(
+        cand.values(),
+        key=lambda c: (-c["count"], (c["username"] or c["name"]).lower()),
+    )
+    return web.json_response({"people": ordered})
+
+
+async def handle_bills_collect(request: web.Request):
+    """POST /api/bills/{id}/collect — добавить кусок контекста (text|photo|voice).
+
+    multipart: kind=text|photo|voice; text=<...> (для text) или file=<...> (фото/голос).
+    OCR/расшифровка идут по байтам напрямую (без телеграма); результат аппендится в
+    bill.collection_context тем же форматом, что чат-сессия.
+    """
+    import base64
+    from steward.helpers.ocr import extract_text_from_image
+    from steward.helpers.stt import transcribe_audio_bytes
+
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+
+    kind = "text"
+    text_val = ""
+    file_bytes: bytes | None = None
+    reader = await request.multipart()
+    async for field in reader:
+        if field.name == "kind":
+            kind = (await field.read()).decode("utf-8").strip() or "text"
+        elif field.name == "text":
+            text_val = (await field.read()).decode("utf-8").strip()
+        elif field.name == "file":
+            buf = bytearray()
+            while True:
+                chunk = await field.read_chunk(64 * 1024)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if len(buf) > 25 * 1024 * 1024:
+                    return web.json_response({"error": "file too large"}, status=413)
+            file_bytes = bytes(buf)
+
+    recognized = ""
+    if kind == "text":
+        if not text_val:
+            return web.json_response({"error": "empty text"}, status=400)
+        recognized = text_val
+        bill.collection_context.append(f"[Текст]\n{text_val}")
+    elif kind == "photo":
+        if not file_bytes:
+            return web.json_response({"error": "missing file"}, status=400)
+        b64 = base64.standard_b64encode(file_bytes).decode("ascii")
+        mime = "PNG" if file_bytes[:8] == b"\x89PNG\r\n\x1a\n" else "JPEG"
+        recognized = await extract_text_from_image(b64, mime) or ""
+        if not recognized:
+            return web.json_response({"error": "не удалось распознать фото", "recognized": ""}, status=422)
+        bill.collection_context.append(f"[Фото]\n{recognized}")
+    elif kind == "voice":
+        if not file_bytes:
+            return web.json_response({"error": "missing file"}, status=400)
+        recognized = await transcribe_audio_bytes(file_bytes) or ""
+        if not recognized:
+            return web.json_response({"error": "речь не распознана", "recognized": ""}, status=422)
+        bill.collection_context.append(f"[Голосовое]\n{recognized}")
+    else:
+        return web.json_response({"error": "unknown kind"}, status=400)
+
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response({
+        "ok": True,
+        "kind": kind,
+        "recognized": recognized,
+        "context_count": len(bill.collection_context),
+    })
+
+
+async def handle_bills_parse(request: web.Request):
+    """POST /api/bills/{id}/parse — прогнать собранный контекст через AI.
+
+    Извлекает позиции (нераспределённые) и участников из bill.collection_context,
+    заменяет bill.transactions результатом, дополняет участников. Статус — draft.
+    """
+    from steward.features.bills import collect as bills_collect
+    from steward.features.bills import parse as bills_parse
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+    if not bill.collection_context:
+        return web.json_response({"error": "нет контекста для разбора"}, status=400)
+
+    result = await bills_collect.run_collect(
+        repository,
+        caller_tid=int(tg_user["id"]),
+        origin_chat_id=bill.origin_chat_id,
+        context_items=list(bill.collection_context),
+    )
+    if result is None:
+        return web.json_response({"error": "AI не ответил, попробуй ещё раз"}, status=503)
+    if not result.item_rows:
+        return web.json_response({
+            "error": "не нашёл позиций — добавь ещё контекста",
+            "questions": result.questions,
+        }, status=422)
+
+    # Web has no interactive disambiguation: auto-resolve every named person to a
+    # bound match (from run_collect) or a freshly created anonymous person.
+    resolved = dict(result.resolved_map)
+    for name in list(result.new_person_names) + list(result.participant_names) + [
+        r.get("creditor_raw", "") for r in result.item_rows
+    ]:
+        name = (name or "").strip()
+        if not name or name == "-":
+            continue
+        key = bills_parse.norm_name_key(name)
+        if key not in resolved or resolved[key] == UNKNOWN_PERSON_ID:
+            person, _ = repository.get_or_create_anonymous_person(name)
+            resolved[key] = person.id
+
+    txs = bills_parse.collect_rows_to_undistributed_transactions(result.item_rows, resolved)
+    bill.transactions = txs
+
+    for name in result.participant_names:
+        pid = resolved.get(bills_parse.norm_name_key(name))
+        if pid and pid != UNKNOWN_PERSON_ID and pid not in bill.participants:
+            bill.participants.append(pid)
+    for tx in txs:
+        if tx.creditor and tx.creditor != UNKNOWN_PERSON_ID and tx.creditor not in bill.participants:
+            bill.participants.append(tx.creditor)
+
+    bill.currency = result.currency or bill.currency
+    bill.distribution_status = "draft"
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response({
+        "bill": _serialize_bill_v2(bill, repository.db.bill_payments_v2),
+        "questions": result.questions,
+    })
+
+
+async def handle_bills_set_creditor(request: web.Request):
+    """PUT /api/bills/{id}/creditor — назначить одного плательщика на весь счёт.
+
+    Ставит `creditor` на ВСЕ позиции (один на счёт — модель веб-создания). Пустой
+    person_id сбрасывает в UNKNOWN. Используется селектором «кто платил» в мастере.
+    """
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+
+    data = await request.json()
+    pid = data.get("person_id") or UNKNOWN_PERSON_ID
+    if pid != UNKNOWN_PERSON_ID and not repository.get_bill_person(pid):
+        return web.json_response({"error": "person not found"}, status=404)
+
+    for tx in bill.transactions:
+        tx.creditor = pid
+    if pid != UNKNOWN_PERSON_ID and pid not in bill.participants:
+        bill.participants.append(pid)
+    bill.updated_at = datetime.datetime.now()
     await repository.save()
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
 
@@ -2606,6 +2897,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills", handle_bills_list)
     app.router.add_post("/api/bills", handle_bills_create)
     app.router.add_get("/api/bills/persons", handle_bills_persons)
+    app.router.add_get("/api/bills/circle", handle_bills_circle)
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
     app.router.add_post("/api/bills/payments", handle_bills_payment_create)
     app.router.add_put("/api/bills/payments/{pid}/confirm", handle_bills_payment_confirm)
@@ -2618,6 +2910,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/bills/{id}/transactions", handle_bills_tx_add)
     app.router.add_patch("/api/bills/{id}/transactions/{tid}", handle_bills_tx_update)
     app.router.add_delete("/api/bills/{id}/transactions/{tid}", handle_bills_tx_delete)
+    app.router.add_post("/api/bills/{id}/collect", handle_bills_collect)
+    app.router.add_post("/api/bills/{id}/parse", handle_bills_parse)
+    app.router.add_put("/api/bills/{id}/creditor", handle_bills_set_creditor)
     app.router.add_put("/api/bills/{id}/distribution", handle_bills_distribute)
     app.router.add_put("/api/bills/{id}/finalize", handle_bills_finalize)
     app.router.add_put("/api/bills/{id}/redistribute", handle_bills_redistribute)
