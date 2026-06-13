@@ -13,9 +13,30 @@ logger = logging.getLogger(__name__)
 class RuleAnswerFeature(Feature):
     rules = collection("rules")
 
+    _AI_TRIGGERS = ["дворецкий", "уважаемый"]
+    _AI_MEDIA_ATTRS = ("video", "video_note", "voice", "audio", "photo", "sticker", "animation", "document")
+
+    def _addressed_to_ai(self, ctx: FeatureContext) -> bool:
+        text = ctx.message.text or ""
+        text_lower = text.lower()
+        bot_username = ctx.bot.username
+        if bot_username and text_lower.startswith(f"@{bot_username.lower()}"):
+            return True
+        if any(text_lower.startswith(t) for t in self._AI_TRIGGERS):
+            return True
+        reply = ctx.message.reply_to_message
+        if reply:
+            from_bot = reply.from_user and reply.from_user.id == ctx.bot.id
+            is_media = any(getattr(reply, a, None) for a in self._AI_MEDIA_ATTRS)
+            if from_bot and not is_media:
+                return True
+        return False
+
     @on_message
     async def answer(self, ctx: FeatureContext) -> bool:
         if ctx.message is None or not isinstance(ctx.message.text, str):
+            return False
+        if self._addressed_to_ai(ctx):
             return False
         rules_list = list(self.rules)
 

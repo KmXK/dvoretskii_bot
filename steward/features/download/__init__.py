@@ -17,6 +17,8 @@ from steward.helpers.limiter import Duration, check_limit
 
 logger = logging.getLogger("download_controller")
 
+_AI_TRIGGERS = ("дворецкий", "уважаемый")
+
 
 class DownloadFeature(Feature):
     excluded_from_ai_router = True
@@ -25,7 +27,14 @@ class DownloadFeature(Feature):
     async def on_url(self, ctx: FeatureContext) -> bool:
         if ctx.message is None or not ctx.message.text:
             return False
-        found = find_download_urls(ctx.message.text)
+        text = ctx.message.text
+        text_lower = text.lower()
+        bot_username = ctx.bot.username
+        if bot_username and text_lower.startswith(f"@{bot_username.lower()}"):
+            return False
+        if any(text_lower.startswith(t) for t in _AI_TRIGGERS):
+            return False
+        found = find_download_urls(text)
         if not found:
             return False
 
