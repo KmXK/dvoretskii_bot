@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
+import BillDistribute from './BillDistribute'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -104,6 +106,7 @@ function DebtSummary({ bills, myPersonId, currency = 'BYN' }) {
     let owedToMe = 0
     for (const bill of bills) {
       if (bill.closed) continue
+      if (bill.distribution_status && bill.distribution_status !== 'final') continue
       const net = computeBillDebts(bill)
       if (myPersonId && net[myPersonId]) {
         for (const amt of Object.values(net[myPersonId])) iOwe += amt
@@ -132,6 +135,7 @@ function DebtSummary({ bills, myPersonId, currency = 'BYN' }) {
 
 function BillCard({ bill, myPersonId, personsById, onOpen }) {
   const myNet = useMemo(() => {
+    if (bill.distribution_status && bill.distribution_status !== 'final') return 0
     const net = computeBillDebts(bill)
     let iOwe = 0
     let owed = 0
@@ -154,7 +158,14 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
       onClick={onOpen}
     >
       <div className="flex items-start justify-between mb-1">
-        <div className="text-white font-medium">{bill.name}</div>
+        <div className="text-white font-medium inline-flex items-center gap-2">
+          {bill.name}
+          {bill.distribution_status && bill.distribution_status !== 'final' && (
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo/20 text-indigo">
+              {bill.distribution_status === 'distributing' ? 'распределяется' : 'недозаполнен'}
+            </span>
+          )}
+        </div>
         <div className="text-xs text-spotify-text inline-flex items-center gap-1">#{bill.id} {bill.closed ? <Lock size={12} /> : <LockOpen size={12} />}</div>
       </div>
       <div className="text-xs text-spotify-text">
@@ -618,6 +629,16 @@ export default function BillsPage() {
     return () => clearInterval(t)
   }, [reload])
 
+  // Deep link `startapp=bill_<id>` → jump straight into that bill (its board if
+  // not yet finalized). Honour it once after the first successful load.
+  useEffect(() => {
+    const raw = WebApp?.initDataUnsafe?.start_param || ''
+    const m = /^bill_(\d+)$/.exec(raw)
+    if (m && bills.some((b) => b.id === Number(m[1]))) {
+      setOpenBillId(Number(m[1]))
+    }
+  }, [bills])
+
   const personsById = useMemo(
     () => Object.fromEntries(persons.map(p => [p.id, p])),
     [persons]
@@ -645,6 +666,24 @@ export default function BillsPage() {
     } catch (e) {
       alert(e.message)
     }
+  }
+
+  const needsDistribution = openBill
+    && openBill.distribution_status && openBill.distribution_status !== 'final'
+    && openBill.transactions.length > 0
+    && !openBill.closed
+
+  if (openBill && needsDistribution && isAuthor) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <BillDistribute
+          bill={openBill}
+          persons={persons}
+          onBack={() => { setOpenBillId(null); reload() }}
+          onChange={reload}
+        />
+      </div>
+    )
   }
 
   if (openBill) {
