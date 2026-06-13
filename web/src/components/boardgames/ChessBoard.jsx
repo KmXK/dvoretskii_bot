@@ -142,11 +142,11 @@ export default function ChessBoard({ state, onMove }) {
   const lastTo = last ? `${last.to[0]},${last.to[1]}` : null
 
   return (
-    <div className="relative bg-zinc-900 rounded-xl overflow-hidden p-2">
+    <div className="relative bg-spotify-dark rounded-2xl border border-white/5 overflow-hidden p-2">
       <div className="grid grid-cols-[18px_1fr] grid-rows-[1fr_18px] gap-1">
         <div className="grid grid-rows-8">
           {rankLabels.map(rank => (
-            <div key={rank} className="h-full flex items-center justify-center text-[10px] text-zinc-500 select-none">
+            <div key={rank} className="h-full flex items-center justify-center text-[10px] text-spotify-text select-none">
               {rank}
             </div>
           ))}
@@ -231,20 +231,21 @@ export default function ChessBoard({ state, onMove }) {
           )}
           {promotionDialog && (
             <div className="absolute inset-0 bg-black/55 flex items-center justify-center z-40">
-              <div className="bg-zinc-900 rounded-xl p-3 w-56">
-                <p className="text-zinc-200 text-xs mb-2 text-center">Выберите фигуру превращения</p>
+              <div className="bg-spotify-dark rounded-2xl border border-white/5 p-3 w-56">
+                <p className="text-white text-xs mb-2 text-center">Выберите фигуру превращения</p>
                 <div className="grid grid-cols-4 gap-2">
                   {['q', 'r', 'b', 'n'].map(code => {
                     const enabled = promotionDialog.legal.has(code)
                     return (
-                      <button
+                      <motion.button
                         key={code}
+                        whileTap={enabled ? { scale: 0.92 } : undefined}
                         onClick={() => choosePromotion(code)}
                         disabled={!enabled}
-                        className={`rounded py-2 text-xl ${enabled ? 'bg-zinc-800 hover:bg-zinc-700 text-white' : 'bg-zinc-800/40 text-zinc-500'}`}
+                        className={`rounded-lg py-2 text-xl transition-colors ${enabled ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-white/5 text-spotify-text'}`}
                       >
                         {PIECES[state.role === 'white' ? code.toUpperCase() : code] || code.toUpperCase()}
-                      </button>
+                      </motion.button>
                     )
                   })}
                 </div>
@@ -255,7 +256,7 @@ export default function ChessBoard({ state, onMove }) {
         <div />
         <div className="grid grid-cols-8">
           {fileLabels.map(file => (
-            <div key={file} className="h-full flex items-center justify-center text-[10px] text-zinc-500 select-none">
+            <div key={file} className="h-full flex items-center justify-center text-[10px] text-spotify-text select-none">
               {file}
             </div>
           ))}

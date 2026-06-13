@@ -111,11 +111,11 @@ export default function CheckersBoard({ state, onMove }) {
   const lastTo = state.lastMove?.to ? `${state.lastMove.to[0]},${state.lastMove.to[1]}` : null
 
   return (
-    <div className="relative bg-zinc-900 rounded-xl overflow-hidden p-2">
+    <div className="relative bg-spotify-dark rounded-2xl border border-white/5 overflow-hidden p-2">
       <div className="grid grid-cols-[18px_1fr] grid-rows-[1fr_18px] gap-1">
         <div className="grid grid-rows-8">
           {rankLabels.map(rank => (
-            <div key={rank} className="h-full flex items-center justify-center text-[10px] text-zinc-500 select-none">
+            <div key={rank} className="h-full flex items-center justify-center text-[10px] text-spotify-text select-none">
               {rank}
             </div>
           ))}
@@ -198,7 +198,7 @@ export default function CheckersBoard({ state, onMove }) {
         <div />
         <div className="grid grid-cols-8">
           {fileLabels.map(file => (
-            <div key={file} className="h-full flex items-center justify-center text-[10px] text-zinc-500 select-none">
+            <div key={file} className="h-full flex items-center justify-center text-[10px] text-spotify-text select-none">
               {file}
             </div>
           ))}
