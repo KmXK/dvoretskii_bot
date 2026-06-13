@@ -24,6 +24,9 @@ MAX_ROOMS = 200
 MAX_BET = 200
 ALLOWED_BETS = {5, 10, 25, 50, 100, 200}
 BOT_MOVE_DELAY = (0.6, 1.4)
+# Сколько секунд держим место игрока при разрыве связи, прежде чем засчитать
+# техническое поражение. Хватает на реконнект флапающего мобильного интернета.
+GRACE_SECONDS = 45
 
 GAME_CHESS = "chess"
 GAME_CHECKERS = "checkers"
@@ -230,6 +233,8 @@ class BoardRoom:
         self.player_names: dict[int, str] = {}
         self.spectators: set[int] = set()
         self.players: dict[str, int | None] = {"white": None, "black": None}
+        # Игроки, у которых сейчас оборвана связь и тикает grace-таймер.
+        self.offline: set[int] = set()
 
         self.started = False
         self.finished = False
@@ -244,6 +249,15 @@ class BoardRoom:
         self.checkers_board: list[list[str]] | None = None
         self.checkers_forced_from: list[int] | None = None
         self._bot_task: asyncio.Task | None = None
+        # Сериализует мутации состояния партии между разными соединениями комнаты.
+        self.lock = asyncio.Lock()
+        # uid -> задача grace-таймера (отмена при реконнекте).
+        self.grace_tasks: dict[int, asyncio.Task] = {}
+
+    def cancel_grace(self, uid: int):
+        task = self.grace_tasks.pop(uid, None)
+        if task and not task.done():
+            task.cancel()
 
     def _public_players(self) -> list[dict]:
         out = []
@@ -258,6 +272,7 @@ class BoardRoom:
                 "id": uid,
                 "name": self.player_names.get(uid, str(uid)),
                 "isBot": False,
+                "offline": uid in self.offline,
             })
         return out
 
@@ -474,6 +489,10 @@ class BoardRoom:
     def cancel_tasks(self):
         if self._bot_task and not self._bot_task.done():
             self._bot_task.cancel()
+        for task in list(self.grace_tasks.values()):
+            if task and not task.done():
+                task.cancel()
+        self.grace_tasks.clear()
 
 
 class BoardRoomManager:
@@ -481,6 +500,10 @@ class BoardRoomManager:
         self.rooms: dict[str, BoardRoom] = {}
         self.player_rooms: dict[int, str] = {}
         self.lobby_connections: dict[int, web.WebSocketResponse] = {}
+        # Проставляются при первом WS-соединении; нужны grace-таймерам и
+        # обработчикам мёртвых сокетов, которые живут вне контекста хендлера.
+        self.repository: Repository | None = None
+        self.metrics = None
 
     def get_room(self, room_id: str) -> BoardRoom | None:
         return self.rooms.get(room_id)
@@ -540,16 +563,159 @@ def _remove_uid_from_room(room: BoardRoom, uid: int):
     room.connections.pop(uid, None)
     room.spectators.discard(uid)
     room.player_names.pop(uid, None)
+    room.offline.discard(uid)
+    room.cancel_grace(uid)
     for side in ("white", "black"):
         if room.players.get(side) == uid:
             room.players[side] = None
 
 
-def _cleanup_dead_room_connections(room: BoardRoom):
-    stale = [uid for uid, ws in room.connections.items() if ws.closed]
-    for uid in stale:
+def _handle_dead_uid(room: BoardRoom, uid: int):
+    """Сокет uid мёртв. Активному игроку запускаем grace, остальных отпускаем."""
+    room.connections.pop(uid, None)
+    _manager.lobby_connections.pop(uid, None)
+    is_player = room._viewer_role(uid) in ALLOWED_SIDES
+    if room.started and not room.finished and is_player:
+        room.offline.add(uid)
+        _start_grace(room, uid)
+    else:
         _remove_uid_from_room(room, uid)
         _manager.player_rooms.pop(uid, None)
+
+
+def _cleanup_dead_room_connections(room: BoardRoom):
+    stale = [uid for uid, ws in list(room.connections.items()) if ws.closed]
+    for uid in stale:
+        _handle_dead_uid(room, uid)
+
+
+def _start_grace(room: BoardRoom, uid: int):
+    """Запускает (или перезапускает) таймер ожидания реконнекта игрока uid."""
+    room.cancel_grace(uid)
+
+    async def _run():
+        try:
+            await asyncio.sleep(GRACE_SECONDS)
+        except asyncio.CancelledError:
+            return
+        try:
+            async with room.lock:
+                if uid in room.connections:
+                    return
+                if room.finished or not room.started:
+                    return
+                await _resolve_abandon(room, uid)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("grace resolve failed room=%s uid=%s", room.id, uid)
+        finally:
+            room.grace_tasks.pop(uid, None)
+
+    room.grace_tasks[uid] = asyncio.create_task(_run())
+
+
+async def _resolve_abandon(room: BoardRoom, uid: int):
+    """Игрок uid покинул активную партию: техпоражение оппоненту либо отмена."""
+    if room.finished or not room.started:
+        return
+    side = room._viewer_role(uid)
+    if side not in ALLOWED_SIDES:
+        return
+    repository = _manager.repository
+    metrics = _manager.metrics
+    if repository is None or metrics is None:
+        return
+    other = "black" if side == "white" else "white"
+    other_uid = room.players.get(other)
+    opponent_present = (room.bot_side == other) or (
+        other_uid is not None and other_uid in room.connections
+    )
+    room.finished = True
+    if opponent_present:
+        room.winner = other
+        room.last_move = {"abandon": side}
+        await _settle_room(repository, metrics, room)
+    else:
+        # Оба игрока ушли — отменяем партию и возвращаем все ставки.
+        room.winner = None
+        room.last_move = {"abandon": "both"}
+        await _refund_room(repository, room)
+    _remove_uid_from_room(room, uid)
+    _manager.player_rooms.pop(uid, None)
+    await _send_room_update(room)
+    await _manager.broadcast_rooms()
+    if not room.connections:
+        _manager.cleanup_room(room.id)
+
+
+async def _refund_room(repository: Repository, room: BoardRoom):
+    """Возврат заблокированных ставок игроков и ставок зрителей без выплат."""
+    if room.stake > 0:
+        for side in ("white", "black"):
+            uid = room.players.get(side)
+            if uid is not None and uid in room.stake_locked:
+                _credit_monkeys(repository, uid, room.stake)
+    for bet in list(room.bets.values()):
+        _credit_monkeys(repository, bet.user_id, bet.amount)
+    await repository.save()
+
+
+async def _on_connection_lost(room: BoardRoom, uid: int, ws: web.WebSocketResponse):
+    """Корректно обрабатывает разрыв конкретного сокета (с проверкой идентичности)."""
+    if room.connections.get(uid) is not ws:
+        # Этот сокет уже заменён более свежим соединением (реконнект) — не трогаем.
+        return
+    room.connections.pop(uid, None)
+    is_player = room._viewer_role(uid) in ALLOWED_SIDES
+    if room.started and not room.finished and is_player:
+        room.offline.add(uid)
+        _start_grace(room, uid)
+        await _send_room_update(room)
+        await _manager.broadcast_rooms()
+        return
+    _remove_uid_from_room(room, uid)
+    _manager.player_rooms.pop(uid, None)
+    if room.connections:
+        await _send_room_update(room)
+        await _manager.broadcast_rooms()
+    else:
+        _manager.cleanup_room(room.id)
+        await _manager.broadcast_rooms()
+
+
+async def _resume_or_lobby(ws: web.WebSocketResponse, user_id: int, user_name: str) -> BoardRoom | None:
+    """После аутентификации: вернуть игрока в его активную партию либо в лобби."""
+    rid = _manager.player_rooms.get(user_id)
+    room = _manager.get_room(rid) if rid else None
+    if (
+        room is not None
+        and room.started
+        and not room.finished
+        and room._viewer_role(user_id) in ALLOWED_SIDES
+    ):
+        async with room.lock:
+            # Перепроверяем под локом: grace-таймер мог завершить партию.
+            if room.started and not room.finished and room._viewer_role(user_id) in ALLOWED_SIDES:
+                room.cancel_grace(user_id)
+                room.offline.discard(user_id)
+                room.player_names[user_id] = user_name
+                room.connections[user_id] = ws
+                _manager.lobby_connections.pop(user_id, None)
+                await ws.send_str(json.dumps({"type": "authed"}))
+                await ws.send_str(json.dumps(
+                    {"type": "room_joined", "room": room.to_dict(), "role": room._viewer_role(user_id)},
+                    ensure_ascii=False,
+                ))
+                await _send_room_update(room)
+                await _manager.broadcast_rooms()
+                return room
+    if rid and (room is None or room.finished):
+        _manager.player_rooms.pop(user_id, None)
+    _manager.lobby_connections[user_id] = ws
+    await ws.send_str(json.dumps({"type": "authed"}))
+    await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
+    return None
 
 
 def _player_can_join(room: BoardRoom, side: str) -> bool:
@@ -630,11 +796,14 @@ async def _settle_room(repository: Repository, metrics, room: BoardRoom):
 
         if winner in ALLOWED_SIDES and winner in participant_ids:
             uid = participant_ids[winner]
-            _credit_monkeys(repository, uid, pot)
+            # Против бота банка соперника нет: победу оплачивает казна по x2,
+            # чтобы ставка имела смысл. В PvP победитель забирает общий банк.
+            payout = room.stake * 2 if room.bot_side is not None else pot
+            _credit_monkeys(repository, uid, payout)
             metrics.inc(
                 "casino_monkeys_won_total",
                 {"user_id": str(uid), "user_name": room.player_names.get(uid, str(uid)), "game": game_id},
-                pot,
+                payout,
             )
         elif winner == "draw":
             for side, uid in participant_ids.items():
@@ -681,8 +850,12 @@ async def _maybe_bot_move(room: BoardRoom):
                 assert room.chess_board is not None
                 mv = chess_logic.choose_bot_move(room.chess_board, room.bot_difficulty)
                 if mv is None:
+                    # Нет ходов: мат (бот проиграл) либо пат (ничья).
                     room.finished = True
-                    room.winner = "black" if room.turn == "white" else "white"
+                    if room.chess_board.is_checkmate():
+                        room.winner = "black" if room.turn == "white" else "white"
+                    else:
+                        room.winner = "draw"
                     return
                 room.chess_board.push(mv)
                 room.last_move = {"by": room.bot_side, "move": mv.uci(), "bot": True}
@@ -714,9 +887,7 @@ async def _send_room_update(room: BoardRoom):
     dead_uids = await room.broadcast({"type": "room_updated", "room": room.to_dict()})
     dead_uids.update(await room.send_states())
     for uid in dead_uids:
-        _remove_uid_from_room(room, uid)
-        _manager.player_rooms.pop(uid, None)
-        _manager.lobby_connections.pop(uid, None)
+        _handle_dead_uid(room, uid)
     _cleanup_dead_room_connections(room)
 
 
@@ -727,6 +898,8 @@ async def boardgames_ws_handler(request: web.Request):
 
     repository: Repository = request.app["repository"]
     metrics = request.app["metrics"]
+    _manager.repository = repository
+    _manager.metrics = metrics
     user_id: int | None = None
     user_name: str = "Player"
     current_room: BoardRoom | None = None
@@ -734,9 +907,7 @@ async def boardgames_ws_handler(request: web.Request):
     cookie_auth = ws_session_user(request)
     if cookie_auth:
         user_id, user_name = cookie_auth
-        _manager.lobby_connections[user_id] = ws
-        await ws.send_str(json.dumps({"type": "authed"}))
-        await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
+        current_room = await _resume_or_lobby(ws, user_id, user_name)
 
     try:
         async for msg in ws:
@@ -752,8 +923,18 @@ async def boardgames_ws_handler(request: web.Request):
 
             if t == "auth":
                 if user_id is not None:
+                    # Повторный auth (клиент всегда шлёт его при открытии). Если уже
+                    # сидим в партии (например, восстановлено по cookie) — отдаём
+                    # её состояние, иначе лобби.
                     await ws.send_str(json.dumps({"type": "authed"}))
-                    await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
+                    if current_room is not None and not current_room.finished:
+                        await ws.send_str(json.dumps(
+                            {"type": "room_joined", "room": current_room.to_dict(), "role": current_room._viewer_role(user_id)},
+                            ensure_ascii=False,
+                        ))
+                        await _send_room_update(current_room)
+                    else:
+                        await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
                     continue
                 if not _is_auth_payload(data):
                     await ws.send_str(json.dumps({"type": "error", "message": "Invalid auth payload"}))
@@ -765,9 +946,7 @@ async def boardgames_ws_handler(request: web.Request):
                     continue
                 user_id = int(tg_user["id"])
                 user_name = str(tg_user.get("username") or tg_user.get("first_name") or "Player")[:30]
-                _manager.lobby_connections[user_id] = ws
-                await ws.send_str(json.dumps({"type": "authed"}))
-                await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
+                current_room = await _resume_or_lobby(ws, user_id, user_name)
 
             elif t == "list_rooms":
                 await ws.send_str(json.dumps({"type": "rooms_list", "rooms": _manager.list_rooms()}, ensure_ascii=False))
@@ -775,6 +954,9 @@ async def boardgames_ws_handler(request: web.Request):
             elif t == "create_room":
                 if not user_id:
                     await ws.send_str(json.dumps({"type": "error", "message": "Not authed"}))
+                    continue
+                if user_id in _manager.player_rooms:
+                    await ws.send_str(json.dumps({"type": "error", "message": "Already in room"}))
                     continue
                 if not _is_create_room_payload(data):
                     await ws.send_str(json.dumps({"type": "error", "message": "Invalid create payload"}))
@@ -852,19 +1034,28 @@ async def boardgames_ws_handler(request: web.Request):
             elif t == "leave_room":
                 if not current_room or not user_id:
                     continue
-                for side in ("white", "black"):
-                    if current_room.players.get(side) == user_id:
-                        current_room.players[side] = None
-                current_room.spectators.discard(user_id)
-                current_room.connections.pop(user_id, None)
-                _manager.player_rooms.pop(user_id, None)
+                room = current_room
+                async with room.lock:
+                    is_active_player = (
+                        room.started
+                        and not room.finished
+                        and room._viewer_role(user_id) in ALLOWED_SIDES
+                    )
+                    room.connections.pop(user_id, None)
+                    if is_active_player:
+                        # Выход из активной партии = техническое поражение.
+                        room.offline.discard(user_id)
+                        room.cancel_grace(user_id)
+                        await _resolve_abandon(room, user_id)
+                    else:
+                        _remove_uid_from_room(room, user_id)
+                        _manager.player_rooms.pop(user_id, None)
+                        if room.connections:
+                            await _send_room_update(room)
+                        else:
+                            _manager.cleanup_room(room.id)
                 _manager.lobby_connections[user_id] = ws
-                rid = current_room.id
                 await ws.send_str(json.dumps({"type": "left_room"}))
-                if not current_room.connections:
-                    _manager.cleanup_room(rid)
-                else:
-                    await _send_room_update(current_room)
                 current_room = None
                 await _manager.broadcast_rooms()
 
@@ -875,46 +1066,50 @@ async def boardgames_ws_handler(request: web.Request):
                     await ws.send_str(json.dumps({"type": "error", "message": "Only creator can start"}))
                     continue
 
-                white_uid = current_room.players.get("white")
-                black_uid = current_room.players.get("black")
-                if white_uid is None and current_room.bot_side != "white":
-                    await ws.send_str(json.dumps({"type": "error", "message": "Need white player"}))
-                    continue
-                if black_uid is None and current_room.bot_side != "black":
-                    await ws.send_str(json.dumps({"type": "error", "message": "Need black player"}))
-                    continue
+                async with current_room.lock:
+                    if current_room.started:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Already started"}))
+                        continue
+                    white_uid = current_room.players.get("white")
+                    black_uid = current_room.players.get("black")
+                    if white_uid is None and current_room.bot_side != "white":
+                        await ws.send_str(json.dumps({"type": "error", "message": "Need white player"}))
+                        continue
+                    if black_uid is None and current_room.bot_side != "black":
+                        await ws.send_str(json.dumps({"type": "error", "message": "Need black player"}))
+                        continue
 
-                if current_room.stake > 0:
-                    charged = []
-                    for side in ("white", "black"):
-                        uid = current_room.players.get(side)
-                        if uid is None:
-                            continue
-                        ok, balance = _charge_monkeys(repository, uid, current_room.player_names.get(uid, str(uid)), current_room.stake)
-                        if not ok:
-                            for rollback_uid in charged:
-                                _credit_monkeys(repository, rollback_uid, current_room.stake)
-                            await repository.save()
-                            await ws.send_str(json.dumps({"type": "error", "message": f"Not enough monkeys for stake (uid={uid}, balance={balance})"}))
-                            break
-                        charged.append(uid)
-                        current_room.stake_locked.add(uid)
-                    else:
+                    charge_error: str | None = None
+                    if current_room.stake > 0:
+                        charged: list[int] = []
+                        for side in ("white", "black"):
+                            uid = current_room.players.get(side)
+                            if uid is None:
+                                continue
+                            ok, balance = _charge_monkeys(repository, uid, current_room.player_names.get(uid, str(uid)), current_room.stake)
+                            if not ok:
+                                for rollback_uid in charged:
+                                    _credit_monkeys(repository, rollback_uid, current_room.stake)
+                                    current_room.stake_locked.discard(rollback_uid)
+                                charge_error = f"Not enough monkeys for stake (uid={uid}, balance={balance})"
+                                break
+                            charged.append(uid)
+                            current_room.stake_locked.add(uid)
                         await repository.save()
-                        if not current_room.start_game():
-                            await ws.send_str(json.dumps({"type": "error", "message": "Cannot start"}))
-                            continue
-                else:
+
+                    if charge_error is not None:
+                        await ws.send_str(json.dumps({"type": "error", "message": charge_error}))
+                        continue
                     if not current_room.start_game():
                         await ws.send_str(json.dumps({"type": "error", "message": "Cannot start"}))
                         continue
 
-                await _send_room_update(current_room)
-                await _manager.broadcast_rooms()
-                await _maybe_bot_move(current_room)
-                if current_room.finished:
-                    await _settle_room(repository, metrics, current_room)
-                await _send_room_update(current_room)
+                    await _send_room_update(current_room)
+                    await _manager.broadcast_rooms()
+                    await _maybe_bot_move(current_room)
+                    if current_room.finished:
+                        await _settle_room(repository, metrics, current_room)
+                    await _send_room_update(current_room)
 
             elif t == "move":
                 if not current_room or not user_id:
@@ -922,15 +1117,16 @@ async def boardgames_ws_handler(request: web.Request):
                 if not _is_move_payload(data):
                     await ws.send_str(json.dumps({"type": "error", "message": "Invalid move payload"}))
                     continue
-                ok, reason = current_room.make_move(user_id, data)
-                if not ok:
-                    await ws.send_str(json.dumps({"type": "error", "message": reason}))
-                    continue
-                await _send_room_update(current_room)
-                await _maybe_bot_move(current_room)
-                if current_room.finished:
-                    await _settle_room(repository, metrics, current_room)
-                await _send_room_update(current_room)
+                async with current_room.lock:
+                    ok, reason = current_room.make_move(user_id, data)
+                    if not ok:
+                        await ws.send_str(json.dumps({"type": "error", "message": reason}))
+                        continue
+                    await _send_room_update(current_room)
+                    await _maybe_bot_move(current_room)
+                    if current_room.finished:
+                        await _settle_room(repository, metrics, current_room)
+                    await _send_room_update(current_room)
 
             elif t == "place_bet":
                 if not current_room or not user_id:
@@ -938,48 +1134,41 @@ async def boardgames_ws_handler(request: web.Request):
                 if not _is_bet_payload(data):
                     await ws.send_str(json.dumps({"type": "error", "message": "Invalid bet payload"}))
                     continue
-                if not current_room.started or current_room.finished:
-                    await ws.send_str(json.dumps({"type": "error", "message": "Betting closed"}))
-                    continue
-                role = current_room._viewer_role(user_id)
-                if role in ALLOWED_SIDES:
-                    await ws.send_str(json.dumps({"type": "error", "message": "Players cannot place spectator bets"}))
-                    continue
-                if user_id in current_room.bets:
-                    await ws.send_str(json.dumps({"type": "error", "message": "Bet already placed"}))
-                    continue
                 side = str(data.get("side", ""))
                 amount = _safe_int(data.get("amount", 0), 0)
-                if side not in ALLOWED_SIDES:
-                    await ws.send_str(json.dumps({"type": "error", "message": "Invalid side"}))
-                    continue
-                if amount not in ALLOWED_BETS or amount > MAX_BET:
-                    await ws.send_str(json.dumps({"type": "error", "message": "Invalid amount"}))
-                    continue
-                ok, balance = _charge_monkeys(repository, user_id, user_name, amount)
-                if not ok:
-                    await ws.send_str(json.dumps({"type": "error", "message": f"Not enough monkeys ({balance})"}))
-                    continue
-                current_room.bets[user_id] = BoardBet(user_id, user_name, side, amount)
-                await repository.save()
-                await ws.send_str(json.dumps({"type": "bet_ok", "monkeys": balance}))
-                await _send_room_update(current_room)
+                async with current_room.lock:
+                    if not current_room.started or current_room.finished:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Betting closed"}))
+                        continue
+                    role = current_room._viewer_role(user_id)
+                    if role in ALLOWED_SIDES:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Players cannot place spectator bets"}))
+                        continue
+                    if user_id in current_room.bets:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Bet already placed"}))
+                        continue
+                    if side not in ALLOWED_SIDES:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Invalid side"}))
+                        continue
+                    if amount not in ALLOWED_BETS or amount > MAX_BET:
+                        await ws.send_str(json.dumps({"type": "error", "message": "Invalid amount"}))
+                        continue
+                    ok, balance = _charge_monkeys(repository, user_id, user_name, amount)
+                    if not ok:
+                        await ws.send_str(json.dumps({"type": "error", "message": f"Not enough monkeys ({balance})"}))
+                        continue
+                    current_room.bets[user_id] = BoardBet(user_id, user_name, side, amount)
+                    await repository.save()
+                    await ws.send_str(json.dumps({"type": "bet_ok", "monkeys": balance}))
+                    await _send_room_update(current_room)
 
     except Exception:
         logger.exception("boardgames ws error uid=%s", user_id)
     finally:
         if user_id:
-            _manager.lobby_connections.pop(user_id, None)
-        if current_room and user_id:
-            current_room.connections.pop(user_id, None)
-            current_room.spectators.discard(user_id)
-            for side in ("white", "black"):
-                if current_room.players.get(side) == user_id:
-                    current_room.players[side] = None
-            _manager.player_rooms.pop(user_id, None)
-            if current_room.connections:
-                await _send_room_update(current_room)
-            else:
-                _manager.cleanup_room(current_room.id)
-            await _manager.broadcast_rooms()
+            if _manager.lobby_connections.get(user_id) is ws:
+                _manager.lobby_connections.pop(user_id, None)
+            if current_room is not None:
+                async with current_room.lock:
+                    await _on_connection_lost(current_room, user_id, ws)
     return ws

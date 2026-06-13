@@ -96,6 +96,25 @@ def simple_from(board: list[list[str]], r: int, c: int, piece: str) -> list[dict
     return out
 
 
+def _capture_seq_len(board: list[list[str]], r: int, c: int, piece: str, side: str) -> int:
+    """Длина максимальной серии взятий, доступной с клетки (r, c).
+
+    Снятие срубленных шашек моделируется так же, как в apply_move (сразу),
+    чтобы оценка совпадала с реальным применением хода. Превращение в дамку
+    посреди серии меняет фигуру и учитывается через apply_move.
+    """
+    caps = captures_from(board, r, c, piece, side)
+    if not caps:
+        return 0
+    best = 0
+    for cap in caps:
+        nb, np = apply_move(board, cap)
+        sub = _capture_seq_len(nb, cap["to"][0], cap["to"][1], np, side)
+        if 1 + sub > best:
+            best = 1 + sub
+    return best
+
+
 def legal_moves(board: list[list[str]], side: str, forced_from: list[int] | None = None) -> list[dict]:
     captures: list[dict] = []
     moves: list[dict] = []
@@ -109,7 +128,20 @@ def legal_moves(board: list[list[str]], side: str, forced_from: list[int] | None
             captures.extend(captures_from(board, r, c, piece, side))
             if forced_from is None:
                 moves.extend(simple_from(board, r, c, piece))
-    return captures if captures else moves
+    if not captures:
+        return moves
+    # Русские правила: обязателен ход с максимальным числом взятий. Оставляем
+    # только первые ходы серий максимальной длины (и для начала боя, и для
+    # продолжения из forced_from).
+    best_total = 0
+    scored: list[tuple[int, dict]] = []
+    for m in captures:
+        nb, np = apply_move(board, m)
+        total = 1 + _capture_seq_len(nb, m["to"][0], m["to"][1], np, side)
+        scored.append((total, m))
+        if total > best_total:
+            best_total = total
+    return [m for total, m in scored if total == best_total]
 
 
 def apply_move(board: list[list[str]], mv: dict) -> tuple[list[list[str]], str]:
