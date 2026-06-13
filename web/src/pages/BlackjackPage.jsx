@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import {
+  Bot, Coins, Crown, Play, RefreshCw, Spade, Users, Volume2, VolumeX,
+} from 'lucide-react'
+import BackButton from '../components/BackButton'
 import { useAuth } from '../context/useAuth'
 import useCasinoSounds from '../hooks/useCasinoSounds'
 
@@ -57,95 +61,140 @@ function Lobby({ rooms, send, monkeyBalance }) {
     setName('')
   }
 
+  const inputCls = 'w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white tabular-nums outline-none focus:bg-white/10 transition-colors'
+
   return (
     <div className="max-w-md mx-auto">
-      <button onClick={() => window.history.back()} className="text-zinc-400 text-sm hover:text-white transition-colors mb-4">
-        ← Назад
-      </button>
-      <h1 className="text-2xl font-bold text-white mb-1">Блэкджек</h1>
-      <p className="text-zinc-400 text-sm mb-4">Играй против ботов и реальных игроков</p>
-      {Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-4">Баланс: {monkeyBalance} 🐵</p>
-      )}
+      <BackButton force />
+      <div className="flex items-start justify-between gap-3 mb-5">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">
+            <Spade size={22} className="text-gold" strokeWidth={2} fill="currentColor" />
+            Блэкджек
+          </h1>
+          <p className="text-spotify-text text-sm mt-0.5">Играй против ботов и реальных игроков</p>
+        </div>
+        {Number.isFinite(monkeyBalance) && (
+          <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-spotify-green/15 px-3 py-1.5 text-sm font-semibold text-spotify-green tabular-nums">
+            {monkeyBalance} 🐵
+          </span>
+        )}
+      </div>
 
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white text-sm font-semibold mb-3">Создать комнату</h2>
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text mb-3">Создать комнату</p>
         <input
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="Название комнаты"
-          className="w-full mb-2 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+          className="w-full mb-2.5 rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors"
           maxLength={40}
         />
-        <div className="grid grid-cols-2 gap-2 mb-2">
-          <label className="text-[11px] text-zinc-400 flex flex-col gap-1">
-            Стартовый стек (фишки)
+        <div className="grid grid-cols-2 gap-2.5 mb-3">
+          <label className="text-[11px] text-spotify-text flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1"><Coins size={12} className="text-spotify-green" /> Стартовый стек</span>
             <input
               type="number"
               value={startChips}
               onChange={e => setStartChips(Math.max(100, Number(e.target.value) || 100))}
-              className="bg-zinc-800 rounded-lg px-2 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+              className={inputCls}
             />
           </label>
-          <label className="text-[11px] text-zinc-400 flex flex-col gap-1">
-            Ставка за раунд (фишки)
+          <label className="text-[11px] text-spotify-text flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1"><Coins size={12} className="text-spotify-green" /> Ставка за раунд</span>
             <input
               type="number"
               value={tableBet}
               onChange={e => setTableBet(Math.max(5, Number(e.target.value) || 5))}
-              className="bg-zinc-800 rounded-lg px-2 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+              className={inputCls}
             />
           </label>
-          <label className="text-[11px] text-zinc-400 flex flex-col gap-1">
-            Ботов за столом
+          <label className="text-[11px] text-spotify-text flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1"><Bot size={12} className="text-indigo" /> Ботов за столом</span>
             <input
               type="number"
               value={botCount}
               onChange={e => setBotCount(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              className="bg-zinc-800 rounded-lg px-2 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+              className={inputCls}
             />
           </label>
-          <label className="bg-zinc-800 rounded-lg px-2 py-2 text-xs text-zinc-300 flex items-center gap-2">
+          <label className="bg-white/5 rounded-lg px-3 text-xs text-white/90 flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               checked={playForMonkeys}
               onChange={e => setPlayForMonkeys(e.target.checked)}
-              className="accent-yellow-500"
+              className="accent-gold w-4 h-4"
             />
             Обезьянки → фишки
           </label>
         </div>
-        <button onClick={create} className="w-full bg-green-600 hover:bg-green-500 text-white text-sm font-semibold py-2 rounded-lg transition-colors">
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          onClick={create}
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gold py-2.5 text-sm font-semibold text-spotify-black transition-colors hover:bg-gold-2"
+        >
+          <Play size={16} strokeWidth={2.5} />
           Создать
-        </button>
+        </motion.button>
       </div>
 
-      <div className="bg-zinc-900 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-white text-sm font-semibold">Комнаты</h2>
-          <button onClick={() => send({ type: 'list_rooms' })} className="text-zinc-400 text-xs hover:text-white">
-            Обновить
-          </button>
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text flex items-center gap-1.5">
+            <Users size={14} strokeWidth={2} />
+            Комнаты
+          </p>
+          <motion.button
+            whileTap={{ scale: 0.9, rotate: -90 }}
+            onClick={() => send({ type: 'list_rooms' })}
+            className="text-spotify-text hover:text-white transition-colors"
+            aria-label="Обновить"
+          >
+            <RefreshCw size={16} strokeWidth={2} />
+          </motion.button>
         </div>
         <div className="flex flex-col gap-2">
-          {rooms.length === 0 && <p className="text-zinc-500 text-sm py-3 text-center">Нет доступных комнат</p>}
-          {rooms.map(r => (
-            <div key={r.id} className="bg-zinc-800 rounded-lg px-3 py-2 flex items-center justify-between">
-              <div>
-                <p className="text-white text-sm">{r.name}</p>
-                <p className="text-zinc-400 text-xs">
-                  {r.playerCount}/{r.maxPlayers} · ставка {r.tableBet} фишек/раунд · стек {r.startChips} фишек
-                  {r.playForMonkeys ? ` · 🐵 ${Math.floor((r.startChips || 0) / (r.monkeyChipRate || 10))}` : ''}
-                </p>
-              </div>
-              <button
-                onClick={() => send({ type: 'join_room', roomId: r.id })}
-                className="bg-green-600 hover:bg-green-500 text-white text-xs font-semibold px-3 py-1.5 rounded"
-              >
-                {r.started ? 'Наблюдать' : 'Войти'}
-              </button>
+          {rooms.length === 0 && (
+            <div className="text-center py-8">
+              <Spade size={36} className="mx-auto mb-2 text-spotify-text/50" strokeWidth={1.75} />
+              <p className="text-spotify-text text-sm">Нет доступных комнат — создай первую</p>
             </div>
-          ))}
+          )}
+          <AnimatePresence initial={false}>
+            {rooms.map((r, i) => (
+              <motion.div
+                key={r.id}
+                layout
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ delay: Math.min(i * 0.04, 0.2), type: 'spring', stiffness: 420, damping: 30 }}
+                className="flex items-center justify-between gap-3 rounded-xl bg-spotify-dark px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="text-white text-sm font-medium truncate">{r.name}</p>
+                  <p className="text-spotify-text text-xs flex items-center gap-2 mt-0.5 flex-wrap">
+                    <span className="inline-flex items-center gap-1"><Users size={12} />{r.playerCount}/{r.maxPlayers}</span>
+                    <span className="inline-flex items-center gap-1 text-spotify-green tabular-nums"><Coins size={12} />{r.tableBet}</span>
+                    <span className="tabular-nums">стек {r.startChips}</span>
+                    {r.playForMonkeys && (
+                      <span className="text-spotify-green tabular-nums">🐵{Math.floor((r.startChips || 0) / (r.monkeyChipRate || 10))}</span>
+                    )}
+                    {r.started && <span className="text-gold">В игре</span>}
+                  </p>
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.94 }}
+                  onClick={() => send({ type: 'join_room', roomId: r.id })}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    r.started ? 'bg-indigo-soft text-indigo hover:brightness-110' : 'bg-gold text-spotify-black hover:bg-gold-2'
+                  }`}
+                >
+                  {r.started ? 'Наблюдать' : 'Войти'}
+                </motion.button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
       </div>
     </div>
@@ -162,48 +211,80 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
       <AnimatePresence>
         {showLeave && (
           <motion.div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-4 w-full max-w-xs">
-              <p className="text-white text-sm mb-3">Покинуть комнату?</p>
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowLeave(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-spotify-gray border border-white/10 rounded-2xl p-5 w-full max-w-xs"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="font-display text-white font-extrabold text-base mb-3">Покинуть комнату?</h3>
               <div className="flex gap-2">
-                <button onClick={() => setShowLeave(false)} className="flex-1 bg-zinc-700 text-white text-xs py-2 rounded">Остаться</button>
-                <button onClick={() => send({ type: 'leave_room' })} className="flex-1 bg-red-600 text-white text-xs py-2 rounded">Выйти</button>
+                <motion.button whileTap={{ scale: 0.96 }} onClick={() => setShowLeave(false)} className="flex-1 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors">Остаться</motion.button>
+                <motion.button whileTap={{ scale: 0.96 }} onClick={() => send({ type: 'leave_room' })} className="flex-1 bg-red-500/90 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors">Выйти</motion.button>
               </div>
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl text-white font-bold">{room.name}</h1>
-        <button onClick={() => setShowLeave(true)} className="text-red-400 text-sm hover:text-red-300">Выйти</button>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h1 className="font-display text-lg font-extrabold tracking-tight text-white truncate">{room.name}</h1>
+        <div className="flex items-center gap-2 shrink-0">
+          {room.playForMonkeys && Number.isFinite(monkeyBalance) && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-spotify-green/15 px-2.5 py-1 text-xs font-semibold text-spotify-green tabular-nums">
+              {monkeyBalance} 🐵
+            </span>
+          )}
+          <button onClick={() => setShowLeave(true)} className="text-red-400 text-xs hover:text-red-300 transition-colors">Выйти</button>
+        </div>
       </div>
-      {room.playForMonkeys && Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-3">Баланс: {monkeyBalance} 🐵</p>
-      )}
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <p className="text-zinc-400 text-xs mb-1">Стартовые фишки: {room.startChips}</p>
-        <p className="text-zinc-400 text-xs mb-1">Ставка стола: {room.tableBet}</p>
-        <p className="text-zinc-400 text-xs">Режим: {room.playForMonkeys ? 'Обезьянки → фишки' : 'Фишки'}</p>
+
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text mb-3 flex items-center gap-1.5">
+          <Coins size={14} strokeWidth={2} className="text-spotify-green" />
+          Параметры стола
+        </p>
+        <div className="flex flex-col gap-1.5 text-xs text-spotify-text">
+          <p>Стартовые фишки: <span className="text-white/90 tabular-nums">{room.startChips}</span></p>
+          <p>Ставка стола: <span className="text-white/90 tabular-nums">{room.tableBet}</span></p>
+          <p>Режим: <span className="text-white/90">{room.playForMonkeys ? 'Обезьянки → фишки' : 'Фишки'}</span></p>
+        </div>
       </div>
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white text-sm font-semibold mb-2">Игроки</h2>
-        <div className="flex flex-col gap-1.5">
+
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text mb-3 flex items-center gap-1.5">
+          <Users size={14} strokeWidth={2} />
+          Игроки
+        </p>
+        <div className="flex flex-col gap-2">
           {(room.players || []).map(p => (
-            <div key={p.id} className="bg-zinc-800 rounded px-3 py-2 text-sm text-white flex items-center gap-2">
-              <span>{p.isBot ? '🤖' : '👤'}</span>
-              <span className={p.id === userId ? 'text-green-400' : ''}>{p.name}</span>
-              {p.id === room.creator_id && <span className="ml-auto text-xs text-yellow-400">создатель</span>}
+            <div key={p.id} className="flex items-center gap-2.5 bg-spotify-dark rounded-xl px-3 py-2">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${p.isBot ? 'bg-indigo' : 'bg-spotify-green'}`}>
+                {p.isBot ? <Bot size={16} /> : p.name[0]?.toUpperCase()}
+              </div>
+              <span className={`text-sm ${p.id === userId ? 'text-spotify-green font-semibold' : p.isBot ? 'text-indigo' : 'text-white'}`}>{p.name}</span>
+              {p.id === room.creator_id && (
+                <span className="ml-auto inline-flex items-center gap-1 text-[10px] bg-gold-soft text-gold px-2 py-0.5 rounded-full">
+                  <Crown size={11} /> создатель
+                </span>
+              )}
             </div>
           ))}
         </div>
       </div>
+
       {isCreator ? (
-        <button onClick={() => send({ type: 'start_game' })} className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold text-sm py-3 rounded-xl">
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          onClick={() => send({ type: 'start_game' })}
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gold py-3 text-sm font-semibold text-spotify-black transition-colors hover:bg-gold-2"
+        >
+          <Play size={16} strokeWidth={2.5} />
           Начать игру
-        </button>
+        </motion.button>
       ) : (
-        <p className="text-zinc-400 text-sm text-center">Ждём старта от создателя...</p>
+        <p className="text-spotify-text text-sm text-center py-3">Ждём старта от создателя…</p>
       )}
     </div>
   )
@@ -574,13 +655,13 @@ export default function BlackjackPage() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-4 max-w-3xl mx-auto">
-      {!connected && <p className="text-zinc-500 text-sm text-center py-6">Подключение...</p>}
+      {!connected && <p className="text-spotify-text text-sm text-center py-6">Подключение…</p>}
       <button
         onClick={toggleMute}
-        className="fixed top-4 right-4 z-50 bg-zinc-900/90 border border-zinc-700 text-white/80 hover:text-white text-sm rounded-full w-9 h-9 flex items-center justify-center"
+        className="fixed top-4 right-4 z-50 bg-spotify-gray/90 border border-white/10 text-spotify-text hover:text-white rounded-full w-9 h-9 flex items-center justify-center transition-colors"
         title={muted ? 'Включить звук' : 'Выключить звук'}
       >
-        {muted ? '🔇' : '🔊'}
+        {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
       </button>
       <AnimatePresence>
         {error && (

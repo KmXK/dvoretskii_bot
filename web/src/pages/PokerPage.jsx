@@ -1,7 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Bot, ChevronDown, Crown, Play, RefreshCw, Send, Settings2,
+  Spade, Trophy, Users,
+} from 'lucide-react'
+import BackButton from '../components/BackButton'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
+
+function SegButton({ active, onClick, tone = 'gold', className = '', children }) {
+  const activeCls = tone === 'indigo'
+    ? 'bg-indigo-soft text-indigo'
+    : tone === 'green'
+      ? 'bg-spotify-green/15 text-spotify-green'
+      : 'bg-gold-soft text-gold'
+  return (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.96 }}
+      onClick={onClick}
+      className={`rounded-lg py-2 text-sm font-medium transition-colors ${active ? activeCls : 'bg-white/5 text-spotify-text hover:bg-white/10'} ${className}`}
+    >
+      {children}
+    </motion.button>
+  )
+}
 
 const SUIT_SYMBOL = { h: '♥', d: '♦', c: '♣', s: '♠' }
 const HAND_NAMES_RU = {
@@ -146,18 +169,18 @@ function LeaveConfirmDialog({ onConfirm, onCancel }) {
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 max-w-xs w-full"
+        className="bg-spotify-gray border border-white/10 rounded-2xl p-5 max-w-xs w-full"
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-white font-bold text-base mb-2">Покинуть стол?</h3>
-        <p className="text-zinc-400 text-sm mb-4">Ваши фишки сохранятся, если вы вернётесь в эту комнату.</p>
+        <h3 className="font-display text-white font-extrabold text-base mb-2">Покинуть стол?</h3>
+        <p className="text-spotify-text text-sm mb-4">Ваши фишки сохранятся, если вы вернётесь в эту комнату.</p>
         <div className="flex gap-2">
-          <button onClick={onCancel} className="flex-1 bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+          <motion.button whileTap={{ scale: 0.96 }} onClick={onCancel} className="flex-1 bg-white/5 hover:bg-white/10 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors">
             Остаться
-          </button>
-          <button onClick={onConfirm} className="flex-1 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors">
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.96 }} onClick={onConfirm} className="flex-1 bg-red-500/90 hover:bg-red-500 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors">
             Выйти
-          </button>
+          </motion.button>
         </div>
       </motion.div>
     </motion.div>
@@ -166,9 +189,9 @@ function LeaveConfirmDialog({ onConfirm, onCancel }) {
 
 function StatCell({ value, label, color = 'text-white' }) {
   return (
-    <div className="bg-zinc-800 rounded-lg p-2 text-center">
-      <div className={`text-lg font-bold ${color}`}>{value}</div>
-      <div className="text-[10px] text-zinc-400">{label}</div>
+    <div className="bg-spotify-dark rounded-xl p-2.5 text-center">
+      <div className={`font-display text-xl font-extrabold tabular-nums ${color}`}>{value}</div>
+      <div className="text-[10px] text-spotify-text mt-0.5">{label}</div>
     </div>
   )
 }
@@ -180,18 +203,23 @@ function PokerStatsBlock({ stats }) {
   const netChips = (s.chipsWon || 0) - (s.chipsLost || 0)
 
   return (
-    <div className="bg-zinc-900 rounded-xl p-4 mb-4">
+    <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center justify-between w-full text-left mb-3"
       >
-        <h2 className="text-white font-semibold text-sm">Ваша статистика</h2>
-        <span className="text-zinc-400 text-xs">{expanded ? 'Меньше ▲' : 'Подробнее ▼'}</span>
+        <span className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text flex items-center gap-1.5">
+          <Trophy size={14} strokeWidth={2} className="text-gold" />
+          Ваша статистика
+        </span>
+        <motion.span animate={{ rotate: expanded ? 180 : 0 }} className="text-spotify-text">
+          <ChevronDown size={16} />
+        </motion.span>
       </button>
 
       <div className="grid grid-cols-3 gap-2">
         <StatCell value={s.games || 0} label="Игр" />
-        <StatCell value={s.gamesWon || 0} label="Побед" color="text-green-400" />
+        <StatCell value={s.gamesWon || 0} label="Побед" color="text-gold" />
         <StatCell value={s.hands || 0} label="Раздач" />
       </div>
 
@@ -204,26 +232,26 @@ function PokerStatsBlock({ stats }) {
             className="overflow-hidden"
           >
             <div className="grid grid-cols-3 gap-2 mt-2">
-              <StatCell value={s.handsWon || 0} label="Выиграно" color="text-green-400" />
+              <StatCell value={s.handsWon || 0} label="Выиграно" color="text-spotify-green" />
               <StatCell value={s.handsLost || 0} label="Проиграно" color="text-red-400" />
-              <StatCell value={s.handsFolded || 0} label="Фолды" color="text-zinc-400" />
+              <StatCell value={s.handsFolded || 0} label="Фолды" color="text-spotify-text" />
             </div>
 
             <div className="grid grid-cols-3 gap-2 mt-2">
-              <StatCell value={s.chipsWon || 0} label="Выиграно фишек" color="text-green-400" />
+              <StatCell value={s.chipsWon || 0} label="Выиграно фишек" color="text-spotify-green" />
               <StatCell value={s.chipsLost || 0} label="Проиграно фишек" color="text-red-400" />
-              <StatCell value={netChips} label="Итог" color={netChips >= 0 ? 'text-green-400' : 'text-red-400'} />
+              <StatCell value={netChips} label="Итог" color={netChips >= 0 ? 'text-spotify-green' : 'text-red-400'} />
             </div>
 
             {s.hands > 0 && (
-              <div className="mt-3 bg-zinc-800 rounded-lg p-2.5">
+              <div className="mt-3 bg-spotify-dark rounded-xl p-2.5">
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-zinc-400 text-[11px]">Винрейт</span>
-                  <span className="text-white text-xs font-bold">{winRate}%</span>
+                  <span className="text-spotify-text text-[11px]">Винрейт</span>
+                  <span className="text-white text-xs font-bold tabular-nums">{winRate}%</span>
                 </div>
-                <div className="w-full bg-zinc-700 rounded-full h-1.5">
+                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
                   <div
-                    className="bg-green-500 h-1.5 rounded-full transition-all"
+                    className="bg-spotify-green h-1.5 rounded-full transition-all"
                     style={{ width: `${winRate}%` }}
                   />
                 </div>
@@ -232,14 +260,14 @@ function PokerStatsBlock({ stats }) {
 
             {s.combos && s.combos.length > 0 && (
               <div className="mt-3">
-                <h3 className="text-zinc-400 text-[11px] mb-2">Комбинации</h3>
+                <h3 className="text-spotify-text text-[11px] mb-2">Комбинации</h3>
                 <div className="flex flex-col gap-1">
                   {s.combos.map((c, i) => (
-                    <div key={i} className="flex items-center justify-between bg-zinc-800 rounded-lg px-2.5 py-1.5">
-                      <span className="text-zinc-300 text-xs">{c.name}</span>
+                    <div key={i} className="flex items-center justify-between bg-spotify-dark rounded-xl px-2.5 py-1.5">
+                      <span className="text-white/90 text-xs">{c.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-500 text-[10px]">собрано {c.collected}</span>
-                        <span className="text-green-400 text-[10px] font-semibold">выиграно {c.won}</span>
+                        <span className="text-spotify-text text-[10px]">собрано {c.collected}</span>
+                        <span className="text-spotify-green text-[10px] font-semibold">выиграно {c.won}</span>
                       </div>
                     </div>
                   ))}
@@ -286,45 +314,57 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
 
   const refresh = () => send({ type: 'list_rooms' })
 
+  const inputCls = 'w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white tabular-nums outline-none focus:bg-white/10 transition-colors'
+
   return (
     <div className="max-w-md mx-auto">
-      <button
-        onClick={() => window.history.back()}
-        className="flex items-center gap-1.5 text-zinc-400 text-sm hover:text-white transition-colors mb-4"
-      >
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
-        Назад
-      </button>
-      <h1 className="text-2xl font-bold text-white mb-1">Покер</h1>
-      <p className="text-zinc-400 text-sm mb-6">Техасский холдем — создайте комнату или присоединитесь</p>
-      {Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-4">Баланс: {monkeyBalance} 🐵</p>
-      )}
+      <BackButton force />
+      <div className="flex items-start justify-between gap-3 mb-5">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">
+            <Spade size={22} className="text-gold" strokeWidth={2} fill="currentColor" />
+            Покер
+          </h1>
+          <p className="text-spotify-text text-sm mt-0.5">Техасский холдем — создай комнату или войди</p>
+        </div>
+        {Number.isFinite(monkeyBalance) && (
+          <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-spotify-green/15 px-3 py-1.5 text-sm font-semibold text-spotify-green tabular-nums">
+            {monkeyBalance} 🐵
+          </span>
+        )}
+      </div>
 
       {pokerStats && <PokerStatsBlock stats={pokerStats} />}
 
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-3">Создать комнату</h2>
-        <div className="flex gap-2 mb-2">
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text mb-3">Создать комнату</p>
+        <div className="flex gap-2 mb-2.5">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Название комнаты"
-            className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:ring-1 focus:ring-green-500"
+            className="flex-1 rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors"
             maxLength={40}
             onKeyDown={e => e.key === 'Enter' && create()}
           />
-          <button onClick={create} className="bg-green-600 hover:bg-green-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+          <motion.button
+            whileTap={{ scale: 0.96 }}
+            onClick={create}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gold px-4 text-sm font-semibold text-spotify-black transition-colors hover:bg-gold-2"
+          >
+            <Play size={15} strokeWidth={2.5} />
             Создать
-          </button>
+          </motion.button>
         </div>
         <button
           onClick={() => setShowSettings(!showSettings)}
-          className="text-zinc-400 hover:text-white text-xs transition-colors"
+          className="inline-flex items-center gap-1.5 text-spotify-text hover:text-white text-xs transition-colors"
         >
-          {showSettings ? 'Скрыть настройки ▲' : 'Настройки ▼'}
+          <Settings2 size={13} strokeWidth={2} />
+          {showSettings ? 'Скрыть настройки' : 'Настройки'}
+          <motion.span animate={{ rotate: showSettings ? 180 : 0 }} className="inline-flex">
+            <ChevronDown size={13} />
+          </motion.span>
         </button>
         <AnimatePresence>
           {showSettings && (
@@ -334,29 +374,29 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="grid grid-cols-2 gap-2 mt-3">
+              <div className="grid grid-cols-2 gap-2.5 mt-3">
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Малый блайнд</label>
+                  <label className="text-spotify-text text-[10px] block mb-1">Малый блайнд</label>
                   <input
                     type="number"
                     value={sb}
                     onChange={e => { const v = Math.max(1, Number(e.target.value)); setSb(v); if (bb < v * 2) setBb(v * 2) }}
-                    className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+                    className={inputCls}
                     min={1}
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Большой блайнд</label>
+                  <label className="text-spotify-text text-[10px] block mb-1">Большой блайнд</label>
                   <input
                     type="number"
                     value={bb}
                     onChange={e => setBb(Math.max(sb * 2, Number(e.target.value)))}
-                    className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+                    className={inputCls}
                     min={sb * 2}
                   />
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Стартовые фишки</label>
+                  <label className="text-spotify-text text-[10px] block mb-1">Стартовые фишки</label>
                   <input
                     type="number"
                     value={sc}
@@ -365,94 +405,80 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
                       const raw = Math.max(minChips, Number(e.target.value))
                       setSc(playForMonkeys ? Math.floor(raw / 10) * 10 : raw)
                     }}
-                    className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+                    className={inputCls}
                     min={bb * 10}
                     step={playForMonkeys ? 10 : 100}
                   />
                   {playForMonkeys && (
-                    <p className="text-zinc-600 text-[10px] mt-1">
+                    <p className="text-spotify-text text-[10px] mt-1">
                       Бай-ин: {Math.floor(sc / 10)} 🐵 ({sc} фишек)
                     </p>
                   )}
                 </div>
                 <div>
-                  <label className="text-zinc-500 text-[10px] block mb-1">Боты</label>
+                  <label className="text-spotify-text text-[10px] block mb-1">Боты</label>
                   <input
                     type="number"
                     value={bc}
                     onChange={e => setBc(e.target.value === '' ? '' : Math.min(7, Number(e.target.value)))}
                     onBlur={() => setBc(prev => Math.max(0, Math.min(7, Number(prev) || 0)))}
-                    className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500"
+                    className={inputCls}
                     min={0}
                     max={7}
                   />
                 </div>
                 {Number(bc) > 0 && (
                   <div className="col-span-2">
-                    <label className="text-zinc-500 text-[10px] block mb-1">Сложность ботов</label>
-                    <div className="flex gap-1.5">
+                    <label className="text-spotify-text text-[10px] block mb-1">Сложность ботов</label>
+                    <div className="grid grid-cols-3 gap-2">
                       {DIFFICULTY_OPTIONS.map(opt => (
-                        <button
-                          key={opt.value}
-                          onClick={() => setBd(opt.value)}
-                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${bd === opt.value ? 'bg-zinc-600 ' + opt.color : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
-                        >
+                        <SegButton key={opt.value} tone="indigo" active={bd === opt.value} onClick={() => setBd(opt.value)}>
                           {opt.label}
-                        </button>
+                        </SegButton>
                       ))}
                     </div>
                   </div>
                 )}
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Валюта</label>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => setPlayForMonkeys(false)}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                        !playForMonkeys ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
-                      }`}
-                    >
+                  <label className="text-spotify-text text-[10px] block mb-1">Валюта</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <SegButton tone="green" active={!playForMonkeys} onClick={() => setPlayForMonkeys(false)}>
                       Только фишки
-                    </button>
-                    <button
+                    </SegButton>
+                    <SegButton
+                      tone="green"
+                      active={playForMonkeys}
                       onClick={() => {
                         setPlayForMonkeys(true)
                         setSc(prev => Math.floor(Math.max(bb * 10, prev) / 10) * 10)
                       }}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                        playForMonkeys ? 'bg-zinc-600 text-yellow-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'
-                      }`}
                     >
                       Обезьянки → фишки
-                    </button>
+                    </SegButton>
                   </div>
                   {playForMonkeys && (
-                    <p className="text-zinc-600 text-[10px] mt-1">Курс: 1 🐵 = 10 фишек. Обмен при входе в комнату.</p>
+                    <p className="text-spotify-text text-[10px] mt-1">Курс: 1 🐵 = 10 фишек. Обмен при входе в комнату.</p>
                   )}
                 </div>
                 <div className="col-span-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-white/90">
                     <input
                       type="checkbox"
                       checked={biEnabled}
                       onChange={e => setBiEnabled(e.target.checked)}
-                      className="accent-green-500 w-4 h-4"
+                      className="accent-gold w-4 h-4"
                     />
-                    <span className="text-zinc-300 text-xs">Автоувеличение блайндов</span>
+                    Автоувеличение блайндов
                   </label>
                 </div>
                 {biEnabled && (
                   <div className="col-span-2">
-                    <label className="text-zinc-500 text-[10px] block mb-1">Повышать каждые</label>
-                    <div className="flex gap-1.5">
+                    <label className="text-spotify-text text-[10px] block mb-1">Повышать каждые</label>
+                    <div className="grid grid-cols-5 gap-1.5">
                       {BLIND_INTERVAL_OPTIONS.map(opt => (
-                        <button
-                          key={opt.value}
-                          onClick={() => setBiInterval(opt.value)}
-                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${biInterval === opt.value ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
-                        >
+                        <SegButton key={opt.value} active={biInterval === opt.value} onClick={() => setBiInterval(opt.value)} className="px-0">
                           {opt.label}
-                        </button>
+                        </SegButton>
                       ))}
                     </div>
                   </div>
@@ -463,44 +489,68 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
         </AnimatePresence>
       </div>
 
-      <div className="bg-zinc-900 rounded-xl p-4">
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-white font-semibold text-sm">Комнаты</h2>
-          <button onClick={refresh} className="text-zinc-400 hover:text-white text-xs transition-colors">
-            Обновить
-          </button>
+          <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text flex items-center gap-1.5">
+            <Users size={14} strokeWidth={2} />
+            Комнаты
+          </p>
+          <motion.button
+            whileTap={{ scale: 0.9, rotate: -90 }}
+            onClick={refresh}
+            className="text-spotify-text hover:text-white transition-colors"
+            aria-label="Обновить"
+          >
+            <RefreshCw size={16} strokeWidth={2} />
+          </motion.button>
         </div>
 
         {rooms.length === 0 && (
-          <p className="text-zinc-500 text-sm text-center py-4">Нет доступных комнат</p>
+          <div className="text-center py-8">
+            <Spade size={36} className="mx-auto mb-2 text-spotify-text/50" strokeWidth={1.75} />
+            <p className="text-spotify-text text-sm">Нет доступных комнат — создай первую</p>
+          </div>
         )}
 
         <div className="flex flex-col gap-2">
-          {rooms.map(room => (
-            <div key={room.id} className="bg-zinc-800 rounded-lg p-3 flex items-center justify-between">
-              <div>
-                <span className="text-white text-sm font-medium">{room.name}</span>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-zinc-400 text-xs">{room.playerCount}/{room.maxPlayers} игроков</span>
-                  {room.botCount > 0 && <span className="text-blue-400 text-xs">🤖{room.botCount}</span>}
-                  {room.playForMonkeys && (
-                    <span className="text-yellow-400 text-xs">
-                      🐵{Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))}
-                    </span>
-                  )}
-                  {room.started && <span className="text-yellow-400 text-xs">В игре</span>}
-                  <span className="text-zinc-500 text-[10px]">{room.smallBlind}/{room.bigBlind}{room.blindIncreaseEnabled ? ' ↑' : ''}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => send({ type: 'join_room', roomId: room.id })}
-                disabled={room.playerCount >= room.maxPlayers}
-                className="bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+          <AnimatePresence initial={false}>
+            {rooms.map((room, i) => (
+              <motion.div
+                key={room.id}
+                layout
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ delay: Math.min(i * 0.04, 0.2), type: 'spring', stiffness: 420, damping: 30 }}
+                className="flex items-center justify-between gap-3 rounded-xl bg-spotify-dark px-3 py-2.5"
               >
-                {room.started ? 'Наблюдать' : 'Войти'}
-              </button>
-            </div>
-          ))}
+                <div className="min-w-0">
+                  <p className="text-white text-sm font-medium truncate">{room.name}</p>
+                  <p className="text-spotify-text text-xs flex items-center gap-2 mt-0.5 flex-wrap">
+                    <span className="inline-flex items-center gap-1"><Users size={12} />{room.playerCount}/{room.maxPlayers}</span>
+                    {room.botCount > 0 && <span className="inline-flex items-center gap-1 text-indigo"><Bot size={12} />{room.botCount}</span>}
+                    {room.playForMonkeys && (
+                      <span className="inline-flex items-center gap-1 text-spotify-green tabular-nums">
+                        🐵{Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))}
+                      </span>
+                    )}
+                    <span className="tabular-nums">{room.smallBlind}/{room.bigBlind}{room.blindIncreaseEnabled ? ' ↑' : ''}</span>
+                    {room.started && <span className="text-gold">В игре</span>}
+                  </p>
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.94 }}
+                  onClick={() => send({ type: 'join_room', roomId: room.id })}
+                  disabled={room.playerCount >= room.maxPlayers}
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    room.started ? 'bg-indigo-soft text-indigo hover:brightness-110' : 'bg-gold text-spotify-black hover:bg-gold-2'
+                  } disabled:bg-white/5 disabled:text-spotify-text`}
+                >
+                  {room.started ? 'Наблюдать' : 'Войти'}
+                </motion.button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
       </div>
     </div>
@@ -559,15 +609,18 @@ function InviteBlock({ room, userId }) {
   if (chats.length === 0) return null
 
   return (
-    <div className="bg-zinc-900 rounded-xl p-4 mb-4">
+    <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center justify-between w-full text-left"
       >
-        <span className="text-white font-semibold text-sm">
-          {sent ? '✓ Приглашения отправлены' : 'Пригласить в чаты'}
+        <span className="text-white text-sm font-semibold flex items-center gap-2">
+          <Send size={15} strokeWidth={2} className="text-indigo" />
+          {sent ? 'Приглашения отправлены' : 'Пригласить в чаты'}
         </span>
-        <span className="text-zinc-400 text-xs">{expanded ? '▲' : '▼'}</span>
+        <motion.span animate={{ rotate: expanded ? 180 : 0 }} className="text-spotify-text">
+          <ChevronDown size={16} />
+        </motion.span>
       </button>
       <AnimatePresence>
         {expanded && (
@@ -577,14 +630,14 @@ function InviteBlock({ room, userId }) {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="flex flex-col gap-1.5 mt-3">
+            <div className="flex flex-col gap-2 mt-3">
               {chats.map(c => (
-                <label key={c.id} className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2 cursor-pointer">
+                <label key={c.id} className="flex items-center gap-2 bg-spotify-dark rounded-lg px-3 py-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={selected.has(c.id)}
                     onChange={() => toggle(c.id)}
-                    className="accent-green-500 w-4 h-4"
+                    className="accent-indigo w-4 h-4"
                     disabled={sent}
                   />
                   <span className="text-white text-sm truncate">{c.name}</span>
@@ -592,13 +645,15 @@ function InviteBlock({ room, userId }) {
               ))}
             </div>
             {!sent && (
-              <button
+              <motion.button
+                whileTap={{ scale: 0.98 }}
                 onClick={sendInvites}
                 disabled={selected.size === 0 || sending}
-                className="w-full mt-3 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+                className="w-full mt-3 flex items-center justify-center gap-2 rounded-xl bg-indigo py-2.5 text-sm font-semibold text-white transition-opacity disabled:opacity-40"
               >
-                {sending ? 'Отправка...' : `Отправить в ${selected.size} ${selected.size === 1 ? 'чат' : selected.size < 5 ? 'чата' : 'чатов'}`}
-              </button>
+                <Send size={15} />
+                {sending ? 'Отправка...' : `Отправить (${selected.size})`}
+              </motion.button>
             )}
           </motion.div>
         )}
@@ -642,6 +697,8 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
     setEditBlinds(false)
   }
 
+  const inputCls = 'w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white tabular-nums outline-none focus:bg-white/10 transition-colors'
+
   return (
     <div className="max-w-md mx-auto">
       <AnimatePresence>
@@ -653,28 +710,39 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
         )}
       </AnimatePresence>
 
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold text-white">{room.name}</h1>
-        <button onClick={() => setShowLeave(true)} className="text-red-400 hover:text-red-300 text-sm transition-colors">
-          Выйти
-        </button>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h1 className="font-display text-lg font-extrabold tracking-tight text-white truncate">{room.name}</h1>
+        <div className="flex items-center gap-2 shrink-0">
+          {playForMonkeys && Number.isFinite(monkeyBalance) && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-spotify-green/15 px-2.5 py-1 text-xs font-semibold text-spotify-green tabular-nums">
+              {monkeyBalance} 🐵
+            </span>
+          )}
+          <button onClick={() => setShowLeave(true)} className="text-red-400 hover:text-red-300 text-xs transition-colors">
+            Выйти
+          </button>
+        </div>
       </div>
-      {playForMonkeys && Number.isFinite(monkeyBalance) && (
-        <p className="text-zinc-400 text-xs mb-4">Баланс: {monkeyBalance} 🐵</p>
-      )}
 
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
-        <h2 className="text-white font-semibold text-sm mb-3">Игроки ({room.playerCount}/8)</h2>
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text mb-3 flex items-center gap-1.5">
+          <Users size={14} strokeWidth={2} />
+          Игроки ({room.playerCount}/8)
+        </p>
         <div className="flex flex-col gap-2">
           {(room.players || []).map((p) => (
-            <div key={p.id} className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
-              <div className={`w-8 h-8 rounded-full ${p.isBot ? 'bg-blue-600' : 'bg-green-600'} flex items-center justify-center text-white text-sm font-bold`}>
-                {p.isBot ? '🤖' : p.name[0]?.toUpperCase()}
+            <div key={p.id} className="flex items-center gap-2.5 bg-spotify-dark rounded-xl px-3 py-2">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${p.isBot ? 'bg-indigo' : 'bg-spotify-green'}`}>
+                {p.isBot ? <Bot size={16} /> : p.name[0]?.toUpperCase()}
               </div>
-              <span className={`text-sm ${p.id === userId ? 'text-green-400 font-semibold' : p.isBot ? 'text-blue-300' : 'text-white'}`}>
+              <span className={`text-sm ${p.id === userId ? 'text-spotify-green font-semibold' : p.isBot ? 'text-indigo' : 'text-white'}`}>
                 {p.name}
               </span>
-              {p.id === room.creator_id && <span className="text-xs text-yellow-400 ml-auto">Создатель</span>}
+              {p.id === room.creator_id && (
+                <span className="ml-auto inline-flex items-center gap-1 text-[10px] bg-gold-soft text-gold px-2 py-0.5 rounded-full">
+                  <Crown size={11} /> Создатель
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -682,132 +750,122 @@ function WaitingRoom({ room, send, userId, monkeyBalance }) {
 
       <InviteBlock room={room} userId={userId} />
 
-      <div className="bg-zinc-900 rounded-xl p-4 mb-4">
+      <div className="rounded-2xl border border-white/5 bg-spotify-gray p-4 mb-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-zinc-400 text-xs font-medium">Настройки</span>
+          <span className="text-xs font-bold uppercase tracking-[0.08em] text-spotify-text flex items-center gap-1.5">
+            <Settings2 size={14} strokeWidth={2} />
+            Настройки
+          </span>
           {isCreator && !editBlinds && (
-            <button onClick={() => setEditBlinds(true)} className="text-green-400 text-xs hover:text-green-300 transition-colors">
+            <button onClick={() => setEditBlinds(true)} className="text-gold text-xs hover:text-gold-2 transition-colors">
               Изменить
             </button>
           )}
         </div>
 
         {editBlinds && isCreator ? (
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-2.5">
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Малый блайнд</label>
+                <label className="text-spotify-text text-[10px] block mb-1">Малый блайнд</label>
                 <input type="number" value={sb}
                   onChange={e => { const v = Math.max(1, Number(e.target.value)); setSb(v); if (bb < v * 2) setBb(v * 2) }}
-                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={1} />
+                  className={inputCls} min={1} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Большой блайнд</label>
+                <label className="text-spotify-text text-[10px] block mb-1">Большой блайнд</label>
                 <input type="number" value={bb}
                   onChange={e => setBb(Math.max(sb * 2, Number(e.target.value)))}
-                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={sb * 2} />
+                  className={inputCls} min={sb * 2} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Стартовые фишки</label>
+                <label className="text-spotify-text text-[10px] block mb-1">Стартовые фишки</label>
                 <input type="number" value={sc}
                   onChange={e => {
                     const minChips = Math.max(bb * 10, playForMonkeys ? 10 : 0)
                     const raw = Math.max(minChips, Number(e.target.value))
                     setSc(playForMonkeys ? Math.floor(raw / 10) * 10 : raw)
                   }}
-                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={bb * 10} step={playForMonkeys ? 10 : 100} />
+                  className={inputCls} min={bb * 10} step={playForMonkeys ? 10 : 100} />
               </div>
               <div>
-                <label className="text-zinc-500 text-[10px] block mb-1">Боты</label>
+                <label className="text-spotify-text text-[10px] block mb-1">Боты</label>
                 <input type="number" value={bc}
                   onChange={e => setBc(e.target.value === '' ? '' : Math.min(7, Number(e.target.value)))}
                   onBlur={() => setBc(prev => Math.max(0, Math.min(7, Number(prev) || 0)))}
-                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-green-500" min={0} max={7} />
+                  className={inputCls} min={0} max={7} />
               </div>
               {Number(bc) > 0 && (
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Сложность ботов</label>
-                  <div className="flex gap-1.5">
+                  <label className="text-spotify-text text-[10px] block mb-1">Сложность ботов</label>
+                  <div className="grid grid-cols-3 gap-2">
                     {DIFFICULTY_OPTIONS.map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setBd(opt.value)}
-                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${bd === opt.value ? 'bg-zinc-600 ' + opt.color : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
-                      >
+                      <SegButton key={opt.value} tone="indigo" active={bd === opt.value} onClick={() => setBd(opt.value)}>
                         {opt.label}
-                      </button>
+                      </SegButton>
                     ))}
                   </div>
                 </div>
               )}
               <div className="col-span-2">
-                <label className="text-zinc-500 text-[10px] block mb-1">Валюта</label>
-                <div className="bg-zinc-800 rounded-lg px-3 py-2 flex items-center justify-between">
-                  <span className="text-zinc-300 text-xs">{playForMonkeys ? 'Обезьянки → фишки' : 'Только фишки'}</span>
-                  <span className="text-zinc-500 text-[10px]">Блокируется после создания комнаты</span>
+                <label className="text-spotify-text text-[10px] block mb-1">Валюта</label>
+                <div className="bg-spotify-dark rounded-lg px-3 py-2 flex items-center justify-between">
+                  <span className="text-white/90 text-xs">{playForMonkeys ? 'Обезьянки → фишки' : 'Только фишки'}</span>
+                  <span className="text-spotify-text text-[10px]">Блокируется после создания</span>
                 </div>
               </div>
               <div className="col-span-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-white/90">
                   <input
                     type="checkbox"
                     checked={biEnabled}
                     onChange={e => setBiEnabled(e.target.checked)}
-                    className="accent-green-500 w-4 h-4"
+                    className="accent-gold w-4 h-4"
                   />
-                  <span className="text-zinc-300 text-xs">Автоувеличение блайндов</span>
+                  Автоувеличение блайндов
                 </label>
               </div>
               {biEnabled && (
                 <div className="col-span-2">
-                  <label className="text-zinc-500 text-[10px] block mb-1">Повышать каждые</label>
-                  <div className="flex gap-1.5">
+                  <label className="text-spotify-text text-[10px] block mb-1">Повышать каждые</label>
+                  <div className="grid grid-cols-5 gap-1.5">
                     {BLIND_INTERVAL_OPTIONS.map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setBiInterval(opt.value)}
-                        className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${biInterval === opt.value ? 'bg-zinc-600 text-green-400' : 'bg-zinc-800 text-zinc-500 hover:bg-zinc-700'}`}
-                      >
+                      <SegButton key={opt.value} active={biInterval === opt.value} onClick={() => setBiInterval(opt.value)} className="px-0">
                         {opt.label}
-                      </button>
+                      </SegButton>
                     ))}
                   </div>
                 </div>
               )}
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setEditBlinds(false)} className="flex-1 bg-zinc-700 text-white text-xs py-1.5 rounded-lg">Отмена</button>
-              <button onClick={saveSettings} className="flex-1 bg-green-600 text-white text-xs py-1.5 rounded-lg">Сохранить</button>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={() => setEditBlinds(false)} className="flex-1 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold py-2 rounded-lg transition-colors">Отмена</motion.button>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={saveSettings} className="flex-1 bg-gold hover:bg-gold-2 text-spotify-black text-xs font-semibold py-2 rounded-lg transition-colors">Сохранить</motion.button>
             </div>
           </div>
         ) : (
-          <>
-            <p className="text-zinc-400 text-xs mb-1">Блайнды: {room.smallBlind || 10} / {room.bigBlind || 20}</p>
-            <p className="text-zinc-400 text-xs mb-1">Стартовые фишки: {room.startChips || 1000}</p>
-            <p className="text-zinc-400 text-xs mb-1">
-              Валюта: {room.playForMonkeys ? `Обезьянки (бай-ин ${Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))} 🐵)` : 'Фишки'}
-            </p>
-            <p className="text-zinc-400 text-xs mb-1">Боты: {room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Средне'})` : ''}</p>
-            {(room.blindIncreaseEnabled ?? true) ? (
-              <p className="text-zinc-400 text-xs mb-1">Повышение блайндов: каждые {room.blindIncreaseInterval || 5} мин</p>
-            ) : (
-              <p className="text-zinc-400 text-xs mb-1">Повышение блайндов: выключено</p>
-            )}
-            <p className="text-zinc-400 text-xs">Мин. игроков: 2 (включая ботов)</p>
-          </>
+          <div className="flex flex-col gap-1.5 text-xs text-spotify-text">
+            <p>Блайнды: <span className="text-white/90 tabular-nums">{room.smallBlind || 10} / {room.bigBlind || 20}</span></p>
+            <p>Стартовые фишки: <span className="text-white/90 tabular-nums">{room.startChips || 1000}</span></p>
+            <p>Валюта: <span className="text-white/90">{room.playForMonkeys ? `Обезьянки (бай-ин ${Math.floor((room.startChips || 0) / (room.monkeyChipRate || 10))} 🐵)` : 'Фишки'}</span></p>
+            <p>Боты: <span className="text-white/90">{room.botCount || 0}{room.botCount > 0 ? ` (${DIFFICULTY_OPTIONS.find(o => o.value === (room.botDifficulty || 'medium'))?.label || 'Средне'})` : ''}</span></p>
+            <p>Повышение блайндов: <span className="text-white/90">{(room.blindIncreaseEnabled ?? true) ? `каждые ${room.blindIncreaseInterval || 5} мин` : 'выключено'}</span></p>
+            <p>Мин. игроков: <span className="text-white/90">2 (включая ботов)</span></p>
+          </div>
         )}
       </div>
 
       {isCreator ? (
-        <button
+        <motion.button
+          whileTap={{ scale: 0.98 }}
           onClick={() => send({ type: 'start_game' })}
           disabled={(room.playerCount || 0) < 2}
-          className="w-full bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
+          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gold py-3 text-sm font-semibold text-spotify-black transition-colors hover:bg-gold-2 disabled:bg-white/5 disabled:text-spotify-text"
         >
-          {(room.playerCount || 0) < 2 ? 'Нужно минимум 2 игрока (добавьте ботов или пригласите)...' : 'Начать игру'}
-        </button>
+          {(room.playerCount || 0) < 2 ? 'Нужно минимум 2 игрока — добавьте ботов или пригласите' : <><Play size={16} strokeWidth={2.5} /> Начать игру</>}
+        </motion.button>
       ) : (
-        <div className="text-center text-zinc-400 text-sm py-3">Ждём, пока создатель начнёт игру...</div>
+        <div className="text-center text-spotify-text text-sm py-3">Ждём, пока создатель начнёт игру…</div>
       )}
     </div>
   )
@@ -1520,7 +1578,7 @@ export default function PokerPage() {
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       {!connected && (
-        <div className="text-center text-zinc-500 text-sm py-8">Подключение...</div>
+        <div className="text-center text-spotify-text text-sm py-8">Подключение…</div>
       )}
 
       <AnimatePresence>
