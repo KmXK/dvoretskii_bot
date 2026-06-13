@@ -24,7 +24,7 @@ function AssetForm({
             onChange={(e) => setName(e.target.value)}
             placeholder={loaded ? 'дай имя ассету' : 'сначала загрузи файл'}
             disabled={!loaded || busy}
-            className="w-full bg-black/40 text-white text-base rounded-lg px-3 py-2.5 border border-white/10 focus:border-spotify-green focus:outline-none disabled:opacity-50"
+            className="w-full bg-black/40 text-white text-base rounded-lg px-3 py-2.5 border border-white/10 focus:border-gold focus:outline-none disabled:opacity-50"
           />
         </label>
 
@@ -35,7 +35,7 @@ function AssetForm({
               onClick={() => setScope('global')}
               disabled={busy}
               className={`px-3 py-2.5 rounded-lg text-sm font-medium transition disabled:opacity-50 ${
-                scope === 'global' ? 'bg-spotify-green text-black' : 'bg-white/5 text-white hover:bg-white/10'
+                scope === 'global' ? 'bg-gold text-black' : 'bg-white/5 text-white hover:bg-white/10'
               }`}
             >🌍 всем</button>
             <button
@@ -57,7 +57,7 @@ function AssetForm({
           <button
             onClick={onSave}
             disabled={!loaded || !name.trim() || busy}
-            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-spotify-green text-black hover:bg-spotify-green/90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-gold text-black hover:bg-gold-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >{busy ? 'Сохраняю…' : isEdit ? 'Сохранить' : 'Создать'}</button>
         </div>
       </div>
@@ -83,7 +83,7 @@ function AssetForm({
               onKeyDown={(e) => { if (e.key === 'Enter' && !fetchDisabled) { e.preventDefault(); onFetchUrl() } }}
               placeholder="ссылка на гиф/видео"
               disabled={busy || urlBusy}
-              className="flex-1 bg-black/40 text-white text-sm rounded-lg px-3 py-2.5 border border-white/10 focus:border-spotify-green focus:outline-none disabled:opacity-50"
+              className="flex-1 bg-black/40 text-white text-sm rounded-lg px-3 py-2.5 border border-white/10 focus:border-gold focus:outline-none disabled:opacity-50"
             />
             <button
               onClick={onFetchUrl}

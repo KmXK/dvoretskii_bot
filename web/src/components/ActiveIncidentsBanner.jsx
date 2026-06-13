@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { Siren, ChevronRight } from 'lucide-react'
 import { api } from '../api/client'
 
 export default function ActiveIncidentsBanner() {
@@ -37,9 +38,9 @@ export default function ActiveIncidentsBanner() {
           <motion.span
             animate={{ scale: [1, 1.18, 1], rotate: [0, -8, 8, 0] }}
             transition={{ duration: 1.4, repeat: Infinity }}
-            className="text-2xl"
+            className="text-white"
           >
-            🚨
+            <Siren size={24} strokeWidth={2.2} />
           </motion.span>
           <div className="flex-1 min-w-0">
             <div className="text-white font-bold text-sm drop-shadow">
@@ -49,7 +50,7 @@ export default function ActiveIncidentsBanner() {
               Тыкни чтобы посмотреть и закрыть
             </div>
           </div>
-          <span className="text-white/90 text-lg">›</span>
+          <ChevronRight size={20} className="text-white/90" />
         </motion.button>
       )}
     </AnimatePresence>

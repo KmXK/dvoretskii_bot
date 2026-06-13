@@ -5,6 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ReferenceArea,
 } from 'recharts'
+import { LineChart, Link2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useToast } from '../../context/useToast'
 import { useTheme } from '../../context/useTheme'
@@ -131,7 +132,7 @@ function ToolbarButton({ active, onClick, children }) {
       onClick={onClick}
       className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-medium whitespace-nowrap border transition-colors ${
         active
-          ? 'bg-spotify-green/15 border-spotify-green/60 text-white'
+          ? 'bg-gold-soft border-gold/50 text-white'
           : 'bg-spotify-black/50 border-transparent text-spotify-text hover:text-white'
       }`}
     >
@@ -179,7 +180,7 @@ function SearchList({ items, selected, onToggle, footer, emptyAction }) {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="🔍 Поиск..."
-          className="w-full bg-spotify-black/60 rounded-lg px-3 py-2 text-xs text-white placeholder-spotify-text outline-none focus:ring-1 focus:ring-spotify-green/50"
+          className="w-full bg-spotify-black/60 rounded-lg px-3 py-2 text-xs text-white placeholder-spotify-text outline-none focus:ring-1 focus:ring-gold/50"
         />
       </div>
       <div className="max-h-56 overflow-y-auto p-1">
@@ -195,13 +196,13 @@ function SearchList({ items, selected, onToggle, footer, emptyAction }) {
                 whileTap={{ scale: 0.97 }}
                 onClick={() => onToggle(it.key)}
                 className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
-                  active ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
+                  active ? 'bg-gold-soft text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
                 }`}
               >
                 {it.emoji && <span className="shrink-0">{it.emoji}</span>}
                 <span className="flex-1 truncate">{it.label}</span>
                 <span className={`w-4 h-4 rounded shrink-0 flex items-center justify-center border transition-colors ${
-                  active ? 'bg-spotify-green border-spotify-green' : 'border-spotify-text/40'
+                  active ? 'bg-gold border-gold' : 'border-spotify-text/40'
                 }`}>
                   <AnimatePresence>
                     {active && (
@@ -549,7 +550,7 @@ export default function MetricsExplorer() {
 
       <div className="flex items-start justify-between mb-3">
         <div>
-          <h3 className="text-white font-semibold text-sm">📈 Метрики</h3>
+          <h3 className="text-white font-semibold text-sm inline-flex items-center gap-1.5"><LineChart size={16} className="text-gold" /> Метрики</h3>
           <p className="text-spotify-text text-[10px] mt-0.5">
             {cumulative ? 'накопительный рост' : 'прирост за интервал'}
           </p>
@@ -563,9 +564,9 @@ export default function MetricsExplorer() {
             className="p-1.5 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"
           >
             {sharing ? (
-              <span className="block w-4 h-4 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+              <span className="block w-4 h-4 border-2 border-gold border-t-transparent rounded-full animate-spin" />
             ) : (
-              <span className="block text-base leading-none">🔗</span>
+              <Link2 size={16} />
             )}
           </motion.button>
           <AnimatePresence mode="popLayout">
@@ -624,7 +625,7 @@ export default function MetricsExplorer() {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => { setMode(m.key); setOpenPanel(null) }}
                   className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
-                    mode === m.key ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
+                    mode === m.key ? 'bg-gold-soft text-white' : 'text-spotify-text hover:bg-white/5 hover:text-white'
                   }`}
                 >
                   <span className="flex-1">{m.label}</span>
@@ -645,7 +646,7 @@ export default function MetricsExplorer() {
                     onClick={() => { setPeriod(p.key); setCustom(null); setOpenPanel(null) }}
                     className={`px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
                       !custom && period === p.key
-                        ? 'bg-spotify-green text-black'
+                        ? 'bg-gold text-black'
                         : 'bg-spotify-black/40 text-spotify-text hover:text-white'
                     }`}
                   >
@@ -658,19 +659,19 @@ export default function MetricsExplorer() {
                   type="datetime-local"
                   value={rangeFrom}
                   onChange={e => setRangeFrom(e.target.value)}
-                  className="flex-1 min-w-[140px] bg-spotify-black/60 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:ring-1 focus:ring-spotify-green/50"
+                  className="flex-1 min-w-[140px] bg-spotify-black/60 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:ring-1 focus:ring-gold/50"
                 />
                 <span className="text-spotify-text text-[10px]">—</span>
                 <input
                   type="datetime-local"
                   value={rangeTo}
                   onChange={e => setRangeTo(e.target.value)}
-                  className="flex-1 min-w-[140px] bg-spotify-black/60 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:ring-1 focus:ring-spotify-green/50"
+                  className="flex-1 min-w-[140px] bg-spotify-black/60 rounded-lg px-2 py-1.5 text-[10px] text-white outline-none focus:ring-1 focus:ring-gold/50"
                 />
                 <motion.button
                   whileTap={{ scale: 0.93 }}
                   onClick={applyCustomRange}
-                  className="bg-spotify-green text-black text-[10px] font-semibold px-3 py-1.5 rounded-lg"
+                  className="bg-gold text-black text-[10px] font-semibold px-3 py-1.5 rounded-lg"
                 >
                   Применить
                 </motion.button>
@@ -702,7 +703,7 @@ export default function MetricsExplorer() {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => setChatsSel([])}
                   className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
-                    chatsSel.length === 0 ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5'
+                    chatsSel.length === 0 ? 'bg-gold-soft text-white' : 'text-spotify-text hover:bg-white/5'
                   }`}
                 >
                   <span>🌐</span>
@@ -724,7 +725,7 @@ export default function MetricsExplorer() {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => setUsersSel([])}
                   className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${
-                    usersSel.length === 0 ? 'bg-spotify-green/10 text-white' : 'text-spotify-text hover:bg-white/5'
+                    usersSel.length === 0 ? 'bg-gold-soft text-white' : 'text-spotify-text hover:bg-white/5'
                   }`}
                 >
                   <span>🌐</span>
@@ -746,7 +747,7 @@ export default function MetricsExplorer() {
                     whileTap={{ scale: 0.93 }}
                     onClick={() => setLimit(n)}
                     className={`px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
-                      limit === n ? 'bg-spotify-green text-black' : 'bg-spotify-black/40 text-spotify-text hover:text-white'
+                      limit === n ? 'bg-gold text-black' : 'bg-spotify-black/40 text-spotify-text hover:text-white'
                     }`}
                   >
                     {n}
@@ -761,7 +762,7 @@ export default function MetricsExplorer() {
                     whileTap={{ scale: 0.93 }}
                     onClick={() => setRank(r.key)}
                     className={`px-3 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
-                      rank === r.key ? 'bg-spotify-green text-black' : 'bg-spotify-black/40 text-spotify-text hover:text-white'
+                      rank === r.key ? 'bg-gold text-black' : 'bg-spotify-black/40 text-spotify-text hover:text-white'
                     }`}
                   >
                     {r.label}
@@ -836,7 +837,7 @@ export default function MetricsExplorer() {
                 <motion.button
                   whileTap={{ scale: 0.93 }}
                   onClick={() => setHidden(new Set())}
-                  className="bg-spotify-green text-black text-xs font-semibold px-4 py-2 rounded-full"
+                  className="bg-gold text-black text-xs font-semibold px-4 py-2 rounded-full"
                 >
                   Включить все
                 </motion.button>

@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion'
+import { Sun, Moon } from 'lucide-react'
 import { useTheme } from '../context/useTheme'
 
 export default function ThemeToggle({ className = '' }) {
@@ -20,9 +21,9 @@ export default function ThemeToggle({ className = '' }) {
           animate={{ rotate: 0, opacity: 1, scale: 1 }}
           exit={{ rotate: 90, opacity: 0, scale: 0.5 }}
           transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-          className="block text-base leading-none"
+          className="block leading-none"
         >
-          {isLight ? '☀️' : '🌙'}
+          {isLight ? <Sun size={17} /> : <Moon size={17} />}
         </motion.span>
       </AnimatePresence>
     </motion.button>

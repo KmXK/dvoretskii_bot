@@ -16,7 +16,7 @@ export default function NotFoundPage() {
       <p className="text-spotify-text text-base mb-6">Ты куда забрался, горнолыжник?</p>
       <button
         onClick={() => navigate('/')}
-        className="px-6 py-2.5 rounded-full bg-spotify-green text-black font-semibold text-sm hover:bg-spotify-green/90 transition-colors"
+        className="px-6 py-2.5 rounded-full bg-gold text-black font-semibold text-sm hover:bg-gold-2 transition-colors"
       >
         На базу
       </button>

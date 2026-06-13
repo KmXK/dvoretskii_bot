@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { Lock } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import MetricsExplorer from '../components/stats/MetricsExplorer'
 import { useAuth } from '../context/useAuth'
@@ -10,7 +11,7 @@ export default function StatsPage() {
     return (
       <div className="flex items-center justify-center min-h-[60vh] px-4">
         <div className="bg-spotify-dark rounded-2xl p-6 text-center max-w-sm">
-          <span className="text-4xl block mb-3">🔒</span>
+          <Lock size={36} className="mx-auto mb-3 text-spotify-text/60" />
           <h2 className="text-white font-semibold text-lg mb-2">Нет данных</h2>
           <p className="text-spotify-text text-sm">Откройте приложение через Telegram</p>
         </div>

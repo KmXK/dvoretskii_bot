@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { CircleAlert, CircleCheck, ClipboardList, Check, RotateCcw } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { api } from '../api/client'
 
 
@@ -48,9 +50,9 @@ function IncidentCard({ incident, onChange, busy }) {
         <motion.span
           animate={isOpen ? { scale: [1, 1.1, 1] } : { scale: 1 }}
           transition={isOpen ? { duration: 1.8, repeat: Infinity } : undefined}
-          className="text-2xl shrink-0"
+          className={`shrink-0 ${isOpen ? 'text-red-400' : 'text-spotify-green'}`}
         >
-          {isOpen ? '🟥' : '✅'}
+          {isOpen ? <CircleAlert size={24} /> : <CircleCheck size={24} />}
         </motion.span>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2">
@@ -85,7 +87,10 @@ function IncidentCard({ incident, onChange, busy }) {
               : 'bg-white/5 text-spotify-text hover:bg-white/10 border border-white/10'
           } ${pending ? 'opacity-50' : ''}`}
         >
-          {isOpen ? '✓ Закрыть' : '↻ Переоткрыть'}
+          <span className="inline-flex items-center gap-1.5">
+            {isOpen ? <Check size={14} /> : <RotateCcw size={14} />}
+            {isOpen ? 'Закрыть' : 'Переоткрыть'}
+          </span>
         </motion.button>
       </div>
     </motion.div>
@@ -136,8 +141,8 @@ export default function IncidentsPage() {
       <div className="flex items-baseline justify-between gap-2 mb-1">
         <h1 className="text-2xl font-bold text-white">Инциденты</h1>
         {openCount > 0 && filter === 'open' && (
-          <span className="text-xs text-red-300 font-mono">
-            🟥 {openCount} актив.
+          <span className="text-xs text-red-300 font-mono inline-flex items-center gap-1">
+            <CircleAlert size={12} /> {openCount} актив.
           </span>
         )}
       </div>
@@ -155,7 +160,7 @@ export default function IncidentsPage() {
             onClick={() => setFilter(opt.id)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               filter === opt.id
-                ? 'bg-spotify-green text-black'
+                ? 'bg-gold text-black'
                 : 'bg-spotify-dark text-spotify-text hover:text-white border border-white/5'
             }`}
           >
@@ -166,7 +171,7 @@ export default function IncidentsPage() {
 
       {loading ? (
         <div className="flex items-center justify-center h-40">
-          <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+          <MascotLoader scale={0.6} />
         </div>
       ) : error ? (
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">
@@ -174,7 +179,9 @@ export default function IncidentsPage() {
         </div>
       ) : incidents.length === 0 ? (
         <div className="text-center py-16">
-          <span className="text-5xl block mb-4">{filter === 'open' ? '🎉' : '📋'}</span>
+          {filter === 'open'
+            ? <CircleCheck size={48} className="mx-auto mb-4 text-spotify-green/70" />
+            : <ClipboardList size={48} className="mx-auto mb-4 text-spotify-text/60" />}
           <p className="text-spotify-text text-sm">
             {filter === 'open' ? 'Открытых инцидентов нет' : 'Инцидентов ещё не было'}
           </p>

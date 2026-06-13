@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Link } from 'react-router-dom'
+import { Globe, Users, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { fuckApi as api } from './api'
 import { useAuth } from '../context/useAuth'
 
@@ -14,9 +16,9 @@ const formatDate = (ts) => ts
 
 function ScopeBadge({ scope }) {
   if (scope === 'global') {
-    return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-spotify-green/15 text-spotify-green">🌍 всем</span>
+    return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gold-soft text-gold"><Globe size={12} /> всем</span>
   }
-  return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/15 text-blue-300">👥 моим чатам</span>
+  return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/15 text-blue-300"><Users size={12} /> моим чатам</span>
 }
 
 
@@ -162,8 +164,8 @@ export default function FuckAssetsPage() {
           <div className="flex items-center gap-2">
             <Link
               to="/fuck/new"
-              className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-spotify-green text-black hover:bg-spotify-green/90 transition"
-            >+ Создать</Link>
+              className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-gold text-black hover:bg-gold-2 transition inline-flex items-center gap-1.5"
+            ><Plus size={16} /> Создать</Link>
           </div>
         </header>
 
@@ -174,7 +176,7 @@ export default function FuckAssetsPage() {
         )}
 
         {loading && assets.length === 0 ? (
-          <div className="text-spotify-text text-sm py-12 text-center">Загрузка…</div>
+          <div className="flex items-center justify-center py-12"><MascotLoader scale={0.6} /></div>
         ) : assets.length === 0 ? (
           <div className="text-center py-16 bg-spotify-dark rounded-2xl">
             <div className="text-6xl mb-4">🤷</div>

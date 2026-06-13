@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Medal } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { api } from '../api/client'
 
 function formatRemaining(seconds) {
@@ -103,7 +105,7 @@ export default function ArmyPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <MascotLoader scale={0.7} />
       </div>
     )
   }
@@ -135,7 +137,7 @@ export default function ArmyPage() {
 
       {army.length === 0 && (
         <div className="text-center py-16">
-          <span className="text-5xl block mb-4">🎖️</span>
+          <Medal size={48} className="mx-auto mb-4 text-spotify-text/60" />
           <p className="text-spotify-text text-sm">В армейку никого не добавили</p>
         </div>
       )}

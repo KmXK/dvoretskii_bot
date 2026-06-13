@@ -18,7 +18,7 @@ export default function Dropdown({ value, onChange, options, placeholder, classN
       <button
         onClick={() => setOpen(o => !o)}
         className={`w-full bg-spotify-gray rounded-lg text-sm text-left flex items-center justify-between
-          outline-none focus:ring-2 focus:ring-spotify-green/50 ${
+          outline-none focus:ring-2 focus:ring-gold/50 ${
           compact ? 'px-2.5 py-1.5 text-xs' : 'px-4 py-2.5'
         } ${current ? 'text-white' : 'text-spotify-text'}`}
       >
@@ -43,7 +43,7 @@ export default function Dropdown({ value, onChange, options, placeholder, classN
                 onClick={() => { onChange(f.value); setOpen(false) }}
                 className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
                   String(f.value) === String(value)
-                    ? 'text-spotify-green bg-white/5'
+                    ? 'text-gold bg-white/5'
                     : 'text-white hover:bg-white/5'
                 }`}
               >

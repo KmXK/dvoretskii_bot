@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -153,7 +155,7 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
     >
       <div className="flex items-start justify-between mb-1">
         <div className="text-white font-medium">{bill.name}</div>
-        <div className="text-xs text-spotify-text">#{bill.id} {bill.closed ? '🔒' : '🔓'}</div>
+        <div className="text-xs text-spotify-text inline-flex items-center gap-1">#{bill.id} {bill.closed ? <Lock size={12} /> : <LockOpen size={12} />}</div>
       </div>
       <div className="text-xs text-spotify-text">
         {author?.display_name || '?'} · {bill.transactions.length} поз. · {bill.participants.length} уч.
@@ -182,23 +184,24 @@ function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete 
         {isAuthor && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(tx.id) }}
-            className="text-red-400 text-xs ml-2"
-          >🗑</button>
+            className="text-red-400 ml-2"
+          ><Trash2 size={14} /></button>
         )}
       </div>
       <div className="mt-2 space-y-1">
         {tx.assignments.map((asg, i) => {
-          const names = asg.debtors.map(d => personsById[d]?.display_name || '?').join(', ') || '⚠️ не назначено'
+          const names = asg.debtors.map(d => personsById[d]?.display_name || '?').join(', ')
           return (
-            <div key={i} className="text-xs text-spotify-text">
-              ▫ {asg.unit_count} ед. → {names}
+            <div key={i} className="text-xs text-spotify-text inline-flex items-center gap-1">
+              {!names && <TriangleAlert size={11} className="text-yellow-400" />}
+              · {asg.unit_count} ед. → {names || 'не назначено'}
             </div>
           )
         })}
       </div>
       <div className="text-xs text-spotify-text/60 mt-1">оплатил {cred}</div>
       {tx.incomplete && (
-        <div className="text-xs text-yellow-400 mt-1">⚠ позиция не завершена</div>
+        <div className="text-xs text-yellow-400 mt-1 inline-flex items-center gap-1"><TriangleAlert size={11} /> позиция не завершена</div>
       )}
     </div>
   )
@@ -314,7 +317,7 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
                 <span className="text-white text-sm font-medium">Назначения</span>
                 <button
                   onClick={splitEqually}
-                  className="text-xs text-spotify-green"
+                  className="text-xs text-gold"
                 >Поровну на всех</button>
               </div>
               <div className="space-y-2">
@@ -331,8 +334,8 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
                       <span className="text-xs text-spotify-text">ед. →</span>
                       <button
                         onClick={() => removeAsg(i)}
-                        className="ml-auto text-red-400 text-xs"
-                      >×</button>
+                        className="ml-auto text-red-400"
+                      ><X size={14} /></button>
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {persons.map(p => (
@@ -348,7 +351,7 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
                           }}
                           className={`text-xs px-2 py-1 rounded ${
                             asg.debtors.includes(p.id)
-                              ? 'bg-spotify-green text-black'
+                              ? 'bg-gold text-black'
                               : 'bg-spotify-gray text-spotify-text'
                           }`}
                         >{p.display_name}</button>
@@ -358,7 +361,7 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
                 ))}
                 <button
                   onClick={addAssignment}
-                  className="w-full text-xs text-spotify-green border border-dashed border-spotify-green/50 rounded py-1"
+                  className="w-full text-xs text-gold border border-dashed border-gold/50 rounded py-1"
                 >+ Назначение</button>
               </div>
               <div className="text-xs text-spotify-text mt-2">
@@ -376,7 +379,7 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
               <button
                 onClick={handleSubmit}
                 disabled={loading}
-                className="flex-1 bg-spotify-green text-black rounded-lg py-2 font-medium disabled:opacity-50"
+                className="flex-1 bg-gold text-black rounded-lg py-2 font-medium disabled:opacity-50 hover:bg-gold-2 transition-colors"
               >{loading ? '...' : 'Добавить'}</button>
             </div>
           </div>
@@ -432,13 +435,13 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
-      <button onClick={onBack} className="text-spotify-text text-sm mb-3 hover:text-white transition-colors">← Назад</button>
+      <button onClick={onBack} className="text-spotify-text text-sm mb-3 hover:text-white transition-colors inline-flex items-center gap-1"><ChevronLeft size={16} /> Назад</button>
       <div className="bg-spotify-dark rounded-xl p-4 mb-4">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-white text-xl font-bold">{bill.name}</h2>
-            <div className="text-xs text-spotify-text">
-              #{bill.id} · {bill.currency} · {bill.closed ? '🔒 закрыт' : '🔓 открыт'}
+            <div className="text-xs text-spotify-text inline-flex items-center gap-1">
+              #{bill.id} · {bill.currency} · {bill.closed ? <><Lock size={12} /> закрыт</> : <><LockOpen size={12} /> открыт</>}
             </div>
             <div className="text-xs text-spotify-text mt-1">
               автор: {personsById[bill.author_person_id]?.display_name || '?'}
@@ -448,8 +451,9 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
             <div className="flex gap-2">
               <button
                 onClick={handleClose}
-                className="text-xs bg-spotify-gray rounded px-2 py-1 text-white"
-              >{bill.closed ? '🔓' : '🔒'}</button>
+                className="bg-spotify-gray rounded px-2 py-1.5 text-white hover:bg-spotify-light-gray transition-colors"
+                title={bill.closed ? 'Открыть счёт' : 'Закрыть счёт'}
+              >{bill.closed ? <LockOpen size={14} /> : <Lock size={14} />}</button>
             </div>
           )}
         </div>
@@ -457,8 +461,8 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
       {suggestions.length > 0 && (
         <div className="bg-yellow-500/10 rounded-xl p-3 mb-4">
-          <div className="text-yellow-400 text-sm font-medium mb-2">
-            🧾 Предложенные правки ({suggestions.length})
+          <div className="text-yellow-400 text-sm font-medium mb-2 inline-flex items-center gap-1.5">
+            <Receipt size={14} /> Предложенные правки ({suggestions.length})
           </div>
           {suggestions.map(s => (
             <div key={s.id} className="bg-spotify-dark rounded-lg p-3 mb-2">
@@ -476,12 +480,12 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
                 <div className="flex gap-2 mt-2">
                   <button
                     onClick={() => handleSuggestionDecide(s.id, 'approve')}
-                    className="flex-1 bg-green-500/20 text-green-400 rounded py-1 text-xs"
-                  >✅ Одобрить</button>
+                    className="flex-1 bg-green-500/20 text-green-400 rounded py-1 text-xs inline-flex items-center justify-center gap-1"
+                  ><Check size={13} /> Одобрить</button>
                   <button
                     onClick={() => handleSuggestionDecide(s.id, 'reject')}
-                    className="flex-1 bg-red-500/20 text-red-400 rounded py-1 text-xs"
-                  >❌ Отклонить</button>
+                    className="flex-1 bg-red-500/20 text-red-400 rounded py-1 text-xs inline-flex items-center justify-center gap-1"
+                  ><X size={13} /> Отклонить</button>
                 </div>
               )}
             </div>
@@ -495,7 +499,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 rounded-lg text-xs ${
-              tab === t ? 'bg-spotify-green text-black' : 'bg-spotify-gray text-spotify-text'
+              tab === t ? 'bg-gold text-black' : 'bg-spotify-gray text-spotify-text'
             }`}
           >
             {t === 'items' ? 'Позиции' : t === 'debts' ? 'Долги' : 'Платежи'}
@@ -504,8 +508,8 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
         {isAuthor && !bill.closed && (
           <button
             onClick={() => setShowAdd(true)}
-            className="ml-auto bg-spotify-green text-black rounded-lg px-3 py-1.5 text-xs font-medium"
-          >+ Позиция</button>
+            className="ml-auto bg-gold text-black rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1 hover:bg-gold-2 transition-colors"
+          ><Plus size={14} /> Позиция</button>
         )}
       </div>
 
@@ -672,16 +676,16 @@ export default function BillsPage() {
         <div className="flex gap-2 mb-4">
           <button
             onClick={() => setTab('open')}
-            className={`px-3 py-1.5 rounded-lg text-xs ${tab === 'open' ? 'bg-spotify-green text-black' : 'bg-spotify-gray text-spotify-text'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs ${tab === 'open' ? 'bg-gold text-black' : 'bg-spotify-gray text-spotify-text'}`}
           >Открытые</button>
           <button
             onClick={() => setTab('closed')}
-            className={`px-3 py-1.5 rounded-lg text-xs ${tab === 'closed' ? 'bg-spotify-green text-black' : 'bg-spotify-gray text-spotify-text'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs ${tab === 'closed' ? 'bg-gold text-black' : 'bg-spotify-gray text-spotify-text'}`}
           >Закрытые</button>
           <button
             onClick={() => setCreating(true)}
-            className="ml-auto bg-spotify-green text-black rounded-lg px-3 py-1.5 text-xs font-medium"
-          >+ Новый</button>
+            className="ml-auto bg-gold text-black rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1 hover:bg-gold-2 transition-colors"
+          ><Plus size={14} /> Новый</button>
         </div>
 
         {creating && (
@@ -694,15 +698,15 @@ export default function BillsPage() {
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
               className="flex-1 bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
             />
-            <button onClick={handleCreate} className="text-spotify-green text-sm">✓</button>
-            <button onClick={() => { setCreating(false); setNewName('') }} className="text-spotify-text text-sm">×</button>
+            <button onClick={handleCreate} className="text-gold"><Check size={18} /></button>
+            <button onClick={() => { setCreating(false); setNewName('') }} className="text-spotify-text"><X size={18} /></button>
           </div>
         )}
 
         {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
         {loading && bills.length === 0 ? (
-          <div className="text-spotify-text text-center py-8">Загрузка...</div>
+          <div className="flex items-center justify-center py-10"><MascotLoader scale={0.6} /></div>
         ) : filteredBills.length === 0 ? (
           <div className="text-spotify-text text-center py-8">
             {tab === 'open' ? 'Нет открытых счетов' : 'Нет закрытых счетов'}

@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { MessageCircle, Heart, Video, Lock } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
+import MascotLoader from '../components/MascotLoader'
 import { api } from '../api/client'
 
 const PERIODS = [
@@ -11,9 +13,9 @@ const PERIODS = [
 ]
 
 const STAT_CARDS = [
-  { key: 'messages', label: 'Сообщения', emoji: '💬', color: 'from-blue-500/20 to-blue-900/20', accent: '#3b82f6' },
-  { key: 'reactions', label: 'Реакции', emoji: '❤️', color: 'from-rose-500/20 to-rose-900/20', accent: '#f43f5e' },
-  { key: 'videos', label: 'Видосики', emoji: '🎬', color: 'from-purple-500/20 to-purple-900/20', accent: '#a855f7' },
+  { key: 'messages', label: 'Сообщения', Icon: MessageCircle, color: 'from-blue-500/20 to-blue-900/20', accent: '#3b82f6' },
+  { key: 'reactions', label: 'Реакции', Icon: Heart, color: 'from-rose-500/20 to-rose-900/20', accent: '#f43f5e' },
+  { key: 'videos', label: 'Видосики', Icon: Video, color: 'from-purple-500/20 to-purple-900/20', accent: '#a855f7' },
 ]
 
 const CHART_METRICS = [
@@ -84,7 +86,7 @@ export default function ProfilePage() {
     return (
       <div className="flex items-center justify-center min-h-[60vh] px-4">
         <div className="bg-spotify-dark rounded-2xl p-6 text-center max-w-sm">
-          <span className="text-4xl block mb-3">🔒</span>
+          <Lock size={36} className="mx-auto mb-3 text-spotify-text/60" />
           <h2 className="text-white font-semibold text-lg mb-2">Нет данных</h2>
           <p className="text-spotify-text text-sm">Откройте приложение через Telegram</p>
         </div>
@@ -101,11 +103,11 @@ export default function ProfilePage() {
     >
       {/* Header */}
       <div className="flex items-center gap-4 mb-5">
-        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-spotify-green to-emerald-700 flex items-center justify-center shrink-0 overflow-hidden">
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gold to-gold-2 flex items-center justify-center shrink-0 overflow-hidden">
           {photoUrl && !photoBroken ? (
             <img src={photoUrl} alt="" className="w-full h-full object-cover" onError={() => setPhotoBroken(true)} />
           ) : (
-            <span className="text-2xl font-bold text-white">
+            <span className="text-2xl font-bold text-black">
               {(firstName?.[0] || username?.[0] || '?').toUpperCase()}
             </span>
           )}
@@ -170,7 +172,7 @@ export default function ProfilePage() {
             onClick={() => setPeriod(p.key)}
             className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
               period === p.key
-                ? 'bg-spotify-green text-black'
+                ? 'bg-gold text-black'
                 : 'text-spotify-text hover:text-white'
             }`}
           >
@@ -189,8 +191,8 @@ export default function ProfilePage() {
             transition={{ delay: 0.2 + i * 0.06 }}
             className={`bg-gradient-to-br ${card.color} bg-spotify-gray rounded-xl p-3 text-center`}
           >
-            <span className="text-xl">{card.emoji}</span>
-            <p className="text-white font-bold text-lg mt-1">
+            <card.Icon size={22} strokeWidth={2} className="mx-auto" style={{ color: card.accent }} />
+            <p className="text-white font-bold text-lg mt-1.5 tabular-nums">
               {statsLoading ? '—' : currentStats[card.key]}
             </p>
             <p className="text-spotify-text text-[10px] mt-0.5">{card.label}</p>
@@ -227,7 +229,7 @@ export default function ProfilePage() {
 
         {statsLoading || !history ? (
           <div className="h-[180px] flex items-center justify-center">
-            <div className="w-6 h-6 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+            <MascotLoader scale={0.5} />
           </div>
         ) : (
           <AnimatePresence mode="wait">

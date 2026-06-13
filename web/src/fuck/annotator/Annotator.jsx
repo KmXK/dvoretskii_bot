@@ -597,7 +597,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
         onMouseDown={(e) => { tlDragRef.current = true; seekFromTimeline(e) }}
         className="relative h-7 bg-spotify-gray rounded cursor-pointer select-none"
       >
-        <div className="absolute inset-y-0 left-0 bg-spotify-green/20 pointer-events-none" style={{ width: playheadRatio * tlWidth + 'px' }} />
+        <div className="absolute inset-y-0 left-0 bg-gold/20 pointer-events-none" style={{ width: playheadRatio * tlWidth + 'px' }} />
         <div className="absolute -inset-y-0.5 w-0.5 bg-white pointer-events-none" style={{ left: playheadRatio * tlWidth + 'px' }} />
         {keyframeMarkers.map((kf, i) => (
           <div
@@ -660,7 +660,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
             onChange={(e) => setSize((s) => ({ ...s, w: e.target.value }))}
             onBlur={(e) => applySize('w', e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySize('w', e.target.value) }}
-            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-spotify-green focus:outline-none"
+            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-gold focus:outline-none"
           />
         </label>
         <label className="flex items-center gap-1 text-spotify-text">
@@ -673,7 +673,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
             onChange={(e) => setSize((s) => ({ ...s, h: e.target.value }))}
             onBlur={(e) => applySize('h', e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySize('h', e.target.value) }}
-            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-spotify-green focus:outline-none"
+            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-gold focus:outline-none"
           />
         </label>
         <label className="flex items-center gap-1 text-spotify-text">
@@ -685,7 +685,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
             onChange={(e) => setSize((s) => ({ ...s, angle: e.target.value }))}
             onBlur={(e) => applySize('angle', e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySize('angle', e.target.value) }}
-            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-spotify-green focus:outline-none"
+            className="w-16 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-gold focus:outline-none"
           />
         </label>
         <button
@@ -712,7 +712,7 @@ const Annotator = forwardRef(function Annotator(_props, ref) {
               onChange={(e) => setFps(e.target.value)}
               onBlur={(e) => handleFpsChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleFpsChange(e.target.value) }}
-              className="w-20 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-spotify-green focus:outline-none"
+              className="w-20 bg-black/40 text-white rounded px-2 py-1 border border-white/10 focus:border-gold focus:outline-none"
             />
           </label>
         )}

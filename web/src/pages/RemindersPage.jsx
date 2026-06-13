@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Bell, Lock, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
+import MascotLoader from '../components/MascotLoader'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -56,16 +58,16 @@ function ReminderCard({ reminder, onDelete, onEdit }) {
                 onKeyDown={e => e.key === 'Enter' && handleEdit()}
                 autoFocus
                 className="flex-1 bg-spotify-gray rounded-lg px-3 py-1.5 text-white text-sm outline-none
-                  focus:ring-1 focus:ring-spotify-green/50"
+                  focus:ring-1 focus:ring-gold/50"
               />
-              <button onClick={handleEdit} className="text-spotify-green text-sm shrink-0">✓</button>
-              <button onClick={() => { setEditing(false); setEditText(reminder.text) }} className="text-spotify-text text-sm shrink-0">✕</button>
+              <button onClick={handleEdit} className="text-spotify-green shrink-0"><Check size={18} /></button>
+              <button onClick={() => { setEditing(false); setEditText(reminder.text) }} className="text-spotify-text shrink-0"><X size={18} /></button>
             </div>
           ) : (
             <p className="text-white text-sm">{reminder.text}</p>
           )}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <span className="text-xs text-spotify-text">🔔 {reminder.next_fire_fmt}</span>
+            <span className="text-xs text-spotify-text inline-flex items-center gap-1"><Bell size={12} /> {reminder.next_fire_fmt}</span>
             {reminder.interval_seconds && (
               <span className="text-xs bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded">
                 каждые {formatInterval(reminder.interval_seconds)}
@@ -85,19 +87,19 @@ function ReminderCard({ reminder, onDelete, onEdit }) {
           {!editing && (
             <button
               onClick={() => setEditing(true)}
-              className="p-1.5 text-spotify-text hover:text-white transition-colors text-xs"
+              className="p-1.5 text-spotify-text hover:text-white transition-colors"
               title="Редактировать"
             >
-              ✏️
+              <Pencil size={15} />
             </button>
           )}
           <button
             onClick={handleDelete}
             disabled={deleting}
-            className="p-1.5 text-spotify-text hover:text-red-400 transition-colors text-xs disabled:opacity-50"
+            className="p-1.5 text-spotify-text hover:text-red-400 transition-colors disabled:opacity-50"
             title="Удалить"
           >
-            🗑
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
@@ -117,7 +119,7 @@ function CompletedCard({ reminder }) {
     >
       <p className="text-white text-sm line-through">{reminder.text}</p>
       <div className="flex items-center gap-2 mt-2">
-        <span className="text-xs text-spotify-text">✅ {reminder.completed_at_fmt}</span>
+        <span className="text-xs text-spotify-text inline-flex items-center gap-1"><Check size={12} className="text-spotify-green" /> {reminder.completed_at_fmt}</span>
         {reminder.fired_count > 1 && (
           <span className="text-xs text-spotify-text">(x{reminder.fired_count})</span>
         )}
@@ -198,7 +200,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
                 onChange={e => setTime(e.target.value)}
                 placeholder="10m, 2h30m, 15:30, 25.12 10:00"
                 className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-                  focus:ring-1 focus:ring-spotify-green/50"
+                  focus:ring-1 focus:ring-gold/50"
               />
               <p className="text-spotify-text/50 text-[10px] mt-1">
                 Интервал (10m, 2h), время (15:30), или дата (25.12 10:00)
@@ -213,7 +215,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
                 onChange={e => setText(e.target.value)}
                 placeholder="О чём напомнить?"
                 className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-                  focus:ring-1 focus:ring-spotify-green/50"
+                  focus:ring-1 focus:ring-gold/50"
               />
             </div>
 
@@ -221,7 +223,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="text-spotify-text text-xs hover:text-white transition-colors"
             >
-              {showAdvanced ? '▾' : '▸'} Повторение и дни
+              <span className="inline-flex items-center gap-1">{showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Повторение и дни</span>
             </button>
 
             {showAdvanced && (
@@ -239,7 +241,7 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
                         onClick={() => setRepeat(v)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           repeat === v
-                            ? 'bg-spotify-green/20 text-spotify-green'
+                            ? 'bg-gold-soft text-gold'
                             : 'bg-spotify-gray text-spotify-text hover:text-white'
                         }`}
                       >
@@ -277,8 +279,8 @@ function CreateReminderDialog({ open, onOpenChange, chats, onCreated }) {
             <button
               onClick={handleCreate}
               disabled={loading || !text.trim() || !time.trim() || !chatId}
-              className="w-full bg-spotify-green text-black font-semibold py-3 rounded-full
-                hover:bg-spotify-green/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+              className="w-full bg-gold text-black font-semibold py-3 rounded-full
+                hover:bg-gold-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
             >
               {loading ? 'Создаю...' : 'Создать'}
             </button>
@@ -345,7 +347,7 @@ export default function RemindersPage() {
     return (
       <div className="flex items-center justify-center min-h-[60vh] px-4">
         <div className="bg-spotify-dark rounded-2xl p-6 text-center max-w-sm">
-          <span className="text-4xl block mb-3">🔒</span>
+          <Lock size={36} className="mx-auto mb-3 text-spotify-text/60" />
           <h2 className="text-white font-semibold text-lg mb-2">Нет данных</h2>
           <p className="text-spotify-text text-sm">Откройте приложение через Telegram</p>
         </div>
@@ -356,7 +358,7 @@ export default function RemindersPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <MascotLoader scale={0.7} />
       </div>
     )
   }
@@ -379,8 +381,8 @@ export default function RemindersPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="bg-spotify-green text-black font-semibold px-4 py-2 rounded-full text-sm
-            hover:bg-spotify-green/90 transition-all"
+          className="bg-gold text-black font-semibold px-4 py-2 rounded-full text-sm
+            hover:bg-gold-2 transition-all"
         >
           + Создать
         </button>
@@ -394,7 +396,7 @@ export default function RemindersPage() {
 
       {data.active.length === 0 && data.completed.length === 0 && (
         <div className="text-center py-16">
-          <span className="text-5xl block mb-4">🔔</span>
+          <Bell size={48} className="mx-auto mb-4 text-spotify-text/60" />
           <p className="text-spotify-text text-sm">Напоминаний пока нет</p>
         </div>
       )}

@@ -1,13 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Coins, Languages, Clock, ArrowLeftRight, ArrowRight, Copy } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { api } from '../api/client'
 
 const TABS = [
-  { id: 'exchange', label: '💱 Валюты', color: 'from-amber-500/20 to-amber-900/20' },
-  { id: 'translate', label: '🌐 Перевод', color: 'from-blue-500/20 to-blue-900/20' },
-  { id: 'timezone', label: '🕐 Время', color: 'from-purple-500/20 to-purple-900/20' },
+  { id: 'exchange', label: 'Валюты', Icon: Coins },
+  { id: 'translate', label: 'Перевод', Icon: Languages },
+  { id: 'timezone', label: 'Время', Icon: Clock },
 ]
 
 const POPULAR_CURRENCIES = ['USD', 'EUR', 'BYN', 'RUB', 'UAH', 'PLN', 'GBP', 'CNY', 'BTC', 'ETH']
@@ -64,7 +65,7 @@ function ExchangeTool() {
           value={amount}
           onChange={e => { setAmount(e.target.value); setResult(null) }}
           className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-            focus:ring-1 focus:ring-spotify-green/50"
+            focus:ring-1 focus:ring-gold/50"
           placeholder="1"
           min="0"
           step="any"
@@ -79,13 +80,13 @@ function ExchangeTool() {
             value={from}
             onChange={e => { setFrom(e.target.value.toUpperCase()); setResult(null) }}
             className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-              focus:ring-1 focus:ring-spotify-green/50 uppercase"
+              focus:ring-1 focus:ring-gold/50 uppercase"
             placeholder="USD"
             maxLength={5}
           />
         </div>
         <button onClick={swap} className="mb-4 p-2 text-spotify-text hover:text-white transition-colors">
-          ⇄
+          <ArrowLeftRight size={18} />
         </button>
         <div className="bg-spotify-dark rounded-xl p-4">
           <label className="text-spotify-text text-xs mb-2 block">В</label>
@@ -94,7 +95,7 @@ function ExchangeTool() {
             value={to}
             onChange={e => { setTo(e.target.value.toUpperCase()); setResult(null) }}
             className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-              focus:ring-1 focus:ring-spotify-green/50 uppercase"
+              focus:ring-1 focus:ring-gold/50 uppercase"
             placeholder="BYN"
             maxLength={5}
           />
@@ -108,7 +109,7 @@ function ExchangeTool() {
             onClick={() => { if (from === c) setTo(c); else setFrom(c); setResult(null) }}
             className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
               from === c || to === c
-                ? 'bg-spotify-green/20 text-spotify-green'
+                ? 'bg-gold-soft text-gold'
                 : 'bg-spotify-gray text-spotify-text hover:text-white'
             }`}
           >
@@ -120,8 +121,8 @@ function ExchangeTool() {
       <button
         onClick={convert}
         disabled={loading || !to || !amount}
-        className="w-full bg-spotify-green text-black font-semibold py-3 rounded-full
-          hover:bg-spotify-green/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+        className="w-full bg-gold text-black font-semibold py-3 rounded-full
+          hover:bg-gold-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
       >
         {loading ? 'Конвертирую...' : 'Конвертировать'}
       </button>
@@ -199,7 +200,7 @@ function TranslateTool() {
           value={text}
           onChange={e => { setText(e.target.value); setResult(null) }}
           className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-            focus:ring-1 focus:ring-spotify-green/50 resize-none"
+            focus:ring-1 focus:ring-gold/50 resize-none"
           rows={4}
           placeholder="Введите текст для перевода..."
         />
@@ -227,8 +228,8 @@ function TranslateTool() {
       <button
         onClick={translate}
         disabled={loading || !text.trim() || !toLang}
-        className="w-full bg-spotify-green text-black font-semibold py-3 rounded-full
-          hover:bg-spotify-green/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+        className="w-full bg-gold text-black font-semibold py-3 rounded-full
+          hover:bg-gold-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
       >
         {loading ? 'Перевожу...' : 'Перевести'}
       </button>
@@ -249,9 +250,9 @@ function TranslateTool() {
             <p className="text-white text-sm whitespace-pre-wrap">{result.text}</p>
             <button
               onClick={() => navigator.clipboard?.writeText(result.text)}
-              className="mt-3 text-spotify-text text-xs hover:text-white transition-colors"
+              className="mt-3 text-spotify-text text-xs hover:text-white transition-colors inline-flex items-center gap-1"
             >
-              📋 Копировать
+              <Copy size={13} /> Копировать
             </button>
           </motion.div>
         )}
@@ -339,16 +340,16 @@ function TimezoneTool() {
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="flex-1 bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm outline-none
-              focus:ring-1 focus:ring-spotify-green/50"
+              focus:ring-1 focus:ring-gold/50"
             placeholder="москва, +3, токио..."
           />
           <button
             type="submit"
             disabled={loading}
-            className="bg-spotify-green text-black font-semibold px-4 rounded-lg
-              hover:bg-spotify-green/90 disabled:opacity-50 transition-all text-sm shrink-0"
+            className="bg-gold text-black font-semibold px-4 rounded-lg flex items-center justify-center
+              hover:bg-gold-2 disabled:opacity-50 transition-all shrink-0"
           >
-            →
+            <ArrowRight size={18} />
           </button>
         </div>
       </form>
@@ -400,13 +401,13 @@ export default function ToolsPage() {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-all ${
+            className={`flex-1 py-2.5 rounded-lg text-xs font-medium transition-all inline-flex items-center justify-center gap-1.5 ${
               tab === t.id
-                ? 'bg-spotify-green text-black'
+                ? 'bg-gold text-black'
                 : 'text-spotify-text hover:text-white'
             }`}
           >
-            {t.label}
+            <t.Icon size={14} /> {t.label}
           </button>
         ))}
       </div>

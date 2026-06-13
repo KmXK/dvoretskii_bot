@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useParams, useNavigate } from 'react-router-dom'
+import {
+  Bell, BellOff, CircleCheck, Circle, CircleMinus, ChevronUp, ChevronDown,
+  Drama, Trash2, Plus, Package, Users, Settings,
+} from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { api } from '../api/client'
 
 const NOTIFICATION_TOGGLES = [
@@ -49,7 +54,9 @@ function NotificationsPanel() {
     <div className="bg-spotify-dark rounded-xl p-3 mb-4 space-y-3">
       {NOTIFICATION_TOGGLES.map(({ key, title, desc }) => (
         <div key={key} className="flex items-center gap-3">
-          <span>{prefs[key] ? '🔔' : '🔕'}</span>
+          <span className={prefs[key] ? 'text-gold' : 'text-spotify-text/60'}>
+            {prefs[key] ? <Bell size={18} /> : <BellOff size={18} />}
+          </span>
           <div className="flex-1">
             <p className="text-white text-sm font-medium">{title}</p>
             <p className="text-spotify-text/70 text-xs">{desc}</p>
@@ -59,7 +66,7 @@ function NotificationsPanel() {
             disabled={busy}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
               prefs[key]
-                ? 'bg-spotify-green text-black'
+                ? 'bg-gold text-black'
                 : 'bg-spotify-bg text-spotify-text'
             }`}
           >
@@ -75,9 +82,9 @@ function TabButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1.5 ${
         active
-          ? 'bg-spotify-green text-black'
+          ? 'bg-gold text-black'
           : 'bg-spotify-dark text-spotify-text hover:text-white'
       }`}
     >
@@ -160,7 +167,11 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
     <div className="space-y-2">
       {Object.entries(caps).map(([cap, info]) => {
         const state = capState(cap)
-        const icon = state === 'on' ? '✅' : state === 'off' ? '❌' : '➖'
+        const stateIcon = state === 'on'
+          ? <CircleCheck size={18} className="text-spotify-green" />
+          : state === 'off'
+            ? <Circle size={18} className="text-spotify-text/50" />
+            : <CircleMinus size={18} className="text-yellow-400" />
         const isOpen = openCap === cap
         return (
           <div key={cap} className="bg-spotify-dark rounded-xl overflow-hidden">
@@ -170,14 +181,14 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
                 disabled={!canEdit || busy}
                 className="flex-1 px-4 py-3 text-left flex items-center gap-2 disabled:opacity-60 hover:bg-white/5"
               >
-                <span>{icon}</span>
+                {stateIcon}
                 <span className="text-white text-sm font-medium">{info.label}</span>
               </button>
               <button
                 onClick={() => setOpenCap(isOpen ? null : cap)}
                 className="px-3 py-3 text-spotify-text hover:text-white"
               >
-                {isOpen ? '▴' : '▾'}
+                {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
               </button>
             </div>
             <AnimatePresence initial={false}>
@@ -200,7 +211,9 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
                           className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/5 disabled:opacity-60"
                         >
                           <div className="flex items-center gap-2">
-                            <span>{active ? '✅' : '❌'}</span>
+                            {active
+                              ? <CircleCheck size={16} className="text-spotify-green" />
+                              : <Circle size={16} className="text-spotify-text/50" />}
                             <span className="text-white font-medium">{label}</span>
                             {f.bundled_with && f.bundled_with.length > 0 && (
                               <span className="text-spotify-text/60 text-xs">
@@ -281,7 +294,7 @@ function AdminsTab({ chatId, data, canEdit, refresh }) {
           <button
             onClick={addAdmin}
             disabled={!adding || busy}
-            className="px-3 py-2 bg-spotify-green text-black rounded-lg text-sm font-medium disabled:opacity-50"
+            className="px-3 py-2 bg-gold text-black rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-gold-2 transition-colors"
           >
             Добавить
           </button>
@@ -374,7 +387,7 @@ function RolesTab() {
         <button
           onClick={createRole}
           disabled={!newName.trim() || busy}
-          className="px-3 py-2 bg-spotify-green text-black rounded-lg text-sm font-medium disabled:opacity-50"
+          className="px-3 py-2 bg-gold text-black rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-gold-2 transition-colors"
         >
           Создать
         </button>
@@ -393,7 +406,7 @@ function RolesTab() {
                 onClick={() => setOpenRole(open ? null : role.id)}
                 className="flex-1 text-left flex items-center gap-2"
               >
-                <span>🎭</span>
+                <Drama size={18} className="text-indigo" />
                 <span className="text-white font-medium">{role.name}</span>
                 <span className="text-xs text-spotify-text">
                   {role.user_ids.length} чел · {role.permissions.length} прав
@@ -401,9 +414,9 @@ function RolesTab() {
               </button>
               <button
                 onClick={() => deleteRole(role.id)}
-                className="text-xs text-red-400 hover:text-red-300 ml-2"
+                className="text-red-400 hover:text-red-300 ml-2"
               >
-                🗑
+                <Trash2 size={15} />
               </button>
             </div>
             <AnimatePresence initial={false}>
@@ -472,9 +485,9 @@ function RolesTab() {
                         />
                         <button
                           onClick={() => addUser(role.id)}
-                          className="px-3 py-2 bg-spotify-green text-black rounded-lg text-sm font-medium"
+                          className="px-3 py-2 bg-gold text-black rounded-lg font-medium hover:bg-gold-2 transition-colors flex items-center"
                         >
-                          +
+                          <Plus size={16} />
                         </button>
                       </div>
                     </div>
@@ -528,7 +541,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <MascotLoader scale={0.7} />
       </div>
     )
   }
@@ -551,7 +564,7 @@ export default function SettingsPage() {
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
       <BackButton />
-      <h1 className="text-2xl font-bold text-white mb-1">⚙ Настройки</h1>
+      <h1 className="text-2xl font-bold text-white mb-1 inline-flex items-center gap-2"><Settings size={22} className="text-gold" /> Настройки</h1>
       <p className="text-spotify-text text-sm mb-4">
         Тонкая настройка бота по чатам
       </p>
@@ -570,14 +583,14 @@ export default function SettingsPage() {
         <>
           <div className="flex gap-2 mb-4 flex-wrap">
             <TabButton active={tab === 'features'} onClick={() => setTab('features')}>
-              📦 Функции
+              <Package size={15} /> Функции
             </TabButton>
             <TabButton active={tab === 'admins'} onClick={() => setTab('admins')}>
-              👥 Чат-админы
+              <Users size={15} /> Чат-админы
             </TabButton>
             {data.is_global_admin && (
               <TabButton active={tab === 'roles'} onClick={() => setTab('roles')}>
-                🎭 Роли
+                <Drama size={15} /> Роли
               </TabButton>
             )}
           </div>

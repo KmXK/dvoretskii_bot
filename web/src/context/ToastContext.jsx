@@ -1,5 +1,6 @@
 import { createContext, useCallback, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Check, TriangleAlert, Info } from 'lucide-react'
 
 export const ToastContext = createContext(null)
 
@@ -9,7 +10,7 @@ const STYLES = {
   info: 'bg-blue-500/95 border-blue-400 text-white',
 }
 
-const ICONS = { success: '✓', error: '⚠', info: 'ℹ' }
+const ICONS = { success: Check, error: TriangleAlert, info: Info }
 
 const DEFAULT_TTL = 4000
 
@@ -53,7 +54,7 @@ export function ToastProvider({ children }) {
               onClick={() => dismiss(t.id)}
               className={`pointer-events-auto cursor-pointer rounded-lg border px-4 py-2.5 shadow-lg flex items-start gap-2 text-sm font-medium backdrop-blur-sm ${STYLES[t.type] ?? STYLES.info}`}
             >
-              <span className="shrink-0 font-bold">{ICONS[t.type] ?? ICONS.info}</span>
+              {(() => { const Icon = ICONS[t.type] ?? ICONS.info; return <Icon size={16} className="shrink-0 mt-0.5" /> })()}
               <span className="flex-1 break-words">{t.message}</span>
             </motion.div>
           ))}

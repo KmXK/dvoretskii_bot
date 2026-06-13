@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { ListChecks } from 'lucide-react'
 import BackButton from '../components/BackButton'
+import MascotLoader from '../components/MascotLoader'
 import { api } from '../api/client'
 
 function TodoItem({ todo, onToggle }) {
@@ -74,7 +76,7 @@ export default function TodoPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <MascotLoader scale={0.7} />
       </div>
     )
   }
@@ -104,7 +106,7 @@ export default function TodoPage() {
 
       {todos.length === 0 && (
         <div className="text-center py-16">
-          <span className="text-5xl block mb-4">📝</span>
+          <ListChecks size={48} className="mx-auto mb-4 text-spotify-text/60" />
           <p className="text-spotify-text text-sm">Задач пока нет</p>
         </div>
       )}

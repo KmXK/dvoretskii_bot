@@ -1,8 +1,10 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Heart, StickyNote, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
+import MascotLoader from '../components/MascotLoader'
 import { useAuth } from '../context/useAuth'
 import { useToast } from '../context/useToast'
 import { api } from '../api/client'
@@ -38,7 +40,17 @@ const SORT_OPTIONS = [
   { value: 'status_priority', label: 'Статус + приоритет' },
 ]
 
-const PRIORITY_EMOJI = { 1: '🔴', 2: '🟠', 3: '🟡', 4: '🔵', 5: '⚪' }
+const PRIORITY_COLOR = { 1: '#ef4444', 2: '#f97316', 3: '#eab308', 4: '#3b82f6', 5: '#9ca3af' }
+
+function PriorityDot({ p, size = 12 }) {
+  return (
+    <span
+      className="inline-block rounded-full shrink-0"
+      style={{ width: size, height: size, background: PRIORITY_COLOR[p] ?? PRIORITY_COLOR[5] }}
+      title={`Приоритет ${p}`}
+    />
+  )
+}
 
 const PAGE_SIZE = 10
 
@@ -58,6 +70,7 @@ function formatDateTime(timestamp) {
 
 function VoteButton({ voted, count, onClick, size = 'sm' }) {
   const iconSize = size === 'sm' ? 'text-base' : 'text-xl'
+  const iconPx = size === 'sm' ? 18 : 22
   const textSize = size === 'sm' ? 'text-xs' : 'text-sm'
   const firstRender = useRef(true)
   useEffect(() => { firstRender.current = false }, [])
@@ -98,10 +111,10 @@ function VoteButton({ voted, count, onClick, size = 'sm' }) {
           initial={firstRender.current ? false : { scale: 0.5 }}
           animate={{ scale: [1.4, 1] }}
           transition={{ type: 'spring', stiffness: 500, damping: 14 }}
-          className={`inline-block ${iconSize}`}
+          className="inline-block"
           style={{ transformOrigin: 'center' }}
         >
-          {voted ? '❤️' : '🤍'}
+          <Heart size={iconPx} className={voted ? 'fill-pink-400 text-pink-400' : 'text-spotify-text'} />
         </motion.span>
         <AnimatePresence>
           {particles.map(p => (
@@ -147,9 +160,7 @@ function FRListItem({ fr, onOpen, onVote }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-center gap-2">
           <span className="text-spotify-text text-xs font-mono shrink-0">#{fr.id}</span>
-          <span className="text-sm" title={`Приоритет ${fr.priority}`}>
-            {PRIORITY_EMOJI[fr.priority] ?? '⚪'}
-          </span>
+          <PriorityDot p={fr.priority} />
           <VoteButton
             voted={fr.voted}
             count={fr.votes_count}
@@ -165,7 +176,7 @@ function FRListItem({ fr, onOpen, onVote }) {
         <span>{fr.author_name}</span>
         <div className="flex items-center gap-2">
           {fr.notes && fr.notes.length > 0 && (
-            <span className="text-spotify-text/60" title="Есть примечания">📝 {fr.notes.length}</span>
+            <span className="text-spotify-text/60 inline-flex items-center gap-1" title="Есть примечания"><StickyNote size={12} /> {fr.notes.length}</span>
           )}
           <span>{formatDate(fr.creation_timestamp)}</span>
         </div>
@@ -190,7 +201,7 @@ function StatusFilter({ selected, onChange }) {
         onClick={() => onChange(new Set())}
         className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
           allSelected
-            ? 'bg-spotify-green/20 text-spotify-green ring-2 ring-spotify-green/30'
+            ? 'bg-gold-soft text-gold ring-2 ring-gold/30'
             : 'bg-white/5 text-spotify-text hover:bg-white/10'
         }`}
       >
@@ -320,11 +331,11 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin, per
                       onClick={() => setPriority(p)}
                       className={`w-10 h-10 rounded-lg text-sm font-medium transition-all flex items-center justify-center ${
                         priority === p
-                          ? 'bg-spotify-green text-black ring-2 ring-spotify-green/30'
-                          : 'bg-white/5 text-spotify-text hover:bg-white/10'
+                          ? 'bg-gold-soft ring-2 ring-gold/40'
+                          : 'bg-white/5 hover:bg-white/10'
                       }`}
                     >
-                      {PRIORITY_EMOJI[p]}
+                      <PriorityDot p={p} size={14} />
                     </button>
                   ))}
                 </div>
@@ -339,7 +350,7 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin, per
                 </span>
               </div>
               <div className="text-spotify-text">Приоритет</div>
-              <div className="text-white">{PRIORITY_EMOJI[feature.priority] ?? '⚪'} {feature.priority}</div>
+              <div className="text-white inline-flex items-center gap-1.5"><PriorityDot p={feature.priority} /> {feature.priority}</div>
             </div>
           )}
 
@@ -365,7 +376,7 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin, per
                 placeholder="Добавить примечание..."
                 rows={2}
                 className="w-full bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm
-                  placeholder-spotify-text outline-none focus:ring-2 focus:ring-spotify-green/50 resize-none"
+                  placeholder-spotify-text outline-none focus:ring-2 focus:ring-gold/50 resize-none"
               />
             </div>
           )}
@@ -391,8 +402,8 @@ function FeatureCardModal({ feature, open, onClose, onSave, onVote, isAdmin, per
             <button
               onClick={handleSave}
               disabled={saving}
-              className="w-full bg-spotify-green text-black font-semibold rounded-full py-2.5 text-sm
-                hover:bg-green-400 transition-colors disabled:opacity-50"
+              className="w-full bg-gold text-black font-semibold rounded-full py-2.5 text-sm
+                hover:bg-gold-2 transition-colors disabled:opacity-50"
             >
               {saving ? 'Сохранение...' : 'Сохранить'}
             </button>
@@ -449,14 +460,14 @@ function CreateFeatureModal({ open, onClose, onCreate, authorName }) {
             rows={4}
             autoFocus
             className="w-full bg-spotify-gray rounded-lg px-3 py-2.5 text-white text-sm
-              placeholder-spotify-text outline-none focus:ring-2 focus:ring-spotify-green/50 resize-none mb-4"
+              placeholder-spotify-text outline-none focus:ring-2 focus:ring-gold/50 resize-none mb-4"
           />
 
           <button
             onClick={handleCreate}
             disabled={saving || !text.trim()}
-            className="w-full bg-spotify-green text-black font-semibold rounded-full py-2.5 text-sm
-              hover:bg-green-400 transition-colors disabled:opacity-50"
+            className="w-full bg-gold text-black font-semibold rounded-full py-2.5 text-sm
+              hover:bg-gold-2 transition-colors disabled:opacity-50"
           >
             {saving ? 'Создание...' : 'Создать'}
           </button>
@@ -599,7 +610,7 @@ export default function FeaturesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <MascotLoader scale={0.7} />
       </div>
     )
   }
@@ -626,10 +637,10 @@ export default function FeaturesPage() {
         <h1 className="text-2xl font-bold text-white">Фича-реквесты</h1>
         <button
           onClick={() => setShowCreate(true)}
-          className="w-9 h-9 rounded-full bg-spotify-green text-black flex items-center justify-center
-            text-xl font-bold hover:bg-green-400 transition-colors shrink-0"
+          className="w-9 h-9 rounded-full bg-gold text-black flex items-center justify-center
+            hover:bg-gold-2 transition-colors shrink-0"
         >
-          +
+          <Plus size={20} />
         </button>
       </div>
       <p className="text-spotify-text text-sm mb-5">
@@ -642,7 +653,7 @@ export default function FeaturesPage() {
         value={search}
         onChange={e => { setSearch(e.target.value); setPage(0) }}
         className="w-full bg-spotify-gray rounded-lg px-4 py-2.5 text-white text-sm
-          placeholder-spotify-text outline-none focus:ring-2 focus:ring-spotify-green/50 mb-3"
+          placeholder-spotify-text outline-none focus:ring-2 focus:ring-gold/50 mb-3"
       />
 
       <StatusFilter selected={statusFilter} onChange={v => { setStatusFilter(v); setPage(0) }} />
@@ -670,10 +681,10 @@ export default function FeaturesPage() {
           <button
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage === 0}
-            className="w-8 h-8 rounded-lg bg-spotify-gray text-spotify-text text-sm
-              disabled:opacity-30 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-lg bg-spotify-gray text-spotify-text
+              disabled:opacity-30 hover:text-white transition-colors flex items-center justify-center"
           >
-            ‹
+            <ChevronLeft size={16} />
           </button>
 
           {Array.from({ length: totalPages }, (_, i) => (
@@ -682,7 +693,7 @@ export default function FeaturesPage() {
               onClick={() => goToPage(i)}
               className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
                 i === currentPage
-                  ? 'bg-spotify-green text-black'
+                  ? 'bg-gold text-black'
                   : 'bg-spotify-gray text-spotify-text hover:text-white'
               }`}
             >
@@ -693,10 +704,10 @@ export default function FeaturesPage() {
           <button
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage === totalPages - 1}
-            className="w-8 h-8 rounded-lg bg-spotify-gray text-spotify-text text-sm
-              disabled:opacity-30 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-lg bg-spotify-gray text-spotify-text
+              disabled:opacity-30 hover:text-white transition-colors flex items-center justify-center"
           >
-            ›
+            <ChevronRight size={16} />
           </button>
         </div>
       )}
