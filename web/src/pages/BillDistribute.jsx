@@ -29,24 +29,20 @@ const fracLabel = (den) => (den > 1 ? `1/${den}` : '1 шт')
 const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b] } return a || 1 }
 const lcm = (a, b) => (a / gcd(a, b)) * b
 
-// Stable per-position colour so a deck of the same item shares a tint, and
-// different positions read as different "suits".
 function hueFor(txId) {
   let h = 0
   for (let i = 0; i < txId.length; i++) h = (h * 31 + txId.charCodeAt(i)) % 360
   return h
 }
-function cardGradient(txId, depth = 0) {
+function cardGradient(txId) {
   const hue = hueFor(txId)
-  const l = 64 - depth * 5
-  return `linear-gradient(135deg, hsl(${hue} 70% ${l}%), hsl(${hue} 72% ${l - 12}%))`
+  return `linear-gradient(135deg, hsl(${hue} 70% 64%), hsl(${hue} 72% 52%))`
 }
 
 // ── Cards model ───────────────────────────────────────────────────────────────
 // One ordered, flat deck of "cards". Each card is a 1/den fraction of one unit of
-// a transaction, owned by a person or null (still in the deck). The deck preserves
-// order so the top card is deck[0]; deferring sends a card to the bottom and
-// splitting drops the copies right under the top. Persisted as
+// a transaction, owned by a person or null (still in the deck). Order is the deck
+// order: deck[0] is the top card. Persisted as
 // BillItemAssignment{unit_count, debtors, denominator}.
 
 let _seq = 0
@@ -90,6 +86,110 @@ function groupAssignments(cards) {
     unit_count: x.count, debtors: x.owner ? [x.owner] : [], denominator: x.den,
   }))
 }
+
+const CARD_W = 220
+const POSE_SPRING = { type: 'spring', stiffness: 340, damping: 26 }
+
+// ── PileCard ──────────────────────────────────────────────────────────────────
+// Every visible card is the SAME component, keyed by id. When the deck shifts a
+// card's depth, the same element's motion values spring to the new pose — so a
+// card promoted to the top glides up smoothly instead of remounting (no flash,
+// no jump). Only the top card is draggable. New cards grow/scatter in (mitosis),
+// the top flies into a person on drop, and swiping/«вниз» flings it to the back.
+const PileCard = forwardRef(function PileCard(
+  { card, depth, isTop, tx, currency, remaining, resolveDrop, onAssign, onDefer, onRename }, ref,
+) {
+  const nodeRef = useRef(null)
+  const dragging = useRef(false)
+  const x = useMotionValue((depth % 2 ? 1 : -1) * depth * 14) // small scatter-in
+  const y = useMotionValue(0)
+  const scale = useMotionValue(0.5)
+  const opacity = useMotionValue(0)
+  const tilt = useMotionValue(0)
+  const lean = useSpring(useTransform(x, [-220, 220], [-22, 22]), { stiffness: 260, damping: 18, mass: 0.6 })
+  const rotate = useTransform([lean, tilt], ([l, t]) => l + t)
+
+  // Grow/settle in.
+  useEffect(() => {
+    const c = animate(opacity, 1, { duration: 0.22 })
+    return () => c.stop()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Spring to the resting pose for the current depth (skip while the top is held).
+  useEffect(() => {
+    if (isTop && dragging.current) return
+    const cs = animate(scale, isTop ? 1 : 1 - depth * 0.05, POSE_SPRING)
+    const ct = animate(tilt, isTop ? 0 : (depth % 2 ? 1 : -1) * depth * 2, POSE_SPRING)
+    const cy = animate(y, depth * 9, POSE_SPRING)
+    const cx = animate(x, 0, POSE_SPRING)
+    return () => { cs.stop(); ct.stop(); cy.stop(); cx.stop() }
+  }, [depth, isTop]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const springHome = () => {
+    animate(x, 0, { type: 'spring', stiffness: 300, damping: 24 })
+    animate(y, depth * 9, { type: 'spring', stiffness: 300, damping: 24 })
+    animate(scale, 1, { type: 'spring', stiffness: 300, damping: 20 })
+  }
+
+  const flingDown = (dir = -1) => {
+    animate(x, dir * 480, { type: 'spring', stiffness: 200, damping: 28 })
+    animate(opacity, 0, { duration: 0.32, onComplete: onDefer })
+  }
+  const absorb = (cb) => {
+    animate(scale, 0.45, { duration: 0.16 })
+    animate(opacity, 0.3, { duration: 0.18, onComplete: cb })
+  }
+  useImperativeHandle(ref, () => ({ flingDown, absorb }), [onDefer]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDragEnd = (_e, info) => {
+    dragging.current = false
+    const drop = resolveDrop(info.point)
+    if (drop) {
+      const r = nodeRef.current?.getBoundingClientRect()
+      if (r) {
+        const cx = r.left + r.width / 2
+        const cy = r.top + r.height / 2
+        const tcx = drop.rect.left + drop.rect.width / 2
+        const tcy = drop.rect.top + drop.rect.height / 2
+        animate(x, x.get() + (tcx - cx), { type: 'spring', stiffness: 240, damping: 26 })
+        animate(y, y.get() + (tcy - cy), { type: 'spring', stiffness: 240, damping: 26 })
+      }
+      animate(scale, 0.18, { duration: 0.3 })
+      animate(opacity, 0, { duration: 0.34, onComplete: () => onAssign(drop.personId) })
+      return
+    }
+    if (Math.abs(info.offset.x) > 90) { flingDown(Math.sign(info.offset.x) || 1); return }
+    springHome()
+  }
+
+  const wrap = { position: 'absolute', left: '50%', top: 8, width: CARD_W, marginLeft: -CARD_W / 2, zIndex: 40 - depth }
+  const unitPrice = card.den > 1 ? piecesCost(tx?.unit_price_minor || 0, 1, card.den) : (tx?.unit_price_minor || 0)
+  return (
+    <motion.div
+      ref={nodeRef}
+      drag={isTop}
+      dragMomentum={false}
+      onDragStart={() => { dragging.current = true; animate(scale, 1.06, { duration: 0.12 }) }}
+      onDragEnd={handleDragEnd}
+      style={{ ...wrap, x, y, scale, opacity, rotate, background: cardGradient(card.txId), pointerEvents: isTop ? 'auto' : 'none' }}
+      className={`select-none rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black ${isTop ? 'touch-none cursor-grab' : ''}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
+        {isTop && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRename(card.txId, tx?.item_name || '') }}
+            className="shrink-0 opacity-70 hover:opacity-100"
+          ><Pencil size={13} /></button>
+        )}
+      </div>
+      <div className="text-3xl font-bold tabular-nums my-2">{fracLabel(card.den)}</div>
+      <div className="text-[11px] opacity-80 tabular-nums">
+        {formatMinor(unitPrice, currency)}{isTop ? ` · ${remaining} в колоде` : ''}
+      </div>
+    </motion.div>
+  )
+})
 
 // ── Person slot (drop target) ───────────────────────────────────────────────────
 
@@ -145,92 +245,6 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
 }
 
 const SPLIT_OPTIONS = [2, 3, 4]
-const CARD_W = 220
-
-// Top card of the pile. Physics: leans into the drag (x→spring rotate). On
-// release it either flies into the target person (glide to slot centre + shrink
-// + fade), flings off-screen when swiped aside (then drops to the deck bottom),
-// or springs back. Motion values are driven imperatively so we own the landing.
-const TopCard = forwardRef(function TopCard({ card, tx, currency, remaining, resolveDrop, onAssign, onDefer, onRename }, ref) {
-  const nodeRef = useRef(null)
-  const x = useMotionValue(0)
-  // Promotion: the next card was already sitting just below/behind, so rise it
-  // into place (y, scale) with opacity already at 1 — no fade-flash, no jump.
-  const y = useMotionValue(10)
-  const scale = useMotionValue(0.93)
-  const opacity = useMotionValue(1)
-  const rotateX = useTransform(x, [-220, 220], [-22, 22])
-  const rotateY = useTransform(y, [-220, 220], [4, -4])
-  const rotateRaw = useTransform([rotateX, rotateY], ([rx, ry]) => rx + ry)
-  const rotate = useSpring(rotateRaw, { stiffness: 260, damping: 18, mass: 0.6 })
-
-  useEffect(() => {
-    const c1 = animate(y, 0, { type: 'spring', stiffness: 340, damping: 26 })
-    const c2 = animate(scale, 1, { type: 'spring', stiffness: 340, damping: 24 })
-    return () => { c1.stop(); c2.stop() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const springBack = () => {
-    animate(x, 0, { type: 'spring', stiffness: 300, damping: 24 })
-    animate(y, 0, { type: 'spring', stiffness: 300, damping: 24 })
-    animate(scale, 1, { type: 'spring', stiffness: 300, damping: 20 })
-  }
-
-  const flingDown = (dir = -1) => {
-    animate(x, dir * 460, { type: 'spring', stiffness: 200, damping: 28 })
-    animate(opacity, 0, { duration: 0.32, onComplete: onDefer })
-  }
-  useImperativeHandle(ref, () => ({ flingDown }), [onDefer]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleDragEnd = (_e, info) => {
-    const drop = resolveDrop(info.point)
-    if (drop) {
-      // Glide the card so its centre lands on the person slot, then vanish.
-      const r = nodeRef.current?.getBoundingClientRect()
-      if (r) {
-        const cx = r.left + r.width / 2
-        const cy = r.top + r.height / 2
-        const tcx = drop.rect.left + drop.rect.width / 2
-        const tcy = drop.rect.top + drop.rect.height / 2
-        animate(x, x.get() + (tcx - cx), { type: 'spring', stiffness: 240, damping: 26 })
-        animate(y, y.get() + (tcy - cy), { type: 'spring', stiffness: 240, damping: 26 })
-      }
-      animate(scale, 0.18, { duration: 0.3 })
-      animate(opacity, 0, { duration: 0.34, onComplete: () => onAssign(drop.personId) })
-      return
-    }
-    if (Math.abs(info.offset.x) > 90) {
-      flingDown(Math.sign(info.offset.x) || 1)
-      return
-    }
-    springBack()
-  }
-
-  return (
-    <motion.div
-      ref={nodeRef}
-      drag
-      dragMomentum={false}
-      onDragStart={() => animate(scale, 1.06, { duration: 0.12 })}
-      onDragEnd={handleDragEnd}
-      style={{ x, y, scale, opacity, rotate, background: cardGradient(card.txId, 0) }}
-      className="touch-none select-none cursor-grab rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onRename(card.txId, tx?.item_name || '') }}
-          className="shrink-0 opacity-70 hover:opacity-100"
-        ><Pencil size={13} /></button>
-      </div>
-      <div className="text-3xl font-bold tabular-nums my-2">{fracLabel(card.den)}</div>
-      <div className="text-[11px] opacity-80 tabular-nums">
-        {formatMinor(card.den > 1 ? piecesCost(tx?.unit_price_minor || 0, 1, card.den) : (tx?.unit_price_minor || 0), currency)}
-        {' · '}{remaining} в колоде
-      </div>
-    </motion.div>
-  )
-})
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
@@ -285,6 +299,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   // ── Derived ──
   const deck = useMemo(() => cards.filter((c) => c.owner === null), [cards])
   const top = deck[0] || null
+  const remaining = deck.length
+  const topLooseCount = top ? deck.filter((c) => c.txId === top.txId).length : 0
+  const canMerge = topLooseCount >= 2
 
   const personStats = useMemo(() => {
     const stat = {}
@@ -316,7 +333,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
 
   const personCount = useCallback((pid) => Object.keys(personStats[pid]?.lines || {}).length, [personStats])
 
-  // ── Card ops (operate on the top card) ──
+  // ── Card ops ──
   const assignTop = useCallback((personId) => {
     if (!top) return
     mutate((prev) => prev.map((c) => (c.id === top.id ? { ...c, owner: personId } : c)))
@@ -324,9 +341,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
 
   const deferTop = useCallback(() => {
     if (!top) return
-    mutate((prev) => { const rest = prev.filter((c) => c.id !== top.id); return [...rest, prev.find((c) => c.id === top.id)] })
+    mutate((prev) => { const card = prev.find((c) => c.id === top.id); return [...prev.filter((c) => c.id !== top.id), card] })
   }, [top, mutate])
 
+  // Mitosis: replace the top card with N children of 1/(den·N) at the same spot.
   const splitTop = useCallback((n) => {
     if (!top) return
     mutate((prev) => {
@@ -339,15 +357,14 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     })
   }, [top, mutate])
 
-  // Undo splitting: recombine all loose (unassigned) pieces of a position back
-  // into the coarsest form — whole units + a single reduced fraction. So four
-  // 1/4 → one whole, two 1/4 → one 1/2, etc.
-  const mergeTx = useCallback((txId) => {
+  // Glue back: recombine a position's loose pieces into whole units + one reduced
+  // fraction. Run an "absorb" shrink on the top card first so it reads as fusing.
+  const doMerge = useCallback((txId) => {
     mutate((prev) => {
       const loose = prev.filter((c) => c.txId === txId && c.owner === null)
       if (loose.length < 2) return prev
       const L = loose.reduce((m, c) => lcm(m, c.den), 1)
-      const totalNum = loose.reduce((s, c) => s + L / c.den, 0) // units × L
+      const totalNum = loose.reduce((s, c) => s + L / c.den, 0)
       const whole = Math.floor(totalNum / L)
       const remNum = totalNum - whole * L
       const g = remNum ? gcd(remNum, L) : 1
@@ -356,13 +373,20 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
       const rebuilt = []
       for (let i = 0; i < whole; i++) rebuilt.push({ id: nextId(), txId, den: 1, owner: null })
       for (let i = 0; i < rNum; i++) rebuilt.push({ id: nextId(), txId, den: rDen, owner: null })
-      if (rebuilt.length >= loose.length) return prev // already minimal — nothing to merge
+      if (rebuilt.length >= loose.length) return prev
       const firstIdx = prev.findIndex((c) => c.txId === txId && c.owner === null)
       const without = prev.filter((c) => !(c.txId === txId && c.owner === null))
       without.splice(Math.min(firstIdx, without.length), 0, ...rebuilt)
       return without
     })
   }, [mutate])
+
+  const mergeTop = useCallback(() => {
+    if (!top) return
+    const txId = top.txId
+    if (topCardRef.current?.absorb) topCardRef.current.absorb(() => doMerge(txId))
+    else doMerge(txId)
+  }, [top, doMerge])
 
   const resolveDrop = useCallback((point) => {
     for (const [pid, el] of Object.entries(slotRefs.current)) {
@@ -438,13 +462,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     )
   }
 
-  const remaining = deck.length
-  const topLooseCount = top ? deck.filter((c) => c.txId === top.txId).length : 0
-  const canMerge = topLooseCount >= 2
-
   // ── Board ──
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-8">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-44">
       <div className="flex items-center justify-between mb-3">
         <button onClick={onBack} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white">
           <ChevronLeft size={16} /> Назад
@@ -474,83 +494,62 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
 
       {/* Card pile */}
       {remaining === 0 ? (
-        <div className="text-center text-spotify-text text-sm py-8 bg-spotify-dark rounded-xl mb-5">
+        <div className="text-center text-spotify-text text-sm py-10 bg-spotify-dark rounded-xl">
           Все карточки разложены 🎉
         </div>
       ) : (
-        <>
-          <div className="relative mx-auto mb-3" style={{ height: 200, maxWidth: CARD_W }}>
-            {deck.slice(0, 4).map((card, i) => {
-                const tx = txById[card.txId]
-                const isTop = i === 0
-                // Centre with marginLeft (not a transform) so framer's drag x/y and
-                // dragSnapToOrigin don't fight the centring.
-                const wrap = { position: 'absolute', left: '50%', top: 8, width: CARD_W, marginLeft: -CARD_W / 2, zIndex: 40 - i }
-                if (isTop) {
-                  return (
-                    <div key={card.id} style={wrap}>
-                      <TopCard
-                        ref={topCardRef}
-                        card={card}
-                        tx={tx}
-                        currency={currency}
-                        remaining={remaining}
-                        resolveDrop={resolveDrop}
-                        onAssign={assignTop}
-                        onDefer={deferTop}
-                        onRename={(txId, name) => setRenaming({ txId, name })}
-                      />
-                    </div>
-                  )
-                }
-                return (
-                  <motion.div
-                    key={card.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.6, rotate: (i % 2 ? 26 : -26), y: -10 }}
-                    animate={{ opacity: 1, scale: 1 - i * 0.05, rotate: (i % 2 ? 1 : -1) * i * 1.5, y: i * 8 }}
-                    transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-                    style={{ ...wrap, background: cardGradient(card.txId, i) }}
-                    className="pointer-events-none rounded-2xl px-4 py-5 shadow-lg shadow-black/40 text-black/80 h-[150px]"
-                  >
-                    <div className="font-semibold text-sm leading-tight line-clamp-2">{tx?.item_name}</div>
-                    <div className="text-2xl font-bold tabular-nums my-2 opacity-70">{fracLabel(card.den)}</div>
-                  </motion.div>
-                )
-              })}
-          </div>
+        <div className="relative mx-auto" style={{ height: 200, maxWidth: CARD_W }}>
+          {deck.slice(0, 4).map((card, i) => (
+            <PileCard
+              key={card.id}
+              ref={i === 0 ? topCardRef : undefined}
+              card={card}
+              depth={i}
+              isTop={i === 0}
+              tx={txById[card.txId]}
+              currency={currency}
+              remaining={remaining}
+              resolveDrop={resolveDrop}
+              onAssign={assignTop}
+              onDefer={deferTop}
+              onRename={(txId, name) => setRenaming({ txId, name })}
+            />
+          ))}
+        </div>
+      )}
 
-          {/* Top-card controls */}
-          <div className="flex items-center justify-center flex-wrap gap-2 mb-5">
-            <span className="inline-flex items-center gap-1 text-[11px] text-spotify-text mr-1"><Scissors size={12} /> делить</span>
-            {SPLIT_OPTIONS.map((n) => (
-              <button
-                key={n}
-                onClick={() => splitTop(n)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-spotify-gray text-white hover:bg-spotify-light-gray transition-colors"
-              >÷{n}</button>
-            ))}
-            {canMerge && (
-              <button
-                onClick={() => mergeTx(top.txId)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-indigo/20 text-indigo hover:bg-indigo/30 transition-colors inline-flex items-center gap-1"
-              ><Merge size={12} /> собрать</button>
-            )}
+      {/* Bottom action bar (floats above the app's nav) */}
+      <div className="fixed inset-x-0 bottom-28 z-30 px-4">
+        <div className="max-w-md mx-auto">
+          {remaining === 0 ? (
             <button
-              onClick={() => (topCardRef.current ? topCardRef.current.flingDown(-1) : deferTop())}
-              className="ml-1 text-xs px-2.5 py-1 rounded-lg bg-spotify-gray text-spotify-text hover:text-white inline-flex items-center gap-1"
-            ><RotateCcw size={12} /> вниз</button>
-          </div>
-        </>
-      )}
-
-      {/* Finish (inline — never behind the bottom nav) */}
-      {remaining === 0 && (
-        <button
-          onClick={() => setFinishing(true)}
-          className="block w-full bg-gold text-black font-semibold rounded-xl py-3 hover:bg-gold-2 transition-colors"
-        >Завершить →</button>
-      )}
+              onClick={() => setFinishing(true)}
+              className="block w-full bg-gold text-black font-semibold rounded-xl py-3 shadow-lg shadow-black/40 hover:bg-gold-2 transition-colors"
+            >Завершить →</button>
+          ) : (
+            <div className="flex items-center justify-center flex-wrap gap-2 bg-spotify-dark/90 backdrop-blur rounded-2xl px-3 py-2.5 shadow-lg shadow-black/40">
+              <span className="inline-flex items-center gap-1 text-[11px] text-spotify-text mr-1"><Scissors size={12} /> делить</span>
+              {SPLIT_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => splitTop(n)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-spotify-gray text-white hover:bg-spotify-light-gray transition-colors"
+                >÷{n}</button>
+              ))}
+              {canMerge && (
+                <button
+                  onClick={mergeTop}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo/20 text-indigo hover:bg-indigo/30 transition-colors inline-flex items-center gap-1"
+                ><Merge size={12} /> собрать</button>
+              )}
+              <button
+                onClick={() => (topCardRef.current ? topCardRef.current.flingDown(-1) : deferTop())}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-spotify-gray text-spotify-text hover:text-white inline-flex items-center gap-1"
+              ><RotateCcw size={12} /> вниз</button>
+            </div>
+          )}
+        </div>
+      </div>
 
       <PersonSheet
         open={!!openPerson}
