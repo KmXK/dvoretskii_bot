@@ -8,6 +8,7 @@ import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
+import BillCreate from './BillCreate'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -625,8 +626,7 @@ export default function BillsPage() {
   const [openBillId, setOpenBillId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
 
   const reload = useCallback(async () => {
     try {
@@ -675,26 +675,19 @@ export default function BillsPage() {
   const openBill = openBillId ? bills.find(b => b.id === openBillId) : null
   const isAuthor = openBill && myPerson && openBill.author_person_id === myPerson.id
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return
-    try {
-      const data = await api('/api/bills', {
-        method: 'POST',
-        body: JSON.stringify({ name: newName.trim() }),
-      })
-      setBills([...bills, data])
-      setNewName('')
-      setCreating(false)
-      setOpenBillId(data.id)
-    } catch (e) {
-      alert(e.message)
-    }
-  }
-
   const needsDistribution = openBill
     && openBill.distribution_status && openBill.distribution_status !== 'final'
     && openBill.transactions.length > 0
     && !openBill.closed
+
+  if (showCreate) {
+    return (
+      <BillCreate
+        onCancel={() => setShowCreate(false)}
+        onReady={(billId) => { setShowCreate(false); reload(); setOpenBillId(billId) }}
+      />
+    )
+  }
 
   if (openBill && needsDistribution && isAuthor) {
     return (
@@ -742,25 +735,10 @@ export default function BillsPage() {
             className={`px-3 py-1.5 rounded-lg text-xs ${tab === 'closed' ? 'bg-gold text-black' : 'bg-spotify-gray text-spotify-text'}`}
           >Закрытые</button>
           <button
-            onClick={() => setCreating(true)}
+            onClick={() => setShowCreate(true)}
             className="ml-auto bg-gold text-black rounded-lg px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1 hover:bg-gold-2 transition-colors"
           ><Plus size={14} /> Новый</button>
         </div>
-
-        {creating && (
-          <div className="bg-spotify-dark rounded-xl p-3 mb-4 flex gap-2">
-            <input
-              placeholder="Название счёта..."
-              value={newName}
-              autoFocus
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              className="flex-1 bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
-            />
-            <button onClick={handleCreate} className="text-gold"><Check size={18} /></button>
-            <button onClick={() => { setCreating(false); setNewName('') }} className="text-spotify-text"><X size={18} /></button>
-          </div>
-        )}
 
         {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
