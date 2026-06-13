@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion'
 import { Lock } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import MetricsExplorer from '../components/stats/MetricsExplorer'
 import { useAuth } from '../context/useAuth'
 
@@ -26,7 +25,6 @@ export default function StatsPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-4">Статистика</h1>
       <MetricsExplorer />
     </motion.div>

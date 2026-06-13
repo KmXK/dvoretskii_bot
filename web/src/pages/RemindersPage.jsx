@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Bell, Lock, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
@@ -370,7 +369,6 @@ export default function RemindersPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
 
       <div className="flex items-center justify-between mb-4">
         <div>

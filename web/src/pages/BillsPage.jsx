@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
@@ -666,7 +665,6 @@ export default function BillsPage() {
   return (
     <div className="max-w-3xl mx-auto">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
-        <BackButton />
         <h1 className="text-2xl font-bold text-white mb-1">Счета</h1>
         <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
 

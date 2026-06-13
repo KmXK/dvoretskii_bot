@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CircleAlert, CircleCheck, ClipboardList, Check, RotateCcw } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import { api } from '../api/client'
 
@@ -137,7 +136,6 @@ export default function IncidentsPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <div className="flex items-baseline justify-between gap-2 mb-1">
         <h1 className="text-2xl font-bold text-white">Инциденты</h1>
         {openCount > 0 && filter === 'open' && (

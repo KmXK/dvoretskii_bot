@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Coins, Languages, Clock, ArrowLeftRight, ArrowRight, Copy } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import { api } from '../api/client'
 
@@ -393,7 +392,6 @@ export default function ToolsPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-4">Инструменты</h1>
 
       <div className="flex gap-1 mb-5 bg-spotify-dark rounded-xl p-1">

@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Link } from 'react-router-dom'
 import { Globe, Users, Plus } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import { fuckApi as api } from './api'
 import { useAuth } from '../context/useAuth'
@@ -151,7 +150,6 @@ export default function FuckAssetsPage() {
 
   return (
     <div className="bg-spotify-black text-white pb-24">
-      <BackButton />
       <div className="max-w-5xl mx-auto px-4 pt-4">
         <header className="flex items-end justify-between gap-4 mb-6">
           <div>

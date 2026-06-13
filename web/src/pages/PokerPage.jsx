@@ -4,7 +4,6 @@ import {
   Bot, ChevronDown, Crown, Play, RefreshCw, Send, Settings2,
   Spade, Trophy, Users,
 } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 
@@ -318,7 +317,6 @@ function Lobby({ rooms, send, userId, pokerStats, monkeyBalance }) {
 
   return (
     <div className="max-w-md mx-auto">
-      <BackButton force />
       <div className="flex items-start justify-between gap-3 mb-5">
         <div>
           <h1 className="font-display text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ListChecks } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import { api } from '../api/client'
 
@@ -98,7 +97,6 @@ export default function TodoPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-1">Задачи</h1>
       <p className="text-spotify-text text-sm mb-5">
         {active.length} активных, {done.length} завершённых

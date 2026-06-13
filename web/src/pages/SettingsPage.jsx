@@ -5,7 +5,6 @@ import {
   Bell, BellOff, CircleCheck, Circle, CircleMinus, ChevronUp, ChevronDown,
   Drama, Trash2, Plus, Package, Users, Settings,
 } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { api } from '../api/client'
@@ -550,7 +549,6 @@ export default function SettingsPage() {
   if (err) {
     return (
       <div className="px-4 pt-6">
-        <BackButton />
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">
           {err}
         </div>
@@ -564,7 +562,6 @@ export default function SettingsPage() {
       animate={{ opacity: 1 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <h1 className="text-2xl font-bold text-white mb-1 inline-flex items-center gap-2"><Settings size={22} className="text-gold" /> Настройки</h1>
       <p className="text-spotify-text text-sm mb-4">
         Тонкая настройка бота по чатам

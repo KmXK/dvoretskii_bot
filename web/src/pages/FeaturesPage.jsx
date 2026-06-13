@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Heart, StickyNote, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import Dropdown from '../components/Dropdown'
 import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
@@ -632,7 +631,6 @@ export default function FeaturesPage() {
       exit={{ opacity: 0 }}
       className="px-4 pt-6 pb-4 max-w-3xl mx-auto"
     >
-      <BackButton />
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-bold text-white">Фича-реквесты</h1>
         <button

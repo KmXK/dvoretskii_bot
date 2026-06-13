@@ -7,7 +7,6 @@ import {
 } from 'lucide-react'
 import CheckersBoard from '../components/boardgames/CheckersBoard'
 import ChessBoard from '../components/boardgames/ChessBoard'
-import BackButton from '../components/BackButton'
 import Loader from '../components/Loader'
 import { useAuth } from '../context/useAuth'
 import { useToast } from '../context/useToast'
@@ -418,7 +417,6 @@ export default function BoardGamesPage() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="px-4 pt-6 pb-4 max-w-3xl mx-auto">
-      <BackButton />
 
       {!connected && (
         <div className="flex flex-col items-center justify-center h-64 gap-3">

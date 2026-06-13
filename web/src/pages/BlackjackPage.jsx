@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   Bot, Coins, Crown, Play, RefreshCw, Spade, Users, Volume2, VolumeX,
 } from 'lucide-react'
-import BackButton from '../components/BackButton'
 import { useAuth } from '../context/useAuth'
 import useCasinoSounds from '../hooks/useCasinoSounds'
 
@@ -65,7 +64,6 @@ function Lobby({ rooms, send, monkeyBalance }) {
 
   return (
     <div className="max-w-md mx-auto">
-      <BackButton force />
       <div className="flex items-start justify-between gap-3 mb-5">
         <div>
           <h1 className="font-display text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">

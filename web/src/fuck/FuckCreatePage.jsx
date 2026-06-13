@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import BackButton from '../components/BackButton'
 import { fuckApi as api } from './api'
 import { useAuth } from '../context/useAuth'
 import Annotator from './annotator/Annotator'
@@ -215,7 +214,6 @@ export default function FuckCreatePage() {
 
   return (
     <div className="bg-spotify-black text-white pb-24">
-      <BackButton />
       <div className="max-w-6xl mx-auto px-4 pt-4">
         <header className="mb-4">
           <h1 className="text-2xl font-bold">
