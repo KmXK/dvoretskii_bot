@@ -1,23 +1,37 @@
 @import "tailwindcss";
 
 @theme {
-  --color-spotify-black: #121212;
-  --color-spotify-dark: #181818;
-  --color-spotify-gray: #282828;
-  --color-spotify-light-gray: #404040;
-  --color-spotify-text: #B3B3B3;
+  /* Base ink surfaces (dark) */
+  --color-spotify-black: #0C0D11;
+  --color-spotify-dark: #14161D;
+  --color-spotify-gray: #1C1F28;
+  --color-spotify-light-gray: #2A2E39;
+  --color-spotify-text: #8C93A0;
+
+  /* Success / money / casino accent (unchanged semantics) */
   --color-spotify-green: #1DB954;
   --color-spotify-green-hover: #1ed760;
+
+  /* Brand accents */
+  --color-gold: #F2B85A;
+  --color-gold-2: #E5963C;
+  --color-gold-soft: rgba(242, 184, 90, 0.12);
+  --color-indigo: #6E63FF;
+  --color-indigo-soft: rgba(110, 99, 255, 0.12);
+
+  --font-display: 'Manrope', system-ui, sans-serif;
 }
 
 /* Светлая тема: перекрашиваем токены, включая --color-white —
    так захардкоженные text-white/border-white/* становятся тёмными. */
 html.light {
-  --color-spotify-black: #f3f3f0;
+  --color-spotify-black: #f4f4f1;
   --color-spotify-dark: #ffffff;
-  --color-spotify-gray: #e7e7e3;
-  --color-spotify-light-gray: #c9c9c5;
+  --color-spotify-gray: #ebebe7;
+  --color-spotify-light-gray: #d4d4cf;
   --color-spotify-text: #5f6360;
+  --color-gold-soft: rgba(208, 138, 42, 0.14);
+  --color-indigo-soft: rgba(99, 88, 230, 0.12);
   --color-white: #16181a;
   color-scheme: light;
 }
@@ -32,10 +46,22 @@ body {
   background-color: var(--color-spotify-black);
   color: var(--color-white, #fff);
   transition: background-color 0.25s ease, color 0.25s ease;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 ::-webkit-scrollbar {
@@ -59,4 +85,14 @@ body {
 @keyframes casino-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+
+/* Маскот-дворецкий: покадровая idle-анимация спрайт-стрипа */
+@keyframes mascot-idle {
+  to { background-position: var(--mascot-end) 0; }
+}
+
+@keyframes mascot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
 }

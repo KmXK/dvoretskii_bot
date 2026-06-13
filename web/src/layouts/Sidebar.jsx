@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { Bot, LogOut, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import { NAV_GROUPS } from './navigation'
 import ThemeToggle from '../components/ThemeToggle'
@@ -10,10 +11,10 @@ function NavItem({ item, collapsed }) {
       to={item.to}
       end={item.to === '/'}
       className={({ isActive }) =>
-        `group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+        `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
           isActive
-            ? 'bg-white/10 text-white'
-            : 'text-spotify-text hover:text-white hover:bg-white/5'
+            ? 'bg-gold-soft text-gold'
+            : 'text-spotify-text hover:bg-white/5 hover:text-white'
         } ${collapsed ? 'justify-center' : ''}`
       }
       title={collapsed ? item.label : undefined}
@@ -21,9 +22,9 @@ function NavItem({ item, collapsed }) {
       {({ isActive }) => (
         <>
           {isActive && (
-            <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-spotify-green" />
+            <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-gold" />
           )}
-          <span className="text-lg shrink-0">{item.icon}</span>
+          <item.Icon size={18} strokeWidth={2} className="shrink-0" />
           {!collapsed && <span className="truncate">{item.label}</span>}
         </>
       )}
@@ -41,12 +42,12 @@ function Avatar({ photoUrl, username, firstName, me, size = 'sm' }) {
         src={photoUrl}
         alt=""
         onError={() => setBroken(true)}
-        className={`${dim} rounded-full object-cover shrink-0 ring-1 ring-white/10`}
+        className={`${dim} shrink-0 rounded-full object-cover ring-1 ring-white/10`}
       />
     )
   }
   return (
-    <div className={`${dim} rounded-full bg-gradient-to-br from-spotify-green to-emerald-700 flex items-center justify-center font-semibold text-white shrink-0 ring-1 ring-white/10`}>
+    <div className={`${dim} flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-gold to-gold-2 font-semibold text-black ring-1 ring-white/10`}>
       {initial}
     </div>
   )
@@ -58,42 +59,36 @@ export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
 
   return (
     <aside
-      className={`flex flex-col bg-spotify-dark border-r border-white/5 transition-[width] duration-200 h-screen ${
+      className={`flex h-screen flex-col border-r border-white/5 bg-spotify-dark transition-[width] duration-200 ${
         isDrawer ? 'w-full' : collapsed ? 'w-16' : 'w-60'
       }`}
     >
-      <div className={`flex items-center h-14 border-b border-white/5 ${collapsed ? 'justify-center' : 'justify-between px-3'}`}>
+      <div className={`flex h-14 items-center border-b border-white/5 ${collapsed ? 'justify-center' : 'justify-between px-3'}`}>
         {!collapsed && (
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xl">🤖</span>
-            <span className="text-white font-semibold tracking-tight truncate">Dvoretskiy</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <Bot size={22} className="text-gold" />
+            <span className="truncate font-semibold tracking-tight text-white">Dvoretskiy</span>
           </div>
         )}
         {!collapsed && <ThemeToggle className="ml-auto" />}
         <button
           onClick={isDrawer ? onClose : onToggle}
-          className="p-1.5 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"
+          className="rounded-md p-1.5 text-spotify-text transition-colors hover:bg-white/5 hover:text-white"
           title={isDrawer ? 'Закрыть' : collapsed ? 'Развернуть' : 'Свернуть'}
         >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            {isDrawer
-              ? <path d="M6 18L18 6M6 6l12 12" />
-              : collapsed
-                ? <path d="M9 18l6-6-6-6" />
-                : <path d="M15 18l-6-6 6-6" />}
-          </svg>
+          {isDrawer ? <X size={20} /> : collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
         </button>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3">
         {NAV_GROUPS.map((group, gi) => (
-          <div key={group.label} className={`${gi === 0 ? '' : 'mt-3 pt-3 border-t border-white/5'} mb-1`}>
+          <div key={group.label} className={`${gi === 0 ? '' : 'mt-3 border-t border-white/5 pt-3'} mb-1`}>
             {!collapsed && (
-              <div className="px-3 mb-1 text-[10px] uppercase tracking-wider text-spotify-text/50 font-semibold">
+              <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-spotify-text/50">
                 {group.label}
               </div>
             )}
-            <div className="px-2 space-y-0.5">
+            <div className="space-y-0.5 px-2">
               {group.items.map((item) => (
                 <NavItem key={item.to} item={item} collapsed={collapsed} />
               ))}
@@ -106,30 +101,28 @@ export default function Sidebar({ open, onToggle, isDrawer = false, onClose }) {
         {collapsed ? (
           <button
             onClick={logout}
-            className="p-2 rounded-md text-spotify-text hover:text-white hover:bg-white/5 transition-colors"
+            className="rounded-md p-2 text-spotify-text transition-colors hover:bg-white/5 hover:text-white"
             title={`${username ? '@' + username : 'Выйти'}`}
           >
             <Avatar photoUrl={photoUrl} username={username} firstName={firstName} me={me} size="sm" />
           </button>
         ) : (
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
             <Avatar photoUrl={photoUrl} username={username} firstName={firstName} me={me} size="sm" />
             <div className="min-w-0 flex-1">
-              <div className="text-white text-sm truncate font-medium">
+              <div className="truncate text-sm font-medium text-white">
                 {username ? `@${username}` : me ? `id:${me.user_id}` : ''}
               </div>
               {me?.is_admin && (
-                <div className="text-amber-300 text-[10px] font-medium leading-tight">admin</div>
+                <div className="text-[10px] font-medium leading-tight text-amber-300">admin</div>
               )}
             </div>
             <button
               onClick={logout}
-              className="p-1.5 text-spotify-text hover:text-white rounded hover:bg-white/5 transition-colors shrink-0"
+              className="shrink-0 rounded p-1.5 text-spotify-text transition-colors hover:bg-white/5 hover:text-white"
               title="Выйти"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-              </svg>
+              <LogOut size={16} />
             </button>
           </div>
         )}

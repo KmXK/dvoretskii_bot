@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { Dices, Receipt, Bell, ChartColumn } from 'lucide-react'
 import { api } from '../api/client'
+import mascot from '../assets/mascot_idle.png'
 
 const FEATURES = [
-  { icon: '🎰', label: 'Казино и игры' },
-  { icon: '💸', label: 'Совместные счета' },
-  { icon: '🔔', label: 'Напоминания' },
-  { icon: '📊', label: 'Статистика чатов' },
+  { Icon: Dices, label: 'Казино и игры' },
+  { Icon: Receipt, label: 'Совместные счета' },
+  { Icon: Bell, label: 'Напоминания' },
+  { Icon: ChartColumn, label: 'Статистика чатов' },
 ]
 
 export default function LoginScreen({ onLoginWidget, onLoginOidc }) {
@@ -78,14 +80,15 @@ export default function LoginScreen({ onLoginWidget, onLoginOidc }) {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-spotify-black text-white relative overflow-hidden">
-      <div className="absolute inset-0 -z-10 opacity-40">
-        <div className="absolute top-1/4 left-1/4 w-72 h-72 rounded-full bg-spotify-green/20 blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
+      <div className="absolute inset-0 -z-10 opacity-50">
+        <div className="absolute top-1/4 left-1/4 w-72 h-72 rounded-full bg-gold/20 blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-72 h-72 rounded-full bg-indigo/15 blur-3xl" />
       </div>
 
       <div className="max-w-md w-full text-center">
-        <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-spotify-green to-emerald-700 text-5xl mb-6 shadow-xl">
-          🤖
+        <div className="relative mx-auto mb-5 grid h-28 w-28 place-items-center">
+          <div className="absolute h-24 w-24 rounded-full bg-gold/25 blur-2xl" />
+          <img src={mascot} alt="Дворецкий" className="relative h-28 drop-shadow-[0_10px_18px_rgba(0,0,0,0.5)]" />
         </div>
         <h1 className="text-4xl font-bold mb-3 tracking-tight">Dvoretskiy</h1>
         <p className="text-spotify-text text-base mb-2">
@@ -99,9 +102,9 @@ export default function LoginScreen({ onLoginWidget, onLoginOidc }) {
           {FEATURES.map((f) => (
             <div
               key={f.label}
-              className="bg-white/5 border border-white/5 rounded-xl px-3 py-2.5 flex items-center gap-2 text-left"
+              className="bg-white/5 border border-white/5 rounded-xl px-3 py-2.5 flex items-center gap-2.5 text-left"
             >
-              <span className="text-lg">{f.icon}</span>
+              <f.Icon size={18} className="text-gold shrink-0" />
               <span className="text-spotify-text text-xs">{f.label}</span>
             </div>
           ))}

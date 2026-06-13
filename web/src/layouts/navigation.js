@@ -1,46 +1,52 @@
+import {
+  Home, User, Dices, Spade, Club, Castle, Trophy, Receipt, ListChecks,
+  TriangleAlert, Bell, Cake, Medal, Lightbulb, Sticker, Plus, ChartColumn,
+  Wrench, Settings,
+} from 'lucide-react'
+
 export const NAV_GROUPS = [
   {
     label: 'Главная',
     items: [
-      { to: '/', label: 'Главная', icon: '🏠' },
-      { to: '/profile', label: 'Профиль', icon: '👤' },
+      { to: '/', label: 'Главная', Icon: Home },
+      { to: '/profile', label: 'Профиль', Icon: User },
     ],
   },
   {
     label: 'Игры',
     items: [
-      { to: '/casino', label: 'Казино', icon: '🎰' },
-      { to: '/poker', label: 'Покер', icon: '🃏' },
-      { to: '/blackjack', label: 'Блэкджек', icon: '♠️' },
-      { to: '/boardgames', label: 'Настолки', icon: '♟️' },
-      { to: '/tennis', label: 'Теннис', icon: '🏓', home: { desc: 'Live-табло тенниса и сквоша', color: 'from-amber-500/20 to-amber-900/20' } },
+      { to: '/casino', label: 'Казино', Icon: Dices, home: { desc: 'Слоты и рулетка', tint: 'gold' } },
+      { to: '/poker', label: 'Покер', Icon: Spade, home: { desc: 'Столы онлайн', tint: 'indigo' } },
+      { to: '/blackjack', label: 'Блэкджек', Icon: Club, home: { desc: '21 очко', tint: 'rose' } },
+      { to: '/boardgames', label: 'Настолки', Icon: Castle, home: { desc: 'Шахматы, шашки', tint: 'green' } },
+      { to: '/tennis', label: 'Теннис', Icon: Trophy, home: { desc: 'Live-табло тенниса и сквоша', tint: 'gold' } },
     ],
   },
   {
     label: 'Списки',
     items: [
-      { to: '/bills', label: 'Счета', icon: '💸', home: { desc: 'Совместные расходы', color: 'from-green-500/20 to-green-900/20' } },
-      { to: '/todo', label: 'Задачи', icon: '📝', home: { desc: 'Список задач', color: 'from-rose-500/20 to-rose-900/20' } },
-      { to: '/incidents', label: 'Инциденты', icon: '🚨', home: { desc: 'Текущие и закрытые', color: 'from-red-500/20 to-red-900/20' } },
-      { to: '/reminders', label: 'Напоминания', icon: '🔔', home: { desc: 'Напоминания', color: 'from-blue-500/20 to-blue-900/20' } },
-      { to: '/birthdays', label: 'Дни рождения', icon: '🎂', home: { desc: 'Дни рождения', color: 'from-pink-500/20 to-pink-900/20' } },
-      { to: '/army', label: 'Армейка', icon: '🎖️', home: { desc: 'Статус по армейке', color: 'from-emerald-500/20 to-emerald-900/20' } },
-      { to: '/features', label: 'Фичи', icon: '💡', home: { desc: 'Фича-реквесты', color: 'from-cyan-500/20 to-cyan-900/20' } },
+      { to: '/bills', label: 'Счета', Icon: Receipt, home: { desc: 'Совместные расходы', tint: 'green' } },
+      { to: '/todo', label: 'Задачи', Icon: ListChecks, home: { desc: 'Список задач', tint: 'rose' } },
+      { to: '/incidents', label: 'Инциденты', Icon: TriangleAlert, home: { desc: 'Текущие и закрытые', tint: 'rose' } },
+      { to: '/reminders', label: 'Напоминания', Icon: Bell, home: { desc: 'Напоминания', tint: 'indigo' } },
+      { to: '/birthdays', label: 'Дни рождения', Icon: Cake, home: { desc: 'Дни рождения', tint: 'gold' } },
+      { to: '/army', label: 'Армейка', Icon: Medal, home: { desc: 'Статус по армейке', tint: 'green' } },
+      { to: '/features', label: 'Фичи', Icon: Lightbulb, home: { desc: 'Фича-реквесты', tint: 'indigo' } },
     ],
   },
   {
     label: '/fuck',
     items: [
-      { to: '/fuck/assets', label: 'Ассеты', icon: '🤡', home: { title: '/fuck', desc: 'Гифки доступные тебе', color: 'from-fuchsia-500/20 to-fuchsia-900/20' } },
-      { to: '/fuck/new', label: 'Создать', icon: '➕' },
+      { to: '/fuck/assets', label: 'Ассеты', Icon: Sticker, home: { title: '/fuck', desc: 'Гифки доступные тебе', tint: 'gold' } },
+      { to: '/fuck/new', label: 'Создать', Icon: Plus },
     ],
   },
   {
     label: 'Прочее',
     items: [
-      { to: '/stats', label: 'Статистика', icon: '📊', home: { desc: 'Статистика чатов', color: 'from-violet-500/20 to-violet-900/20' } },
-      { to: '/tools', label: 'Инструменты', icon: '🧰', home: { desc: 'Валюты, перевод, время', color: 'from-amber-500/20 to-amber-900/20' } },
-      { to: '/settings', label: 'Настройки', icon: '⚙', home: { desc: 'Функции и роли', color: 'from-slate-500/20 to-slate-900/20' } },
+      { to: '/stats', label: 'Статистика', Icon: ChartColumn, home: { desc: 'Статистика чатов', tint: 'indigo' } },
+      { to: '/tools', label: 'Инструменты', Icon: Wrench, home: { desc: 'Валюты, перевод, время', tint: 'gold' } },
+      { to: '/settings', label: 'Настройки', Icon: Settings, home: { desc: 'Функции и роли', tint: 'slate' } },
     ],
   },
 ]
@@ -52,7 +58,7 @@ export const HOME_CARDS = ALL_NAV_ITEMS
   .map((item) => ({
     title: item.home.title ?? item.label,
     desc: item.home.desc,
-    emoji: item.icon,
-    color: item.home.color,
+    Icon: item.Icon,
+    tint: item.home.tint,
     to: item.to,
   }))

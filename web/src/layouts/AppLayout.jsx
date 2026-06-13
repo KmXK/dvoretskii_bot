@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation } from 'react-router-dom'
+import { Bot, Menu } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
@@ -33,7 +34,7 @@ export default function AppLayout({ children }) {
 
   if (mode === 'miniapp') {
     return (
-      <div className="min-h-screen bg-spotify-black pb-16">
+      <div className="min-h-screen bg-spotify-black pb-24">
         {children}
         <BottomNav />
       </div>
@@ -61,12 +62,10 @@ export default function AppLayout({ children }) {
           className="p-1.5 rounded-md text-spotify-text hover:text-white hover:bg-white/5"
           aria-label="Открыть меню"
         >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 6h18M3 12h18M3 18h18" />
-          </svg>
+          <Menu size={20} />
         </button>
         <div className="ml-3 flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-lg">🤖</span>
+          <Bot size={20} className="text-gold" />
           <span className="text-white font-semibold">Dvoretskiy</span>
         </div>
         <ThemeToggle />

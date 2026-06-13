@@ -1,28 +1,45 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Home, User, Dices, ChartColumn, Menu } from 'lucide-react'
 import { NAV_GROUPS } from './navigation'
 import ThemeToggle from '../components/ThemeToggle'
 
 const PRIMARY = [
-  { to: '/', label: 'Главная', icon: '🏠' },
-  { to: '/profile', label: 'Профиль', icon: '👤' },
-  { to: '/casino', label: 'Казино', icon: '🎰' },
+  { to: '/', label: 'Главная', Icon: Home },
+  { to: '/profile', label: 'Профиль', Icon: User },
+  { to: '/casino', label: 'Казино', Icon: Dices },
+  { to: '/stats', label: 'Стата', Icon: ChartColumn },
 ]
 
-function NavItem({ to, icon, label }) {
+function NavItem({ to, Icon, label }) {
   return (
     <NavLink
       to={to}
       end={to === '/'}
-      className={({ isActive }) =>
-        `flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg text-[10px] font-medium transition-colors ${
-          isActive ? 'text-spotify-green' : 'text-spotify-text hover:text-white'
-        }`
-      }
+      className="relative flex flex-1 flex-col items-center gap-1 pt-2 text-[10.5px] font-semibold"
     >
-      <span className="text-lg leading-none">{icon}</span>
-      <span>{label}</span>
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <motion.span
+              layoutId="bottomnav-pill"
+              transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+              className="absolute -top-px h-[3px] w-6 rounded-full bg-gold"
+              style={{ boxShadow: '0 0 12px var(--color-gold)' }}
+            />
+          )}
+          <span
+            className={`grid h-8 w-8 place-items-center rounded-xl transition-colors ${
+              isActive ? 'bg-gold-soft text-gold' : 'text-spotify-text'
+            }`}
+          >
+            <Icon size={19} strokeWidth={2} />
+          </span>
+          <span className={isActive ? 'text-gold' : 'text-spotify-text'}>{label}</span>
+        </>
+      )}
     </NavLink>
   )
 }
@@ -32,14 +49,19 @@ export default function BottomNav() {
 
   return (
     <>
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-spotify-dark/95 backdrop-blur-md border-t border-white/5">
-        <div className="flex justify-around items-center h-14 max-w-lg mx-auto px-2">
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/5 bg-spotify-dark/85 backdrop-blur-xl"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="mx-auto flex h-[68px] max-w-lg items-start justify-around px-3">
           {PRIMARY.map((p) => <NavItem key={p.to} {...p} />)}
           <button
             onClick={() => setMenuOpen(true)}
-            className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg text-[10px] font-medium text-spotify-text hover:text-white"
+            className="relative flex flex-1 flex-col items-center gap-1 pt-2 text-[10.5px] font-semibold text-spotify-text"
           >
-            <span className="text-lg leading-none">≡</span>
+            <span className="grid h-8 w-8 place-items-center rounded-xl">
+              <Menu size={19} strokeWidth={2} />
+            </span>
             <span>Ещё</span>
           </button>
         </div>
@@ -48,15 +70,15 @@ export default function BottomNav() {
       <Dialog.Root open={menuOpen} onOpenChange={setMenuOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" />
-          <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto bg-spotify-dark rounded-t-2xl shadow-2xl p-4 pb-8">
-            <div className="flex items-center justify-between mb-4">
-              <Dialog.Title className="text-white text-base font-semibold">Все разделы</Dialog.Title>
+          <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[80vh] overflow-y-auto rounded-t-2xl bg-spotify-dark p-4 pb-8 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <Dialog.Title className="text-base font-semibold text-white">Все разделы</Dialog.Title>
               <ThemeToggle />
             </div>
             <div className="space-y-5">
               {NAV_GROUPS.map((group) => (
                 <div key={group.label}>
-                  <div className="text-[10px] uppercase tracking-wider text-spotify-text/60 font-semibold mb-2">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-spotify-text/60">
                     {group.label}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
@@ -67,15 +89,15 @@ export default function BottomNav() {
                         end={item.to === '/'}
                         onClick={() => setMenuOpen(false)}
                         className={({ isActive }) =>
-                          `flex flex-col items-center justify-center gap-1 px-2 py-3 rounded-xl text-xs ${
+                          `flex flex-col items-center justify-center gap-1.5 rounded-xl px-2 py-3 text-xs transition-colors ${
                             isActive
-                              ? 'bg-spotify-green/20 text-spotify-green'
+                              ? 'bg-gold-soft text-gold'
                               : 'bg-white/5 text-white hover:bg-white/10'
                           }`
                         }
                       >
-                        <span className="text-xl">{item.icon}</span>
-                        <span className="leading-tight text-center">{item.label}</span>
+                        <item.Icon size={20} strokeWidth={2} />
+                        <span className="text-center leading-tight">{item.label}</span>
                       </NavLink>
                     ))}
                   </div>
