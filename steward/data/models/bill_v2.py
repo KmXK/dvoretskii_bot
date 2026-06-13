@@ -80,6 +80,11 @@ class BillV2:
     origin_chat_id: int | None = None               # scope-hint only, NOT used for access control
     updated_at: datetime = field(default_factory=datetime.now)
     last_incomplete_reminder_at: datetime | None = None
+    distribution_status: str = "final"              # draft | distributing | final
+    # draft       — позиции собраны в чате, распределение по людям ещё не делалось
+    # distributing— распределение начато в мини-аппе, ещё не подтверждено
+    # final       — распределение подтверждено, долги учитываются в сводках
+    # Старые счета мигрируют в "final"; долги считаются ТОЛЬКО для final-счетов.
 
 
 @dataclass

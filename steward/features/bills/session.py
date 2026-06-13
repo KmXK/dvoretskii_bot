@@ -55,6 +55,7 @@ class _SessionState:
     context_items: list[str] = field(default_factory=list)
     parsed_transactions: list = field(default_factory=list)
     parsed_rows: list[dict] = field(default_factory=list)
+    participants: list[str] = field(default_factory=list)
     new_person_names: list[str] = field(default_factory=list)
     resolve_queue: list[tuple[str, list]] = field(default_factory=list)
     resolved_map: dict[str, str] = field(default_factory=dict)
@@ -141,6 +142,88 @@ class _BillCollectStep(Step):
         if st:
             st.last_kb_msg, st.last_kb_chat = msg.message_id, msg.chat_id
         return msg
+
+    async def _send_rich(
+        self,
+        context,
+        rich_chunks: list[str],
+        fallback_chunks: list[str],
+        *,
+        keyboard: Keyboard | None = None,
+    ) -> None:
+        """Send a multi-message native-table block (sendRichMessage) with a
+        ``` monospace fallback. The keyboard rides the last message.
+
+        Probes support on the first chunk: if the native method is unavailable we
+        send the fallback set instead (avoids partial native + fallback dupes).
+        """
+        import telegram
+
+        st = self._state(context)
+        is_cb = isinstance(context, CallbackStepContext)
+        chat_id = (
+            context.callback_query.message.chat_id if is_cb else context.message.chat_id
+        )
+        markup = keyboard.to_markup() if keyboard is not None else None
+
+        if st and st.last_kb_msg and st.last_kb_chat:
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=st.last_kb_chat, message_id=st.last_kb_msg, reply_markup=None,
+                )
+            except Exception:
+                pass
+            st.last_kb_msg = st.last_kb_chat = None
+
+        last = len(rich_chunks) - 1
+
+        async def _one(md: str, with_kb: bool):
+            api_kwargs: dict = {"chat_id": chat_id, "rich_message": {"markdown": md}}
+            if with_kb and markup is not None:
+                try:
+                    res = await context.bot.do_api_request(
+                        "sendRichMessage",
+                        api_kwargs={**api_kwargs, "reply_markup": markup.to_dict()},
+                    )
+                    return res
+                except telegram.error.BadRequest:
+                    res = await context.bot.do_api_request("sendRichMessage", api_kwargs=api_kwargs)
+                    follow = await context.bot.send_message(chat_id=chat_id, text="⤵️", reply_markup=markup)
+                    if st:
+                        st.last_kb_msg, st.last_kb_chat = follow.message_id, follow.chat_id
+                    return None
+            return await context.bot.do_api_request("sendRichMessage", api_kwargs=api_kwargs)
+
+        try:
+            res = await _one(rich_chunks[0], with_kb=(last == 0))
+        except telegram.error.TelegramError as e:
+            logger.warning("bills sendRichMessage unavailable, fallback to monospace: %s", e)
+            msg = None
+            for i, text in enumerate(fallback_chunks):
+                msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=(markup if i == last else None),
+                    parse_mode="Markdown",
+                )
+            if st and markup is not None and msg is not None:
+                st.last_kb_msg, st.last_kb_chat = msg.message_id, msg.chat_id
+            return
+
+        self._track_rich_kb(st, res, markup if last == 0 else None)
+        for i in range(1, len(rich_chunks)):
+            res = await _one(rich_chunks[i], with_kb=(i == last))
+            self._track_rich_kb(st, res, markup if i == last else None)
+
+    @staticmethod
+    def _track_rich_kb(st, res, markup) -> None:
+        """Remember the keyboard-bearing native message so we can clear it later."""
+        if st is None or markup is None or not isinstance(res, dict):
+            return
+        mid = res.get("message_id")
+        chat = (res.get("chat") or {}).get("id")
+        if mid and chat:
+            st.last_kb_msg, st.last_kb_chat = mid, chat
 
     async def chat(self, context: ChatStepContext) -> bool:
         st = self._state(context)
@@ -623,15 +706,30 @@ class _BillCollectStep(Step):
                 person, _ = repo.get_or_create_anonymous_person(name)
                 st.resolved_map[key] = person.id
 
-        st.parsed_transactions = parse.rows_to_transactions(st.parsed_rows, st.resolved_map)
         st.phase = "confirm"
-        text = fmt.format_preview(
-            st.parsed_transactions,
-            feature._persons(),
-            st.currency,
-            st.resolved_map,
+
+        if st.editing_bill_id is not None or st.is_suggestion:
+            # Editing an already-distributed bill, or proposing items to one:
+            # keep the in-chat distributed preview + confirm.
+            st.parsed_transactions = parse.rows_to_transactions(st.parsed_rows, st.resolved_map)
+            text = fmt.format_preview(
+                st.parsed_transactions, feature._persons(), st.currency, st.resolved_map,
+            )
+            await self._send(context, text, keyboard=fmt.kb_confirm(feature))
+            return
+
+        # New bill: collection-only. Positions are kept undistributed — the
+        # who-owes-what split happens on the web board. We just verify the
+        # collected positions + participants with native tables here.
+        st.participants = parse.collect_participant_ids(st.parsed_rows, st.resolved_map)
+        st.parsed_transactions = parse.rows_to_undistributed_transactions(
+            st.parsed_rows, st.resolved_map,
         )
-        await self._send(context, text, keyboard=fmt.kb_confirm(feature))
+        rich, fb = fmt.build_collect_review(
+            st.parsed_transactions, st.participants, feature._persons(),
+            st.currency, st.bill_name,
+        )
+        await self._send_rich(context, rich, fb, keyboard=fmt.kb_collect_review(feature))
 
     # -- in-session callback handlers --
 

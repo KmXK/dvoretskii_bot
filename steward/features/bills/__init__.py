@@ -1693,9 +1693,9 @@ class BillsFeature(Feature):
             username=user.username,
         )
 
-        participant_ids: list[str] = []
-        if st.editing_bill_id is None:
-            participant_ids.append(caller.id)
+        participant_ids: list[str] = list(st.participants)
+        if st.editing_bill_id is None and caller.id not in participant_ids:
+            participant_ids.insert(0, caller.id)
         for tx in st.parsed_transactions:
             for asg in tx.assignments:
                 for d in asg.debtors:
@@ -1704,6 +1704,7 @@ class BillsFeature(Feature):
             if tx.creditor and tx.creditor not in participant_ids:
                 participant_ids.append(tx.creditor)
         participants = [p for p in participant_ids if p != UNKNOWN_PERSON_ID]
+        is_draft = st.editing_bill_id is None
 
         if st.editing_bill_id is not None:
             bill = self.repository.get_bill_v2(st.editing_bill_id)
@@ -1727,6 +1728,7 @@ class BillsFeature(Feature):
                 currency=st.currency,
                 origin_chat_id=st.origin_chat_id,
                 updated_at=datetime.now(),
+                distribution_status="draft" if is_draft else "final",
             )
             self.repository.db.bills_v2.append(bill)
             header = None
@@ -1736,13 +1738,25 @@ class BillsFeature(Feature):
             if p := by_id.get(pid):
                 update_chat_last_seen(p, st.origin_chat_id)
 
-        if any(tx.incomplete for tx in st.parsed_transactions):
+        # Draft bills are distributed on the web board, not nudged in chat.
+        if not is_draft and any(tx.incomplete for tx in st.parsed_transactions):
             from steward.delayed_action.bill_incomplete_nudge import schedule_incomplete_nudge
             schedule_incomplete_nudge(self.repository, bill.id)
 
         await self.repository.save()
 
         by_id = self._persons()
+
+        if is_draft:
+            from steward.helpers.webapp import get_bill_deep_link
+            link = get_bill_deep_link(bot, bill.id)
+            kb = (
+                Keyboard.row(Button("🍽 Открыть распределение", url=link))
+                if link else None
+            )
+            await send_callback(fmt.format_draft_saved(bill, by_id), keyboard=kb)
+            return
+
         text = fmt.format_bill_created(bill, by_id)
         if header is not None:
             text = header + "\n" + "\n".join(text.splitlines()[1:])

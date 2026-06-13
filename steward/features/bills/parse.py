@@ -152,6 +152,80 @@ def rows_to_transactions(rows: list[dict], name_to_id: dict[str, str]) -> list[B
     return txs
 
 
+def rows_to_undistributed_transactions(
+    rows: list[dict], name_to_id: dict[str, str]
+) -> list[BillTransaction]:
+    """Like `rows_to_transactions`, but DROP all debtor assignments.
+
+    The new flow collects positions (name, quantity, unit price, creditor) in chat
+    and leaves distribution-by-person to the web board, so every transaction comes
+    out `incomplete` with empty `assignments`. Creditor is still resolved.
+    """
+
+    def _resolve(raw: str) -> str:
+        raw = raw.strip()
+        if not raw or raw == "-":
+            return UNKNOWN_PERSON_ID
+        return name_to_id.get(norm_name_key(raw), UNKNOWN_PERSON_ID)
+
+    groups: dict[str, list[dict]] = {}
+    ungrouped: list[dict] = []
+    for row in rows:
+        gid = row.get("group_id", "").strip()
+        (groups.setdefault(gid, []) if gid else ungrouped).append(row)
+
+    txs: list[BillTransaction] = []
+    for group_rows in groups.values():
+        first = group_rows[0]
+        txs.append(BillTransaction(
+            id=str(uuid.uuid4()),
+            item_name=first["name"],
+            creditor=_resolve(first["creditor_raw"]),
+            unit_price_minor=first["price_minor"],
+            quantity=sum(r["quantity"] for r in group_rows),
+            assignments=[],
+            source=first.get("source", "text"),
+            incomplete=True,
+        ))
+    for row in ungrouped:
+        txs.append(BillTransaction(
+            id=str(uuid.uuid4()),
+            item_name=row["name"],
+            creditor=_resolve(row["creditor_raw"]),
+            unit_price_minor=row["price_minor"],
+            quantity=row["quantity"],
+            assignments=[],
+            source=row.get("source", "text"),
+            incomplete=True,
+        ))
+    return txs
+
+
+def collect_participant_ids(
+    rows: list[dict], name_to_id: dict[str, str]
+) -> list[str]:
+    """Union of every resolved person mentioned across rows (creditors + debtors).
+
+    These become the bill's participants — "кто был" — even though the per-item
+    distribution is deferred to the web board.
+    """
+    out: list[str] = []
+
+    def _add(raw: str):
+        raw = (raw or "").strip()
+        if not raw or raw == "-":
+            return
+        pid = name_to_id.get(norm_name_key(raw))
+        if pid and pid != UNKNOWN_PERSON_ID and pid not in out:
+            out.append(pid)
+
+    for row in rows:
+        _add(row.get("creditor_raw", ""))
+        for name in (row.get("debtors_raw", "") or "").split(","):
+            _add(name)
+    return out
+
+
 def build_persons_directory(
     persons: list,
     *,

@@ -1927,6 +1927,7 @@ def _serialize_bill_v2(bill, payments: list) -> dict:
         "updated_at": bill.updated_at.isoformat() if bill.updated_at else None,
         "closed": bill.closed,
         "closed_at": bill.closed_at.isoformat() if bill.closed_at else None,
+        "distribution_status": getattr(bill, "distribution_status", "final"),
         "payments": [_serialize_payment_v2(p) for p in bill_payments],
     }
 
@@ -2197,6 +2198,74 @@ async def handle_bills_tx_delete(request: web.Request):
     bill.updated_at = datetime.datetime.now()
     await repository.save()
     return web.json_response({"ok": True})
+
+
+async def handle_bills_distribute(request: web.Request):
+    """Bulk-save the per-item distribution from the web board.
+
+    Body: {"transactions": [{"id": tx_id, "assignments": [{unit_count, debtors}]}]}.
+    Updates only the assignments of listed transactions, recomputes `incomplete`,
+    adds any new debtors to participants, and moves the bill into `distributing`
+    (unless already `final`). Atomic single round-trip for auto-save on drag.
+    """
+    from steward.data.models.bill_v2 import BillItemAssignment, UNKNOWN_PERSON_ID
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+
+    data = await request.json()
+    by_id = {t.id: t for t in bill.transactions}
+    for entry in data.get("transactions", []):
+        tx = by_id.get(entry.get("id"))
+        if not tx:
+            continue
+        tx.assignments = [
+            BillItemAssignment(
+                unit_count=int(a.get("unit_count", 1)),
+                debtors=list(a.get("debtors", [])),
+            )
+            for a in entry.get("assignments", [])
+        ]
+        tx.incomplete = any(not a.debtors for a in tx.assignments) or not tx.assignments
+        for asg in tx.assignments:
+            for d in asg.debtors:
+                if d and d != UNKNOWN_PERSON_ID and d not in bill.participants:
+                    bill.participants.append(d)
+
+    if getattr(bill, "distribution_status", "final") != "final":
+        bill.distribution_status = "distributing"
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_finalize(request: web.Request):
+    """Confirm distribution: mark the bill `final` so its debts count in summaries."""
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    bill.distribution_status = "final"
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
 
 
 async def handle_bills_suggestions_list(request: web.Request):
@@ -2507,6 +2576,8 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/bills/{id}/transactions", handle_bills_tx_add)
     app.router.add_patch("/api/bills/{id}/transactions/{tid}", handle_bills_tx_update)
     app.router.add_delete("/api/bills/{id}/transactions/{tid}", handle_bills_tx_delete)
+    app.router.add_put("/api/bills/{id}/distribution", handle_bills_distribute)
+    app.router.add_put("/api/bills/{id}/finalize", handle_bills_finalize)
     app.router.add_get("/api/bills/{id}/suggestions", handle_bills_suggestions_list)
     app.router.add_post("/api/bills/{id}/suggestions", handle_bills_suggestion_create)
     app.router.add_get("/ws/poker", poker_ws_handler)

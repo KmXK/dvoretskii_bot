@@ -35,6 +35,16 @@ def get_webapp_deep_link(bot: ExtBot, chat_id: int | str | None = None) -> str |
     return _get_direct_url()
 
 
+def get_bill_deep_link(bot: ExtBot, bill_id: int) -> str | None:
+    """Deep link that opens the mini-app straight on a bill's distribution board.
+
+    Encoded as `startapp=bill_<id>` (read in the web app via
+    `WebApp.initDataUnsafe.start_param`). Falls back to the bare direct URL if the
+    bot username is unavailable (dev/tunnel) — without the bill anchor.
+    """
+    return get_webapp_deep_link(bot, chat_id=f"bill_{bill_id}")
+
+
 def get_webapp_keyboard(
     bot: ExtBot,
     chat_id: int | str | None = None,

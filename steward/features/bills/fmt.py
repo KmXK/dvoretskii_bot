@@ -65,8 +65,45 @@ def paginate_grid(
     return rows, page, total_pages
 
 
+def md_inline(text: str) -> str:
+    """Escape user text for an inline `parse_mode="Markdown"` context.
+
+    Names/nicks/item titles are arbitrary user input — unescaped `_ * ` ` [` break
+    the message render (or 400 the API). Escape at the render boundary, never store
+    escaped. For code-block table cells use `_cell` instead; for the new native
+    pipe-tables use `cell_md`.
+    """
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace("_", "\\_")
+        .replace("*", "\\*")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+    )
+
+
+def cell_md(text: str) -> str:
+    """Escape a value for a native `sendRichMessage` pipe-table cell.
+
+    Beyond the usual markdown specials, `|` splits the row and newlines break it —
+    those are the real `/bills` footguns, so handle them here too.
+    """
+    return (
+        md_inline((text or "").replace("\n", " ").replace("\r", " "))
+        .replace("|", "\\|")
+    )
+
+
+def _cell(text: str) -> str:
+    """Sanitize a value for a code-block (```) cell: only backticks can escape it."""
+    return (text or "").replace("`", "ʼ").replace("\n", " ")
+
+
 def _mono_table(headers: list[str], rows: list[list[str]]) -> str:
     """Aligned monospace table inside a code block."""
+    headers = [_cell(h) for h in headers]
+    rows = [[_cell(c) for c in r] for r in rows]
     all_rows = [headers] + rows
     cols = len(headers)
     widths = [max(len(r[i]) if i < len(r) else 0 for r in all_rows) for i in range(cols)]
@@ -137,6 +174,8 @@ def _compute_balances(bills: list[BillV2], person_id: str | None, payments: list
 
     for bill in bills:
         if bill.closed:
+            continue
+        if getattr(bill, "distribution_status", "final") != "final":
             continue
         raw = compute_bill_debts(bill.transactions, bill.currency)
         net = net_debts(raw)
@@ -293,7 +332,7 @@ def format_bill_detail(
 
 def format_bill_created(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
     lines = [
-        f"✅ Счёт «{bill.name}» \\#{bill.id} создан!",
+        f"✅ Счёт «{md_inline(bill.name)}» \\#{bill.id} создан!",
         f"Позиций: {len(bill.transactions)} · Участников: {len(bill.participants)}",
     ]
     incomplete = sum(1 for tx in bill.transactions if tx.incomplete)
@@ -380,6 +419,89 @@ def format_preview(
     )
 
     return "\n".join(lines)
+
+
+_ITEMS_PER_CHUNK = 18
+
+
+def _collect_item_rows(transactions: list, currency: str) -> list[tuple[str, str, str, str]]:
+    rows = []
+    for tx in transactions:
+        unit = minor_to_display(tx.unit_price_minor, currency)
+        total = minor_to_display(tx.unit_price_minor * tx.quantity, currency)
+        rows.append((tx.item_name, str(tx.quantity), unit, total))
+    return rows
+
+
+def build_collect_review(
+    transactions: list,
+    participant_ids: list[str],
+    by_id: dict[str, BillPerson],
+    currency: str,
+    bill_name: str,
+) -> tuple[list[str], list[str]]:
+    """Build the chat verification of collected positions.
+
+    Returns (rich_chunks, fallback_chunks): parallel lists of messages. The first
+    message lists participants, the rest are item tables split into chunks so we
+    never hit the message-length limit. `rich_chunks` are native-table markdown
+    (sendRichMessage); `fallback_chunks` are the ``` monospace equivalent for
+    `parse_mode="Markdown"`. All user text is escaped per surface.
+    """
+    names = [pname(pid, by_id) for pid in participant_ids] or ["—"]
+    item_rows = _collect_item_rows(transactions, currency)
+    n = len(item_rows)
+    chunks = [item_rows[i:i + _ITEMS_PER_CHUNK] for i in range(0, n, _ITEMS_PER_CHUNK)] or [[]]
+
+    # -- rich (native sendRichMessage markdown) --
+    rich: list[str] = []
+    rich.append(
+        f"# 🧾 {cell_md(bill_name)}\n\n"
+        f"**Кто был ({len(participant_ids)}):** "
+        + ", ".join(cell_md(x) for x in names)
+    )
+    for ci, chunk in enumerate(chunks):
+        head = "## Позиции" + (f" ({ci * _ITEMS_PER_CHUNK + 1}–{ci * _ITEMS_PER_CHUNK + len(chunk)} из {n})" if len(chunks) > 1 else f" ({n})")
+        lines = [head, "", "| Позиция | Кол-во | Цена | Сумма |", "|:--|--:|--:|--:|"]
+        for name, qty, unit, total in chunk:
+            lines.append(f"| {cell_md(name)} | {qty} | {cell_md(unit)} | {cell_md(total)} |")
+        if not chunk:
+            lines.append("| _нет позиций_ | | | |")
+        rich.append("\n".join(lines))
+
+    # -- fallback (Markdown + ``` monospace) --
+    fb: list[str] = []
+    fb.append(
+        f"🧾 *{md_inline(bill_name)}*\n"
+        f"👥 *Кто был ({len(participant_ids)}):* "
+        + ", ".join(md_inline(x) for x in names)
+    )
+    for ci, chunk in enumerate(chunks):
+        head = "📋 *Позиции" + (f" {ci * _ITEMS_PER_CHUNK + 1}–{ci * _ITEMS_PER_CHUNK + len(chunk)}/{n}*" if len(chunks) > 1 else f" ({n})*")
+        table = _mono_table(["Позиция", "Кол", "Цена", "Сумма"], [list(r) for r in chunk]) if chunk else "_нет позиций_"
+        fb.append(f"{head}\n{table}")
+    return rich, fb
+
+
+def kb_collect_review(feature: "BillsFeature") -> Keyboard:
+    """Keyboard under the collected-positions verification."""
+    return Keyboard.grid([
+        [feature.cb("bills:add_confirm").button("➡️ Распределить в приложении")],
+        [
+            feature.cb("bills:add_more").button("📎 Ещё контекст"),
+            feature.cb("bills:add_cancel").button("❌ Отмена"),
+        ],
+    ])
+
+
+def format_draft_saved(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
+    """Message shown after a collected bill is saved as a draft."""
+    return (
+        f"📥 Собрал счёт «{md_inline(bill.name)}» \\#{bill.id}: "
+        f"{len(bill.transactions)} поз., {len(bill.participants)} уч.\n\n"
+        "Теперь распредели позиции по людям — перетаскиванием в приложении.\n"
+        "_Счёт уже сохранён и числится недозаполненным; можно вернуться к нему позже._"
+    )
 
 
 def kb_collect(feature: "BillsFeature", context_items: list[str] | None = None) -> Keyboard:
