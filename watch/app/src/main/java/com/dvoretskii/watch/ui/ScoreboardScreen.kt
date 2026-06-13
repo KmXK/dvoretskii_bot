@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,8 +31,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
@@ -60,7 +60,6 @@ fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
         try {
             sessions = api.getActiveSessions()
             error = null
-            // авто-выбор единственной; сброс, если выбранная исчезла
             if (sessions.size == 1) selectedId = sessions[0].sessionId
             else if (selectedId != null && sessions.none { it.sessionId == selectedId }) selectedId = null
         } catch (e: ApiException) {
@@ -73,7 +72,6 @@ fun ScoreboardScreen(api: ApiClient, onUnauthorized: () -> Unit) {
         }
     }
 
-    // Поллинг — ловим изменения, сделанные с телефона/вебаппы/других часов.
     LaunchedEffect(Unit) {
         while (true) {
             refresh()
@@ -182,86 +180,123 @@ private fun Scoreboard(
     onUndo: () -> Unit,
     onSwitch: () -> Unit,
 ) {
-    // Горизонтальные поля побольше — на круглом экране края обрезаются.
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 26.dp, vertical = 14.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
+        // Session-switch link — only when multiple sessions exist; no wins row here
         if (canSwitch) {
-            Text(
-                "▾ сменить сессию",
-                style = MaterialTheme.typography.caption3,
-                color = MaterialTheme.colors.onSurfaceVariant,
-                modifier = Modifier.clickable(enabled = !busy, onClick = onSwitch),
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "▾ сменить",
+                    style = MaterialTheme.typography.caption3,
+                    color = MaterialTheme.colors.onSurfaceVariant,
+                    modifier = Modifier.clickable(enabled = !busy, onClick = onSwitch),
+                )
+            }
+        }
+
+        // Split tap zones — wins badge is inside each half corner
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 6.dp, vertical = if (canSwitch) 2.dp else 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            HalfButton(
+                score = "${s.scoreA}",
+                name = s.playerA,
+                wins = s.winsA,
+                color = sideA,
+                serving = s.currentServer == "a",
+                enabled = !busy,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                onClick = onPointA,
+            )
+            HalfButton(
+                score = "${s.scoreB}",
+                name = s.playerB,
+                wins = s.winsB,
+                color = sideB,
+                serving = s.currentServer == "b",
+                enabled = !busy,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                onClick = onPointB,
             )
         }
-        // Имена (по центру, с эллипсисом) — без краевых элементов, чтобы не резалось.
-        Text(
-            text = "${s.playerA} ${s.winsA}:${s.winsB} ${s.playerB}",
-            style = MaterialTheme.typography.caption2,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
 
-        // Крупный счёт текущей партии; подача — цветная точка под подающей стороной.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${s.scoreA}", fontSize = 38.sp, fontWeight = FontWeight.Black, color = sideA)
-            Text(" : ", fontSize = 26.sp, color = MaterialTheme.colors.onSurfaceVariant)
-            Text("${s.scoreB}", fontSize = 38.sp, fontWeight = FontWeight.Black, color = sideB)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(48.dp)) {
-            ServerDot(active = s.currentServer == "a", color = sideA)
-            ServerDot(active = s.currentServer == "b", color = sideB)
-        }
-
-        // Две зоны +1
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PointButton("+1", sideA, enabled = !busy, modifier = Modifier.weight(1f), onClick = onPointA)
-            PointButton("+1", sideB, enabled = !busy, modifier = Modifier.weight(1f), onClick = onPointB)
-        }
-
+        // Undo at bottom
         Chip(
             label = { Text("↩ Отменить", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) },
             onClick = onUndo,
             enabled = !busy,
             colors = ChipDefaults.secondaryChipColors(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
         )
     }
 }
 
 @Composable
-private fun PointButton(
-    label: String,
+private fun HalfButton(
+    score: String,
+    name: String,
+    wins: Int,
     color: Color,
+    serving: Boolean,
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        colors = ButtonDefaults.buttonColors(backgroundColor = color),
-        modifier = modifier,
-    ) {
-        Text(label, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-    }
-}
-
-@Composable
-private fun ServerDot(active: Boolean, color: Color) {
     Box(
-        modifier = Modifier
-            .size(8.dp)
-            .clip(androidx.compose.foundation.shape.CircleShape)
-            .then(
-                if (active) Modifier.background(color) else Modifier.background(Color.Transparent)
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(color.copy(alpha = if (enabled) 0.9f else 0.5f))
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
+        // Wins badge — top corner (overlaid)
+        Text(
+            "$wins",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            color = Color.White.copy(alpha = 0.45f),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp),
+        )
+
+        // Main content centred
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (serving) {
+                Box(
+                    modifier = Modifier
+                        .padding(bottom = 4.dp)
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.9f))
+                )
+            }
+            Text(
+                score,
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Black,
+                color = Color.White,
+                textAlign = TextAlign.Center,
             )
-    )
+            Text(
+                name,
+                style = MaterialTheme.typography.caption2,
+                color = Color.White.copy(alpha = 0.65f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 6.dp),
+            )
+        }
+    }
 }
