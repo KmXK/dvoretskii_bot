@@ -46,6 +46,7 @@ from steward.metrics import ContextMetrics, MetricsEngine
 from steward.session.session_registry import (
     cleanup_stale_sessions,
     deactivate_session,
+    has_active_session_in_chat,
     try_get_session_handler,
 )
 
@@ -421,6 +422,8 @@ class Bot:
                     if func is not None:
                         await _safe_post_action(func)
                     return
+            elif action == "chat" and chat_id_int is not None and has_active_session_in_chat(chat_id_int):
+                return
         except UnsupportedUpdateType:
             pass
         except BaseException as e:

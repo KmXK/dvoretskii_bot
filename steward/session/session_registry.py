@@ -54,6 +54,10 @@ def deactivate_session_by_key(key: SessionKey):
     session_last_activity.pop(key, None)
 
 
+def has_active_session_in_chat(chat_id: int) -> bool:
+    return any(key[0] == chat_id for key in sessions)
+
+
 def cleanup_stale_sessions(ttl_seconds: int) -> int:
     if ttl_seconds <= 0:
         return 0

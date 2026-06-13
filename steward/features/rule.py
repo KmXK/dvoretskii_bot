@@ -11,6 +11,7 @@ from steward.framework import (
     FeatureContext,
     Keyboard,
     collection,
+    initiator_only,
     on_callback,
     step,
     subcommand,
@@ -462,10 +463,19 @@ class _ResponsesStep(Step):
         context.session_context["responses"] = [e["response"] for e in self.entries]
 
     async def _init(self, context) -> None:
-        # В режиме редактирования ответы уже лежат в session_context — поднимаем их
-        # как entries с тем же интерфейсом (копия + контрол / реакция-контрол).
         existing = list(context.session_context.get("responses") or [])
         chat_id = context.update.effective_chat.id
+        kb = Keyboard([[
+            Button("➕ Реакция", callback_data=f"{self.PREFIX}|react"),
+            Button("💾 Готово", callback_data=f"{self.PREFIX}|done"),
+        ]])
+        self.prompt = await context.bot.send_message(
+            chat_id,
+            "Ответы на сообщение. Присылай сообщения / стикеры / медиа — каждое"
+            " станет ответом, и я сразу пришлю его обратно для проверки. Реакцию"
+            " добавь кнопкой. Лишнее убирай кнопкой 🗑 под нужным ответом.",
+            reply_markup=kb.to_markup(),
+        )
         for r in existing:
             uid = self._next_uid
             self._next_uid += 1
@@ -480,6 +490,10 @@ class _ResponsesStep(Step):
                     "control": (control.chat_id, control.message_id), "extra": [],
                 })
             else:
+                label = f"Ответ #{len(self.entries) + 1}"
+                control = await context.bot.send_message(
+                    chat_id, label, reply_markup=self._del_kb(uid).to_markup()
+                )
                 extra: list[tuple[int, int]] = []
                 try:
                     copied = await context.bot.copy_message(
@@ -488,25 +502,10 @@ class _ResponsesStep(Step):
                     extra.append((chat_id, copied.message_id))
                 except Exception:
                     pass
-                label = f"Ответ #{len(self.entries) + 1}"
-                control = await context.bot.send_message(
-                    chat_id, label, reply_markup=self._del_kb(uid).to_markup()
-                )
                 self.entries.append({
                     "uid": uid, "response": r, "kind": "copy", "label": label,
                     "control": (control.chat_id, control.message_id), "extra": extra,
                 })
-        kb = Keyboard([[
-            Button("➕ Реакция", callback_data=f"{self.PREFIX}|react"),
-            Button("💾 Готово", callback_data=f"{self.PREFIX}|done"),
-        ]])
-        self.prompt = await context.bot.send_message(
-            chat_id,
-            "Ответы на сообщение. Присылай сообщения / стикеры / медиа — каждое"
-            " станет ответом, и я сразу пришлю его обратно для проверки. Реакцию"
-            " добавь кнопкой. Лишнее убирай кнопкой 🗑 под нужным ответом.",
-            reply_markup=kb.to_markup(),
-        )
         self._sync(context)
 
     async def _renumber(self, context) -> None:
@@ -544,16 +543,16 @@ class _ResponsesStep(Step):
         msg = context.message
         uid = self._next_uid
         self._next_uid += 1
+        label = f"Ответ #{len(self.entries) + 1}"
+        control = await context.bot.send_message(
+            msg.chat_id, label, reply_markup=self._del_kb(uid).to_markup()
+        )
         extra: list[tuple[int, int]] = []
         try:
             copied = await context.bot.copy_message(msg.chat_id, msg.chat_id, msg.message_id)
             extra.append((msg.chat_id, copied.message_id))
         except Exception:
             pass
-        label = f"Ответ #{len(self.entries) + 1}"
-        control = await context.bot.send_message(
-            msg.chat_id, label, reply_markup=self._del_kb(uid).to_markup()
-        )
         self.entries.append({
             "uid": uid,
             "response": Response(msg.chat_id, msg.message_id, 100),
@@ -808,9 +807,9 @@ class RuleFeature(Feature):
         if not list(self.rules):
             await ctx.reply("Правил нет")
             return
-        await self._render_list(ctx, 0, edit=False)
+        await self._render_list(ctx, 0, edit=False, owner_id=ctx.user_id)
 
-    async def _render_list(self, ctx: FeatureContext, page: int, edit: bool) -> None:
+    async def _render_list(self, ctx: FeatureContext, page: int, edit: bool, *, owner_id: int) -> None:
         rules = sorted(self.rules, key=lambda r: r.id)
         if not rules:
             if edit:
@@ -830,16 +829,16 @@ class RuleFeature(Feature):
             for r in chunk
         )
         rows = [[
-            Button(f"✏ {r.id}", callback_data=self._cb("edit_root", rule_id=r.id))
+            Button(f"✏ {r.id}", callback_data=self._cb("edit_root", owner_id=owner_id, rule_id=r.id))
             for r in chunk
         ]]
         if pages > 1:
             nav: list[Button] = []
             if page > 0:
-                nav.append(Button("‹", callback_data=self._cb("list", page=page - 1)))
-            nav.append(Button(f"{page + 1}/{pages}", callback_data=self._cb("list", page=page)))
+                nav.append(Button("‹", callback_data=self._cb("list", owner_id=owner_id, page=page - 1)))
+            nav.append(Button(f"{page + 1}/{pages}", callback_data=self._cb("list", owner_id=owner_id, page=page)))
             if page < pages - 1:
-                nav.append(Button("›", callback_data=self._cb("list", page=page + 1)))
+                nav.append(Button("›", callback_data=self._cb("list", owner_id=owner_id, page=page + 1)))
             rows.append(nav)
         kb = Keyboard(rows)
         if edit:
@@ -847,9 +846,9 @@ class RuleFeature(Feature):
         else:
             await ctx.reply(text, keyboard=kb, markdown=False)
 
-    @on_callback("rules:list", schema="<page:int>")
-    async def cb_list(self, ctx: FeatureContext, page: int):
-        await self._render_list(ctx, page, edit=True)
+    @on_callback("rules:list", schema="<page:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_list(self, ctx: FeatureContext, page: int, owner_id: int):
+        await self._render_list(ctx, page, edit=True, owner_id=owner_id)
 
     @subcommand("add", description="Добавить правило (сессия)", permission="rules.manage")
     async def add(self, ctx: FeatureContext):
@@ -880,7 +879,7 @@ class RuleFeature(Feature):
         if not self._can_edit(ctx, rule):
             await ctx.reply("Это правило можно редактировать только из своих чатов.")
             return
-        await self._render_edit_root(ctx, rule)
+        await self._render_edit_root(ctx, rule, owner_id=ctx.user_id)
 
     @subcommand("<rule_id:int>", description="Просмотр правила", permission="rules.manage")
     async def view(self, ctx: FeatureContext, rule_id: int):
@@ -932,7 +931,9 @@ class RuleFeature(Feature):
 
     # ── Edit-меню ────────────────────────────────────────────────────────────
 
-    def _cb(self, name: str, **values) -> str:
+    def _cb(self, name: str, owner_id: int | None = None, **values) -> str:
+        if owner_id is not None:
+            values["owner_id"] = owner_id
         return self.cb(f"rules:{name}")(**values)
 
     def _can_edit(self, ctx: FeatureContext, rule: Rule) -> bool:
@@ -940,14 +941,14 @@ class RuleFeature(Feature):
             return True
         return any(ctx.repository.is_chat_admin(ctx.user_id, c) for c in rule.chats)
 
-    async def _render_edit_root(self, ctx: FeatureContext, rule: Rule, edit: bool = False):
+    async def _render_edit_root(self, ctx: FeatureContext, rule: Rule, edit: bool = False, *, owner_id: int):
         ic = "вкл" if rule.pattern.ignore_case_flag else "выкл"
         rows = [
-            [Button("💬 Чаты", callback_data=self._cb("edit_chats", rule_id=rule.id))],
-            [Button("👤 От кого", callback_data=self._cb("edit_from", rule_id=rule.id))],
-            [Button("🔤 Шаблон", callback_data=self._cb("edit_pattern", rule_id=rule.id))],
-            [Button(f"Aa Игнор регистра: {ic}", callback_data=self._cb("edit_ic", rule_id=rule.id))],
-            [Button("📝 Ответы", callback_data=self._cb("edit_responses", rule_id=rule.id))],
+            [Button("💬 Чаты", callback_data=self._cb("edit_chats", owner_id=owner_id, rule_id=rule.id))],
+            [Button("👤 От кого", callback_data=self._cb("edit_from", owner_id=owner_id, rule_id=rule.id))],
+            [Button("🔤 Шаблон", callback_data=self._cb("edit_pattern", owner_id=owner_id, rule_id=rule.id))],
+            [Button(f"Aa Игнор регистра: {ic}", callback_data=self._cb("edit_ic", owner_id=owner_id, rule_id=rule.id))],
+            [Button("📝 Ответы", callback_data=self._cb("edit_responses", owner_id=owner_id, rule_id=rule.id))],
         ]
         text = _render_rule(rule, ctx.repository)
         if edit:
@@ -965,33 +966,30 @@ class RuleFeature(Feature):
             return None
         return rule
 
-    @on_callback("rules:edit_root", schema="<rule_id:int>")
-    async def cb_edit_root(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_root", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_root(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
-        await self._render_edit_root(ctx, rule, edit=True)
+        await self._render_edit_root(ctx, rule, edit=True, owner_id=owner_id)
 
-    async def _render_chat_editor(self, ctx: FeatureContext, rule: Rule):
+    async def _render_chat_editor(self, ctx: FeatureContext, rule: Rule, *, owner_id: int):
         chats = _member_chats(ctx.repository, ctx.user_id)
         rows = []
         for c in chats:
             is_admin = ctx.repository.is_chat_admin(ctx.user_id, c.id)
             in_scope = c.id in rule.chats
             if is_admin:
-                # Свой чат — добавляем/убираем сразу.
                 mark = "✅" if in_scope else "❌"
-                cb = self._cb("chat_toggle", rule_id=rule.id, chat_id=c.id)
+                cb = self._cb("chat_toggle", owner_id=owner_id, rule_id=rule.id, chat_id=c.id)
             elif in_scope:
-                # Не свой, но уже подключён — убрать может только их админ.
                 mark = "✅🔒"
-                cb = self._cb("chat_propose", rule_id=rule.id, chat_id=c.id)
+                cb = self._cb("chat_propose", owner_id=owner_id, rule_id=rule.id, chat_id=c.id)
             else:
-                # Не свой и не подключён — можно предложить (нужно подтверждение).
                 mark = "📨"
-                cb = self._cb("chat_propose", rule_id=rule.id, chat_id=c.id)
+                cb = self._cb("chat_propose", owner_id=owner_id, rule_id=rule.id, chat_id=c.id)
             rows.append([Button(f"{mark} {c.name}", callback_data=cb)])
-        rows.append([Button("⏎ Назад", callback_data=self._cb("edit_root", rule_id=rule.id))])
+        rows.append([Button("⏎ Назад", callback_data=self._cb("edit_root", owner_id=owner_id, rule_id=rule.id))])
         text = (
             "Чаты правила. ✅ — входит, ❌ — нет (твои чаты, жми чтобы вкл/выкл).\n"
             "📨 — предложить чужому чату (нужно подтверждение их чат-админа).\n"
@@ -999,15 +997,15 @@ class RuleFeature(Feature):
         )
         await ctx.edit(text, keyboard=Keyboard(rows), markdown=False)
 
-    @on_callback("rules:edit_chats", schema="<rule_id:int>")
-    async def cb_edit_chats(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_chats", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_chats(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
-        await self._render_chat_editor(ctx, rule)
+        await self._render_chat_editor(ctx, rule, owner_id=owner_id)
 
-    @on_callback("rules:chat_toggle", schema="<rule_id:int>|<chat_id:int>")
-    async def cb_chat_toggle(self, ctx: FeatureContext, rule_id: int, chat_id: int):
+    @on_callback("rules:chat_toggle", schema="<rule_id:int>|<chat_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_chat_toggle(self, ctx: FeatureContext, rule_id: int, chat_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
@@ -1016,10 +1014,10 @@ class RuleFeature(Feature):
             return
         rule.chats.discard(chat_id) if chat_id in rule.chats else rule.chats.add(chat_id)
         await self.rules.save()
-        await self._render_chat_editor(ctx, rule)
+        await self._render_chat_editor(ctx, rule, owner_id=owner_id)
 
-    @on_callback("rules:chat_propose", schema="<rule_id:int>|<chat_id:int>")
-    async def cb_chat_propose(self, ctx: FeatureContext, rule_id: int, chat_id: int):
+    @on_callback("rules:chat_propose", schema="<rule_id:int>|<chat_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_chat_propose(self, ctx: FeatureContext, rule_id: int, chat_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
@@ -1095,17 +1093,17 @@ class RuleFeature(Feature):
         except Exception:
             logger.debug("could not DM user %s", user_id)
 
-    @on_callback("rules:edit_ic", schema="<rule_id:int>")
-    async def cb_edit_ic(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_ic", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_ic(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
         rule.pattern.ignore_case_flag = 0 if rule.pattern.ignore_case_flag else 1
         await self.rules.save()
-        await self._render_edit_root(ctx, rule, edit=True)
+        await self._render_edit_root(ctx, rule, edit=True, owner_id=owner_id)
 
-    @on_callback("rules:edit_from", schema="<rule_id:int>")
-    async def cb_edit_from(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_from", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_from(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
@@ -1121,8 +1119,8 @@ class RuleFeature(Feature):
         await self.rules.save()
         await ctx.reply("«От кого» обновлено")
 
-    @on_callback("rules:edit_pattern", schema="<rule_id:int>")
-    async def cb_edit_pattern(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_pattern", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_pattern(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
@@ -1142,8 +1140,8 @@ class RuleFeature(Feature):
         await self.rules.save()
         await ctx.reply("Шаблон обновлён")
 
-    @on_callback("rules:edit_responses", schema="<rule_id:int>")
-    async def cb_edit_responses(self, ctx: FeatureContext, rule_id: int):
+    @on_callback("rules:edit_responses", schema="<rule_id:int>|<owner_id:int>", access=initiator_only("owner_id", admin_bypass=True))
+    async def cb_edit_responses(self, ctx: FeatureContext, rule_id: int, owner_id: int):
         rule = await self._guard(ctx, rule_id)
         if rule is None:
             return
