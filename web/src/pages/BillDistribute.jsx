@@ -282,22 +282,28 @@ const PileCard = forwardRef(function PileCard(
 })
 
 // ── FX-слой: митоз и склейка ────────────────────────────────────────────────────
+// split: N карт вылетают над нодой «делить», веером, затем по одной летят в колоду.
+// merge: N карт вылетают из колоды к ноде «собрать», сливаются, одна летит обратно.
 
-function FxLayer({ fx, tx, currency, anchor, onDone }) {
+function FxLayer({ fx, tx, currency, onDone }) {
   const n = fx.type === 'split' ? fx.n : fx.count
+  const hub = fx.hubAnchor
+  const node = fx.nodeAnchor || hub
+  const dnx = node.x - hub.x
+  const dny = node.y - hub.y
+  const total = fx.type === 'split' ? 300 + n * 200 : 500 + n * 160
   useEffect(() => {
-    const t = setTimeout(onDone, fx.type === 'split' ? 560 + n * 110 : 520 + n * 110)
+    const t = setTimeout(onDone, total)
     return () => clearTimeout(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const base = {
-    position: 'absolute', left: anchor.x, top: anchor.y, width: CARD_W,
-    marginLeft: -CARD_W / 2, marginTop: -CARD_H / 2, background: cardGradient(fx.txId),
+    position: 'absolute', left: hub.x - CARD_W / 2, top: hub.y - CARD_H / 2,
+    width: CARD_W, background: cardGradient(fx.txId),
   }
 
   if (fx.type === 'split') {
     const childDen = fx.den * n
-    // карта делится: доли выезжают веером и плавно собираются обратно в колоду
     return (
       <div className="absolute inset-0 z-[55] pointer-events-none">
         {Array.from({ length: n }).map((_, i) => {
@@ -305,15 +311,15 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
           return (
             <motion.div
               key={i}
-              initial={{ x: 0, y: 0, scale: 1, rotate: 0, opacity: i === 0 ? 1 : 0 }}
+              initial={{ x: dnx, y: dny, scale: 0, opacity: 0, rotate: 0 }}
               animate={{
-                x: [0, spread * 58, 0],
-                y: [0, -6, 0],
-                scale: 1,
-                rotate: [0, spread * 6, 0],
-                opacity: 1,
+                x: [dnx, dnx + spread * 52, 0],
+                y: [dny, dny - 28, 0],
+                scale: [0, 0.88, 0.15],
+                opacity: [0, 1, 0],
+                rotate: [0, spread * 7, 0],
               }}
-              transition={{ duration: 0.52, delay: i * 0.07, times: [0, 0.5, 1], ease: 'easeInOut' }}
+              transition={{ duration: 0.54, delay: 0.08 + i * 0.13, ease: 'easeInOut', times: [0, 0.44, 1] }}
               style={{ ...base, zIndex: 60 - i }}
               className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
             >
@@ -325,7 +331,6 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
     )
   }
 
-  // merge: куски по одному слетаются к центру и сливаются в одну карту
   return (
     <div className="absolute inset-0 z-[55] pointer-events-none">
       {Array.from({ length: n }).map((_, i) => {
@@ -334,13 +339,25 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
         return (
           <motion.div
             key={i}
-            initial={{ x: spread * 58, y: spread % 2 ? -10 : 10, scale: 0.95, rotate: spread * 6, opacity: 1 }}
-            animate={{ x: 0, y: 0, scale: 1, rotate: 0, opacity: last ? 1 : 0 }}
-            transition={{ duration: 0.42, delay: last ? n * 0.08 : i * 0.08, ease: 'easeInOut' }}
+            initial={{ x: spread * 44, y: spread % 2 ? -10 : 10, scale: 0.88, opacity: 1, rotate: spread * 5 }}
+            animate={last ? {
+              x: [spread * 44, dnx, 0],
+              y: [spread % 2 ? -10 : 10, dny, 0],
+              scale: [0.88, 1.1, 0.15],
+              opacity: [1, 1, 0],
+              rotate: [spread * 5, 0, 0],
+            } : {
+              x: dnx, y: dny, scale: 0.08, opacity: 0, rotate: 0,
+            }}
+            transition={last ? {
+              duration: 0.7, delay: (n - 1) * 0.1 + 0.06, ease: 'easeInOut', times: [0, 0.58, 1],
+            } : {
+              duration: 0.34, delay: i * 0.1, ease: 'easeIn',
+            }}
             style={{ ...base, zIndex: last ? 62 : 56 + i }}
             className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
           >
-            <CardFace tx={tx} den={fx.den} currency={currency} />
+            <CardFace tx={tx} den={last ? 1 : fx.den} currency={currency} />
           </motion.div>
         )
       })}
@@ -356,14 +373,17 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
 
 const SPECIAL_ICON = { split: Scissors, defer: RotateCcw, merge: Merge }
 
-function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode }) {
+function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode, proximityScales }) {
   const hotId = activeId || absorbId
-  const scaleAnim = (id) => ({
-    animate: { scale: absorbId === id ? [1, 1.7, 1] : activeId === id ? 1.45 : 1 },
-    transition: absorbId === id
-      ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
-      : { type: 'spring', stiffness: 300, damping: 18 },
-  })
+  const scaleAnim = (id) => {
+    const prox = proximityScales?.[id] || 1
+    return {
+      animate: { scale: absorbId === id ? [prox, 1.7, 1] : activeId === id ? 1.45 : prox },
+      transition: absorbId === id
+        ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+        : { type: 'spring', stiffness: 220, damping: 14 },
+    }
+  }
   return (
     <div className="absolute inset-0">
       <svg className="absolute inset-0 w-full h-full pointer-events-none">
@@ -438,6 +458,63 @@ function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, sta
 
 // ── Per-person sheet ────────────────────────────────────────────────────────────
 
+function SheetLine({ ln, currency, onRemove }) {
+  const [dragging, setDragging] = useState(false)
+  const x = useMotionValue(0)
+  const y = useMotionValue(0)
+
+  const handleDragEnd = (_e, info) => {
+    setDragging(false)
+    const dist = Math.hypot(info.offset.x, info.offset.y)
+    if (dist > 90) {
+      const angle = Math.atan2(info.offset.y, info.offset.x)
+      animate(x, Math.cos(angle) * 500, { duration: 0.28, ease: 'easeOut' })
+      animate(y, Math.sin(angle) * 500, { duration: 0.28, ease: 'easeOut', onComplete: () => onRemove(ln.txId) })
+    } else {
+      animate(x, 0, { type: 'spring', stiffness: 340, damping: 28 })
+      animate(y, 0, { type: 'spring', stiffness: 340, damping: 28 })
+    }
+  }
+
+  return (
+    <motion.div
+      drag
+      dragMomentum={false}
+      style={{ x, y, touchAction: 'none', position: 'relative' }}
+      onDragStart={() => setDragging(true)}
+      onDragEnd={handleDragEnd}
+      whileDrag={{ scale: 1.06, zIndex: 20 }}
+      className="flex items-center justify-between bg-spotify-gray rounded-xl px-3 py-2.5 cursor-grab"
+    >
+      <motion.div
+        className="absolute inset-0 rounded-xl pointer-events-none"
+        style={{ background: cardGradient(ln.txId) }}
+        animate={{ opacity: dragging ? 1 : 0 }}
+        transition={{ duration: 0.16 }}
+      />
+      <div className="relative z-10 min-w-0">
+        <motion.div
+          animate={{ color: dragging ? '#000' : '#fff' }}
+          transition={{ duration: 0.14 }}
+          className="text-sm truncate"
+        >
+          {ln.name}
+        </motion.div>
+        <motion.div
+          animate={{ color: dragging ? 'rgba(0,0,0,0.65)' : 'rgba(139,139,139,1)' }}
+          transition={{ duration: 0.14 }}
+          className="text-[11px] tabular-nums"
+        >
+          {ln.portion} · {formatMinor(ln.amount, currency)}
+        </motion.div>
+      </div>
+      <motion.div className="relative z-10 ml-2 shrink-0" animate={{ opacity: dragging ? 0 : 0.5 }}>
+        <Undo2 size={15} />
+      </motion.div>
+    </motion.div>
+  )
+}
+
 function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }) {
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
@@ -449,29 +526,18 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
           <div className="text-gold font-semibold tabular-nums mb-1">{formatMinor(total, currency)}</div>
           {lines.length > 0 && (
             <div className="text-[11px] text-spotify-text/70 mb-3 inline-flex items-center gap-1">
-              <Undo2 size={12} /> смахни позицию вбок — вернётся в колоду
+              <Undo2 size={12} /> потяни позицию и брось — вернётся в колоду
             </div>
           )}
           <div className="space-y-2">
             {lines.length === 0 && <div className="text-spotify-text text-sm py-4 text-center">Пока ничего не досталось</div>}
-            {lines.map((ln) => (
-              <motion.div
-                key={ln.txId}
-                drag="x"
-                dragSnapToOrigin
-                dragElastic={0.7}
-                onDragEnd={(_e, info) => { if (Math.abs(info.offset.x) > 110) onRemove(ln.txId) }}
-                whileDrag={{ scale: 1.02, cursor: 'grabbing' }}
-                className="flex items-center justify-between bg-spotify-gray rounded-lg px-3 py-2.5 cursor-grab touch-pan-y"
-                style={{ touchAction: 'pan-y' }}
-              >
-                <div className="min-w-0">
-                  <div className="text-white text-sm truncate">{ln.name}</div>
-                  <div className="text-[11px] text-spotify-text tabular-nums">{ln.portion} · {formatMinor(ln.amount, currency)}</div>
-                </div>
-                <Undo2 size={15} className="ml-2 shrink-0 text-spotify-text/50" />
-              </motion.div>
-            ))}
+            <AnimatePresence>
+              {lines.map((ln) => (
+                <motion.div key={ln.txId} exit={{ opacity: 0, scale: 0.8 }} transition={{ duration: 0.2 }}>
+                  <SheetLine ln={ln} currency={currency} onRemove={onRemove} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
           </div>
           <button onClick={onClose} className="mt-4 w-full bg-spotify-gray text-white rounded-lg py-2">Закрыть</button>
         </Dialog.Content>
@@ -503,12 +569,22 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [activeNode, setActiveNode] = useState(null)
   const [absorb, setAbsorb] = useState(null)
   const [splitPrompt, setSplitPrompt] = useState(false)
+  const [dragPoint, setDragPoint] = useState(null)
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
   const registerRef = useCallback((id, el) => {
     if (el) nodeRefs.current[id] = el
     else delete nodeRefs.current[id]
+  }, [])
+
+  const getNodeBoardPos = useCallback((id) => {
+    const el = nodeRefs.current[id]
+    const boardEl = boardRef.current
+    if (!el || !boardEl) return null
+    const nr = el.getBoundingClientRect()
+    const br = boardEl.getBoundingClientRect()
+    return { x: nr.left - br.left + nr.width / 2, y: nr.top - br.top + nr.height / 2 }
   }, [])
 
   // ── Размер игрового поля ──
@@ -648,6 +724,18 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     return { nodeW, nodeH, slots, actions, hub, capture: Math.max(56, nodeW * 0.95) }
   }, [participants, boardSize, boardH, canMerge])
 
+  const proximityScales = useMemo(() => {
+    if (!dragPoint) return {}
+    const result = {}
+    for (const [id, el] of Object.entries(nodeRefs.current)) {
+      const r = el?.getBoundingClientRect?.()
+      if (!r) continue
+      const d = Math.hypot(dragPoint.x - (r.left + r.width / 2), dragPoint.y - (r.top + r.height / 2))
+      result[id] = 1 + Math.max(0, 1 - d / 130) * 0.6
+    }
+    return result
+  }, [dragPoint])
+
   const SPECIAL_KIND = { __defer__: 'defer', __split__: 'split', __merge__: 'merge' }
 
   const nearestNode = useCallback((point) => {
@@ -723,13 +811,15 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   // FX-обёртки: показать анимацию деления/склейки, затем закоммитить.
   const startSplit = useCallback((n) => {
     if (!top || fx) return
-    setFx({ type: 'split', txId: top.txId, den: top.den, n })
-  }, [top, fx])
+    const nodeAnchor = getNodeBoardPos('__split__') || layout.hub
+    setFx({ type: 'split', txId: top.txId, den: top.den, n, nodeAnchor, hubAnchor: layout.hub })
+  }, [top, fx, getNodeBoardPos, layout.hub])
 
   const startMerge = useCallback(() => {
     if (!top || !canMerge || fx) return
-    setFx({ type: 'merge', txId: top.txId, den: top.den, count: Math.min(topLooseCount, 5) })
-  }, [top, canMerge, fx, topLooseCount])
+    const nodeAnchor = getNodeBoardPos('__merge__') || layout.hub
+    setFx({ type: 'merge', txId: top.txId, den: top.den, count: Math.min(topLooseCount, 5), nodeAnchor, hubAnchor: layout.hub })
+  }, [top, canMerge, fx, topLooseCount, getNodeBoardPos, layout.hub])
 
   const fxDone = useCallback(() => {
     setFx((cur) => {
@@ -853,6 +943,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           currency={currency}
           registerRef={registerRef}
           onTapNode={(id) => { if (!SPECIAL_KIND[id]) setOpenPerson(id) }}
+          proximityScales={proximityScales}
         />
 
         {/* колода у низа — слой пропускает клики мимо карты к нодам (прячем при FX) */}
@@ -877,15 +968,15 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 onSplit={() => setSplitPrompt(true)}
                 onMerge={startMerge}
                 onRename={(txId, name) => setRenaming({ txId, name })}
-                onDragStartCard={() => setActiveNode(null)}
-                onDragMoveCard={(point) => setActiveNode(nearestNode(point)?.id || null)}
-                onDragEndCard={() => setActiveNode(null)}
+                onDragStartCard={() => { setActiveNode(null); setDragPoint(null) }}
+                onDragMoveCard={(point) => { setActiveNode(nearestNode(point)?.id || null); setDragPoint(point) }}
+                onDragEndCard={() => { setActiveNode(null); setDragPoint(null) }}
               />
             ))}
           </div>
         )}
 
-        {fx && <FxLayer fx={fx} tx={txById[fx.txId]} currency={currency} anchor={layout.hub} onDone={fxDone} />}
+        {fx && <FxLayer fx={fx} tx={txById[fx.txId]} currency={currency} onDone={fxDone} />}
       </div>
 
       {/* Нижняя панель — только завершение (делить/вниз/собрать теперь ноды) */}
