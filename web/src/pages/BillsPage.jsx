@@ -8,7 +8,7 @@ import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
-import BillCreate, { PositionsStep } from './BillCreate'
+import BillCreate, { PositionsStep, PeopleManage } from './BillCreate'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -628,6 +628,7 @@ export default function BillsPage() {
   const [error, setError] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [editPositionsId, setEditPositionsId] = useState(null)
+  const [managePeopleId, setManagePeopleId] = useState(null)
 
   const reload = useCallback(async () => {
     try {
@@ -690,6 +691,18 @@ export default function BillsPage() {
     )
   }
 
+  if (openBill && isAuthor && managePeopleId === openBill.id) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <PeopleManage
+          bill={openBill}
+          onDone={async () => { await reload(); setManagePeopleId(null) }}
+          onBack={async () => { await reload(); setManagePeopleId(null) }}
+        />
+      </div>
+    )
+  }
+
   if (openBill && isAuthor && editPositionsId === openBill.id) {
     const counts = {}
     for (const t of openBill.transactions) {
@@ -704,6 +717,7 @@ export default function BillsPage() {
           onBack={async () => { await reload(); setEditPositionsId(null) }}
           onReady={async () => { await reload(); setEditPositionsId(null) }}
           onDeleted={() => { setEditPositionsId(null); setOpenBillId(null); reload() }}
+          onPeople={() => { setEditPositionsId(null); setManagePeopleId(openBill.id) }}
         />
       </div>
     )
@@ -718,6 +732,7 @@ export default function BillsPage() {
           onBack={() => { setOpenBillId(null); reload() }}
           onChange={reload}
           onEditPositions={() => setEditPositionsId(openBill.id)}
+          onManagePeople={() => setManagePeopleId(openBill.id)}
         />
       </div>
     )

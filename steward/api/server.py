@@ -2396,6 +2396,49 @@ async def handle_bills_set_creditor(request: web.Request):
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
 
 
+async def handle_bills_set_participants(request: web.Request):
+    """PUT /api/bills/{id}/participants — заменить состав, сохранив позиции.
+
+    Тело `{participants:[{person_id}|{name}|{username}]}`. Резолвит как create
+    (автор всегда в составе), чистит ссылки на удалённых: их creditor → UNKNOWN,
+    из debtors убираются. Транзакции/распределение в остальном не трогаются.
+    """
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+
+    caller, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+    data = await request.json()
+    ids = _resolve_bill_participants(repository, caller, data.get("participants"))
+    removed = set(bill.participants) - set(ids)
+    if removed:
+        for tx in bill.transactions:
+            if tx.creditor in removed:
+                tx.creditor = UNKNOWN_PERSON_ID
+            for asg in tx.assignments:
+                asg.debtors = [d for d in asg.debtors if d not in removed]
+            tx.incomplete = any(not a.debtors for a in tx.assignments)
+    bill.participants = ids
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
 async def handle_bills_close(request: web.Request):
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -2988,6 +3031,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/bills/{id}/collect", handle_bills_collect)
     app.router.add_post("/api/bills/{id}/parse", handle_bills_parse)
     app.router.add_put("/api/bills/{id}/creditor", handle_bills_set_creditor)
+    app.router.add_put("/api/bills/{id}/participants", handle_bills_set_participants)
     app.router.add_put("/api/bills/{id}/distribution", handle_bills_distribute)
     app.router.add_put("/api/bills/{id}/finalize", handle_bills_finalize)
     app.router.add_put("/api/bills/{id}/redistribute", handle_bills_redistribute)

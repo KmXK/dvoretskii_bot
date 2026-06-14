@@ -86,3 +86,13 @@ h1, h2, h3, h4 {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
+
+/* Лёгкое «дыхание» нод графа распределения — на CSS (компоновщик), а не на JS,
+   чтобы не лагало при множестве нод. */
+@keyframes bill-node-float {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(3px, -4px); }
+  50%  { transform: translate(0, -6px); }
+  75%  { transform: translate(-3px, -3px); }
+  100% { transform: translate(0, 0); }
+}

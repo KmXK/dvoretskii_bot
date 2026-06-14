@@ -351,7 +351,7 @@ function EditableCell({ value, onSave, className = '', type = 'text', placeholde
   )
 }
 
-export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
+export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, onPeople }) {
   const [chunks, setChunks] = useState(() => bill.collection_context || [])
   const [positions, setPositions] = useState(() => bill.transactions || [])
   const [participantIds, setParticipantIds] = useState(() => bill.participants || [])
@@ -563,6 +563,11 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }
       <div className="flex items-center gap-2 mb-1">
         <button onClick={onBack} className="text-spotify-text hover:text-white p-1 -ml-1"><ChevronLeft size={22} /></button>
         <h1 className="font-display text-2xl font-extrabold text-white truncate flex-1">{bill.name}</h1>
+        {onPeople && (
+          <button onClick={onPeople} className="text-spotify-text hover:text-white p-1 inline-flex items-center gap-1 text-sm" title="Изменить состав">
+            <Users size={17} /> Люди
+          </button>
+        )}
         <button onClick={() => setConfirmDelete(true)} className="text-spotify-text/70 hover:text-red-400 p-1" title="Удалить счёт">
           <Trash2 size={19} />
         </button>
@@ -708,23 +713,23 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }
                 </button>
               </div>
               <div className="flex items-center gap-2 mt-1.5">
-                <div className="inline-flex items-center text-spotify-text text-xs">
+                <div className="inline-flex items-baseline text-spotify-text">
                   <EditableCell
                     value={tx.quantity}
                     type="number"
                     onSave={(v) => patchTx(tx.id, { quantity: Math.max(1, parseInt(v, 10) || 1) })}
-                    className="w-10 text-center text-white tabular-nums"
+                    className="w-9 text-center text-white text-base font-semibold tabular-nums"
                   />
-                  <span className="opacity-60">×</span>
+                  <span className="opacity-50 text-xs">×</span>
                 </div>
-                <div className="inline-flex items-center text-spotify-text text-xs">
+                <div className="inline-flex items-baseline">
                   <EditableCell
                     value={(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}
                     type="number"
                     onSave={(v) => patchTx(tx.id, { unit_price_minor: Math.max(0, Math.round(parseFloat((v || '').replace(',', '.')) * 100) || 0) })}
-                    className="w-16 text-right text-white tabular-nums"
+                    className="w-16 text-right text-gold text-base font-bold tabular-nums"
                   />
-                  <span className="opacity-60 ml-1">{cur}</span>
+                  <span className="text-gold/70 text-xs ml-1">{cur}</span>
                 </div>
                 <PayerSelect
                   value={tx.creditor}
@@ -817,16 +822,126 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }
   )
 }
 
+// ── Управление составом существующего счёта (позиции сохраняются) ───────────────
+
+export function PeopleManage({ bill, onDone, onBack }) {
+  const [circle, setCircle] = useState([])
+  const [roster, setRoster] = useState([])
+  const [manualRaw, setManualRaw] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    api.get('/api/bills/persons').then((ps) => {
+      const byId = Object.fromEntries((ps || []).map((p) => [p.id, p]))
+      setRoster(bill.participants
+        .map((id) => byId[id])
+        .filter(Boolean)
+        .map((p) => ({ id: p.id, display_name: p.display_name, username: p.username || p.telegram_username || '' })))
+    }).catch(() => { /* noop */ })
+    api.get('/api/bills/circle').then((d) => setCircle(d.people || [])).catch(() => { /* noop */ })
+  }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const inRoster = (id) => roster.some((r) => r.id === id)
+  const addChip = (p) => { if (!inRoster(p.id)) setRoster((r) => [...r, { id: p.id, display_name: p.name, username: p.username || '' }]) }
+  const removeId = (id) => setRoster((r) => r.filter((p) => p.id !== id))
+
+  const addManual = async () => {
+    const raw = manualRaw.trim()
+    if (!raw) return
+    setManualRaw('')
+    try {
+      const entry = raw.startsWith('@') ? { username: raw } : { name: raw }
+      const data = await api.post('/api/bills/resolve-people', { participants: [entry] })
+      const np = (data.people || []).find((p) => p.id !== bill.author_person_id && !inRoster(p.id))
+      if (np) setRoster((r) => [...r, np])
+    } catch (e) { setError(e.message || 'Не удалось добавить') }
+  }
+
+  const save = async () => {
+    setBusy(true); setError(null)
+    try {
+      const updated = await api.put(`/api/bills/${bill.id}/participants`, { participants: roster.map((p) => ({ person_id: p.id })) })
+      onDone ? onDone(updated) : onBack()
+    } catch (e) { setError(e.message || 'Не удалось сохранить') } finally { setBusy(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="px-4 pt-6 pb-4">
+      <div className="flex items-center gap-2 mb-1">
+        <button onClick={onBack} className="text-spotify-text hover:text-white p-1 -ml-1"><ChevronLeft size={22} /></button>
+        <h1 className="font-display text-2xl font-extrabold text-white truncate flex-1">Кто участвует</h1>
+      </div>
+      <p className="text-spotify-text text-sm mb-5 pl-8">Позиции и распределение сохранятся</p>
+
+      <div className="space-y-2 mb-4">
+        {roster.map((p) => (
+          <motion.div key={p.id} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 bg-spotify-dark border border-white/10">
+            <div className="min-w-0 flex-1">
+              <div className="text-white text-sm truncate inline-flex items-center gap-1.5">
+                {p.display_name}
+                {p.id === bill.author_person_id && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gold/20 text-gold">ты</span>}
+              </div>
+              {p.username && <div className="text-[11px] text-spotify-text truncate">@{p.username}</div>}
+            </div>
+            {p.id !== bill.author_person_id && (
+              <button onClick={() => removeId(p.id)} className="shrink-0 text-spotify-text/70 hover:text-red-400 p-1"><X size={16} /></button>
+            )}
+          </motion.div>
+        ))}
+      </div>
+
+      {circle.filter((p) => !inRoster(p.id)).length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {circle.filter((p) => !inRoster(p.id)).slice(0, 24).map((p) => (
+            <motion.button key={p.id} whileTap={{ scale: 0.94 }} onClick={() => addChip(p)}
+              className="px-3 py-1.5 rounded-full text-sm border bg-white/5 border-white/10 text-spotify-text hover:bg-white/10 transition inline-flex items-center gap-1">
+              <Plus size={13} /> {p.name}
+            </motion.button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2 mb-5">
+        <input
+          placeholder="Имя или @username…"
+          value={manualRaw}
+          onChange={(e) => setManualRaw(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addManual()}
+          className="flex-1 rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/60 outline-none focus:bg-white/10 transition"
+        />
+        <button onClick={addManual} className="px-3 rounded-lg bg-white/5 text-spotify-text hover:bg-white/10 transition"><Plus size={18} /></button>
+      </div>
+
+      {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
+
+      <motion.button whileTap={{ scale: 0.98 }} onClick={save} disabled={busy}
+        className="w-full rounded-2xl py-4 font-bold text-base bg-gold text-black disabled:opacity-60 inline-flex items-center justify-center gap-2">
+        {busy ? <Loader2 size={18} className="animate-spin" /> : <><Check size={18} /> Готово</>}
+      </motion.button>
+    </motion.div>
+  )
+}
+
 // ── Wizard ────────────────────────────────────────────────────────────────────
 
 export default function BillCreate({ onCancel, onReady }) {
   const [bill, setBill] = useState(null)
   const [payer, setPayer] = useState(null)
+  const [manage, setManage] = useState(false)
   return (
     <div className="max-w-3xl mx-auto">
       <AnimatePresence mode="wait">
         {!bill ? (
           <PeopleStep key="people" onCancel={onCancel} onNext={(b, p) => { setBill(b); setPayer(p) }} />
+        ) : manage ? (
+          <PeopleManage
+            key="manage"
+            bill={bill}
+            onDone={(updated) => { setBill(updated); setManage(false) }}
+            onBack={() => setManage(false)}
+          />
         ) : (
           <PositionsStep
             key="positions"
@@ -835,6 +950,7 @@ export default function BillCreate({ onCancel, onReady }) {
             onBack={() => setBill(null)}
             onReady={onReady}
             onDeleted={onCancel}
+            onPeople={() => setManage(true)}
           />
         )}
       </AnimatePresence>

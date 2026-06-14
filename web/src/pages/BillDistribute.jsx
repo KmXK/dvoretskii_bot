@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Network, Trash2, ListChecks } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Network, Trash2, ListChecks, Users } from 'lucide-react'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -245,8 +245,8 @@ const PileCard = forwardRef(function PileCard(
 
   const handleDragEnd = (_e, info) => {
     dragging.current = false
-    onDragEndCard?.()
     const drop = resolveDrop(info.point)
+    onDragEndCard?.(drop)
     if (drop) {
       flyToRect(drop.rect, () => (drop.kind === 'defer' ? onDefer() : onAssign(drop.personId)))
       return
@@ -359,7 +359,7 @@ function FxLayer({ fx, tx, currency, onDone }) {
 const NODE_W = 76
 const NODE_H = 48
 
-function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency, registerRef, onTapNode }) {
+function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency, registerRef, onTapNode, onSwap }) {
   const { cx, cy, nodes, defer, w, h } = layout
   // Цель пульса/линии — активная нода или та, что сейчас «поглощает» карту.
   const hotId = activeId || absorbId
@@ -382,44 +382,57 @@ function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency,
       {nodes.map((nd, i) => {
         const active = activeId === nd.id
         const absorbing = absorbId === nd.id
+        const hot = active || absorbing
         const st = stats[nd.id] || { total: 0, count: 0 }
         const tint = personTint(nd.id)
         return (
+          // Внешняя обёртка — стабильная позиция (ref для хит-теста), плавно
+          // переезжает при перестановке. Внутри — CSS-«дыхание», затем кнопка.
           <div
             key={nd.id}
             ref={(el) => registerRef(nd.id, el)}
-            style={{ position: 'absolute', left: nd.x, top: nd.y, width: NODE_W, height: NODE_H, marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2 }}
+            style={{
+              position: 'absolute', left: nd.x, top: nd.y, width: NODE_W, height: NODE_H,
+              marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2,
+              transition: 'left .35s ease, top .35s ease',
+            }}
           >
-            <motion.button
-              type="button"
-              disabled={!interactive}
-              onClick={() => interactive && onTapNode(nd.id)}
-              animate={{
-                y: [0, i % 2 ? -4 : 4, 0],
-                x: [0, i % 3 ? 3 : -3, 0],
-                scale: absorbing ? [1, 1.7, 1] : active ? 1.55 : 1,
-              }}
-              transition={{
-                y: { repeat: Infinity, duration: 3 + (i % 3), ease: 'easeInOut' },
-                x: { repeat: Infinity, duration: 4 + (i % 2), ease: 'easeInOut' },
-                scale: absorbing
-                  ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
-                  : { type: 'spring', stiffness: 300, damping: 18 },
-              }}
+            <div
               style={{
-                width: NODE_W, height: NODE_H,
-                pointerEvents: interactive ? 'auto' : 'none',
-                background: active || absorbing ? undefined : tint.bg,
-                borderColor: active || absorbing ? undefined : tint.border,
-                color: active || absorbing ? undefined : tint.fg,
+                width: NODE_W, height: NODE_H, willChange: 'transform',
+                animation: `bill-node-float ${5 + (i % 4)}s ease-in-out ${(i % 5) * 0.4}s infinite`,
               }}
-              className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
-                active || absorbing ? 'bg-gold text-black border-gold z-10' : ''
-              }`}
             >
-              <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(nd.person.display_name)}</span>
-              {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
-            </motion.button>
+              <motion.button
+                type="button"
+                drag={interactive}
+                dragSnapToOrigin
+                dragElastic={0.5}
+                onClick={() => interactive && onTapNode(nd.id)}
+                onDragEnd={(_e, info) => onSwap?.(nd.id, info.point)}
+                whileDrag={{ scale: 1.12, zIndex: 30 }}
+                animate={{ scale: absorbing ? [1, 1.7, 1] : active ? 1.55 : 1 }}
+                transition={{
+                  scale: absorbing
+                    ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+                    : { type: 'spring', stiffness: 300, damping: 18 },
+                }}
+                style={{
+                  width: NODE_W, height: NODE_H,
+                  pointerEvents: interactive ? 'auto' : 'none',
+                  background: hot ? undefined : tint.bg,
+                  borderColor: hot ? undefined : tint.border,
+                  color: hot ? undefined : tint.fg,
+                  touchAction: 'none',
+                }}
+                className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
+                  hot ? 'bg-gold text-black border-gold z-10' : ''
+                } ${interactive ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              >
+                <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(nd.person.display_name)}</span>
+                {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
+              </motion.button>
+            </div>
           </div>
         )
       })}
@@ -457,19 +470,31 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
         <Dialog.Content className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 w-full max-w-md
           bg-spotify-black rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto">
           <Dialog.Title className="text-white text-lg font-bold mb-1">{person?.display_name}</Dialog.Title>
-          <div className="text-gold font-semibold tabular-nums mb-3">{formatMinor(total, currency)}</div>
+          <div className="text-gold font-semibold tabular-nums mb-1">{formatMinor(total, currency)}</div>
+          {lines.length > 0 && (
+            <div className="text-[11px] text-spotify-text/70 mb-3 inline-flex items-center gap-1">
+              <Undo2 size={12} /> смахни позицию вбок — вернётся в колоду
+            </div>
+          )}
           <div className="space-y-2">
             {lines.length === 0 && <div className="text-spotify-text text-sm py-4 text-center">Пока ничего не досталось</div>}
             {lines.map((ln) => (
-              <div key={ln.txId} className="flex items-center justify-between bg-spotify-gray rounded-lg px-3 py-2">
+              <motion.div
+                key={ln.txId}
+                drag="x"
+                dragSnapToOrigin
+                dragElastic={0.7}
+                onDragEnd={(_e, info) => { if (Math.abs(info.offset.x) > 110) onRemove(ln.txId) }}
+                whileDrag={{ scale: 1.02, cursor: 'grabbing' }}
+                className="flex items-center justify-between bg-spotify-gray rounded-lg px-3 py-2.5 cursor-grab touch-pan-y"
+                style={{ touchAction: 'pan-y' }}
+              >
                 <div className="min-w-0">
                   <div className="text-white text-sm truncate">{ln.name}</div>
                   <div className="text-[11px] text-spotify-text tabular-nums">{ln.portion} · {formatMinor(ln.amount, currency)}</div>
                 </div>
-                <button onClick={() => onRemove(ln.txId)} className="ml-2 shrink-0 inline-flex items-center gap-1 text-xs text-red-400">
-                  <Undo2 size={14} /> вернуть
-                </button>
-              </div>
+                <Undo2 size={15} className="ml-2 shrink-0 text-spotify-text/50" />
+              </motion.div>
             ))}
           </div>
           <button onClick={onClose} className="mt-4 w-full bg-spotify-gray text-white rounded-lg py-2">Закрыть</button>
@@ -483,7 +508,7 @@ const SPLIT_OPTIONS = [2, 3, 4]
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
-export default function BillDistribute({ bill, persons, onBack, onChange, onEditPositions }) {
+export default function BillDistribute({ bill, persons, onBack, onChange, onEditPositions, onManagePeople }) {
   const personsById = useMemo(() => Object.fromEntries(persons.map((p) => [p.id, p])), [persons])
   const participants = useMemo(
     () => bill.participants.map((id) => personsById[id]).filter(Boolean),
@@ -504,6 +529,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [showGraph, setShowGraph] = useState(false)
   const [activeNode, setActiveNode] = useState(null)
   const [absorb, setAbsorb] = useState(null)
+  const [committing, setCommitting] = useState(false)
+  const [order, setOrder] = useState(() => bill.participants.slice())
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
@@ -525,7 +552,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const measure = () => {
       setBoardSize(Math.round(el.clientWidth))
       const top = el.getBoundingClientRect().top
-      setBoardH(Math.max(360, Math.round(window.innerHeight - top - 150)))
+      setBoardH(Math.max(360, Math.round(window.innerHeight - top - 210)))
     }
     window.scrollTo(0, 0)
     measure()
@@ -599,29 +626,64 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   const personCount = useCallback((pid) => personStats[pid]?.count || 0, [personStats])
 
+  // Состав мог измениться (добавили/удалили людей) — переносим в order, сохраняя
+  // ручной порядок.
+  useEffect(() => {
+    setOrder((prev) => {
+      const set = new Set(bill.participants)
+      const kept = prev.filter((id) => set.has(id))
+      const added = bill.participants.filter((id) => !prev.includes(id))
+      const next = [...kept, ...added]
+      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next
+    })
+  }, [bill.participants])
+
   // ── Раскладка графа ──
-  // Экран вытянут по вертикали → люди веером ВВЕРХ от центра (минимум боковых
-  // направлений), нода «вниз» — внизу по центру. Узкий по горизонтали, высокий
-  // по вертикали эллипс.
+  // Экран вытянут по вертикали → люди веером ВВЕРХ от центра (минимум боковых),
+  // нода «вниз» — внизу по центру (над панелью). Затем релаксация расталкивает
+  // ноды, чтобы не накладывались, и держит их подальше от карты в центре.
   const layout = useMemo(() => {
     const w = boardSize
     const h = boardH
     const cx = w / 2
     const cy = h / 2
-    const Rx = w * 0.30
-    const Ry = h * 0.44
-    const N = participants.length
-    // Веер вокруг направления «вверх» (270°); ширина растёт с числом людей, но
-    // ограничена, чтобы не уходить в чистые бока.
-    const span = Math.min(170, 46 * Math.max(1, N))
-    const nodes = participants.map((p, i) => {
+    const Rx = w * 0.33
+    const Ry = h * 0.40
+    const ids = order.filter((id) => personsById[id])
+    const N = ids.length
+    const span = Math.min(180, 52 * Math.max(1, N))
+    const pts = ids.map((id, i) => {
       const frac = N === 1 ? 0.5 : (i + 1) / (N + 1)
       const deg = 270 + span * (frac - 0.5)
       const rad = (deg * Math.PI) / 180
-      return { id: p.id, person: p, x: cx + Rx * Math.cos(rad), y: cy + Ry * Math.sin(rad) }
+      return { id, person: personsById[id], x: cx + Rx * Math.cos(rad), y: cy + Ry * Math.sin(rad) }
     })
-    return { w, h, cx, cy, nodes, defer: { id: '__defer__', x: cx, y: cy + Ry } }
-  }, [participants, boardSize, boardH])
+    const minDx = NODE_W + 16
+    const minDy = NODE_H + 16
+    const exX = CARD_W / 2 + NODE_W / 2 - 8
+    const exY = 96
+    for (let it = 0; it < 36; it++) {
+      for (let a = 0; a < pts.length; a++) {
+        for (let b = a + 1; b < pts.length; b++) {
+          const dx = pts[b].x - pts[a].x
+          const dy = pts[b].y - pts[a].y
+          const ox = minDx - Math.abs(dx)
+          const oy = minDy - Math.abs(dy)
+          if (ox > 0 && oy > 0) {
+            if (ox <= oy) { const s = ((dx < 0 ? -1 : 1) * ox) / 2; pts[a].x -= s; pts[b].x += s }
+            else { const s = ((dy < 0 ? -1 : 1) * oy) / 2; pts[a].y -= s; pts[b].y += s }
+          }
+        }
+      }
+      for (const p of pts) {
+        // не наезжать на карту в центре — выталкиваем вверх
+        if (Math.abs(p.x - cx) < exX && Math.abs(p.y - cy) < exY) p.y = cy - exY
+        p.x = Math.max(NODE_W / 2 + 6, Math.min(w - NODE_W / 2 - 6, p.x))
+        p.y = Math.max(NODE_H / 2 + 6, Math.min(h * 0.76, p.y))
+      }
+    }
+    return { w, h, cx, cy, nodes: pts, defer: { id: '__defer__', x: cx, y: cy + Ry } }
+  }, [order, personsById, boardSize, boardH])
 
   const nearestNode = useCallback((point) => {
     let best = null
@@ -641,23 +703,43 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   // ── Card ops ──
   const pulseAbsorb = useCallback((id) => {
+    setCommitting(false)
+    setActiveNode(null)
     setAbsorb(id)
     setTimeout(() => setAbsorb((cur) => (cur === id ? null : cur)), 480)
   }, [])
 
   const assignTop = useCallback((personId) => {
-    setActiveNode(null)
     if (!top) return
     pulseAbsorb(personId)
     mutate((prev) => prev.map((c) => (c.id === top.id ? { ...c, owner: personId } : c)))
   }, [top, mutate, pulseAbsorb])
 
   const deferTop = useCallback(() => {
-    setActiveNode(null)
     if (!top) return
     pulseAbsorb('__defer__')
     mutate((prev) => { const card = prev.find((c) => c.id === top.id); return [...prev.filter((c) => c.id !== top.id), card] })
   }, [top, mutate, pulseAbsorb])
+
+  // Перестановка нод в режиме графа: меняем местами в order с ближайшей.
+  const onSwapNode = useCallback((draggedId, point) => {
+    let best = null
+    let bestD = 130
+    for (const id of order) {
+      if (id === draggedId) continue
+      const r = nodeRefs.current[id]?.getBoundingClientRect?.()
+      if (!r) continue
+      const d = Math.hypot(point.x - (r.left + r.width / 2), point.y - (r.top + r.height / 2))
+      if (d < bestD) { bestD = d; best = id }
+    }
+    if (!best) return
+    setOrder((prev) => {
+      const a = prev.indexOf(draggedId)
+      const b = prev.indexOf(best)
+      if (a < 0 || b < 0) return prev
+      const n = [...prev]; [n[a], n[b]] = [n[b], n[a]]; return n
+    })
+  }, [order])
 
   const splitTop = useCallback((n) => {
     if (!top) return
@@ -783,7 +865,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     )
   }
 
-  const graphVisible = dragging || touching || showGraph || !!absorb
+  const graphVisible = dragging || touching || showGraph || !!absorb || committing
 
   // ── Board ──
   return (
@@ -793,12 +875,16 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           <ChevronLeft size={16} /> Назад
         </button>
         <div className="flex items-center gap-3">
+          {onManagePeople && (
+            <button onClick={onManagePeople} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Изменить состав">
+              <Users size={15} /> Люди
+            </button>
+          )}
           {onEditPositions && (
             <button onClick={onEditPositions} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Назад к позициям">
               <ListChecks size={15} /> Позиции
             </button>
           )}
-          <span className="text-[11px] text-spotify-text">{saving ? 'сохраняю…' : 'сохранено'}</span>
           <button onClick={() => setConfirmDelete(true)} className="text-spotify-text/70 hover:text-red-400" title="Удалить счёт"><Trash2 size={17} /></button>
         </div>
       </div>
@@ -835,6 +921,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 currency={currency}
                 registerRef={registerRef}
                 onTapNode={(id) => { if (id !== '__defer__') setOpenPerson(id) }}
+                onSwap={onSwapNode}
               />
             </motion.div>
           )}
@@ -863,7 +950,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 onTapEndCard={() => setTouching(false)}
                 onDragStartCard={() => { setDragging(true); setActiveNode(null) }}
                 onDragMoveCard={(point) => setActiveNode(nearestNode(point)?.id || null)}
-                onDragEndCard={() => { setDragging(false); setTouching(false); setActiveNode(null) }}
+                onDragEndCard={(drop) => {
+                  setDragging(false); setTouching(false)
+                  if (drop) { setActiveNode(drop.id); setCommitting(true) } // граф остаётся до поглощения
+                  else setActiveNode(null)
+                }}
               />
             ))}
           </div>
