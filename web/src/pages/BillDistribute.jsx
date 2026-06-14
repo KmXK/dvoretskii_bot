@@ -177,7 +177,7 @@ function CardFace({ tx, den, currency, footer, onRename }) {
 
 const PileCard = forwardRef(function PileCard(
   { card, depth, isTop, draggable, dimmed, tx, currency, remaining, resolveDrop,
-    onAssign, onDefer, onRename, onDragStartCard, onDragMoveCard, onDragEndCard,
+    onAssign, onDefer, onSplit, onMerge, onRename, onDragStartCard, onDragMoveCard, onDragEndCard,
     onTouchStartCard, onTapEndCard }, ref,
 ) {
   const nodeRef = useRef(null)
@@ -247,11 +247,14 @@ const PileCard = forwardRef(function PileCard(
     dragging.current = false
     const drop = resolveDrop(info.point)
     onDragEndCard?.(drop)
-    if (drop) {
+    if (drop && (drop.kind === 'person' || drop.kind === 'defer')) {
       flyToRect(drop.rect, () => (drop.kind === 'defer' ? onDefer() : onAssign(drop.personId)))
       return
     }
+    // делить/собрать: карта возвращается в колоду, действие запускает анимацию
     springHome()
+    if (drop?.kind === 'split') onSplit?.()
+    else if (drop?.kind === 'merge') onMerge?.()
   }
 
   const wrap = {
@@ -285,8 +288,9 @@ const PileCard = forwardRef(function PileCard(
 // ── FX-слой: митоз и склейка ────────────────────────────────────────────────────
 
 function FxLayer({ fx, tx, currency, onDone }) {
+  const n = fx.type === 'split' ? fx.n : fx.count
   useEffect(() => {
-    const t = setTimeout(onDone, fx.type === 'split' ? 680 : 600)
+    const t = setTimeout(onDone, fx.type === 'split' ? 560 + n * 110 : 520 + n * 110)
     return () => clearTimeout(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -296,8 +300,8 @@ function FxLayer({ fx, tx, currency, onDone }) {
   }
 
   if (fx.type === 'split') {
-    const n = fx.n
     const childDen = fx.den * n
+    // карта делится и по одной (последовательно) карты «возвращаются» в колоду
     return (
       <div className="absolute inset-0 z-[55] pointer-events-none">
         {Array.from({ length: n }).map((_, i) => {
@@ -305,15 +309,15 @@ function FxLayer({ fx, tx, currency, onDone }) {
           return (
             <motion.div
               key={i}
-              initial={{ x: 0, y: 0, scale: 1, rotate: 0, opacity: i === 0 ? 1 : 0 }}
+              initial={{ x: 0, y: -10, scale: 1.1, rotate: 0, opacity: i === 0 ? 1 : 0 }}
               animate={{
-                x: [0, spread * 64, spread * 14],
-                y: [0, -12, 0],
-                scale: [1, 1.12, 1],
-                rotate: [0, spread * 9, spread * 2.5],
-                opacity: 1,
+                x: [spread * 70, spread * 70, 0],
+                y: [-10, -10, 0],
+                scale: [1.1, 1.1, 1],
+                rotate: [spread * 10, spread * 10, 0],
+                opacity: [1, 1, 1],
               }}
-              transition={{ duration: 0.62, times: [0, 0.5, 1], ease: 'easeOut' }}
+              transition={{ duration: 0.5, delay: i * 0.11, times: [0, 0.35, 1], ease: 'easeInOut' }}
               style={{ ...base, zIndex: 60 - i }}
               className="rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
             >
@@ -325,24 +329,23 @@ function FxLayer({ fx, tx, currency, onDone }) {
     )
   }
 
-  // merge: куски сходятся к центру и сливаются
-  const count = fx.count
+  // merge: куски по одному слетаются к центру и сливаются в одну карту
   return (
     <div className="absolute inset-0 z-[55] pointer-events-none">
-      {Array.from({ length: count }).map((_, i) => {
-        const spread = i - (count - 1) / 2
-        const last = i === count - 1
+      {Array.from({ length: n }).map((_, i) => {
+        const spread = i - (n - 1) / 2
+        const last = i === n - 1
         return (
           <motion.div
             key={i}
-            initial={{ x: spread * 56, y: spread % 2 ? -8 : 8, scale: 0.96, rotate: spread * 6, opacity: 1 }}
+            initial={{ x: spread * 70, y: spread % 2 ? -14 : 14, scale: 0.96, rotate: spread * 7, opacity: 1 }}
             animate={{
               x: 0, y: 0,
-              scale: last ? [0.96, 1.1, 1] : 0.7,
+              scale: last ? [0.96, 1.12, 1] : 0.6,
               rotate: 0,
               opacity: last ? 1 : 0,
             }}
-            transition={{ duration: 0.55, ease: 'easeInOut' }}
+            transition={{ duration: 0.45, delay: last ? n * 0.1 : i * 0.1, ease: 'easeInOut' }}
             style={{ ...base, zIndex: last ? 62 : 56 + i }}
             className="rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
           >
@@ -356,22 +359,144 @@ function FxLayer({ fx, tx, currency, onDone }) {
 
 // ── Радиальный граф людей ────────────────────────────────────────────────────────
 
-const NODE_W = 76
-const NODE_H = 48
+const NODE_W = 78
+const NODE_H = 50
+const SPECIAL_ICON = { split: Scissors, defer: RotateCcw, merge: Merge }
 
-function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency, registerRef, onTapNode, onSwap }) {
-  const { cx, cy, nodes, defer, w, h } = layout
-  // Цель пульса/линии — активная нода или та, что сейчас «поглощает» карту.
+// ── Force-directed граф людей (как graph view в Obsidian) ──────────────────────
+// Ноды отталкиваются друг от друга, пружиной тянутся к центру (граф стремится
+// сжаться), можно растащить — само соберётся. Линии живые: следуют за нодами.
+// Позиции считаются в RAF и пишутся прямо в DOM (transform), без ре-рендера.
+
+function RadialGraph({
+  people, specials, center, bounds, activeId, absorbId, interactive, paused,
+  stats, currency, registerRef, onTapNode,
+}) {
+  const wrapRef = useRef(null)
+  const sim = useRef(new Map())       // id -> {x,y,vx,vy}
+  const nodeEl = useRef({})           // id -> outer div (двигаем transform)
+  const lineEl = useRef({})           // id -> <line>
+  const drag = useRef(null)           // {id, moved}
+  const rafRef = useRef(0)
+  const pausedRef = useRef(paused)
+  useEffect(() => { pausedRef.current = paused }, [paused])
+
+  // Сидируем позиции для новых людей (по вееру), убираем ушедших.
+  useEffect(() => {
+    const S = sim.current
+    const ids = people.map((p) => p.id)
+    const n = ids.length
+    const r = Math.min(bounds.w, bounds.h) * 0.28
+    ids.forEach((id, i) => {
+      if (!S.has(id)) {
+        const frac = n === 1 ? 0.5 : (i + 1) / (n + 1)
+        const deg = 270 + Math.min(170, 52 * n) * (frac - 0.5)
+        const rad = (deg * Math.PI) / 180
+        S.set(id, { x: center.x + r * Math.cos(rad), y: center.y + r * Math.sin(rad), vx: 0, vy: 0 })
+      }
+    })
+    for (const id of [...S.keys()]) if (!ids.includes(id)) S.delete(id)
+  }, [people, center.x, center.y, bounds.w, bounds.h])
+
+  // Физический цикл.
+  useEffect(() => {
+    const REST = Math.min(bounds.w, bounds.h) * 0.30
+    const REP = 3200
+    const DAMP = 0.82
+    const GRAV = 0.018
+    const exX = CARD_W / 2 + NODE_W / 2 - 6
+    const exY = 104
+    const step = () => {
+      const S = sim.current
+      const ids = [...S.keys()]
+      if (!pausedRef.current) {
+        for (const id of ids) { const a = S.get(id); a.ax = 0; a.ay = 0 }
+        // пружина к кольцу вокруг центра
+        for (const id of ids) {
+          const a = S.get(id)
+          const dx = a.x - center.x, dy = a.y - center.y
+          const d = Math.hypot(dx, dy) || 0.001
+          const f = (d - REST) * GRAV
+          a.ax -= (dx / d) * f; a.ay -= (dy / d) * f
+        }
+        // взаимное отталкивание
+        for (let i = 0; i < ids.length; i++) {
+          for (let j = i + 1; j < ids.length; j++) {
+            const a = S.get(ids[i]), b = S.get(ids[j])
+            let dx = b.x - a.x, dy = b.y - a.y
+            let d2 = dx * dx + dy * dy; if (d2 < 1) { d2 = 1; dx = 1 }
+            const d = Math.sqrt(d2); const rep = REP / d2
+            const ux = dx / d, uy = dy / d
+            a.ax -= ux * rep; a.ay -= uy * rep; b.ax += ux * rep; b.ay += uy * rep
+          }
+        }
+        // выталкивание из зоны карты в центре
+        for (const id of ids) {
+          const a = S.get(id)
+          if (Math.abs(a.x - center.x) < exX && Math.abs(a.y - center.y) < exY) {
+            const dx = a.x - center.x, dy = a.y - center.y, d = Math.hypot(dx, dy) || 0.001
+            a.ax += (dx / d) * 1.4; a.ay += (dy / d) * 1.4
+          }
+        }
+        // интегрируем
+        for (const id of ids) {
+          const a = S.get(id)
+          if (drag.current?.id === id) { a.vx = 0; a.vy = 0 } else {
+            a.vx = (a.vx + a.ax) * DAMP; a.vy = (a.vy + a.ay) * DAMP
+            a.x += a.vx; a.y += a.vy
+          }
+          a.x = Math.max(NODE_W / 2, Math.min(bounds.w - NODE_W / 2, a.x))
+          a.y = Math.max(NODE_H / 2, Math.min(bounds.h * 0.82, a.y))
+        }
+      }
+      // пишем в DOM
+      for (const id of ids) {
+        const a = S.get(id)
+        const el = nodeEl.current[id]
+        if (el) el.style.transform = `translate3d(${a.x - NODE_W / 2}px, ${a.y - NODE_H / 2}px, 0)`
+        const ln = lineEl.current[id]
+        if (ln) { ln.setAttribute('x2', a.x); ln.setAttribute('y2', a.y) }
+      }
+      rafRef.current = requestAnimationFrame(step)
+    }
+    rafRef.current = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [center.x, center.y, bounds.w, bounds.h])
+
+  // Перетаскивание ноды пальцем (физика растаскивается и собирается обратно).
+  const onNodePointerDown = (id) => (e) => {
+    if (!interactive) return
+    e.preventDefault()
+    drag.current = { id, moved: false }
+    const rect = wrapRef.current?.getBoundingClientRect()
+    const move = (ev) => {
+      if (!drag.current || !rect) return
+      drag.current.moved = true
+      const a = sim.current.get(id); if (!a) return
+      a.x = ev.clientX - rect.left; a.y = ev.clientY - rect.top
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      const wasTap = drag.current && !drag.current.moved
+      drag.current = null
+      if (wasTap) onTapNode(id)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
   const hotId = activeId || absorbId
   return (
-    <div className="absolute inset-0">
-      <svg width={w} height={h} className="absolute inset-0 pointer-events-none">
-        {[...nodes, defer].map((nd) => {
-          const hot = hotId === nd.id
+    <div ref={wrapRef} className="absolute inset-0">
+      <svg width={bounds.w} height={bounds.h} className="absolute inset-0 pointer-events-none">
+        {people.map((p) => {
+          const hot = hotId === p.id
           return (
             <line
-              key={nd.id}
-              x1={cx} y1={cy} x2={nd.x} y2={nd.y}
+              key={p.id}
+              ref={(el) => { if (el) lineEl.current[p.id] = el; else delete lineEl.current[p.id] }}
+              x1={center.x} y1={center.y} x2={center.x} y2={center.y}
               stroke={hot ? 'rgba(214,178,112,0.95)' : 'rgba(255,255,255,0.14)'}
               strokeWidth={hot ? 2.5 : 1}
             />
@@ -379,83 +504,71 @@ function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency,
         })}
       </svg>
 
-      {nodes.map((nd, i) => {
-        const active = activeId === nd.id
-        const absorbing = absorbId === nd.id
+      {people.map((p) => {
+        const active = activeId === p.id
+        const absorbing = absorbId === p.id
         const hot = active || absorbing
-        const st = stats[nd.id] || { total: 0, count: 0 }
-        const tint = personTint(nd.id)
+        const st = stats[p.id] || { total: 0, count: 0 }
+        const tint = personTint(p.id)
         return (
-          // Внешняя обёртка — стабильная позиция (ref для хит-теста), плавно
-          // переезжает при перестановке. Внутри — CSS-«дыхание», затем кнопка.
           <div
-            key={nd.id}
-            ref={(el) => registerRef(nd.id, el)}
-            style={{
-              position: 'absolute', left: nd.x, top: nd.y, width: NODE_W, height: NODE_H,
-              marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2,
-              transition: 'left .35s ease, top .35s ease',
-            }}
+            key={p.id}
+            ref={(el) => { registerRef(p.id, el); if (el) nodeEl.current[p.id] = el; else delete nodeEl.current[p.id] }}
+            style={{ position: 'absolute', left: 0, top: 0, width: NODE_W, height: NODE_H, willChange: 'transform' }}
           >
-            <div
-              style={{
-                width: NODE_W, height: NODE_H, willChange: 'transform',
-                animation: `bill-node-float ${5 + (i % 4)}s ease-in-out ${(i % 5) * 0.4}s infinite`,
+            <motion.button
+              type="button"
+              onPointerDown={onNodePointerDown(p.id)}
+              animate={{ scale: absorbing ? [1, 1.7, 1] : active ? 1.5 : 1 }}
+              transition={{
+                scale: absorbing
+                  ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+                  : { type: 'spring', stiffness: 300, damping: 18 },
               }}
+              style={{
+                width: NODE_W, height: NODE_H, touchAction: 'none',
+                pointerEvents: interactive ? 'auto' : 'none',
+                background: hot ? undefined : tint.bg,
+                borderColor: hot ? undefined : tint.border,
+                color: hot ? undefined : tint.fg,
+              }}
+              className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
+                hot ? 'bg-gold text-black border-gold z-10' : ''
+              } ${interactive ? 'cursor-grab active:cursor-grabbing' : ''}`}
             >
-              <motion.button
-                type="button"
-                drag={interactive}
-                dragSnapToOrigin
-                dragElastic={0.5}
-                onClick={() => interactive && onTapNode(nd.id)}
-                onDragEnd={(_e, info) => onSwap?.(nd.id, info.point)}
-                whileDrag={{ scale: 1.12, zIndex: 30 }}
-                animate={{ scale: absorbing ? [1, 1.7, 1] : active ? 1.55 : 1 }}
-                transition={{
-                  scale: absorbing
-                    ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
-                    : { type: 'spring', stiffness: 300, damping: 18 },
-                }}
-                style={{
-                  width: NODE_W, height: NODE_H,
-                  pointerEvents: interactive ? 'auto' : 'none',
-                  background: hot ? undefined : tint.bg,
-                  borderColor: hot ? undefined : tint.border,
-                  color: hot ? undefined : tint.fg,
-                  touchAction: 'none',
-                }}
-                className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
-                  hot ? 'bg-gold text-black border-gold z-10' : ''
-                } ${interactive ? 'cursor-grab active:cursor-grabbing' : ''}`}
-              >
-                <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(nd.person.display_name)}</span>
-                {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
-              </motion.button>
-            </div>
+              <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(p.person.display_name)}</span>
+              {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
+            </motion.button>
           </div>
         )
       })}
 
-      {/* нижняя нода — сброс вниз колоды */}
-      <div
-        ref={(el) => registerRef(defer.id, el)}
-        style={{ position: 'absolute', left: defer.x, top: defer.y, width: NODE_W, height: NODE_H, marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2 }}
-      >
-        <motion.div
-          animate={{ scale: absorbId === defer.id ? [1, 1.7, 1] : activeId === defer.id ? 1.55 : 1 }}
-          transition={absorbId === defer.id
-            ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
-            : { type: 'spring', stiffness: 300, damping: 18 }}
-          style={{ width: NODE_W, height: NODE_H }}
-          className={`rounded-2xl border flex flex-col items-center justify-center shadow-lg shadow-black/40 ${
-            activeId === defer.id || absorbId === defer.id ? 'bg-indigo text-white border-indigo' : 'bg-spotify-dark/90 text-spotify-text border-white/15 border-dashed'
-          }`}
-        >
-          <RotateCcw size={15} />
-          <span className="text-[10px] mt-0.5">вниз</span>
-        </motion.div>
-      </div>
+      {/* фиксированные ноды-действия снизу: делить · вниз · собрать */}
+      {specials.map((s) => {
+        const Icon = SPECIAL_ICON[s.icon] || RotateCcw
+        const hot = activeId === s.id || absorbId === s.id
+        return (
+          <div
+            key={s.id}
+            ref={(el) => registerRef(s.id, el)}
+            style={{ position: 'absolute', left: s.x, top: s.y, width: NODE_W, height: NODE_H, marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2 }}
+          >
+            <motion.div
+              animate={{ scale: absorbId === s.id ? [1, 1.7, 1] : activeId === s.id ? 1.5 : 1 }}
+              transition={absorbId === s.id
+                ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+                : { type: 'spring', stiffness: 300, damping: 18 }}
+              style={{ width: NODE_W, height: NODE_H }}
+              className={`rounded-2xl border flex flex-col items-center justify-center shadow-lg shadow-black/40 ${
+                hot ? 'bg-indigo text-white border-indigo' : 'bg-spotify-dark/90 text-spotify-text border-white/15 border-dashed'
+              }`}
+            >
+              <Icon size={15} />
+              <span className="text-[10px] mt-0.5">{s.label}</span>
+            </motion.div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -530,7 +643,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [activeNode, setActiveNode] = useState(null)
   const [absorb, setAbsorb] = useState(null)
   const [committing, setCommitting] = useState(false)
-  const [order, setOrder] = useState(() => bill.participants.slice())
+  const [splitPrompt, setSplitPrompt] = useState(false)
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
@@ -626,64 +739,22 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   const personCount = useCallback((pid) => personStats[pid]?.count || 0, [personStats])
 
-  // Состав мог измениться (добавили/удалили людей) — переносим в order, сохраняя
-  // ручной порядок.
-  useEffect(() => {
-    setOrder((prev) => {
-      const set = new Set(bill.participants)
-      const kept = prev.filter((id) => set.has(id))
-      const added = bill.participants.filter((id) => !prev.includes(id))
-      const next = [...kept, ...added]
-      return next.length === prev.length && next.every((v, i) => v === prev[i]) ? prev : next
-    })
-  }, [bill.participants])
+  // ── Граф: центр, границы, люди, фикс-ноды действий ──
+  const center = useMemo(() => ({ x: boardSize / 2, y: boardH / 2 }), [boardSize, boardH])
+  const bounds = useMemo(() => ({ w: boardSize, h: boardH }), [boardSize, boardH])
+  const people = useMemo(() => participants.map((p) => ({ id: p.id, person: p })), [participants])
+  const specials = useMemo(() => {
+    const yRow = boardH / 2 + boardH * 0.40
+    const list = [
+      { id: '__split__', icon: 'split', label: 'делить' },
+      { id: '__defer__', icon: 'defer', label: 'вниз' },
+    ]
+    if (canMerge) list.push({ id: '__merge__', icon: 'merge', label: 'собрать' })
+    const n = list.length
+    return list.map((s, i) => ({ ...s, x: (boardSize * (i + 1)) / (n + 1), y: yRow }))
+  }, [boardSize, boardH, canMerge])
 
-  // ── Раскладка графа ──
-  // Экран вытянут по вертикали → люди веером ВВЕРХ от центра (минимум боковых),
-  // нода «вниз» — внизу по центру (над панелью). Затем релаксация расталкивает
-  // ноды, чтобы не накладывались, и держит их подальше от карты в центре.
-  const layout = useMemo(() => {
-    const w = boardSize
-    const h = boardH
-    const cx = w / 2
-    const cy = h / 2
-    const Rx = w * 0.33
-    const Ry = h * 0.40
-    const ids = order.filter((id) => personsById[id])
-    const N = ids.length
-    const span = Math.min(180, 52 * Math.max(1, N))
-    const pts = ids.map((id, i) => {
-      const frac = N === 1 ? 0.5 : (i + 1) / (N + 1)
-      const deg = 270 + span * (frac - 0.5)
-      const rad = (deg * Math.PI) / 180
-      return { id, person: personsById[id], x: cx + Rx * Math.cos(rad), y: cy + Ry * Math.sin(rad) }
-    })
-    const minDx = NODE_W + 16
-    const minDy = NODE_H + 16
-    const exX = CARD_W / 2 + NODE_W / 2 - 8
-    const exY = 96
-    for (let it = 0; it < 36; it++) {
-      for (let a = 0; a < pts.length; a++) {
-        for (let b = a + 1; b < pts.length; b++) {
-          const dx = pts[b].x - pts[a].x
-          const dy = pts[b].y - pts[a].y
-          const ox = minDx - Math.abs(dx)
-          const oy = minDy - Math.abs(dy)
-          if (ox > 0 && oy > 0) {
-            if (ox <= oy) { const s = ((dx < 0 ? -1 : 1) * ox) / 2; pts[a].x -= s; pts[b].x += s }
-            else { const s = ((dy < 0 ? -1 : 1) * oy) / 2; pts[a].y -= s; pts[b].y += s }
-          }
-        }
-      }
-      for (const p of pts) {
-        // не наезжать на карту в центре — выталкиваем вверх
-        if (Math.abs(p.x - cx) < exX && Math.abs(p.y - cy) < exY) p.y = cy - exY
-        p.x = Math.max(NODE_W / 2 + 6, Math.min(w - NODE_W / 2 - 6, p.x))
-        p.y = Math.max(NODE_H / 2 + 6, Math.min(h * 0.76, p.y))
-      }
-    }
-    return { w, h, cx, cy, nodes: pts, defer: { id: '__defer__', x: cx, y: cy + Ry } }
-  }, [order, personsById, boardSize, boardH])
+  const SPECIAL_KIND = { __defer__: 'defer', __split__: 'split', __merge__: 'merge' }
 
   const nearestNode = useCallback((point) => {
     let best = null
@@ -697,9 +768,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
       if (d < bestD) { bestD = d; best = { id, rect: r } }
     }
     if (!best) return null
-    if (best.id === '__defer__') return { kind: 'defer', rect: best.rect, id: best.id }
+    const kind = SPECIAL_KIND[best.id]
+    if (kind) return { kind, rect: best.rect, id: best.id }
     return { kind: 'person', personId: best.id, rect: best.rect, id: best.id }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Card ops ──
   const pulseAbsorb = useCallback((id) => {
@@ -720,26 +792,6 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     pulseAbsorb('__defer__')
     mutate((prev) => { const card = prev.find((c) => c.id === top.id); return [...prev.filter((c) => c.id !== top.id), card] })
   }, [top, mutate, pulseAbsorb])
-
-  // Перестановка нод в режиме графа: меняем местами в order с ближайшей.
-  const onSwapNode = useCallback((draggedId, point) => {
-    let best = null
-    let bestD = 130
-    for (const id of order) {
-      if (id === draggedId) continue
-      const r = nodeRefs.current[id]?.getBoundingClientRect?.()
-      if (!r) continue
-      const d = Math.hypot(point.x - (r.left + r.width / 2), point.y - (r.top + r.height / 2))
-      if (d < bestD) { bestD = d; best = id }
-    }
-    if (!best) return
-    setOrder((prev) => {
-      const a = prev.indexOf(draggedId)
-      const b = prev.indexOf(best)
-      if (a < 0 || b < 0) return prev
-      const n = [...prev]; [n[a], n[b]] = [n[b], n[a]]; return n
-    })
-  }, [order])
 
   const splitTop = useCallback((n) => {
     if (!top) return
@@ -875,6 +927,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           <ChevronLeft size={16} /> Назад
         </button>
         <div className="flex items-center gap-3">
+          <button onClick={() => setShowGraph((v) => !v)} className={`text-sm inline-flex items-center gap-1 ${showGraph ? 'text-gold' : 'text-spotify-text hover:text-white'}`} title="Граф">
+            <Network size={15} /> Граф
+          </button>
           {onManagePeople && (
             <button onClick={onManagePeople} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Изменить состав">
               <Users size={15} /> Люди
@@ -891,7 +946,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
       <h2 className="text-white text-xl font-bold">{bill.name}</h2>
       <p className="text-spotify-text text-sm mb-3">
-        Тащи карту к человеку · вниз по центру — отложить
+        Тащи карту на человека · на ноду снизу — делить, отложить, собрать
       </p>
 
       {/* Игровое поле во весь экран: частицы + граф + колода (без рамки) */}
@@ -913,15 +968,18 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
               className="absolute inset-0"
             >
               <RadialGraph
-                layout={layout}
+                people={people}
+                specials={specials}
+                center={center}
+                bounds={bounds}
                 activeId={activeNode}
                 absorbId={absorb}
                 interactive={showGraph && !dragging && !touching}
+                paused={dragging || touching || committing || !!absorb}
                 stats={personStats}
                 currency={currency}
                 registerRef={registerRef}
-                onTapNode={(id) => { if (id !== '__defer__') setOpenPerson(id) }}
-                onSwap={onSwapNode}
+                onTapNode={(id) => { if (!SPECIAL_KIND[id]) setOpenPerson(id) }}
               />
             </motion.div>
           )}
@@ -945,6 +1003,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 resolveDrop={nearestNode}
                 onAssign={assignTop}
                 onDefer={deferTop}
+                onSplit={() => setSplitPrompt(true)}
+                onMerge={startMerge}
                 onRename={(txId, name) => setRenaming({ txId, name })}
                 onTouchStartCard={() => setTouching(true)}
                 onTapEndCard={() => setTouching(false)}
@@ -952,7 +1012,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 onDragMoveCard={(point) => setActiveNode(nearestNode(point)?.id || null)}
                 onDragEndCard={(drop) => {
                   setDragging(false); setTouching(false)
-                  if (drop) { setActiveNode(drop.id); setCommitting(true) } // граф остаётся до поглощения
+                  // для людей/«вниз» граф держим до поглощения; делить/собрать — нет
+                  if (drop && (drop.kind === 'person' || drop.kind === 'defer')) { setActiveNode(drop.id); setCommitting(true) }
                   else setActiveNode(null)
                 }}
               />
@@ -963,46 +1024,17 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
         {fx && <FxLayer fx={fx} tx={txById[fx.txId]} currency={currency} onDone={fxDone} />}
       </div>
 
-      {/* Нижняя панель */}
-      <div className="fixed inset-x-0 bottom-28 z-30 px-4">
-        <div className="max-w-md mx-auto space-y-2">
-          {remaining === 0 ? (
+      {/* Нижняя панель — только завершение (делить/вниз/собрать теперь ноды) */}
+      {remaining === 0 && (
+        <div className="fixed inset-x-0 bottom-28 z-30 px-4">
+          <div className="max-w-md mx-auto">
             <button
               onClick={() => setFinishing(true)}
               className="block w-full bg-gold text-black font-semibold rounded-xl py-3 shadow-lg shadow-black/40 hover:bg-gold-2 transition-colors"
             >Завершить →</button>
-          ) : (
-            <div className="flex items-center justify-center flex-wrap gap-2 bg-spotify-dark/90 backdrop-blur rounded-2xl px-3 py-2.5 shadow-lg shadow-black/40">
-              <span className="inline-flex items-center gap-1 text-[11px] text-spotify-text mr-1"><Scissors size={12} /> делить</span>
-              {SPLIT_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => startSplit(n)}
-                  disabled={!!fx}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-spotify-gray text-white hover:bg-spotify-light-gray disabled:opacity-50 transition-colors"
-                >÷{n}</button>
-              ))}
-              {canMerge && (
-                <button
-                  onClick={startMerge}
-                  disabled={!!fx}
-                  className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo/20 text-indigo hover:bg-indigo/30 disabled:opacity-50 transition-colors inline-flex items-center gap-1"
-                ><Merge size={12} /> собрать</button>
-              )}
-              <button
-                onClick={() => (topCardRef.current ? topCardRef.current.flingDown(-1) : deferTop())}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-spotify-gray text-spotify-text hover:text-white inline-flex items-center gap-1"
-              ><RotateCcw size={12} /> вниз</button>
-            </div>
-          )}
-          <button
-            onClick={() => setShowGraph((v) => !v)}
-            className={`w-full rounded-xl py-2 text-sm inline-flex items-center justify-center gap-1.5 transition-colors ${
-              showGraph ? 'bg-gold/20 text-gold' : 'bg-spotify-dark/80 text-spotify-text hover:text-white'
-            }`}
-          ><Network size={14} /> {showGraph ? 'Скрыть граф' : 'Показать граф'}</button>
+          </div>
         </div>
-      </div>
+      )}
 
       <PersonSheet
         open={!!openPerson}
@@ -1013,6 +1045,27 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
         lines={openPerson ? personLines(openPerson) : []}
         onRemove={(txId) => returnLine(txId, openPerson)}
       />
+
+      {/* На сколько разделить (после сброса карты на ноду «делить») */}
+      <Dialog.Root open={splitPrompt} onOpenChange={(v) => !v && setSplitPrompt(false)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
+            bg-spotify-black rounded-2xl p-5 w-[calc(100%-2rem)] max-w-xs text-center">
+            <Dialog.Title className="text-white text-base font-bold mb-1">На сколько разделить?</Dialog.Title>
+            <p className="text-spotify-text text-xs mb-4">Карта превратится в доли и вернётся в колоду</p>
+            <div className="flex justify-center gap-2">
+              {SPLIT_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => { setSplitPrompt(false); startSplit(n) }}
+                  className="flex-1 py-3 rounded-xl bg-spotify-gray text-white text-lg font-bold hover:bg-spotify-light-gray transition-colors"
+                >÷{n}</button>
+              ))}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={!!renaming} onOpenChange={(v) => !v && setRenaming(null)}>
         <Dialog.Portal>
