@@ -373,17 +373,14 @@ function FxLayer({ fx, tx, currency, onDone }) {
 
 const SPECIAL_ICON = { split: Scissors, defer: RotateCcw, merge: Merge }
 
-function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode, proximityScales }) {
+function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode }) {
   const hotId = activeId || absorbId
-  const scaleAnim = (id) => {
-    const prox = proximityScales?.[id] || 1
-    return {
-      animate: { scale: absorbId === id ? [prox, 1.7, 1] : activeId === id ? 1.45 : prox },
-      transition: absorbId === id
-        ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
-        : { type: 'spring', stiffness: 220, damping: 14 },
-    }
-  }
+  const scaleAnim = (id) => ({
+    animate: { scale: absorbId === id ? [1, 1.7, 1] : activeId === id ? 1.45 : 1 },
+    transition: absorbId === id
+      ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+      : { type: 'spring', stiffness: 300, damping: 18 },
+  })
   return (
     <div className="absolute inset-0">
       <svg className="absolute inset-0 w-full h-full pointer-events-none">
@@ -406,7 +403,7 @@ function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, sta
           <div
             key={s.id}
             ref={(el) => registerRef(s.id, el)}
-            style={{ position: 'absolute', left: s.x, top: s.y, width: nodeW, height: nodeH, marginLeft: -nodeW / 2, marginTop: -nodeH / 2, transition: 'left .35s ease, top .35s ease' }}
+            style={{ position: 'absolute', left: s.x, top: s.y, width: nodeW, height: nodeH, marginLeft: -nodeW / 2, marginTop: -nodeH / 2, transition: 'left .35s ease, top .35s ease, transform 90ms ease-out', transformOrigin: 'center' }}
           >
             <div style={{ width: nodeW, height: nodeH, willChange: 'transform', animation: `bill-node-float ${5 + (i % 4)}s ease-in-out ${(i % 5) * 0.4}s infinite` }}>
               <motion.button
@@ -570,7 +567,6 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [activeNode, setActiveNode] = useState(null)
   const [absorb, setAbsorb] = useState(null)
   const [splitPrompt, setSplitPrompt] = useState(false)
-  const [dragPoint, setDragPoint] = useState(null)
   const [flyingCard, setFlyingCard] = useState(null)
 
   const topCardRef = useRef(null)
@@ -578,6 +574,32 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const registerRef = useCallback((id, el) => {
     if (el) nodeRefs.current[id] = el
     else delete nodeRefs.current[id]
+  }, [])
+
+  const rafProximity = useRef(null)
+
+  const applyProximity = useCallback((point) => {
+    if (rafProximity.current) cancelAnimationFrame(rafProximity.current)
+    rafProximity.current = requestAnimationFrame(() => {
+      let bestId = null; let bestProx = 0
+      for (const [id, el] of Object.entries(nodeRefs.current)) {
+        const r = el?.getBoundingClientRect?.()
+        if (!r) continue
+        const d = Math.hypot(point.x - (r.left + r.width / 2), point.y - (r.top + r.height / 2))
+        const prox = Math.pow(Math.max(0, 1 - d / 140), 1.6)
+        if (prox > bestProx) { bestProx = prox; bestId = id }
+      }
+      for (const [id, el] of Object.entries(nodeRefs.current)) {
+        if (el) el.style.transform = id === bestId && bestProx > 0.05 ? `scale(${1 + bestProx * 0.3})` : ''
+      }
+    })
+  }, [])
+
+  const clearProximity = useCallback(() => {
+    if (rafProximity.current) cancelAnimationFrame(rafProximity.current)
+    for (const el of Object.values(nodeRefs.current)) {
+      if (el) el.style.transform = ''
+    }
   }, [])
 
   const getNodeBoardPos = useCallback((id) => {
@@ -725,19 +747,6 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const hub = { x: W / 2, y: cardY }
     return { nodeW, nodeH, slots, actions, hub, capture: Math.max(56, nodeW * 0.95) }
   }, [participants, boardSize, boardH, canMerge])
-
-  const proximityScales = useMemo(() => {
-    if (!dragPoint) return {}
-    const result = {}
-    for (const [id, el] of Object.entries(nodeRefs.current)) {
-      const r = el?.getBoundingClientRect?.()
-      if (!r) continue
-      const d = Math.hypot(dragPoint.x - (r.left + r.width / 2), dragPoint.y - (r.top + r.height / 2))
-      const proximity = Math.pow(Math.max(0, 1 - d / 150), 1.8)
-      result[id] = 1 + proximity * 0.28
-    }
-    return result
-  }, [dragPoint])
 
   const SPECIAL_KIND = { __defer__: 'defer', __split__: 'split', __merge__: 'merge' }
 
@@ -958,11 +967,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           currency={currency}
           registerRef={registerRef}
           onTapNode={(id) => { if (!SPECIAL_KIND[id]) setOpenPerson(id) }}
-          proximityScales={proximityScales}
         />
 
-        {/* колода у низа — слой пропускает клики мимо карты к нодам (прячем при FX) */}
-        {remaining > 0 && !fx && (
+        {/* колода у низа — слой пропускает клики мимо карты к нодам */}
+        {remaining > 0 && (
           <div className="absolute inset-0 pointer-events-none">
             {deck.slice(0, 4).map((card, i) => (
               <PileCard
@@ -983,9 +991,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 onSplit={() => setSplitPrompt(true)}
                 onMerge={startMerge}
                 onRename={(txId, name) => setRenaming({ txId, name })}
-                onDragStartCard={() => { setActiveNode(null); setDragPoint(null) }}
-                onDragMoveCard={(point) => { setActiveNode(nearestNode(point)?.id || null); setDragPoint(point) }}
-                onDragEndCard={() => { setActiveNode(null); setDragPoint(null) }}
+                onDragStartCard={() => { setActiveNode(null); clearProximity() }}
+                onDragMoveCard={(point) => { setActiveNode(nearestNode(point)?.id || null); applyProximity(point) }}
+                onDragEndCard={() => { setActiveNode(null); clearProximity() }}
               />
             ))}
           </div>
