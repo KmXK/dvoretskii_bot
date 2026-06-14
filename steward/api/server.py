@@ -2024,35 +2024,19 @@ async def handle_bills_get(request: web.Request):
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
 
 
-async def handle_bills_create(request: web.Request):
-    import uuid as _uuid
-    from steward.data.models.bill_v2 import BillV2
-    repository: Repository = request.app["repository"]
-    tg_user = _get_tg_user_from_request(request)
-    if not tg_user:
-        return web.json_response({"error": "auth required"}, status=401)
-    data = await request.json()
-    name = (data.get("name") or "").strip()
-    if not name:
-        return web.json_response({"error": "name required"}, status=400)
-    currency = data.get("currency", "BYN")
-    origin_chat_id = data.get("origin_chat_id")
+def _resolve_bill_participants(repository: "Repository", caller, entries) -> list[str]:
+    """Resolve a web guest list to ordered BillPerson ids (caller always first).
 
-    caller, _ = repository.get_or_create_bill_person(
-        telegram_id=int(tg_user["id"]),
-        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
-        username=tg_user.get("username"),
-    )
-
-    # Optional initial guest list (web create-from-scratch wizard). Each entry is
-    # {person_id} for someone already known, or {name}/{username} to add ad-hoc.
+    Each entry is {person_id} for someone known, or {name}/{username} to add ad-hoc.
+    Creates/finds persons as needed; dedups while preserving order.
+    """
     participant_ids: list[str] = [caller.id]
 
     def _add(pid: str | None):
         if pid and pid not in participant_ids:
             participant_ids.append(pid)
 
-    for entry in data.get("participants", []) or []:
+    for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         if entry.get("person_id"):
@@ -2079,6 +2063,63 @@ async def handle_bills_create(request: web.Request):
         elif entry.get("name"):
             person, _ = repository.get_or_create_anonymous_person(str(entry["name"]).strip())
             _add(person.id)
+
+    return participant_ids
+
+
+async def handle_bills_resolve_people(request: web.Request):
+    """POST /api/bills/resolve-people — разрезолвить состав ДО создания счёта.
+
+    Тело `{participants:[{person_id}|{name}|{username}]}` → `{people:[{id,
+    display_name, username}]}` (автор первым). Мини-апп показывает это
+    подтверждающим списком на шаге «люди» и выбирает плательщика по реальному id.
+    """
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    caller, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+    data = await request.json()
+    ids = _resolve_bill_participants(repository, caller, data.get("participants"))
+    people = []
+    for pid in ids:
+        p = repository.get_bill_person(pid)
+        if p:
+            people.append({
+                "id": p.id,
+                "display_name": p.display_name,
+                "username": p.telegram_username or "",
+            })
+    return web.json_response({"people": people})
+
+
+async def handle_bills_create(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillV2
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return web.json_response({"error": "name required"}, status=400)
+    currency = data.get("currency", "BYN")
+    origin_chat_id = data.get("origin_chat_id")
+
+    caller, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+
+    # Optional initial guest list (web create-from-scratch wizard). Each entry is
+    # {person_id} for someone already known, or {name}/{username} to add ad-hoc.
+    participant_ids = _resolve_bill_participants(repository, caller, data.get("participants"))
 
     is_draft = bool(data.get("draft"))
     bill = BillV2(
@@ -2242,11 +2283,10 @@ async def handle_bills_parse(request: web.Request):
     """POST /api/bills/{id}/parse — прогнать собранный контекст через AI.
 
     Извлекает позиции (нераспределённые) и участников из bill.collection_context,
-    заменяет bill.transactions результатом, дополняет участников. Статус — draft.
+    заменяет bill.transactions результатом (match-only по составу). Статус — draft.
     """
     from steward.features.bills import collect as bills_collect
     from steward.features.bills import parse as bills_parse
-    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
 
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -2278,30 +2318,18 @@ async def handle_bills_parse(request: web.Request):
             "questions": result.questions,
         }, status=422)
 
-    # Web has no interactive disambiguation: auto-resolve every named person to a
-    # bound match (from run_collect) or a freshly created anonymous person.
-    resolved = dict(result.resolved_map)
-    for name in list(result.new_person_names) + list(result.participant_names) + [
-        r.get("creditor_raw", "") for r in result.item_rows
-    ]:
-        name = (name or "").strip()
-        if not name or name == "-":
-            continue
-        key = bills_parse.norm_name_key(name)
-        if key not in resolved or resolved[key] == UNKNOWN_PERSON_ID:
-            person, _ = repository.get_or_create_anonymous_person(name)
-            resolved[key] = person.id
+    # The cast is already fixed on the «люди» step. parse is match-only: it may
+    # only bind creditors/names to EXISTING participants — never create new persons
+    # nor widen the circle. Anything that does not resolve to a participant stays
+    # UNKNOWN (the user fixes the payer with the per-item dropdown).
+    allowed = set(bill.participants)
+    resolved = {
+        key: pid for key, pid in result.resolved_map.items()
+        if pid in allowed
+    }
 
     txs = bills_parse.collect_rows_to_undistributed_transactions(result.item_rows, resolved)
     bill.transactions = txs
-
-    for name in result.participant_names:
-        pid = resolved.get(bills_parse.norm_name_key(name))
-        if pid and pid != UNKNOWN_PERSON_ID and pid not in bill.participants:
-            bill.participants.append(pid)
-    for tx in txs:
-        if tx.creditor and tx.creditor != UNKNOWN_PERSON_ID and tx.creditor not in bill.participants:
-            bill.participants.append(tx.creditor)
 
     bill.currency = result.currency or bill.currency
     bill.distribution_status = "draft"
@@ -2384,6 +2412,31 @@ async def handle_bills_reopen(request: web.Request):
     bill.updated_at = datetime.datetime.now()
     await repository.save()
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
+
+
+async def handle_bills_delete(request: web.Request):
+    """DELETE /api/bills/{id} — удалить счёт целиком (до подтверждения).
+
+    Только автор/админ. Разрешено пока счёт не финализирован — чтобы можно было
+    отменить ошибочно созданный/собранный счёт. Финальные счета не удаляем
+    (участвуют в долговых сводках); их закрывают через /close.
+    """
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "close")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if getattr(bill, "distribution_status", "final") == "final":
+        return web.json_response({"error": "финальный счёт нельзя удалить — закрой его"}, status=409)
+    repository.db.bills_v2 = [b for b in repository.db.bills_v2 if b.id != bill_id]
+    await repository.save()
+    return web.json_response({"ok": True})
 
 
 async def handle_bills_tx_add(request: web.Request):
@@ -2904,7 +2957,9 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_put("/api/bills/payments/{pid}/reject", handle_bills_payment_reject)
     app.router.add_post("/api/bills/suggestions/{sid}/approve", handle_bills_suggestion_approve)
     app.router.add_post("/api/bills/suggestions/{sid}/reject", handle_bills_suggestion_reject)
+    app.router.add_post("/api/bills/resolve-people", handle_bills_resolve_people)
     app.router.add_get("/api/bills/{id}", handle_bills_get)
+    app.router.add_delete("/api/bills/{id}", handle_bills_delete)
     app.router.add_put("/api/bills/{id}/close", handle_bills_close)
     app.router.add_put("/api/bills/{id}/reopen", handle_bills_reopen)
     app.router.add_post("/api/bills/{id}/transactions", handle_bills_tx_add)

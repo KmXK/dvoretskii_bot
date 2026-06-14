@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  ChevronLeft, Plus, X, Users, Mic, Square, Image as ImageIcon,
-  Type, Sparkles, Loader2,
+  ChevronLeft, ChevronDown, Plus, X, Users, Mic, Square, Image as ImageIcon,
+  Type, Sparkles, Loader2, Check, Trash2, Crown,
 } from 'lucide-react'
 import { api } from '../api/client'
 
-// Создание счёта с нуля прямо в мини-аппе: шаг «люди» (окружение + вручную) →
-// шаг «позиции» (голос/фото/текст → AI-разбор) → доска распределения.
+// Создание счёта с нуля прямо в мини-аппе: шаг «люди» (собрать → подтвердить
+// состав + кто платил) → шаг «позиции» (голос/фото/текст → AI-разбор, ручная
+// правка, плательщик по позиции) → доска распределения.
 
 function pickAudioMime() {
   if (typeof MediaRecorder === 'undefined') return null
@@ -18,9 +19,62 @@ function pickAudioMime() {
   return ''
 }
 
-// ── Step 1: люди ──────────────────────────────────────────────────────────────
+const UNKNOWN_PID = '__unknown__'
+const curSymbol = (c) => (c === 'BYN' ? 'р' : c)
+
+// ── Кастомный дропдаун «кто платил» ───────────────────────────────────────────
+
+function PayerSelect({ value, options, onChange, placeholder = 'кто платил', className = '' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+  const current = options.find((o) => o.id === value)
+  return (
+    <div className={`relative ${className}`} ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full inline-flex items-center justify-between gap-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1.5 text-xs text-white transition"
+      >
+        <span className={`truncate ${current ? '' : 'text-spotify-text/70'}`}>{current?.name || placeholder}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+            transition={{ duration: 0.12 }}
+            className="absolute right-0 mt-1 z-30 min-w-[150px] max-h-52 overflow-y-auto rounded-xl bg-spotify-gray border border-white/10 shadow-xl shadow-black/50 py-1"
+          >
+            {options.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => { onChange(o.id); setOpen(false) }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10 transition"
+              >
+                <span className="truncate">{o.name}</span>
+                {o.id === value && <Check size={14} className="text-spotify-green shrink-0" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Step 1: люди (собрать → подтвердить) ───────────────────────────────────────
 
 function PeopleStep({ onCancel, onNext }) {
+  const [stage, setStage] = useState('pick') // 'pick' | 'confirm'
   const [name, setName] = useState('')
   const [circle, setCircle] = useState([])
   const [selected, setSelected] = useState(() => new Set())
@@ -28,6 +82,10 @@ function PeopleStep({ onCancel, onNext }) {
   const [manualRaw, setManualRaw] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  // Подтверждающий состав (резолв с бэка) + выбранный плательщик.
+  const [roster, setRoster] = useState([]) // [{id, display_name, username}], автор первым
+  const [payerId, setPayerId] = useState(null)
 
   useEffect(() => {
     api.get('/api/bills/circle')
@@ -48,7 +106,8 @@ function PeopleStep({ onCancel, onNext }) {
     setManualRaw('')
   }
 
-  const submit = async () => {
+  // pick → confirm: резолвим весь состав в реальные id (автор добавится на бэке).
+  const goConfirm = async () => {
     setError(null)
     if (!name.trim()) { setError('Дай счёту название'); return }
     const participants = [
@@ -57,10 +116,36 @@ function PeopleStep({ onCancel, onNext }) {
     ]
     setBusy(true)
     try {
+      const data = await api.post('/api/bills/resolve-people', { participants })
+      const people = data.people || []
+      setRoster(people)
+      setPayerId((prev) => prev || people[0]?.id || null)
+      setStage('confirm')
+    } catch (e) {
+      setError(e.message || 'Не удалось собрать состав')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeFromRoster = (id) => {
+    setRoster((r) => r.filter((p) => p.id !== id))
+    setPayerId((p) => (p === id ? roster[0]?.id || null : p))
+  }
+
+  // confirm → создать счёт + назначить плательщика, перейти к позициям.
+  const create = async () => {
+    setError(null)
+    setBusy(true)
+    try {
       const bill = await api.post('/api/bills', {
-        name: name.trim(), draft: true, participants,
+        name: name.trim(), draft: true,
+        participants: roster.map((p) => ({ person_id: p.id })),
       })
-      onNext(bill)
+      if (payerId) {
+        try { await api.put(`/api/bills/${bill.id}/creditor`, { person_id: payerId }) } catch { /* не критично */ }
+      }
+      onNext(bill, payerId)
     } catch (e) {
       setError(e.message || 'Не удалось создать счёт')
     } finally {
@@ -68,6 +153,75 @@ function PeopleStep({ onCancel, onNext }) {
     }
   }
 
+  // ── вид «подтвердить состав» ──
+  if (stage === 'confirm') {
+    return (
+      <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="px-4 pt-6 pb-4">
+        <div className="flex items-center gap-2 mb-1">
+          <button onClick={() => setStage('pick')} className="text-spotify-text hover:text-white p-1 -ml-1"><ChevronLeft size={22} /></button>
+          <h1 className="font-display text-2xl font-extrabold text-white truncate">{name.trim()}</h1>
+        </div>
+        <p className="text-spotify-text text-sm mb-5 pl-8">Проверь состав и выбери, кто платил</p>
+
+        <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Участники ({roster.length})</div>
+        <div className="space-y-2 mb-5">
+          {roster.map((p, i) => {
+            const isAuthor = i === 0
+            const isPayer = payerId === p.id
+            return (
+              <motion.div
+                key={p.id}
+                layout
+                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                className={`flex items-center gap-2 rounded-xl px-3 py-2.5 border transition-colors ${
+                  isPayer ? 'bg-spotify-green/15 border-spotify-green/50' : 'bg-spotify-dark border-white/10'
+                }`}
+              >
+                <button
+                  onClick={() => setPayerId(p.id)}
+                  className={`shrink-0 w-7 h-7 rounded-full inline-flex items-center justify-center border transition-colors ${
+                    isPayer ? 'bg-spotify-green/30 border-spotify-green text-spotify-green' : 'border-white/20 text-spotify-text hover:border-white/40'
+                  }`}
+                  title="кто платил"
+                >
+                  <Crown size={14} className={isPayer ? 'fill-current' : ''} />
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="text-white text-sm truncate inline-flex items-center gap-1.5">
+                    {p.display_name}
+                    {isAuthor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gold/20 text-gold">ты</span>}
+                  </div>
+                  {p.username && <div className="text-[11px] text-spotify-text truncate">@{p.username}</div>}
+                </div>
+                {!isAuthor && (
+                  <button onClick={() => removeFromRoster(p.id)} className="shrink-0 text-spotify-text/70 hover:text-red-400 p-1">
+                    <X size={16} />
+                  </button>
+                )}
+              </motion.div>
+            )
+          })}
+        </div>
+
+        <p className="text-spotify-text/70 text-[11px] mb-4 inline-flex items-center gap-1">
+          <Crown size={11} /> корона = кто заплатил за счёт (можно поменять у позиций потом)
+        </p>
+
+        {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
+
+        <motion.button
+          whileTap={{ scale: 0.98 }}
+          onClick={create}
+          disabled={busy}
+          className="w-full rounded-2xl py-4 font-bold text-base bg-gold text-black disabled:opacity-60 inline-flex items-center justify-center gap-2"
+        >
+          {busy ? <Loader2 size={18} className="animate-spin" /> : <>Дальше — позиции <ChevronLeft size={18} className="rotate-180" /></>}
+        </motion.button>
+      </motion.div>
+    )
+  }
+
+  // ── вид «собрать людей» ──
   return (
     <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="px-4 pt-6 pb-4">
       <div className="flex items-center gap-2 mb-5">
@@ -85,6 +239,10 @@ function PeopleStep({ onCancel, onNext }) {
 
       <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-spotify-text mb-2">
         <Users size={14} /> Кто участвует
+      </div>
+
+      <div className="mb-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gold/15 border border-gold/40 text-gold text-sm">
+        <Crown size={13} /> Ты <span className="opacity-60 text-[11px]">— уже в счёте</span>
       </div>
 
       {circle.length > 0 && (
@@ -136,17 +294,17 @@ function PeopleStep({ onCancel, onNext }) {
         />
         <button onClick={addManual} className="px-3 rounded-lg bg-white/5 text-spotify-text hover:bg-white/10 transition"><Plus size={18} /></button>
       </div>
-      <p className="text-spotify-text/70 text-[11px] mb-5">Ты уже добавлен. Раскидывать позиции по людям будешь на следующем экране.</p>
+      <p className="text-spotify-text/70 text-[11px] mb-5">На следующем шаге проверишь состав и выберешь, кто платил.</p>
 
       {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 
       <motion.button
         whileTap={{ scale: 0.98 }}
-        onClick={submit}
+        onClick={goConfirm}
         disabled={busy}
         className="w-full rounded-2xl py-4 font-bold text-base bg-gold text-black disabled:opacity-60 inline-flex items-center justify-center gap-2"
       >
-        {busy ? <Loader2 size={18} className="animate-spin" /> : <>Дальше — позиции <ChevronLeft size={18} className="rotate-180" /></>}
+        {busy ? <Loader2 size={18} className="animate-spin" /> : <>Проверить состав <ChevronLeft size={18} className="rotate-180" /></>}
       </motion.button>
     </motion.div>
   )
@@ -161,14 +319,32 @@ function contextKind(chunk) {
   return m ? m[1] : 'Текст'
 }
 
-const UNKNOWN_PID = '__unknown__'
+// Инлайн-редактируемое значение (название/кол-во/цена) с сохранением на blur/enter.
+function EditableCell({ value, onSave, className = '', type = 'text', placeholder = '' }) {
+  const [v, setV] = useState(String(value ?? ''))
+  const [prev, setPrev] = useState(value)
+  if (value !== prev) { setPrev(value); setV(String(value ?? '')) } // sync при внешнем изменении
+  const commit = () => { if (v !== String(value ?? '')) onSave(v) }
+  return (
+    <input
+      value={v}
+      type={type}
+      inputMode={type === 'number' ? 'decimal' : undefined}
+      placeholder={placeholder}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+      className={`bg-transparent outline-none focus:bg-white/5 rounded px-1.5 py-1 transition ${className}`}
+    />
+  )
+}
 
-function PositionsStep({ bill, onBack, onReady }) {
+function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
   const [chunks, setChunks] = useState(() => bill.collection_context || [])
   const [positions, setPositions] = useState(() => bill.transactions || [])
   const [participantIds, setParticipantIds] = useState(() => bill.participants || [])
   const [namesById, setNamesById] = useState({})
-  const [payerId, setPayerId] = useState(() => bill.author_person_id)
+  const [payerId, setPayerId] = useState(() => defaultPayer || bill.author_person_id)
   const [textVal, setTextVal] = useState('')
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
@@ -176,11 +352,20 @@ function PositionsStep({ bill, onBack, onReady }) {
   const [parsing, setParsing] = useState(false)
   const [error, setError] = useState(null)
   const [questions, setQuestions] = useState([])
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [newItem, setNewItem] = useState({ name: '', price: '', qty: '1' })
 
   const recRef = useRef(null)
   const streamRef = useRef(null)
   const fileRef = useRef(null)
   const timerRef = useRef(null)
+
+  const cur = curSymbol(bill.currency)
+
+  const payerOptions = participantIds
+    .map((pid) => ({ id: pid, name: namesById[pid] || '…' }))
+    .concat([{ id: UNKNOWN_PID, name: '— не указан' }])
 
   const loadNames = useCallback(async () => {
     try {
@@ -191,7 +376,7 @@ function PositionsStep({ bill, onBack, onReady }) {
 
   useEffect(() => { loadNames() }, [loadNames])
 
-  // Назначить одного плательщика на весь счёт (creditor всех позиций).
+  // Назначить одного плательщика на весь счёт (дефолт для всех позиций).
   const applyPayer = useCallback(async (pid) => {
     setPayerId(pid)
     try {
@@ -202,6 +387,51 @@ function PositionsStep({ bill, onBack, onReady }) {
       setError(e.message || 'Не удалось назначить плательщика')
     }
   }, [bill.id])
+
+  const patchTx = useCallback(async (txId, patch) => {
+    setPositions((prev) => prev.map((t) => (t.id === txId ? { ...t, ...patch } : t)))
+    try {
+      const updated = await api.patch(`/api/bills/${bill.id}/transactions/${txId}`, patch)
+      setPositions((prev) => prev.map((t) => (t.id === txId ? updated : t)))
+    } catch (e) {
+      setError(e.message || 'Не удалось сохранить')
+    }
+  }, [bill.id])
+
+  const deleteTx = useCallback(async (txId) => {
+    setPositions((prev) => prev.filter((t) => t.id !== txId))
+    try { await api.delete(`/api/bills/${bill.id}/transactions/${txId}`) }
+    catch (e) { setError(e.message || 'Не удалось удалить') }
+  }, [bill.id])
+
+  const addItem = useCallback(async () => {
+    const name = newItem.name.trim()
+    const price = Math.round(parseFloat((newItem.price || '').replace(',', '.')) * 100)
+    const qty = Math.max(1, parseInt(newItem.qty, 10) || 1)
+    if (!name || !price || price <= 0) { setError('Название и цена обязательны'); return }
+    setError(null)
+    try {
+      const tx = await api.post(`/api/bills/${bill.id}/transactions`, {
+        item_name: name, unit_price_minor: price, quantity: qty,
+        creditor: payerId || UNKNOWN_PID, assignments: [],
+      })
+      setPositions((prev) => [...prev, tx])
+      setNewItem({ name: '', price: '', qty: '1' })
+      setAdding(false)
+    } catch (e) {
+      setError(e.message || 'Не удалось добавить позицию')
+    }
+  }, [bill.id, newItem, payerId])
+
+  const removeBill = useCallback(async () => {
+    try {
+      await api.delete(`/api/bills/${bill.id}`)
+      onDeleted()
+    } catch (e) {
+      setError(e.message || 'Не удалось удалить счёт')
+      setConfirmDelete(false)
+    }
+  }, [bill.id, onDeleted])
 
   const post = useCallback(async (fd) => {
     const data = await api.post(`/api/bills/${bill.id}/collect`, fd)
@@ -250,7 +480,6 @@ function PositionsStep({ bill, onBack, onReady }) {
     setError(null)
     const mime = pickAudioMime()
     if (mime === null || !navigator.mediaDevices?.getUserMedia) {
-      // нет MediaRecorder — даём приложить готовый аудиофайл
       fileRef.current?.click()
       return
     }
@@ -306,16 +535,9 @@ function PositionsStep({ bill, onBack, onReady }) {
       setParticipantIds(data.bill?.participants || [])
       setQuestions(data.questions || [])
       await loadNames()
-      // Кто платил: если AI распознал плательщика из голоса/текста — берём его
-      // (доминирующий по позициям), иначе остаёмся на авторе. Один на весь счёт.
-      const counts = {}
-      for (const t of txs) {
-        if (t.creditor && t.creditor !== UNKNOWN_PID) counts[t.creditor] = (counts[t.creditor] || 0) + 1
-      }
-      const detected = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0]
-      await applyPayer(detected || payerId || bill.author_person_id)
+      // По умолчанию весь счёт оплачивает выбранный на шаге 1 плательщик.
+      await applyPayer(payerId || bill.author_person_id)
     } catch (e) {
-      // 422 с вопросами — покажем подсказку
       setError(e.message || 'Не нашёл позиций — добавь ещё контекста')
     } finally {
       setParsing(false)
@@ -328,7 +550,10 @@ function PositionsStep({ bill, onBack, onReady }) {
     <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="px-4 pt-6 pb-4">
       <div className="flex items-center gap-2 mb-1">
         <button onClick={onBack} className="text-spotify-text hover:text-white p-1 -ml-1"><ChevronLeft size={22} /></button>
-        <h1 className="font-display text-2xl font-extrabold text-white truncate">{bill.name}</h1>
+        <h1 className="font-display text-2xl font-extrabold text-white truncate flex-1">{bill.name}</h1>
+        <button onClick={() => setConfirmDelete(true)} className="text-spotify-text/70 hover:text-red-400 p-1" title="Удалить счёт">
+          <Trash2 size={19} />
+        </button>
       </div>
       <p className="text-spotify-text text-sm mb-5 pl-8">Надиктуй, сфоткай чек или впиши позиции</p>
 
@@ -422,50 +647,125 @@ function PositionsStep({ bill, onBack, onReady }) {
         </div>
       )}
 
-      {/* кто платил — один на весь счёт */}
-      <AnimatePresence>
-        {positions.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
-            <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Кто платил за всё</div>
-            <div className="flex flex-wrap gap-2">
-              {participantIds.map((pid) => {
-                const active = payerId === pid
-                return (
-                  <motion.button
-                    key={pid}
-                    whileTap={{ scale: 0.94 }}
-                    onClick={() => applyPayer(pid)}
-                    className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                      active
-                        ? 'bg-spotify-green/25 border-spotify-green/60 text-spotify-green font-medium'
-                        : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
-                    }`}
-                  >
-                    {namesById[pid] || '…'}
-                  </motion.button>
-                )
-              })}
+      {/* кто платил — дефолт на весь счёт */}
+      {positions.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
+          <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Кто платил за всё</div>
+          <div className="flex flex-wrap gap-2">
+            {participantIds.map((pid) => {
+              const active = payerId === pid
+              return (
+                <motion.button
+                  key={pid}
+                  whileTap={{ scale: 0.94 }}
+                  onClick={() => applyPayer(pid)}
+                  className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                    active
+                      ? 'bg-spotify-green/25 border-spotify-green/60 text-spotify-green font-medium'
+                      : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
+                  }`}
+                >
+                  {namesById[pid] || '…'}
+                </motion.button>
+              )
+            })}
+          </div>
+        </motion.div>
+      )}
+
+      {/* редактируемые позиции */}
+      {positions.length > 0 && (
+        <div className="space-y-2 mb-3">
+          <div className="text-xs uppercase tracking-wider text-spotify-text">Позиции ({positions.length})</div>
+          {positions.map((tx) => (
+            <motion.div
+              key={tx.id}
+              layout
+              initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              className="bg-spotify-dark rounded-lg p-2.5"
+            >
+              <div className="flex items-center gap-2">
+                <EditableCell
+                  value={tx.item_name}
+                  placeholder="Название"
+                  onSave={(v) => patchTx(tx.id, { item_name: v })}
+                  className="flex-1 text-white text-sm min-w-0"
+                />
+                <button onClick={() => deleteTx(tx.id)} className="shrink-0 text-spotify-text/60 hover:text-red-400 p-1">
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mt-1.5">
+                <div className="inline-flex items-center text-spotify-text text-xs">
+                  <EditableCell
+                    value={tx.quantity}
+                    type="number"
+                    onSave={(v) => patchTx(tx.id, { quantity: Math.max(1, parseInt(v, 10) || 1) })}
+                    className="w-10 text-center text-white tabular-nums"
+                  />
+                  <span className="opacity-60">×</span>
+                </div>
+                <div className="inline-flex items-center text-spotify-text text-xs">
+                  <EditableCell
+                    value={(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}
+                    type="number"
+                    onSave={(v) => patchTx(tx.id, { unit_price_minor: Math.max(0, Math.round(parseFloat((v || '').replace(',', '.')) * 100) || 0) })}
+                    className="w-16 text-right text-white tabular-nums"
+                  />
+                  <span className="opacity-60 ml-1">{cur}</span>
+                </div>
+                <PayerSelect
+                  value={tx.creditor}
+                  options={payerOptions}
+                  onChange={(pid) => patchTx(tx.id, { creditor: pid })}
+                  className="ml-auto w-32"
+                  placeholder="кто платил"
+                />
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      {/* добавить позицию вручную */}
+      {(positions.length > 0 || chunks.length === 0) && (
+        adding ? (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="bg-spotify-dark rounded-lg p-2.5 mb-5 space-y-2">
+            <input
+              autoFocus
+              placeholder="Название позиции"
+              value={newItem.name}
+              onChange={(e) => setNewItem((n) => ({ ...n, name: e.target.value }))}
+              className="w-full bg-white/5 rounded px-2.5 py-1.5 text-white text-sm outline-none focus:bg-white/10"
+            />
+            <div className="flex items-center gap-2">
+              <input
+                placeholder="кол-во" inputMode="numeric"
+                value={newItem.qty}
+                onChange={(e) => setNewItem((n) => ({ ...n, qty: e.target.value }))}
+                className="w-16 bg-white/5 rounded px-2.5 py-1.5 text-white text-sm text-center tabular-nums outline-none focus:bg-white/10"
+              />
+              <span className="text-spotify-text text-xs">×</span>
+              <input
+                placeholder="цена" inputMode="decimal"
+                value={newItem.price}
+                onChange={(e) => setNewItem((n) => ({ ...n, price: e.target.value }))}
+                className="w-20 bg-white/5 rounded px-2.5 py-1.5 text-white text-sm text-right tabular-nums outline-none focus:bg-white/10"
+              />
+              <span className="text-spotify-text text-xs">{cur}</span>
+              <button onClick={addItem} className="ml-auto px-3 py-1.5 rounded-lg bg-gold text-black text-sm font-medium inline-flex items-center gap-1"><Check size={15} /></button>
+              <button onClick={() => { setAdding(false); setNewItem({ name: '', price: '', qty: '1' }) }} className="px-2.5 py-1.5 rounded-lg bg-white/5 text-spotify-text"><X size={15} /></button>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* предпросмотр позиций */}
-      <AnimatePresence>
-        {positions.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-2 mb-5">
-            <div className="text-xs uppercase tracking-wider text-spotify-text">Позиции ({positions.length})</div>
-            {positions.map((tx) => (
-              <div key={tx.id} className="bg-spotify-dark rounded-lg px-3 py-2.5 flex items-center justify-between gap-2">
-                <span className="text-white text-sm truncate">{tx.item_name || 'Без названия'}</span>
-                <span className="text-spotify-text text-sm whitespace-nowrap tabular-nums">
-                  {tx.quantity > 1 ? `${tx.quantity}× ` : ''}{(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')} {bill.currency === 'BYN' ? 'р' : bill.currency}
-                </span>
-              </div>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="w-full rounded-lg border border-dashed border-white/15 text-spotify-text hover:text-white hover:border-white/30 py-2.5 text-sm inline-flex items-center justify-center gap-1.5 mb-5 transition"
+          >
+            <Plus size={16} /> Добавить позицию вручную
+          </button>
+        )
+      )}
 
       {positions.length > 0 && (
         <motion.button
@@ -476,6 +776,30 @@ function PositionsStep({ bill, onBack, onReady }) {
           Распределить по людям <ChevronLeft size={18} className="rotate-180" />
         </motion.button>
       )}
+
+      {/* подтверждение удаления */}
+      <AnimatePresence>
+        {confirmDelete && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+            onClick={() => setConfirmDelete(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-spotify-black rounded-2xl p-5 w-full max-w-sm"
+            >
+              <h3 className="text-white font-bold text-lg mb-1">Удалить счёт?</h3>
+              <p className="text-spotify-text text-sm mb-4">«{bill.name}» удалится целиком. Это не отменить.</p>
+              <div className="flex gap-2">
+                <button onClick={() => setConfirmDelete(false)} className="flex-1 bg-spotify-gray text-white rounded-xl py-2.5">Отмена</button>
+                <button onClick={removeBill} className="flex-1 bg-red-500/90 text-white rounded-xl py-2.5 font-medium inline-flex items-center justify-center gap-1.5"><Trash2 size={16} /> Удалить</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }
@@ -484,13 +808,21 @@ function PositionsStep({ bill, onBack, onReady }) {
 
 export default function BillCreate({ onCancel, onReady }) {
   const [bill, setBill] = useState(null)
+  const [payer, setPayer] = useState(null)
   return (
     <div className="max-w-3xl mx-auto">
       <AnimatePresence mode="wait">
         {!bill ? (
-          <PeopleStep key="people" onCancel={onCancel} onNext={setBill} />
+          <PeopleStep key="people" onCancel={onCancel} onNext={(b, p) => { setBill(b); setPayer(p) }} />
         ) : (
-          <PositionsStep key="positions" bill={bill} onBack={() => setBill(null)} onReady={onReady} />
+          <PositionsStep
+            key="positions"
+            bill={bill}
+            defaultPayer={payer}
+            onBack={() => setBill(null)}
+            onReady={onReady}
+            onDeleted={onCancel}
+          />
         )}
       </AnimatePresence>
     </div>

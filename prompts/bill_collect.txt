@@ -72,7 +72,9 @@ Rules for determining who paid (creditor):
 - "Лёша заплатил", "платил Лёша" → Лёша paid.
 - "мы купили", "мы взяли", "сходили" → AMBIGUOUS payer. Use "-".
 - Only set creditor to a specific person when the text EXPLICITLY says who paid.
-- When creditor is "-" for an item, add ONE question to [ВОПРОСЫ] asking who paid for it.
+- Usually ONE person pays for the whole bill. Do NOT ask who paid for each item.
+  If the payer is unclear, add AT MOST ONE question for the WHOLE bill (see [ВОПРОСЫ]),
+  never one question per position.
 
 Rules for first-person references:
 - If context contains "Я = <name>": that person is the speaker. Resolve "я", "мне",
@@ -94,8 +96,12 @@ Rules for [ДАННЫЕ]:
 
 Rules for [ВОПРОСЫ] — ask as little as possible:
 - ONLY two kinds of questions are allowed:
-  (1) a missing item amount ("Сколько стоил кальян?" | 20 | 30 | 50 | Другое),
-  (2) an ambiguous payer ("Кто платил за кальян?" | <name1> | <name2> | Другое).
+  (1) a missing item amount, one per item with an unknown amount
+      ("Сколько стоил кальян?" | 20 | 30 | 50 | Другое),
+  (2) ONE single payer question for the WHOLE bill — NOT one per position
+      ("Кто платил по счёту?" | <name1> | <name2> | Несколько человек | Другое).
+- Ask the payer question only ONCE total, and only if the payer is unclear for the
+  whole bill. If one creditor is already known for everything, do NOT ask it.
 - NEVER ask who consumed / who owes / how to split / who took which item.
 - DO NOT ask about who someone is — name disambiguation is handled later.
 - DO NOT ask redundant questions you can already infer from context.
