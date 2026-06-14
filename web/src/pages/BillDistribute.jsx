@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Network, Trash2, ListChecks } from 'lucide-react'
@@ -43,6 +43,13 @@ function cardGradient(txId) {
 function personTint(pid) {
   const hue = hueFor(pid)
   return { bg: `hsl(${hue} 42% 26%)`, border: `hsl(${hue} 55% 52%)`, fg: `hsl(${hue} 70% 86%)` }
+}
+
+// Короткий алиас для ноды: первое слово, обрезанное — чтобы все ноды были одного
+// размера независимо от длины ника.
+function nodeAlias(name) {
+  const first = (name || '?').trim().split(/\s+/)[0] || '?'
+  return first.length > 9 ? `${first.slice(0, 8)}…` : first
 }
 
 // ── Cards model ───────────────────────────────────────────────────────────────
@@ -169,7 +176,7 @@ function CardFace({ tx, den, currency, footer, onRename }) {
 // ближайшую ноду графа.
 
 const PileCard = forwardRef(function PileCard(
-  { card, depth, isTop, draggable, tx, currency, remaining, resolveDrop,
+  { card, depth, isTop, draggable, dimmed, tx, currency, remaining, resolveDrop,
     onAssign, onDefer, onRename, onDragStartCard, onDragMoveCard, onDragEndCard,
     onTouchStartCard, onTapEndCard }, ref,
 ) {
@@ -198,10 +205,18 @@ const PileCard = forwardRef(function PileCard(
     return () => { cs.stop(); ct.stop(); cy.stop(); cx.stop(); co.stop() }
   }, [depth, isTop]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Полупрозрачность при наведении на ноду — видно, кому отдаёшь.
+  useEffect(() => {
+    if (!dragging.current) return
+    const c = animate(opacity, dimmed ? 0.4 : 1, { duration: 0.16 })
+    return () => c.stop()
+  }, [dimmed]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const springHome = () => {
     animate(x, 0, { type: 'spring', stiffness: 300, damping: 24 })
     animate(y, depth * 9, { type: 'spring', stiffness: 300, damping: 24 })
     animate(scale, 1, { type: 'spring', stiffness: 300, damping: 20 })
+    animate(opacity, 1, { duration: 0.2 })
   }
 
   const flingDown = (dir = -1) => {
@@ -341,19 +356,24 @@ function FxLayer({ fx, tx, currency, onDone }) {
 
 // ── Радиальный граф людей ────────────────────────────────────────────────────────
 
-function RadialGraph({ layout, activeId, interactive, stats, currency, registerRef, onTapNode }) {
+const NODE_W = 76
+const NODE_H = 48
+
+function RadialGraph({ layout, activeId, absorbId, interactive, stats, currency, registerRef, onTapNode }) {
   const { cx, cy, nodes, defer, w, h } = layout
+  // Цель пульса/линии — активная нода или та, что сейчас «поглощает» карту.
+  const hotId = activeId || absorbId
   return (
     <div className="absolute inset-0">
       <svg width={w} height={h} className="absolute inset-0 pointer-events-none">
         {[...nodes, defer].map((nd) => {
-          const active = activeId === nd.id
+          const hot = hotId === nd.id
           return (
             <line
               key={nd.id}
               x1={cx} y1={cy} x2={nd.x} y2={nd.y}
-              stroke={active ? 'rgba(214,178,112,0.95)' : 'rgba(255,255,255,0.14)'}
-              strokeWidth={active ? 2.5 : 1}
+              stroke={hot ? 'rgba(214,178,112,0.95)' : 'rgba(255,255,255,0.14)'}
+              strokeWidth={hot ? 2.5 : 1}
             />
           )
         })}
@@ -361,13 +381,14 @@ function RadialGraph({ layout, activeId, interactive, stats, currency, registerR
 
       {nodes.map((nd, i) => {
         const active = activeId === nd.id
+        const absorbing = absorbId === nd.id
         const st = stats[nd.id] || { total: 0, count: 0 }
         const tint = personTint(nd.id)
         return (
           <div
             key={nd.id}
             ref={(el) => registerRef(nd.id, el)}
-            style={{ position: 'absolute', left: nd.x, top: nd.y, transform: 'translate(-50%, -50%)' }}
+            style={{ position: 'absolute', left: nd.x, top: nd.y, width: NODE_W, height: NODE_H, marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2 }}
           >
             <motion.button
               type="button"
@@ -376,24 +397,27 @@ function RadialGraph({ layout, activeId, interactive, stats, currency, registerR
               animate={{
                 y: [0, i % 2 ? -4 : 4, 0],
                 x: [0, i % 3 ? 3 : -3, 0],
-                scale: active ? 1.22 : 1,
+                scale: absorbing ? [1, 1.7, 1] : active ? 1.55 : 1,
               }}
               transition={{
                 y: { repeat: Infinity, duration: 3 + (i % 3), ease: 'easeInOut' },
                 x: { repeat: Infinity, duration: 4 + (i % 2), ease: 'easeInOut' },
-                scale: { type: 'spring', stiffness: 320, damping: 20 },
+                scale: absorbing
+                  ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+                  : { type: 'spring', stiffness: 300, damping: 18 },
               }}
               style={{
+                width: NODE_W, height: NODE_H,
                 pointerEvents: interactive ? 'auto' : 'none',
-                background: active ? undefined : tint.bg,
-                borderColor: active ? undefined : tint.border,
-                color: active ? undefined : tint.fg,
+                background: active || absorbing ? undefined : tint.bg,
+                borderColor: active || absorbing ? undefined : tint.border,
+                color: active || absorbing ? undefined : tint.fg,
               }}
-              className={`rounded-2xl border px-3 py-2 min-w-[64px] max-w-[128px] flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
-                active ? 'bg-gold text-black border-gold scale-105 z-10' : ''
+              className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
+                active || absorbing ? 'bg-gold text-black border-gold z-10' : ''
               }`}
             >
-              <span className="font-semibold text-xs truncate max-w-full">{nd.person.display_name}</span>
+              <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(nd.person.display_name)}</span>
               {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
             </motion.button>
           </div>
@@ -403,16 +427,19 @@ function RadialGraph({ layout, activeId, interactive, stats, currency, registerR
       {/* нижняя нода — сброс вниз колоды */}
       <div
         ref={(el) => registerRef(defer.id, el)}
-        style={{ position: 'absolute', left: defer.x, top: defer.y, transform: 'translate(-50%, -50%)' }}
+        style={{ position: 'absolute', left: defer.x, top: defer.y, width: NODE_W, height: NODE_H, marginLeft: -NODE_W / 2, marginTop: -NODE_H / 2 }}
       >
         <motion.div
-          animate={{ scale: activeId === defer.id ? 1.22 : 1 }}
-          transition={{ type: 'spring', stiffness: 320, damping: 20 }}
-          className={`rounded-2xl border px-4 py-2 flex flex-col items-center justify-center shadow-lg shadow-black/40 ${
-            activeId === defer.id ? 'bg-indigo text-white border-indigo' : 'bg-spotify-dark/90 text-spotify-text border-white/15 border-dashed'
+          animate={{ scale: absorbId === defer.id ? [1, 1.7, 1] : activeId === defer.id ? 1.55 : 1 }}
+          transition={absorbId === defer.id
+            ? { duration: 0.46, times: [0, 0.45, 1], ease: 'easeOut' }
+            : { type: 'spring', stiffness: 300, damping: 18 }}
+          style={{ width: NODE_W, height: NODE_H }}
+          className={`rounded-2xl border flex flex-col items-center justify-center shadow-lg shadow-black/40 ${
+            activeId === defer.id || absorbId === defer.id ? 'bg-indigo text-white border-indigo' : 'bg-spotify-dark/90 text-spotify-text border-white/15 border-dashed'
           }`}
         >
-          <RotateCcw size={16} />
+          <RotateCcw size={15} />
           <span className="text-[10px] mt-0.5">вниз</span>
         </motion.div>
       </div>
@@ -476,6 +503,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [touching, setTouching] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
   const [activeNode, setActiveNode] = useState(null)
+  const [absorb, setAbsorb] = useState(null)
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
@@ -485,19 +513,26 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   }, [])
 
   // ── Размер игрового поля ──
-  // Поле занимает почти весь экран (без видимой рамки), карты тащатся свободно.
+  // Поле занимает весь экран (без видимой рамки) и НЕ скроллится: высота
+  // считается так, чтобы поле кончалось прямо над нижней панелью (иначе появлялся
+  // скролл, из-за которого «съезжали» зоны попадания).
   const boardRef = useRef(null)
   const [boardSize, setBoardSize] = useState(340)
-  const [vh, setVh] = useState(() => (typeof window !== 'undefined' ? window.innerHeight : 760))
-  useEffect(() => {
+  const [boardH, setBoardH] = useState(420)
+  useLayoutEffect(() => {
     const el = boardRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => setBoardSize(Math.round(el.clientWidth)))
+    const measure = () => {
+      setBoardSize(Math.round(el.clientWidth))
+      const top = el.getBoundingClientRect().top
+      setBoardH(Math.max(360, Math.round(window.innerHeight - top - 150)))
+    }
+    window.scrollTo(0, 0)
+    measure()
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
-    setBoardSize(Math.round(el.clientWidth))
-    const onResize = () => setVh(window.innerHeight)
-    window.addEventListener('resize', onResize)
-    return () => { ro.disconnect(); window.removeEventListener('resize', onResize) }
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
 
   useEffect(() => { setCards(billToCards(bill)) }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -565,22 +600,23 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const personCount = useCallback((pid) => personStats[pid]?.count || 0, [personStats])
 
   // ── Раскладка графа ──
-  // Поле во весь экран по вертикали: люди разбросаны по всей площади (вверх, вниз
-  // и в стороны), нижний центр зарезервирован под ноду «вниз».
-  const boardH = Math.max(380, vh - 270)
+  // Экран вытянут по вертикали → люди веером ВВЕРХ от центра (минимум боковых
+  // направлений), нода «вниз» — внизу по центру. Узкий по горизонтали, высокий
+  // по вертикали эллипс.
   const layout = useMemo(() => {
     const w = boardSize
     const h = boardH
     const cx = w / 2
     const cy = h / 2
-    const Rx = w * 0.40
-    const Ry = h * 0.42
+    const Rx = w * 0.30
+    const Ry = h * 0.44
     const N = participants.length
-    const GAP = 84
-    const start = 90 + GAP / 2
-    const span = 360 - GAP
+    // Веер вокруг направления «вверх» (270°); ширина растёт с числом людей, но
+    // ограничена, чтобы не уходить в чистые бока.
+    const span = Math.min(170, 46 * Math.max(1, N))
     const nodes = participants.map((p, i) => {
-      const deg = N === 1 ? 270 : start + (span * (i + 1)) / (N + 1)
+      const frac = N === 1 ? 0.5 : (i + 1) / (N + 1)
+      const deg = 270 + span * (frac - 0.5)
       const rad = (deg * Math.PI) / 180
       return { id: p.id, person: p, x: cx + Rx * Math.cos(rad), y: cy + Ry * Math.sin(rad) }
     })
@@ -604,17 +640,24 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   }, [])
 
   // ── Card ops ──
+  const pulseAbsorb = useCallback((id) => {
+    setAbsorb(id)
+    setTimeout(() => setAbsorb((cur) => (cur === id ? null : cur)), 480)
+  }, [])
+
   const assignTop = useCallback((personId) => {
     setActiveNode(null)
     if (!top) return
+    pulseAbsorb(personId)
     mutate((prev) => prev.map((c) => (c.id === top.id ? { ...c, owner: personId } : c)))
-  }, [top, mutate])
+  }, [top, mutate, pulseAbsorb])
 
   const deferTop = useCallback(() => {
     setActiveNode(null)
     if (!top) return
+    pulseAbsorb('__defer__')
     mutate((prev) => { const card = prev.find((c) => c.id === top.id); return [...prev.filter((c) => c.id !== top.id), card] })
-  }, [top, mutate])
+  }, [top, mutate, pulseAbsorb])
 
   const splitTop = useCallback((n) => {
     if (!top) return
@@ -740,11 +783,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     )
   }
 
-  const graphVisible = dragging || touching || showGraph
+  const graphVisible = dragging || touching || showGraph || !!absorb
 
   // ── Board ──
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-44">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4 overflow-hidden">
       <div className="flex items-center justify-between mb-2">
         <button onClick={onBack} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white">
           <ChevronLeft size={16} /> Назад
@@ -775,17 +818,27 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           </div>
         ) : null}
 
-        {graphVisible && (
-          <RadialGraph
-            layout={layout}
-            activeId={activeNode}
-            interactive={showGraph && !dragging && !touching}
-            stats={personStats}
-            currency={currency}
-            registerRef={registerRef}
-            onTapNode={(id) => { if (id !== '__defer__') setOpenPerson(id) }}
-          />
-        )}
+        <AnimatePresence>
+          {graphVisible && (
+            <motion.div
+              key="graph"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.22 }}
+              className="absolute inset-0"
+            >
+              <RadialGraph
+                layout={layout}
+                activeId={activeNode}
+                absorbId={absorb}
+                interactive={showGraph && !dragging && !touching}
+                stats={personStats}
+                currency={currency}
+                registerRef={registerRef}
+                onTapNode={(id) => { if (id !== '__defer__') setOpenPerson(id) }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* колода по центру — слой пропускает клики мимо карты к нодам */}
         {remaining > 0 && (
@@ -798,6 +851,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 depth={i}
                 isTop={i === 0}
                 draggable={i === 0 && !fx}
+                dimmed={i === 0 && !!activeNode}
                 tx={txById[card.txId]}
                 currency={currency}
                 remaining={remaining}
