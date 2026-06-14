@@ -291,7 +291,7 @@ function FxLayer({ fx, tx, currency, onDone }) {
   const node = fx.nodeAnchor || hub
   const dnx = node.x - hub.x
   const dny = node.y - hub.y
-  const total = fx.type === 'split' ? 300 + n * 200 : 500 + n * 160
+  const total = fx.type === 'split' ? 300 + n * 200 : 350 + n * 120
   useEffect(() => {
     const t = setTimeout(onDone, total)
     return () => clearTimeout(t)
@@ -339,20 +339,21 @@ function FxLayer({ fx, tx, currency, onDone }) {
         return (
           <motion.div
             key={i}
-            initial={{ x: spread * 44, y: spread % 2 ? -10 : 10, scale: 0.88, opacity: 1, rotate: spread * 5 }}
+            initial={{ x: spread * 48, y: spread % 2 ? -12 : 12, scale: 0.9, opacity: 1, rotate: spread * 5 }}
             animate={last ? {
-              x: [spread * 44, dnx, 0],
-              y: [spread % 2 ? -10 : 10, dny, 0],
-              scale: [0.88, 1.1, 0.15],
-              opacity: [1, 1, 0],
-              rotate: [spread * 5, 0, 0],
+              x: [spread * 48, dnx, dnx, dnx],
+              y: [spread % 2 ? -12 : 12, dny, dny, dny],
+              scale: [0.9, 1.22, 0.95, 0],
+              opacity: [1, 1, 1, 0],
+              rotate: [spread * 5, 0, 0, 0],
             } : {
-              x: dnx, y: dny, scale: 0.08, opacity: 0, rotate: 0,
+              x: dnx, y: dny, scale: 0.06, opacity: 0, rotate: 0,
             }}
             transition={last ? {
-              duration: 0.7, delay: (n - 1) * 0.1 + 0.06, ease: 'easeInOut', times: [0, 0.58, 1],
+              duration: 0.62, delay: (n - 1) * 0.09 + 0.05,
+              ease: 'easeInOut', times: [0, 0.48, 0.7, 1],
             } : {
-              duration: 0.34, delay: i * 0.1, ease: 'easeIn',
+              duration: 0.28, delay: i * 0.09, ease: 'easeIn',
             }}
             style={{ ...base, zIndex: last ? 62 : 56 + i }}
             className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
@@ -519,7 +520,7 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onFlyStart
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
         <Dialog.Content className="fixed bottom-0 left-1/2 -translate-x-1/2 z-50 w-full max-w-md
-          bg-spotify-black rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto">
+          bg-spotify-black rounded-t-2xl p-5">
           <Dialog.Title className="text-white text-lg font-bold mb-1">{person?.display_name}</Dialog.Title>
           <div className="text-gold font-semibold tabular-nums mb-1">{formatMinor(total, currency)}</div>
           {lines.length > 0 && (
@@ -855,6 +856,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   const handleFlyStart = useCallback((ln, fromRect) => {
     returnLine(ln.txId, openPerson)
+    setOpenPerson(null)
     setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
   }, [returnLine, openPerson])
 
