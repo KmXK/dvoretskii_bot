@@ -589,18 +589,6 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     return { x: nr.left - br.left + nr.width / 2, y: nr.top - br.top + nr.height / 2 }
   }, [])
 
-  const getDeckScreenPos = useCallback(() => {
-    const boardEl = boardRef.current
-    if (!boardEl) return { x: window.innerWidth / 2, y: window.innerHeight * 0.8 }
-    const br = boardEl.getBoundingClientRect()
-    return { x: br.left + layout.hub.x, y: br.top + layout.hub.y }
-  }, [layout.hub])
-
-  const handleFlyStart = useCallback((ln, fromRect) => {
-    returnLine(ln.txId, openPerson)
-    setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
-  }, [returnLine, openPerson])
-
   // ── Размер игрового поля ──
   // Поле занимает весь экран (без видимой рамки) и НЕ скроллится: высота
   // считается так, чтобы поле кончалось прямо над нижней панелью (иначе появлялся
@@ -848,6 +836,18 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const returnLine = useCallback((txId, personId) => {
     mutate((prev) => prev.map((c) => (c.txId === txId && c.owner === personId ? { ...c, owner: null } : c)))
   }, [mutate])
+
+  const getDeckScreenPos = useCallback(() => {
+    const boardEl = boardRef.current
+    if (!boardEl) return { x: window.innerWidth / 2, y: window.innerHeight * 0.8 }
+    const br = boardEl.getBoundingClientRect()
+    return { x: br.left + layout.hub.x, y: br.top + layout.hub.y }
+  }, [layout.hub])
+
+  const handleFlyStart = useCallback((ln, fromRect) => {
+    returnLine(ln.txId, openPerson)
+    setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
+  }, [returnLine, openPerson])
 
   // ── Rename ──
   const submitRename = useCallback(async () => {
