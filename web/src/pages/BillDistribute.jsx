@@ -458,7 +458,8 @@ function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, sta
 
 // ── Per-person sheet ────────────────────────────────────────────────────────────
 
-function SheetLine({ ln, currency, onRemove }) {
+function SheetLine({ ln, currency, onFlyStart }) {
+  const elRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const x = useMotionValue(0)
   const y = useMotionValue(0)
@@ -466,10 +467,9 @@ function SheetLine({ ln, currency, onRemove }) {
   const handleDragEnd = (_e, info) => {
     setDragging(false)
     const dist = Math.hypot(info.offset.x, info.offset.y)
-    if (dist > 90) {
-      const angle = Math.atan2(info.offset.y, info.offset.x)
-      animate(x, Math.cos(angle) * 500, { duration: 0.28, ease: 'easeOut' })
-      animate(y, Math.sin(angle) * 500, { duration: 0.28, ease: 'easeOut', onComplete: () => onRemove(ln.txId) })
+    if (dist > 80) {
+      const rect = elRef.current?.getBoundingClientRect()
+      onFlyStart(ln, rect || { left: window.innerWidth / 2, top: window.innerHeight / 2, width: CARD_W, height: CARD_H })
     } else {
       animate(x, 0, { type: 'spring', stiffness: 340, damping: 28 })
       animate(y, 0, { type: 'spring', stiffness: 340, damping: 28 })
@@ -478,6 +478,7 @@ function SheetLine({ ln, currency, onRemove }) {
 
   return (
     <motion.div
+      ref={elRef}
       drag
       dragMomentum={false}
       style={{ x, y, touchAction: 'none', position: 'relative' }}
@@ -515,7 +516,7 @@ function SheetLine({ ln, currency, onRemove }) {
   )
 }
 
-function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }) {
+function PersonSheet({ open, onClose, person, lines, currency, total, onFlyStart }) {
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
       <Dialog.Portal>
@@ -534,7 +535,7 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onRemove }
             <AnimatePresence>
               {lines.map((ln) => (
                 <motion.div key={ln.txId} exit={{ opacity: 0, scale: 0.8 }} transition={{ duration: 0.2 }}>
-                  <SheetLine ln={ln} currency={currency} onRemove={onRemove} />
+                  <SheetLine ln={ln} currency={currency} onFlyStart={onFlyStart} />
                 </motion.div>
               ))}
             </AnimatePresence>
@@ -570,6 +571,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [absorb, setAbsorb] = useState(null)
   const [splitPrompt, setSplitPrompt] = useState(false)
   const [dragPoint, setDragPoint] = useState(null)
+  const [flyingCard, setFlyingCard] = useState(null)
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
@@ -586,6 +588,18 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const br = boardEl.getBoundingClientRect()
     return { x: nr.left - br.left + nr.width / 2, y: nr.top - br.top + nr.height / 2 }
   }, [])
+
+  const getDeckScreenPos = useCallback(() => {
+    const boardEl = boardRef.current
+    if (!boardEl) return { x: window.innerWidth / 2, y: window.innerHeight * 0.8 }
+    const br = boardEl.getBoundingClientRect()
+    return { x: br.left + layout.hub.x, y: br.top + layout.hub.y }
+  }, [layout.hub])
+
+  const handleFlyStart = useCallback((ln, fromRect) => {
+    returnLine(ln.txId, openPerson)
+    setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
+  }, [returnLine, openPerson])
 
   // ── Размер игрового поля ──
   // Поле занимает весь экран (без видимой рамки) и НЕ скроллится: высота
@@ -731,7 +745,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
       const r = el?.getBoundingClientRect?.()
       if (!r) continue
       const d = Math.hypot(dragPoint.x - (r.left + r.width / 2), dragPoint.y - (r.top + r.height / 2))
-      result[id] = 1 + Math.max(0, 1 - d / 130) * 0.6
+      const proximity = Math.pow(Math.max(0, 1 - d / 150), 1.8)
+      result[id] = 1 + proximity * 0.28
     }
     return result
   }, [dragPoint])
@@ -998,8 +1013,30 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
         currency={currency}
         total={openPerson ? personStats[openPerson]?.total || 0 : 0}
         lines={openPerson ? personLines(openPerson) : []}
-        onRemove={(txId) => returnLine(txId, openPerson)}
+        onFlyStart={handleFlyStart}
       />
+
+      {/* Летящая карта — fixed overlay, рендерится вне диалога, над всем */}
+      <AnimatePresence>
+        {flyingCard && (() => {
+          const deck = getDeckScreenPos()
+          const fr = flyingCard.fromRect
+          return (
+            <motion.div
+              key="flying-return"
+              className="fixed pointer-events-none rounded-2xl px-4 py-4 shadow-2xl text-black"
+              style={{ left: fr.left, top: fr.top, width: fr.width, height: fr.height, zIndex: 200, background: cardGradient(flyingCard.txId) }}
+              initial={{ scale: 1, opacity: 1 }}
+              animate={{ x: deck.x - fr.left - fr.width / 2, y: deck.y - fr.top - fr.height / 2, scale: 0.2, opacity: 0 }}
+              transition={{ duration: 0.36, ease: 'easeIn' }}
+              onAnimationComplete={() => setFlyingCard(null)}
+            >
+              <div className="text-sm font-semibold truncate">{flyingCard.name}</div>
+              <div className="text-[11px] opacity-75">{flyingCard.portion}</div>
+            </motion.div>
+          )
+        })()}
+      </AnimatePresence>
 
       {/* На сколько разделить (после сброса карты на ноду «делить») */}
       <Dialog.Root open={splitPrompt} onOpenChange={(v) => !v && setSplitPrompt(false)}>
