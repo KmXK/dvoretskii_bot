@@ -291,7 +291,7 @@ function FxLayer({ fx, tx, currency, onDone }) {
   const node = fx.nodeAnchor || hub
   const dnx = node.x - hub.x
   const dny = node.y - hub.y
-  const total = fx.type === 'split' ? 300 + n * 200 : 350 + n * 120
+  const total = fx.type === 'split' ? 300 + n * 200 : 950 + n * 120
   useEffect(() => {
     const t = setTimeout(onDone, total)
     return () => clearTimeout(t)
@@ -331,37 +331,41 @@ function FxLayer({ fx, tx, currency, onDone }) {
     )
   }
 
+  // merge: куски по одному вылетают из колоды → летят к ноде → схлопываются → одна карта возвращается
   return (
     <div className="absolute inset-0 z-[55] pointer-events-none">
-      {Array.from({ length: n }).map((_, i) => {
-        const spread = i - (n - 1) / 2
-        const last = i === n - 1
-        return (
-          <motion.div
-            key={i}
-            initial={{ x: spread * 48, y: spread % 2 ? -12 : 12, scale: 0.9, opacity: 1, rotate: spread * 5 }}
-            animate={last ? {
-              x: [spread * 48, dnx, dnx, dnx],
-              y: [spread % 2 ? -12 : 12, dny, dny, dny],
-              scale: [0.9, 1.22, 0.95, 0],
-              opacity: [1, 1, 1, 0],
-              rotate: [spread * 5, 0, 0, 0],
-            } : {
-              x: dnx, y: dny, scale: 0.06, opacity: 0, rotate: 0,
-            }}
-            transition={last ? {
-              duration: 0.62, delay: (n - 1) * 0.09 + 0.05,
-              ease: 'easeInOut', times: [0, 0.48, 0.7, 1],
-            } : {
-              duration: 0.28, delay: i * 0.09, ease: 'easeIn',
-            }}
-            style={{ ...base, zIndex: last ? 62 : 56 + i }}
-            className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
-          >
-            <CardFace tx={tx} den={last ? 1 : fx.den} currency={currency} />
-          </motion.div>
-        )
-      })}
+      {Array.from({ length: n }).map((_, i) => (
+        <motion.div
+          key={i}
+          initial={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+          animate={{
+            x: [0, dnx, dnx, dnx],
+            y: [0, dny, dny, dny],
+            scale: [0, 1, 1, 0],
+            opacity: [0, 1, 1, 0],
+          }}
+          transition={{ duration: 0.56, delay: i * 0.12, times: [0, 0.5, 0.78, 1], ease: 'easeOut' }}
+          style={{ ...base, zIndex: 56 + i }}
+          className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
+        >
+          <CardFace tx={tx} den={fx.den} currency={currency} />
+        </motion.div>
+      ))}
+      <motion.div
+        key="merged"
+        initial={{ x: dnx, y: dny, scale: 0, opacity: 0 }}
+        animate={{
+          x: [dnx, dnx, 0],
+          y: [dny, dny, 0],
+          scale: [0, 1.15, 0.18],
+          opacity: [0, 1, 0],
+        }}
+        transition={{ duration: 0.46, delay: (n - 1) * 0.12 + 0.46, times: [0, 0.22, 1], ease: 'easeIn' }}
+        style={{ ...base, zIndex: 65 }}
+        className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
+      >
+        <CardFace tx={tx} den={1} currency={currency} />
+      </motion.div>
     </div>
   )
 }
@@ -856,7 +860,6 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   const handleFlyStart = useCallback((ln, fromRect) => {
     returnLine(ln.txId, openPerson)
-    setOpenPerson(null)
     setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
   }, [returnLine, openPerson])
 
