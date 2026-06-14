@@ -98,8 +98,8 @@ function groupAssignments(cards) {
   }))
 }
 
-const CARD_W = 150
-const CARD_H = 128
+const CARD_W = 148
+const CARD_H = 120
 const POSE_SPRING = { type: 'spring', stiffness: 340, damping: 26 }
 const DRAG_SCALE = 0.72 // карта уменьшается при подъёме, чтобы видеть ноды
 
@@ -161,7 +161,7 @@ function CardFace({ tx, den, currency, footer, onRename }) {
           <button onClick={onRename} className="shrink-0 opacity-70 hover:opacity-100"><Pencil size={13} /></button>
         )}
       </div>
-      <div className="text-3xl font-bold tabular-nums my-2">{fracLabel(den)}</div>
+      <div className="text-2xl font-bold tabular-nums my-1">{fracLabel(den)}</div>
       <div className="text-[11px] opacity-80 tabular-nums">
         {formatMinor(unitPrice, currency)}{footer ? ` · ${footer}` : ''}
       </div>
@@ -180,9 +180,9 @@ const PileCard = forwardRef(function PileCard(
 ) {
   const nodeRef = useRef(null)
   const dragging = useRef(false)
-  const x = useMotionValue((depth % 2 ? 1 : -1) * depth * 12)
+  const x = useMotionValue(0)
   const y = useMotionValue(0)
-  const scale = useMotionValue(0.5)
+  const scale = useMotionValue(0.84)
   const opacity = useMotionValue(0)
   const tilt = useMotionValue(0)
   const lean = useSpring(useTransform(x, [-220, 220], [-22, 22]), { stiffness: 260, damping: 18, mass: 0.6 })
@@ -268,7 +268,7 @@ const PileCard = forwardRef(function PileCard(
       onDrag={(_e, info) => onDragMoveCard?.(info.point)}
       onDragEnd={handleDragEnd}
       style={{ ...wrap, x, y, scale, opacity, rotate, background: cardGradient(card.txId), pointerEvents: draggable ? 'auto' : 'none' }}
-      className={`select-none rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black ${draggable ? 'touch-none cursor-grab' : ''}`}
+      className={`select-none rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black ${draggable ? 'touch-none cursor-grab' : ''}`}
     >
       <CardFace
         tx={tx}
@@ -297,7 +297,7 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
 
   if (fx.type === 'split') {
     const childDen = fx.den * n
-    // карта делится и по одной (последовательно) карты «возвращаются» в колоду
+    // карта делится: доли выезжают веером и плавно собираются обратно в колоду
     return (
       <div className="absolute inset-0 z-[55] pointer-events-none">
         {Array.from({ length: n }).map((_, i) => {
@@ -305,17 +305,17 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
           return (
             <motion.div
               key={i}
-              initial={{ x: 0, y: -10, scale: 1.1, rotate: 0, opacity: i === 0 ? 1 : 0 }}
+              initial={{ x: 0, y: 0, scale: 1, rotate: 0, opacity: i === 0 ? 1 : 0 }}
               animate={{
-                x: [spread * 70, spread * 70, 0],
-                y: [-10, -10, 0],
-                scale: [1.1, 1.1, 1],
-                rotate: [spread * 10, spread * 10, 0],
-                opacity: [1, 1, 1],
+                x: [0, spread * 58, 0],
+                y: [0, -6, 0],
+                scale: 1,
+                rotate: [0, spread * 6, 0],
+                opacity: 1,
               }}
-              transition={{ duration: 0.5, delay: i * 0.11, times: [0, 0.35, 1], ease: 'easeInOut' }}
+              transition={{ duration: 0.52, delay: i * 0.07, times: [0, 0.5, 1], ease: 'easeInOut' }}
               style={{ ...base, zIndex: 60 - i }}
-              className="rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
+              className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
             >
               <CardFace tx={tx} den={childDen} currency={currency} />
             </motion.div>
@@ -334,16 +334,11 @@ function FxLayer({ fx, tx, currency, anchor, onDone }) {
         return (
           <motion.div
             key={i}
-            initial={{ x: spread * 70, y: spread % 2 ? -14 : 14, scale: 0.96, rotate: spread * 7, opacity: 1 }}
-            animate={{
-              x: 0, y: 0,
-              scale: last ? [0.96, 1.12, 1] : 0.6,
-              rotate: 0,
-              opacity: last ? 1 : 0,
-            }}
-            transition={{ duration: 0.45, delay: last ? n * 0.1 : i * 0.1, ease: 'easeInOut' }}
+            initial={{ x: spread * 58, y: spread % 2 ? -10 : 10, scale: 0.95, rotate: spread * 6, opacity: 1 }}
+            animate={{ x: 0, y: 0, scale: 1, rotate: 0, opacity: last ? 1 : 0 }}
+            transition={{ duration: 0.42, delay: last ? n * 0.08 : i * 0.08, ease: 'easeInOut' }}
             style={{ ...base, zIndex: last ? 62 : 56 + i }}
-            className="rounded-2xl px-4 py-5 shadow-xl shadow-black/50 text-black"
+            className="rounded-2xl px-4 py-4 shadow-xl shadow-black/50 text-black"
           >
             <CardFace tx={tx} den={fx.den} currency={currency} />
           </motion.div>
@@ -619,10 +614,16 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const gapY = Math.max(10, Math.round(nodeH * 0.34))
     const cols = Math.max(1, Math.min(N, 4, Math.floor((W - 8) / (nodeW + gapX))))
     const rows = Math.max(1, Math.ceil(N / cols))
+    // Якорим снизу вверх, чтобы карта всегда влезала (не срезалась навбаром):
+    // карта → ряд действий → сетка людей.
+    const cardHalf = CARD_H / 2
+    const cardY = H - cardHalf - 10
+    const actY = cardY - cardHalf - nodeH / 2 - 14
     const zoneTop = nodeH / 2 + 6
-    const zoneH = H * 0.60
+    const zoneBottom = actY - nodeH / 2 - 16
+    const zoneH = Math.max(nodeH, zoneBottom - zoneTop)
     const gridH = rows * nodeH + (rows - 1) * gapY
-    const startY = zoneTop + Math.max(0, (zoneH - gridH) / 2)
+    const startY = zoneTop + nodeH / 2 + Math.max(0, (zoneH - gridH) / 2)
     const slots = participants.map((p, i) => {
       const r = Math.floor(i / cols)
       const rowCount = Math.min(cols, N - r * cols)
@@ -642,9 +643,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const an = acts.length
     const actGap = Math.max(12, gapX)
     const actW = an * nodeW + (an - 1) * actGap
-    const actY = H * 0.70
     const actions = acts.map((s, i) => ({ ...s, x: (W - actW) / 2 + nodeW / 2 + i * (nodeW + actGap), y: actY }))
-    const hub = { x: W / 2, y: H * 0.88 }
+    const hub = { x: W / 2, y: cardY }
     return { nodeW, nodeH, slots, actions, hub, capture: Math.max(56, nodeW * 0.95) }
   }, [participants, boardSize, boardH, canMerge])
 
@@ -855,8 +855,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           onTapNode={(id) => { if (!SPECIAL_KIND[id]) setOpenPerson(id) }}
         />
 
-        {/* колода у низа — слой пропускает клики мимо карты к нодам */}
-        {remaining > 0 && (
+        {/* колода у низа — слой пропускает клики мимо карты к нодам (прячем при FX) */}
+        {remaining > 0 && !fx && (
           <div className="absolute inset-0 pointer-events-none">
             {deck.slice(0, 4).map((card, i) => (
               <PileCard
