@@ -8,7 +8,7 @@ import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
-import BillCreate from './BillCreate'
+import BillCreate, { PositionsStep } from './BillCreate'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -627,6 +627,7 @@ export default function BillsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [editPositionsId, setEditPositionsId] = useState(null)
 
   const reload = useCallback(async () => {
     try {
@@ -689,6 +690,25 @@ export default function BillsPage() {
     )
   }
 
+  if (openBill && isAuthor && editPositionsId === openBill.id) {
+    const counts = {}
+    for (const t of openBill.transactions) {
+      if (t.creditor && t.creditor !== '__unknown__') counts[t.creditor] = (counts[t.creditor] || 0) + 1
+    }
+    const defPayer = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || openBill.author_person_id
+    return (
+      <div className="max-w-3xl mx-auto">
+        <PositionsStep
+          bill={openBill}
+          defaultPayer={defPayer}
+          onBack={async () => { await reload(); setEditPositionsId(null) }}
+          onReady={async () => { await reload(); setEditPositionsId(null) }}
+          onDeleted={() => { setEditPositionsId(null); setOpenBillId(null); reload() }}
+        />
+      </div>
+    )
+  }
+
   if (openBill && needsDistribution && isAuthor) {
     return (
       <div className="max-w-3xl mx-auto">
@@ -697,6 +717,7 @@ export default function BillsPage() {
           persons={persons}
           onBack={() => { setOpenBillId(null); reload() }}
           onChange={reload}
+          onEditPositions={() => setEditPositionsId(openBill.id)}
         />
       </div>
     )

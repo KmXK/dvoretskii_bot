@@ -2287,6 +2287,7 @@ async def handle_bills_parse(request: web.Request):
     """
     from steward.features.bills import collect as bills_collect
     from steward.features.bills import parse as bills_parse
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
 
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -2301,6 +2302,17 @@ async def handle_bills_parse(request: web.Request):
         return web.json_response({"error": err}, status=403)
     if bill.closed:
         return web.json_response({"error": "bill closed"}, status=400)
+
+    # Плательщик уже выбран на шаге «люди» — используем его как дефолтного кредитора
+    # и НЕ переспрашиваем (вырезаем payer-вопросы из ответа AI).
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    known_payer = body.get("payer_person_id")
+    if known_payer and known_payer not in set(bill.participants):
+        known_payer = None
+
     if not bill.collection_context:
         return web.json_response({"error": "нет контекста для разбора"}, status=400)
 
@@ -2329,6 +2341,14 @@ async def handle_bills_parse(request: web.Request):
     }
 
     txs = bills_parse.collect_rows_to_undistributed_transactions(result.item_rows, resolved)
+    questions = result.questions
+    if known_payer:
+        # Дефолт оплаты известен → не оставляем UNKNOWN-кредиторов и убираем
+        # «кто платил» из вопросов (пользователь уже ответил на шаге «люди»).
+        for tx in txs:
+            if not tx.creditor or tx.creditor == UNKNOWN_PERSON_ID:
+                tx.creditor = known_payer
+        questions = [q for q in questions if "плат" not in (q.get("text", "").lower())]
     bill.transactions = txs
 
     bill.currency = result.currency or bill.currency
@@ -2337,7 +2357,7 @@ async def handle_bills_parse(request: web.Request):
     await repository.save()
     return web.json_response({
         "bill": _serialize_bill_v2(bill, repository.db.bill_payments_v2),
-        "questions": result.questions,
+        "questions": questions,
     })
 
 

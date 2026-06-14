@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Network, Trash2 } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Network, Trash2, ListChecks } from 'lucide-react'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -39,8 +39,10 @@ function cardGradient(txId) {
   return `linear-gradient(135deg, hsl(${hue} 70% 64%), hsl(${hue} 72% 52%))`
 }
 
-function initials(name) {
-  return (name || '?').trim().slice(0, 1).toUpperCase()
+// Приглушённый персональный цвет ноды по id человека.
+function personTint(pid) {
+  const hue = hueFor(pid)
+  return { bg: `hsl(${hue} 42% 26%)`, border: `hsl(${hue} 55% 52%)`, fg: `hsl(${hue} 70% 86%)` }
 }
 
 // ── Cards model ───────────────────────────────────────────────────────────────
@@ -89,10 +91,11 @@ function groupAssignments(cards) {
   }))
 }
 
-const CARD_W = 200
-const CARD_MT = -84 // ≈ half card height, для центровки в доске
+const CARD_W = 196
+const CARD_MT = -60 // центровка карты со сдвигом чуть ниже центра доски
 const POSE_SPRING = { type: 'spring', stiffness: 340, damping: 26 }
-const CAPTURE = 82 // радиус захвата ноды при перетаскивании
+const CAPTURE = 92 // радиус захвата ноды при перетаскивании
+const DRAG_SCALE = 0.66 // карта уменьшается при подъёме, чтобы видеть ноды
 
 // ── Фон: дрейфующие частицы (антураж меню) ─────────────────────────────────────
 
@@ -167,7 +170,8 @@ function CardFace({ tx, den, currency, footer, onRename }) {
 
 const PileCard = forwardRef(function PileCard(
   { card, depth, isTop, draggable, tx, currency, remaining, resolveDrop,
-    onAssign, onDefer, onRename, onDragStartCard, onDragMoveCard, onDragEndCard }, ref,
+    onAssign, onDefer, onRename, onDragStartCard, onDragMoveCard, onDragEndCard,
+    onTouchStartCard, onTapEndCard }, ref,
 ) {
   const nodeRef = useRef(null)
   const dragging = useRef(false)
@@ -244,7 +248,9 @@ const PileCard = forwardRef(function PileCard(
       ref={nodeRef}
       drag={draggable}
       dragMomentum={false}
-      onDragStart={() => { dragging.current = true; onDragStartCard?.(); animate(scale, 1.06, { duration: 0.12 }) }}
+      onTapStart={() => draggable && onTouchStartCard?.()}
+      onTap={() => draggable && onTapEndCard?.()}
+      onDragStart={() => { dragging.current = true; onDragStartCard?.(); animate(scale, DRAG_SCALE, { type: 'spring', stiffness: 300, damping: 22 }) }}
       onDrag={(_e, info) => onDragMoveCard?.(info.point)}
       onDragEnd={handleDragEnd}
       style={{ ...wrap, x, y, scale, opacity, rotate, background: cardGradient(card.txId), pointerEvents: draggable ? 'auto' : 'none' }}
@@ -335,19 +341,19 @@ function FxLayer({ fx, tx, currency, onDone }) {
 
 // ── Радиальный граф людей ────────────────────────────────────────────────────────
 
-function RadialGraph({ layout, nodeSize, activeId, interactive, stats, currency, registerRef, onTapNode }) {
-  const { cx, cy, nodes, defer, size } = layout
+function RadialGraph({ layout, activeId, interactive, stats, currency, registerRef, onTapNode }) {
+  const { cx, cy, nodes, defer, w, h } = layout
   return (
     <div className="absolute inset-0">
-      <svg width={size} height={size} className="absolute inset-0 pointer-events-none">
+      <svg width={w} height={h} className="absolute inset-0 pointer-events-none">
         {[...nodes, defer].map((nd) => {
           const active = activeId === nd.id
           return (
             <line
               key={nd.id}
               x1={cx} y1={cy} x2={nd.x} y2={nd.y}
-              stroke={active ? 'rgba(214,178,112,0.9)' : 'rgba(255,255,255,0.16)'}
-              strokeWidth={active ? 2 : 1}
+              stroke={active ? 'rgba(214,178,112,0.95)' : 'rgba(255,255,255,0.14)'}
+              strokeWidth={active ? 2.5 : 1}
             />
           )
         })}
@@ -356,38 +362,39 @@ function RadialGraph({ layout, nodeSize, activeId, interactive, stats, currency,
       {nodes.map((nd, i) => {
         const active = activeId === nd.id
         const st = stats[nd.id] || { total: 0, count: 0 }
+        const tint = personTint(nd.id)
         return (
           <div
             key={nd.id}
             ref={(el) => registerRef(nd.id, el)}
-            style={{ position: 'absolute', left: nd.x, top: nd.y, width: nodeSize, height: nodeSize, marginLeft: -nodeSize / 2, marginTop: -nodeSize / 2 }}
-            className="flex items-center justify-center"
+            style={{ position: 'absolute', left: nd.x, top: nd.y, transform: 'translate(-50%, -50%)' }}
           >
             <motion.button
               type="button"
               disabled={!interactive}
               onClick={() => interactive && onTapNode(nd.id)}
               animate={{
-                y: [0, i % 2 ? -3 : 3, 0],
-                x: [0, i % 3 ? 2 : -2, 0],
-                scale: active ? 1.32 : 1,
+                y: [0, i % 2 ? -4 : 4, 0],
+                x: [0, i % 3 ? 3 : -3, 0],
+                scale: active ? 1.22 : 1,
               }}
               transition={{
                 y: { repeat: Infinity, duration: 3 + (i % 3), ease: 'easeInOut' },
                 x: { repeat: Infinity, duration: 4 + (i % 2), ease: 'easeInOut' },
                 scale: { type: 'spring', stiffness: 320, damping: 20 },
               }}
-              style={{ width: nodeSize, height: nodeSize, pointerEvents: interactive ? 'auto' : 'none' }}
-              className={`rounded-full flex flex-col items-center justify-center border text-center leading-none transition-colors ${
-                active
-                  ? 'bg-gold text-black border-gold shadow-lg shadow-gold/30'
-                  : st.count > 0
-                    ? 'bg-spotify-gray text-white border-spotify-light-gray'
-                    : 'bg-spotify-dark/90 text-spotify-text border-white/15'
+              style={{
+                pointerEvents: interactive ? 'auto' : 'none',
+                background: active ? undefined : tint.bg,
+                borderColor: active ? undefined : tint.border,
+                color: active ? undefined : tint.fg,
+              }}
+              className={`rounded-2xl border px-3 py-2 min-w-[64px] max-w-[128px] flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${
+                active ? 'bg-gold text-black border-gold scale-105 z-10' : ''
               }`}
             >
-              <span className="font-semibold text-xs px-1 truncate max-w-full">{initials(nd.person.display_name)}</span>
-              {st.total > 0 && <span className="text-[9px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
+              <span className="font-semibold text-xs truncate max-w-full">{nd.person.display_name}</span>
+              {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
             </motion.button>
           </div>
         )
@@ -396,19 +403,17 @@ function RadialGraph({ layout, nodeSize, activeId, interactive, stats, currency,
       {/* нижняя нода — сброс вниз колоды */}
       <div
         ref={(el) => registerRef(defer.id, el)}
-        style={{ position: 'absolute', left: defer.x, top: defer.y, width: nodeSize, height: nodeSize, marginLeft: -nodeSize / 2, marginTop: -nodeSize / 2 }}
-        className="flex items-center justify-center"
+        style={{ position: 'absolute', left: defer.x, top: defer.y, transform: 'translate(-50%, -50%)' }}
       >
         <motion.div
-          animate={{ scale: activeId === defer.id ? 1.32 : 1 }}
+          animate={{ scale: activeId === defer.id ? 1.22 : 1 }}
           transition={{ type: 'spring', stiffness: 320, damping: 20 }}
-          style={{ width: nodeSize, height: nodeSize }}
-          className={`rounded-full flex flex-col items-center justify-center border ${
+          className={`rounded-2xl border px-4 py-2 flex flex-col items-center justify-center shadow-lg shadow-black/40 ${
             activeId === defer.id ? 'bg-indigo text-white border-indigo' : 'bg-spotify-dark/90 text-spotify-text border-white/15 border-dashed'
           }`}
         >
           <RotateCcw size={16} />
-          <span className="text-[9px] mt-0.5">вниз</span>
+          <span className="text-[10px] mt-0.5">вниз</span>
         </motion.div>
       </div>
     </div>
@@ -451,7 +456,7 @@ const SPLIT_OPTIONS = [2, 3, 4]
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
-export default function BillDistribute({ bill, persons, onBack, onChange }) {
+export default function BillDistribute({ bill, persons, onBack, onChange, onEditPositions }) {
   const personsById = useMemo(() => Object.fromEntries(persons.map((p) => [p.id, p])), [persons])
   const participants = useMemo(
     () => bill.participants.map((id) => personsById[id]).filter(Boolean),
@@ -468,6 +473,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [fx, setFx] = useState(null)
   const [dragging, setDragging] = useState(false)
+  const [touching, setTouching] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
   const [activeNode, setActiveNode] = useState(null)
 
@@ -478,16 +484,20 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     else delete nodeRefs.current[id]
   }, [])
 
-  // ── Размер доски ──
+  // ── Размер игрового поля ──
+  // Поле занимает почти весь экран (без видимой рамки), карты тащатся свободно.
   const boardRef = useRef(null)
   const [boardSize, setBoardSize] = useState(340)
+  const [vh, setVh] = useState(() => (typeof window !== 'undefined' ? window.innerHeight : 760))
   useEffect(() => {
     const el = boardRef.current
     if (!el) return
     const ro = new ResizeObserver(() => setBoardSize(Math.round(el.clientWidth)))
     ro.observe(el)
     setBoardSize(Math.round(el.clientWidth))
-    return () => ro.disconnect()
+    const onResize = () => setVh(window.innerHeight)
+    window.addEventListener('resize', onResize)
+    return () => { ro.disconnect(); window.removeEventListener('resize', onResize) }
   }, [])
 
   useEffect(() => { setCards(billToCards(bill)) }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -555,24 +565,27 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
   const personCount = useCallback((pid) => personStats[pid]?.count || 0, [personStats])
 
   // ── Раскладка графа ──
+  // Поле во весь экран по вертикали: люди разбросаны по всей площади (вверх, вниз
+  // и в стороны), нижний центр зарезервирован под ноду «вниз».
+  const boardH = Math.max(380, vh - 270)
   const layout = useMemo(() => {
-    const size = boardSize
-    const cx = size / 2
-    const cy = size / 2
-    const R = size * 0.45
+    const w = boardSize
+    const h = boardH
+    const cx = w / 2
+    const cy = h / 2
+    const Rx = w * 0.40
+    const Ry = h * 0.42
     const N = participants.length
-    const GAP = 90
+    const GAP = 84
     const start = 90 + GAP / 2
     const span = 360 - GAP
     const nodes = participants.map((p, i) => {
       const deg = N === 1 ? 270 : start + (span * (i + 1)) / (N + 1)
       const rad = (deg * Math.PI) / 180
-      return { id: p.id, person: p, x: cx + R * Math.cos(rad), y: cy + R * Math.sin(rad) }
+      return { id: p.id, person: p, x: cx + Rx * Math.cos(rad), y: cy + Ry * Math.sin(rad) }
     })
-    return { size, cx, cy, nodes, defer: { id: '__defer__', x: cx, y: cy + R } }
-  }, [participants, boardSize])
-
-  const nodeSize = participants.length > 8 ? 46 : participants.length > 6 ? 52 : 60
+    return { w, h, cx, cy, nodes, defer: { id: '__defer__', x: cx, y: cy + Ry } }
+  }, [participants, boardSize, boardH])
 
   const nearestNode = useCallback((point) => {
     let best = null
@@ -727,7 +740,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
     )
   }
 
-  const graphVisible = dragging || showGraph
+  const graphVisible = dragging || touching || showGraph
 
   // ── Board ──
   return (
@@ -737,6 +750,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
           <ChevronLeft size={16} /> Назад
         </button>
         <div className="flex items-center gap-3">
+          {onEditPositions && (
+            <button onClick={onEditPositions} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Назад к позициям">
+              <ListChecks size={15} /> Позиции
+            </button>
+          )}
           <span className="text-[11px] text-spotify-text">{saving ? 'сохраняю…' : 'сохранено'}</span>
           <button onClick={() => setConfirmDelete(true)} className="text-spotify-text/70 hover:text-red-400" title="Удалить счёт"><Trash2 size={17} /></button>
         </div>
@@ -747,8 +765,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         Тащи карту к человеку · вниз по центру — отложить
       </p>
 
-      {/* Доска: частицы + граф + колода */}
-      <div ref={boardRef} className="relative mx-auto w-full overflow-hidden rounded-3xl bg-spotify-dark/40" style={{ maxWidth: 360, height: boardSize }}>
+      {/* Игровое поле во весь экран: частицы + граф + колода (без рамки) */}
+      <div ref={boardRef} className="relative w-full" style={{ height: boardH }}>
         <ParticleField />
 
         {remaining === 0 && !graphVisible ? (
@@ -760,9 +778,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
         {graphVisible && (
           <RadialGraph
             layout={layout}
-            nodeSize={nodeSize}
             activeId={activeNode}
-            interactive={!dragging}
+            interactive={showGraph && !dragging && !touching}
             stats={personStats}
             currency={currency}
             registerRef={registerRef}
@@ -770,9 +787,9 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
           />
         )}
 
-        {/* колода по центру */}
+        {/* колода по центру — слой пропускает клики мимо карты к нодам */}
         {remaining > 0 && (
-          <div className="absolute inset-0">
+          <div className="absolute inset-0 pointer-events-none">
             {deck.slice(0, 4).map((card, i) => (
               <PileCard
                 key={card.id}
@@ -788,9 +805,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange }) {
                 onAssign={assignTop}
                 onDefer={deferTop}
                 onRename={(txId, name) => setRenaming({ txId, name })}
+                onTouchStartCard={() => setTouching(true)}
+                onTapEndCard={() => setTouching(false)}
                 onDragStartCard={() => { setDragging(true); setActiveNode(null) }}
                 onDragMoveCard={(point) => setActiveNode(nearestNode(point)?.id || null)}
-                onDragEndCard={() => { setDragging(false); setActiveNode(null) }}
+                onDragEndCard={() => { setDragging(false); setTouching(false); setActiveNode(null) }}
               />
             ))}
           </div>

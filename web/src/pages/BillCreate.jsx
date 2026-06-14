@@ -24,7 +24,7 @@ const curSymbol = (c) => (c === 'BYN' ? 'р' : c)
 
 // ── Кастомный дропдаун «кто платил» ───────────────────────────────────────────
 
-function PayerSelect({ value, options, onChange, placeholder = 'кто платил', className = '' }) {
+function PayerSelect({ value, options, onChange, placeholder = 'кто платил', className = '', compact = false }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   useEffect(() => {
@@ -36,14 +36,26 @@ function PayerSelect({ value, options, onChange, placeholder = 'кто плат�
   const current = options.find((o) => o.id === value)
   return (
     <div className={`relative ${className}`} ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full inline-flex items-center justify-between gap-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1.5 text-xs text-white transition"
-      >
-        <span className={`truncate ${current ? '' : 'text-spotify-text/70'}`}>{current?.name || placeholder}</span>
-        <ChevronDown size={13} className="shrink-0 opacity-70" />
-      </button>
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-spotify-text hover:text-white hover:bg-white/5 transition max-w-full"
+          title="кто платил"
+        >
+          <Crown size={12} className="shrink-0 text-gold/80" />
+          <span className="truncate">{current?.name || placeholder}</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="w-full inline-flex items-center justify-between gap-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1.5 text-xs text-white transition"
+        >
+          <span className={`truncate ${current ? '' : 'text-spotify-text/70'}`}>{current?.name || placeholder}</span>
+          <ChevronDown size={13} className="shrink-0 opacity-70" />
+        </button>
+      )}
       <AnimatePresence>
         {open && (
           <motion.div
@@ -339,7 +351,7 @@ function EditableCell({ value, onSave, className = '', type = 'text', placeholde
   )
 }
 
-function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
+export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
   const [chunks, setChunks] = useState(() => bill.collection_context || [])
   const [positions, setPositions] = useState(() => bill.transactions || [])
   const [participantIds, setParticipantIds] = useState(() => bill.participants || [])
@@ -529,7 +541,7 @@ function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
   const runParse = async () => {
     setError(null); setParsing(true); setQuestions([])
     try {
-      const data = await api.post(`/api/bills/${bill.id}/parse`, {})
+      const data = await api.post(`/api/bills/${bill.id}/parse`, { payer_person_id: payerId || bill.author_person_id })
       const txs = data.bill?.transactions || []
       setPositions(txs)
       setParticipantIds(data.bill?.participants || [])
@@ -718,8 +730,9 @@ function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted }) {
                   value={tx.creditor}
                   options={payerOptions}
                   onChange={(pid) => patchTx(tx.id, { creditor: pid })}
-                  className="ml-auto w-32"
+                  className="ml-auto"
                   placeholder="кто платил"
+                  compact
                 />
               </div>
             </motion.div>
