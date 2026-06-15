@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, Loader2, Share2 } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, Loader2 } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
@@ -591,23 +591,6 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
     onChange()
   }
 
-  const [sharing, setSharing] = useState(false)
-  const shareImage = async () => {
-    if (!WebApp.isVersionAtLeast?.('8.0') || typeof WebApp.shareMessage !== 'function') {
-      alert('Обновите Telegram — нужен шеринг сообщений (8.0+)')
-      return
-    }
-    setSharing(true)
-    try {
-      const { prepared_message_id } = await api(`/api/bills/${bill.id}/share-image`, { method: 'POST' })
-      WebApp.shareMessage(prepared_message_id)
-    } catch (e) {
-      alert(e.message || 'Не удалось подготовить картинку')
-    } finally {
-      setSharing(false)
-    }
-  }
-
   const net = useMemo(() => computeBillDebts(bill), [bill])
   const myDebts = (myPersonId && net[myPersonId]) || {}
   const owedToMe = {}
@@ -754,14 +737,6 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
       {tab === 'debts' && (
         <div className="space-y-2">
-          <button
-            onClick={shareImage}
-            disabled={sharing}
-            className="w-full rounded-lg bg-gold/15 border border-gold/30 text-gold py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-gold/25 disabled:opacity-50 transition"
-          >
-            {sharing ? <Loader2 size={15} className="animate-spin" /> : <Share2 size={15} />}
-            Поделиться итогом
-          </button>
           {Object.keys(myDebts).length === 0 && Object.keys(owedToMe).length === 0 && (
             <div className="text-spotify-text text-center text-sm py-4">Долгов нет</div>
           )}
