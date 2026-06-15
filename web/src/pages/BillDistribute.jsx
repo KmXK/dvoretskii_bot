@@ -1,7 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock, Share2, Loader2 } from 'lucide-react'
+import WebApp from '@twa-dev/sdk'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -919,6 +920,26 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     } catch { /* noop */ } finally { setSaving(false) }
   }, [bill.id, buildBody, cards, onBack, onChange])
 
+  // ── Поделиться «кто что взял» картинкой (нативный шеринг) ──
+  const [sharing, setSharing] = useState(false)
+  const shareSummary = useCallback(async () => {
+    if (!WebApp.isVersionAtLeast?.('8.0') || typeof WebApp.shareMessage !== 'function') {
+      alert('Обновите Telegram — нужен шеринг сообщений (8.0+)')
+      return
+    }
+    setSharing(true)
+    try {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      await api.put(`/api/bills/${bill.id}/distribution`, buildBody(cards))
+      const { prepared_message_id } = await api.post(`/api/bills/${bill.id}/share-image`, {})
+      WebApp.shareMessage(prepared_message_id)
+    } catch (e) {
+      alert(e.message || 'Не удалось подготовить картинку')
+    } finally {
+      setSharing(false)
+    }
+  }, [bill.id, buildBody, cards])
+
   // ── Finish summary ──
   if (finishing) {
     const filled = participants.filter((p) => personCount(p.id) > 0)
@@ -947,6 +968,15 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
             </div>
           ))}
         </div>
+        <button
+          onClick={shareSummary}
+          disabled={sharing}
+          className="w-full mb-2 rounded-xl bg-gold/15 border border-gold/30 text-gold py-3 font-medium inline-flex items-center justify-center gap-2 hover:bg-gold/25 disabled:opacity-50 transition"
+        >
+          {sharing ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />}
+          Поделиться — кто что взял
+        </button>
+        <p className="text-spotify-text/60 text-xs text-center mb-3">скинь в чат, чтобы подсказали, всё ли верно</p>
         <div className="flex gap-2">
           <button onClick={() => setFinishing(false)} className="flex-1 bg-spotify-gray text-white rounded-xl py-3">Переделать</button>
           <button onClick={finalize} disabled={saving} className="flex-1 bg-gold text-black font-semibold rounded-xl py-3 disabled:opacity-50 hover:bg-gold-2 transition-colors">

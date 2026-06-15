@@ -471,6 +471,64 @@ def format_bill_detail_rich(
     return "\n\n".join(parts)
 
 
+def _people_breakdown(bill: BillV2) -> dict[str, list[tuple[str, int]]]:
+    """{person_id: [(item_name, share_minor)]} — кто что взял (с долей платившего)."""
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for tx in bill.transactions:
+        for asg in tx.assignments:
+            debtors = [d for d in asg.debtors if d and d != UNKNOWN_PERSON_ID]
+            if not debtors:
+                continue
+            den = getattr(asg, "denominator", 1) or 1
+            asg_total = (tx.unit_price_minor * asg.unit_count + den // 2) // den
+            shares = split_minor(asg_total, len(asg.debtors))
+            for d, share in zip(asg.debtors, shares):
+                if d and d != UNKNOWN_PERSON_ID:
+                    groups.setdefault(d, []).append((tx.item_name or "—", share))
+    return groups
+
+
+def format_bill_people_rich(
+    bill: BillV2,
+    by_id: dict[str, BillPerson],
+) -> str:
+    status = "🔒 Закрыт" if bill.closed else "🔓 Открыт"
+    parts = [
+        f"# 🧾 {cell_md(bill.name)} #{bill.id}",
+        f"{status} · **Автор:** {cell_md(pname(bill.author_person_id, by_id))} · {bill.currency}",
+        "## 👥 Кто что взял",
+    ]
+    groups = _people_breakdown(bill)
+    if not groups:
+        parts.append("_Позиции ещё не распределены_")
+        return "\n\n".join(parts)
+    for pid, items in sorted(groups.items(), key=lambda kv: pname(kv[0], by_id).lower()):
+        total = sum(s for _, s in items)
+        parts.append(f"### {cell_md(pname(pid, by_id))} — {minor_to_display(total, bill.currency)}")
+        parts.append(_rich_table(
+            ["Позиция", "Доля"],
+            [[cell_md(name), minor_to_display(s, bill.currency)] for name, s in items],
+        ))
+    return "\n\n".join(parts)
+
+
+def format_bill_people(
+    bill: BillV2,
+    by_id: dict[str, BillPerson],
+) -> str:
+    lines = [f"🧾 *{md_inline(bill.name)}* \\#{bill.id}", "", "👥 *Кто что взял:*"]
+    groups = _people_breakdown(bill)
+    if not groups:
+        lines.append("_Позиции ещё не распределены_")
+        return "\n".join(lines)
+    for pid, items in sorted(groups.items(), key=lambda kv: pname(kv[0], by_id).lower()):
+        total = sum(s for _, s in items)
+        lines.append(f"\n*{mname(pid, by_id)}* — {minor_to_display(total, bill.currency)}")
+        for name, s in items:
+            lines.append(f"  • {md_inline(name)}: {minor_to_display(s, bill.currency)}")
+    return "\n".join(lines)
+
+
 def format_preview(
     transactions: list,
     by_id: dict[str, BillPerson],
@@ -693,10 +751,23 @@ def kb_change_pick(feature: "BillsFeature", idx: int, persons: list) -> Keyboard
     return Keyboard.grid(rows)
 
 
-def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_admin: bool, payments: list) -> Keyboard:
+def kb_bill(
+    feature: "BillsFeature",
+    bill: BillV2,
+    person_id: str | None,
+    is_admin: bool,
+    payments: list,
+    view: str = "positions",
+) -> Keyboard:
     rows: list[list[Button]] = []
     can_edit = is_admin or (person_id and person_id == bill.author_person_id)
     is_participant = person_id and person_id in bill.participants and person_id != bill.author_person_id
+
+    if bill.transactions:
+        if view == "people":
+            rows.append([feature.cb("bills:view").button("📋 По позициям", bill_id=bill.id)])
+        else:
+            rows.append([feature.cb("bills:people").button("👥 По людям", bill_id=bill.id)])
 
     if not bill.closed:
         rows.append([
@@ -706,8 +777,15 @@ def kb_bill(feature: "BillsFeature", bill: BillV2, person_id: str | None, is_adm
         if is_participant:
             rows.append([feature.cb("bills:suggest_start").button("➕ Предложить", bill_id=bill.id)])
         if can_edit:
+            from steward.helpers.webapp import get_bill_deep_link
+            edit_link = get_bill_deep_link(feature.bot, bill.id)
+            edit_btn = (
+                Button("✏️ Исправить", url=edit_link)
+                if edit_link
+                else feature.cb("bills:edit").button("✏️ Исправить", bill_id=bill.id)
+            )
             rows.append([
-                feature.cb("bills:edit").button("✏️ Исправить", bill_id=bill.id),
+                edit_btn,
                 feature.cb("bills:close").button("🔒 Закрыть", bill_id=bill.id),
             ])
     elif can_edit:

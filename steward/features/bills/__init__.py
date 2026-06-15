@@ -858,27 +858,44 @@ class BillsFeature(Feature):
                 break
         return has_owe, has_owed
 
-    async def _show_bill(self, ctx: FeatureContext, bill_id: int):
+    async def _render_bill(
+        self, ctx: FeatureContext, bill_id: int, *, mode: str = "positions", edit: bool
+    ):
         bill = self.repository.get_bill_v2(bill_id)
         if not bill:
-            await ctx.reply(f"Счёт \\#{bill_id} не найден.")
+            if edit:
+                await ctx.edit(f"Счёт \\#{bill_id} не найден.")
+            else:
+                await ctx.reply(f"Счёт \\#{bill_id} не найден.")
             return
         tid = ctx.user_id
         person = self.repository.get_bill_person_by_telegram_id(tid)
         is_admin = self.repository.is_admin(tid)
         pid = person.id if person else None
         if not is_admin and pid not in (bill.participants + [bill.author_person_id]):
-            await ctx.reply("Нет доступа к этому счёту.")
+            if edit:
+                await ctx.toast("Нет доступа.", alert=True)
+            else:
+                await ctx.reply("Нет доступа к этому счёту.")
             return
         by_id = self._persons()
         payments = self.repository.db.bill_payments_v2
+        if mode == "people":
+            rich = fmt.format_bill_people_rich(bill, by_id)
+            plain = fmt.format_bill_people(bill, by_id)
+        else:
+            rich = fmt.format_bill_detail_rich(bill, pid, by_id, payments)
+            plain = fmt.format_bill_detail(bill, pid, by_id, payments)
         await self._send_view(
             ctx,
-            fmt.format_bill_detail_rich(bill, pid, by_id, payments),
-            fmt.format_bill_detail(bill, pid, by_id, payments),
-            keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
-            edit=False,
+            rich,
+            plain,
+            keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments, view=mode),
+            edit=edit,
         )
+
+    async def _show_bill(self, ctx: FeatureContext, bill_id: int):
+        await self._render_bill(ctx, bill_id, mode="positions", edit=False)
 
     async def _start_create(self, ctx: FeatureContext, name: str):
         chat_id = ctx.chat_id
@@ -1158,26 +1175,11 @@ class BillsFeature(Feature):
 
     @on_callback("bills:view", schema="<bill_id:int>")
     async def on_view(self, ctx: FeatureContext, bill_id: int):
-        bill = self.repository.get_bill_v2(bill_id)
-        if not bill:
-            await ctx.edit(f"Счёт \\#{bill_id} не найден.")
-            return
-        tid = ctx.user_id
-        person = self.repository.get_bill_person_by_telegram_id(tid)
-        is_admin = self.repository.is_admin(tid)
-        pid = person.id if person else None
-        if not is_admin and pid not in (bill.participants + [bill.author_person_id]):
-            await ctx.toast("Нет доступа.", alert=True)
-            return
-        by_id = self._persons()
-        payments = self.repository.db.bill_payments_v2
-        await self._send_view(
-            ctx,
-            fmt.format_bill_detail_rich(bill, pid, by_id, payments),
-            fmt.format_bill_detail(bill, pid, by_id, payments),
-            keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
-            edit=True,
-        )
+        await self._render_bill(ctx, bill_id, mode="positions", edit=True)
+
+    @on_callback("bills:people", schema="<bill_id:int>")
+    async def on_view_people(self, ctx: FeatureContext, bill_id: int):
+        await self._render_bill(ctx, bill_id, mode="people", edit=True)
 
     @on_callback(
         "bills:edit",
