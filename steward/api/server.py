@@ -2426,8 +2426,10 @@ async def handle_bills_share_image(request: web.Request):
                     per_person.setdefault(d, []).append((tx.item_name or "—", share))
 
     groups: list[dict] = []
+    grand_total = 0
     for pid, items in sorted(per_person.items(), key=lambda kv: names.get(kv[0], "").lower()):
         total = sum(s for _, s in items)
+        grand_total += total
         groups.append({
             "name": names.get(pid, "?"),
             "total": minor_to_display(total, bill.currency),
@@ -2451,10 +2453,25 @@ async def handle_bills_share_image(request: web.Request):
     except Exception:
         pass
 
+    n = len(groups)
+    if n % 10 == 1 and n % 100 != 11:
+        people_word = "участник"
+    elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        people_word = "участника"
+    else:
+        people_word = "участников"
+    if n:
+        caption = (
+            f"🧾 {bill.name} — кто что взял\n"
+            f"{n} {people_word} · итого {minor_to_display(grand_total, bill.currency)}"
+        )
+    else:
+        caption = f"🧾 {bill.name} — кто что взял"
+
     result = InlineQueryResultCachedPhoto(
         id=_uuid.uuid4().hex,
         photo_file_id=file_id,
-        caption=f"Раскидка: {bill.name}",
+        caption=caption,
     )
     try:
         prepared = await bot.save_prepared_inline_message(
