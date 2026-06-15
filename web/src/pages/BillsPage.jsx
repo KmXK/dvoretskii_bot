@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, Loader2, Share2 } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import { useAuth } from '../context/useAuth'
@@ -30,6 +30,33 @@ function splitMinor(total, n) {
   const base = Math.floor(total / n)
   const rem = total - base * n
   return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0))
+}
+
+// Группировка позиций по людям: для каждого должника — его позиции с долей.
+function buildPeopleGroups(bill) {
+  const groups = {} // personId -> { items: [...], total }
+  for (const tx of bill.transactions) {
+    for (const asg of tx.assignments) {
+      if (!asg.debtors || asg.debtors.length === 0) continue
+      const den = asg.denominator || 1
+      const total = Math.floor((tx.unit_price_minor * asg.unit_count + Math.floor(den / 2)) / den)
+      const shares = splitMinor(total, asg.debtors.length)
+      asg.debtors.forEach((d, i) => {
+        if (d === '__unknown__') return
+        if (!groups[d]) groups[d] = { items: [], total: 0 }
+        groups[d].items.push({
+          txId: tx.id,
+          name: tx.item_name,
+          share: shares[i],
+          creditor: tx.creditor,
+          isPayer: d === tx.creditor,
+          locked: !!tx.locked,
+        })
+        groups[d].total += shares[i]
+      })
+    }
+  }
+  return groups
 }
 
 // ── Debt computation (matches steward/helpers/bills_money.py) ────────────────
@@ -182,6 +209,32 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
   )
 }
 
+// Группа позиций одного человека (вид «По людям»): его доли + итог.
+function PersonGroup({ name, group, personsById, currency, isMine }) {
+  return (
+    <div className={`bg-spotify-gray/50 rounded-lg p-3 ${isMine ? 'border-l-2 border-green-400' : ''}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-white text-sm font-semibold truncate">{name}</div>
+        <div className="text-gold font-bold tabular-nums">{formatMinor(group.total, currency)}</div>
+      </div>
+      <div className="space-y-1">
+        {group.items.map((it, i) => (
+          <div key={i} className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-spotify-text truncate flex items-center gap-1 min-w-0">
+              {it.locked && <Lock size={11} className="text-spotify-green/70 shrink-0" />}
+              <span className="truncate">{it.name}</span>
+              {it.isPayer
+                ? <span className="text-spotify-text/50 shrink-0">· платил</span>
+                : <span className="text-spotify-text/50 shrink-0">→ {personsById[it.creditor]?.display_name || '?'}</span>}
+            </span>
+            <span className="text-white tabular-nums shrink-0">{formatMinor(it.share, currency)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete }) {
   const cred = personsById[tx.creditor]?.display_name || '?'
   const total = tx.unit_price_minor * tx.quantity
@@ -194,7 +247,9 @@ function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete 
             {tx.quantity} × {formatMinor(tx.unit_price_minor, currency)} = {formatMinor(total, currency)}
           </div>
         </div>
-        {isAuthor && (
+        {tx.locked ? (
+          <span className="text-spotify-green/70 ml-2" title="По позиции прошла оплата — правка заблокирована"><Lock size={14} /></span>
+        ) : isAuthor && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(tx.id) }}
             className="text-red-400 ml-2"
@@ -402,11 +457,85 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
   )
 }
 
+// Строка долга с действием: «Переслал» (я должник) или «Получил» (я кредитор).
+// По клику раскрывается инлайн-поле суммы (предзаполнено остатком).
+function DebtRow({ direction, name, amount, currency, onSubmit }) {
+  const owe = direction === 'owe'
+  const [open, setOpen] = useState(false)
+  const [val, setVal] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const start = () => {
+    setVal(((amount / 100).toFixed(amount % 100 === 0 ? 0 : 2)))
+    setErr(null)
+    setOpen(true)
+  }
+  const submit = async () => {
+    const minor = Math.round(parseFloat(String(val).replace(',', '.')) * 100)
+    if (!minor || minor <= 0) { setErr('Неверная сумма'); return }
+    setBusy(true); setErr(null)
+    try { await onSubmit(minor); setOpen(false) }
+    catch (e) { setErr(e.message || 'Не вышло') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <motion.div layout className={`rounded-lg overflow-hidden ${owe ? 'bg-red-500/10' : 'bg-green-500/10'}`}>
+      <div className="p-3 flex items-center justify-between gap-2">
+        <span className="text-white text-sm truncate">{owe ? '→' : '←'} {name}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`font-semibold ${owe ? 'text-red-400' : 'text-green-400'}`}>{formatMinor(amount, currency)}</span>
+          <button
+            onClick={open ? () => setOpen(false) : start}
+            className={`rounded-md px-2 py-1 text-xs inline-flex items-center gap-1 transition ${
+              owe ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30' : 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
+            }`}
+          >
+            {owe ? <><Send size={12} /> Переслал</> : <><Wallet size={12} /> Получил</>}
+          </button>
+        </div>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="px-3 pb-3"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                value={val} onChange={(e) => setVal(e.target.value)} inputMode="decimal" autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+                className="flex-1 min-w-0 rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none focus:bg-white/10"
+              />
+              <button
+                onClick={submit} disabled={busy}
+                className={`rounded-lg px-3 py-2 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 ${
+                  owe ? 'bg-red-500/25 text-red-200' : 'bg-green-500/25 text-green-200'
+                }`}
+              >
+                {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                {owe ? 'Перевёл' : 'Зачесть'}
+              </button>
+            </div>
+            {err && <div className="text-xs text-red-400 mt-1">{err}</div>}
+            <div className="text-[11px] text-spotify-text/60 mt-1">
+              {owe ? 'Пометится как перевод, ждёт подтверждения получателя' : 'Засчитается сразу как полученный перевод'}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
 function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
   const api = useApi()
   const [tab, setTab] = useState('items')
+  const [itemsView, setItemsView] = useState('positions')
   const [showAdd, setShowAdd] = useState(false)
   const [suggestions, setSuggestions] = useState([])
+  const peopleGroups = useMemo(() => buildPeopleGroups(bill), [bill])
   const personsById = useMemo(
     () => Object.fromEntries(persons.map(p => [p.id, p])),
     [persons]
@@ -445,6 +574,37 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
       onChange()
     } catch (e) {
       alert(e.message)
+    }
+  }
+
+  const payForward = async (creditorId, amountMinor) => {
+    await api('/api/bills/payments', { method: 'POST', body: {
+      creditor: creditorId, amount_minor: amountMinor, currency: bill.currency, bill_ids: [bill.id],
+    } })
+    onChange()
+  }
+
+  const markReceived = async (debtorId, amountMinor) => {
+    await api('/api/bills/payments/received', { method: 'POST', body: {
+      debtor: debtorId, amount_minor: amountMinor, currency: bill.currency, bill_ids: [bill.id],
+    } })
+    onChange()
+  }
+
+  const [sharing, setSharing] = useState(false)
+  const shareImage = async () => {
+    if (!WebApp.isVersionAtLeast?.('8.0') || typeof WebApp.shareMessage !== 'function') {
+      alert('Обновите Telegram — нужен шеринг сообщений (8.0+)')
+      return
+    }
+    setSharing(true)
+    try {
+      const { prepared_message_id } = await api(`/api/bills/${bill.id}/share-image`, { method: 'POST' })
+      WebApp.shareMessage(prepared_message_id)
+    } catch (e) {
+      alert(e.message || 'Не удалось подготовить картинку')
+    } finally {
+      setSharing(false)
     }
   }
 
@@ -544,10 +704,23 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
       {tab === 'items' && (
         <div className="space-y-2">
+          {bill.transactions.length > 0 && (
+            <div className="inline-flex rounded-lg bg-spotify-gray p-0.5 mb-1">
+              {[['positions', 'По позициям'], ['people', 'По людям']].map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setItemsView(v)}
+                  className={`px-3 py-1 rounded-md text-xs transition ${
+                    itemsView === v ? 'bg-gold text-black font-medium' : 'text-spotify-text'
+                  }`}
+                >{label}</button>
+              ))}
+            </div>
+          )}
           {bill.transactions.length === 0 && (
             <div className="text-spotify-text text-center text-sm py-4">Нет позиций</div>
           )}
-          {bill.transactions.map(tx => (
+          {itemsView === 'positions' && bill.transactions.map(tx => (
             <TransactionRow
               key={tx.id}
               tx={tx}
@@ -558,25 +731,53 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
               onDelete={handleDelete}
             />
           ))}
+          {itemsView === 'people' && (
+            Object.keys(peopleGroups).length === 0 ? (
+              <div className="text-spotify-text text-center text-sm py-4">Позиции ещё не распределены</div>
+            ) : (
+              Object.entries(peopleGroups)
+                .sort((a, b) => (personsById[a[0]]?.display_name || '').localeCompare(personsById[b[0]]?.display_name || ''))
+                .map(([pid, group]) => (
+                  <PersonGroup
+                    key={pid}
+                    name={personsById[pid]?.display_name || '?'}
+                    group={group}
+                    personsById={personsById}
+                    currency={bill.currency}
+                    isMine={pid === myPersonId}
+                  />
+                ))
+            )
+          )}
         </div>
       )}
 
       {tab === 'debts' && (
         <div className="space-y-2">
+          <button
+            onClick={shareImage}
+            disabled={sharing}
+            className="w-full rounded-lg bg-gold/15 border border-gold/30 text-gold py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-gold/25 disabled:opacity-50 transition"
+          >
+            {sharing ? <Loader2 size={15} className="animate-spin" /> : <Share2 size={15} />}
+            Поделиться итогом
+          </button>
           {Object.keys(myDebts).length === 0 && Object.keys(owedToMe).length === 0 && (
             <div className="text-spotify-text text-center text-sm py-4">Долгов нет</div>
           )}
           {Object.entries(myDebts).map(([cred, amt]) => (
-            <div key={cred} className="bg-red-500/10 rounded-lg p-3 flex justify-between">
-              <span className="text-white text-sm">→ {personsById[cred]?.display_name || '?'}</span>
-              <span className="text-red-400 font-semibold">{formatMinor(amt, bill.currency)}</span>
-            </div>
+            <DebtRow
+              key={cred} direction="owe" amount={amt} currency={bill.currency}
+              name={personsById[cred]?.display_name || '?'}
+              onSubmit={(minor) => payForward(cred, minor)}
+            />
           ))}
           {Object.entries(owedToMe).map(([deb, amt]) => (
-            <div key={deb} className="bg-green-500/10 rounded-lg p-3 flex justify-between">
-              <span className="text-white text-sm">← {personsById[deb]?.display_name || '?'}</span>
-              <span className="text-green-400 font-semibold">{formatMinor(amt, bill.currency)}</span>
-            </div>
+            <DebtRow
+              key={deb} direction="owed" amount={amt} currency={bill.currency}
+              name={personsById[deb]?.display_name || '?'}
+              onSubmit={(minor) => markReceived(deb, minor)}
+            />
           ))}
         </div>
       )}

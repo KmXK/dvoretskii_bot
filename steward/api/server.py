@@ -1886,7 +1886,43 @@ def _serialize_assignment(asg) -> dict:
     }
 
 
-def _serialize_transaction(tx) -> dict:
+def _settled_pairs(bill_payments: list) -> set:
+    """Пары (должник, кредитор), по которым есть подтверждённый платёж."""
+    from steward.data.models.bill_v2 import PaymentStatus
+    return {
+        (p.debtor, p.creditor)
+        for p in bill_payments
+        if p.status in PaymentStatus.SETTLED
+    }
+
+
+def _tx_payment_locked(tx, settled_pairs: set) -> bool:
+    """Позиция заблокирована для правки, если по любой её паре должник→кредитор
+    уже прошёл подтверждённый платёж."""
+    if not settled_pairs:
+        return False
+    debtors = {d for a in tx.assignments for d in a.debtors}
+    return any((d, tx.creditor) in settled_pairs for d in debtors)
+
+
+def _bill_settled_pairs(repository: "Repository", bill) -> set:
+    bill_payments = [p for p in repository.db.bill_payments_v2 if bill.id in p.bill_ids]
+    return _settled_pairs(bill_payments)
+
+
+def _locked_people(bill, settled_pairs: set) -> set:
+    """Люди (должники + плательщик), завязанные на оплаченные позиции —
+    их нельзя убрать из состава, а плательщика по их позициям нельзя сменить."""
+    people: set = set()
+    for tx in bill.transactions:
+        if _tx_payment_locked(tx, settled_pairs):
+            people.add(tx.creditor)
+            for a in tx.assignments:
+                people.update(a.debtors)
+    return people
+
+
+def _serialize_transaction(tx, locked: bool = False) -> dict:
     return {
         "id": tx.id,
         "item_name": tx.item_name,
@@ -1898,6 +1934,7 @@ def _serialize_transaction(tx) -> dict:
         "source": tx.source,
         "created_at": tx.created_at.isoformat() if tx.created_at else None,
         "incomplete": tx.incomplete,
+        "locked": locked,
     }
 
 
@@ -1916,12 +1953,13 @@ def _serialize_payment_v2(p) -> dict:
 
 def _serialize_bill_v2(bill, payments: list) -> dict:
     bill_payments = [p for p in payments if bill.id in p.bill_ids]
+    settled = _settled_pairs(bill_payments)
     return {
         "id": bill.id,
         "name": bill.name,
         "author_person_id": bill.author_person_id,
         "participants": list(bill.participants),
-        "transactions": [_serialize_transaction(tx) for tx in bill.transactions],
+        "transactions": [_serialize_transaction(tx, _tx_payment_locked(tx, settled)) for tx in bill.transactions],
         "currency": bill.currency,
         "origin_chat_id": bill.origin_chat_id,
         "created_at": bill.created_at.isoformat() if bill.created_at else None,
@@ -2279,6 +2317,150 @@ async def handle_bills_collect(request: web.Request):
     })
 
 
+_CONTEXT_KIND_RE = re.compile(r"^\[(Текст|Фото|Голосовое)\]\n?", re.UNICODE)
+
+
+async def handle_bills_collect_delete(request: web.Request):
+    """DELETE /api/bills/{id}/collect/{index} — удалить кусок собранного контекста."""
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+    index = int(request.match_info["index"])
+    if index < 0 or index >= len(bill.collection_context):
+        return web.json_response({"error": "index out of range"}, status=404)
+    bill.collection_context.pop(index)
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response({"ok": True, "context_count": len(bill.collection_context)})
+
+
+async def handle_bills_collect_edit(request: web.Request):
+    """PATCH /api/bills/{id}/collect/{index} — поправить распознанный текст куска.
+
+    body: {text}. Префикс типа ([Текст]/[Фото]/[Голосовое]) сохраняется.
+    """
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+    if bill.closed:
+        return web.json_response({"error": "bill closed"}, status=400)
+    index = int(request.match_info["index"])
+    if index < 0 or index >= len(bill.collection_context):
+        return web.json_response({"error": "index out of range"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    new_text = (body.get("text") or "").strip()
+    if not new_text:
+        return web.json_response({"error": "empty text"}, status=400)
+    cur = bill.collection_context[index]
+    m = _CONTEXT_KIND_RE.match(cur)
+    prefix = f"[{m.group(1)}]\n" if m else ""
+    bill.collection_context[index] = f"{prefix}{new_text}"
+    bill.updated_at = datetime.datetime.now()
+    await repository.save()
+    return web.json_response({"ok": True, "chunk": bill.collection_context[index]})
+
+
+async def handle_bills_share_image(request: web.Request):
+    """POST /api/bills/{id}/share-image — отрисовать итоговую раскидку картинкой и
+    подготовить её к нативному шерингу (WebApp.shareMessage).
+
+    Считаем нетто-долги (после платежей), рисуем PNG, грузим в Telegram ради
+    file_id, кладём prepared inline message. Возвращаем prepared_message_id.
+    """
+    import uuid as _uuid
+    from telegram import InlineQueryResultCachedPhoto
+    from steward.helpers.bill_image import render_bill_summary_png
+    from steward.helpers.bills_money import (
+        apply_payments, compute_bill_debts, minor_to_display, net_debts,
+    )
+
+    repository: Repository = request.app["repository"]
+    bot = request.app.get("bot")
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    if bot is None:
+        return web.json_response({"error": "bot unavailable"}, status=503)
+    bill_id = int(request.match_info["id"])
+    bill = repository.get_bill_v2(bill_id)
+    if not bill:
+        return web.json_response({"error": "not found"}, status=404)
+    ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "view")
+    if not ok:
+        return web.json_response({"error": err}, status=403)
+
+    debts = compute_bill_debts(bill.transactions, bill.currency)
+    net = net_debts(debts)
+    bill_payments = [p for p in repository.db.bill_payments_v2 if bill.id in p.bill_ids]
+    apply_payments(net, bill_payments, clamp_zero=True)
+
+    names = {p.id: p.display_name for p in repository.db.bill_persons}
+    rows: list[tuple[str, str, str]] = []
+    for debtor, creds in net.items():
+        for creditor, amount in creds.items():
+            if amount > 0:
+                rows.append((
+                    names.get(debtor, "?"),
+                    names.get(creditor, "?"),
+                    minor_to_display(amount, bill.currency),
+                ))
+    rows.sort(key=lambda r: r[0].lower())
+
+    png = render_bill_summary_png(bill.name, rows)
+
+    uid = int(tg_user["id"])
+    try:
+        msg = await bot.send_photo(chat_id=uid, photo=png, disable_notification=True)
+    except Exception as e:
+        logger.warning("share-image: send_photo to %s failed: %s", uid, e)
+        return web.json_response({"error": "не удалось подготовить картинку"}, status=502)
+    file_id = msg.photo[-1].file_id
+    try:
+        await bot.delete_message(chat_id=uid, message_id=msg.message_id)
+    except Exception:
+        pass
+
+    result = InlineQueryResultCachedPhoto(
+        id=_uuid.uuid4().hex,
+        photo_file_id=file_id,
+        caption=f"Раскидка: {bill.name}",
+    )
+    try:
+        prepared = await bot.save_prepared_inline_message(
+            uid, result,
+            allow_user_chats=True,
+            allow_group_chats=True,
+            allow_channel_chats=True,
+            allow_bot_chats=False,
+        )
+    except Exception as e:
+        logger.warning("share-image: save_prepared_inline_message failed: %s", e)
+        return web.json_response({"error": "шеринг недоступен"}, status=502)
+
+    return web.json_response({"prepared_message_id": prepared.id})
+
+
 async def handle_bills_parse(request: web.Request):
     """POST /api/bills/{id}/parse — прогнать собранный контекст через AI.
 
@@ -2302,6 +2484,11 @@ async def handle_bills_parse(request: web.Request):
         return web.json_response({"error": err}, status=403)
     if bill.closed:
         return web.json_response({"error": "bill closed"}, status=400)
+    if _bill_settled_pairs(repository, bill):
+        return web.json_response(
+            {"error": "по счёту уже есть оплаты — перераспознавание позиций заблокировано"},
+            status=409,
+        )
 
     # Плательщик уже выбран на шаге «люди» — используем его как дефолтного кредитора
     # и НЕ переспрашиваем (вырезаем payer-вопросы из ответа AI).
@@ -2387,7 +2574,16 @@ async def handle_bills_set_creditor(request: web.Request):
     if pid != UNKNOWN_PERSON_ID and not repository.get_bill_person(pid):
         return web.json_response({"error": "person not found"}, status=404)
 
+    settled = _bill_settled_pairs(repository, bill)
+    if any(_tx_payment_locked(tx, settled) and tx.creditor != pid for tx in bill.transactions):
+        return web.json_response(
+            {"error": "по части позиций уже прошла оплата — плательщика всего счёта сменить нельзя"},
+            status=409,
+        )
+
     for tx in bill.transactions:
+        if _tx_payment_locked(tx, settled):
+            continue
         tx.creditor = pid
     if pid != UNKNOWN_PERSON_ID and pid not in bill.participants:
         bill.participants.append(pid)
@@ -2427,6 +2623,17 @@ async def handle_bills_set_participants(request: web.Request):
     ids = _resolve_bill_participants(repository, caller, data.get("participants"))
     removed = set(bill.participants) - set(ids)
     if removed:
+        settled = _bill_settled_pairs(repository, bill)
+        blocked = removed & _locked_people(bill, settled)
+        if blocked:
+            names = ", ".join(
+                (repository.get_bill_person(pid).display_name if repository.get_bill_person(pid) else "?")
+                for pid in blocked
+            )
+            return web.json_response(
+                {"error": f"нельзя убрать из счёта — по их позициям уже прошла оплата: {names}"},
+                status=409,
+            )
         for tx in bill.transactions:
             if tx.creditor in removed:
                 tx.creditor = UNKNOWN_PERSON_ID
@@ -2551,7 +2758,8 @@ async def handle_bills_tx_add(request: web.Request):
         bill.participants.append(tx.creditor)
     bill.updated_at = datetime.datetime.now()
     await repository.save()
-    return web.json_response(_serialize_transaction(tx))
+    settled = _bill_settled_pairs(repository, bill)
+    return web.json_response(_serialize_transaction(tx, _tx_payment_locked(tx, settled)))
 
 
 async def handle_bills_tx_update(request: web.Request):
@@ -2572,6 +2780,12 @@ async def handle_bills_tx_update(request: web.Request):
     tx = next((t for t in bill.transactions if t.id == tx_id), None)
     if not tx:
         return web.json_response({"error": "tx not found"}, status=404)
+
+    settled = _bill_settled_pairs(repository, bill)
+    if _tx_payment_locked(tx, settled):
+        return web.json_response(
+            {"error": "по этой позиции уже прошла оплата — правка заблокирована"}, status=409
+        )
 
     data = await request.json()
     if "item_name" in data:
@@ -2594,7 +2808,8 @@ async def handle_bills_tx_update(request: web.Request):
         tx.incomplete = any(not a.debtors for a in tx.assignments)
     bill.updated_at = datetime.datetime.now()
     await repository.save()
-    return web.json_response(_serialize_transaction(tx))
+    settled = _bill_settled_pairs(repository, bill)
+    return web.json_response(_serialize_transaction(tx, _tx_payment_locked(tx, settled)))
 
 
 async def handle_bills_tx_delete(request: web.Request):
@@ -2610,6 +2825,11 @@ async def handle_bills_tx_delete(request: web.Request):
     ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
     if not ok:
         return web.json_response({"error": err}, status=403)
+    tx = next((t for t in bill.transactions if t.id == tx_id), None)
+    if tx is not None and _tx_payment_locked(tx, _bill_settled_pairs(repository, bill)):
+        return web.json_response(
+            {"error": "по этой позиции уже прошла оплата — удаление заблокировано"}, status=409
+        )
     bill.transactions = [t for t in bill.transactions if t.id != tx_id]
     bill.updated_at = datetime.datetime.now()
     await repository.save()
@@ -2641,9 +2861,13 @@ async def handle_bills_distribute(request: web.Request):
 
     data = await request.json()
     by_id = {t.id: t for t in bill.transactions}
+    settled = _bill_settled_pairs(repository, bill)
     for entry in data.get("transactions", []):
         tx = by_id.get(entry.get("id"))
         if not tx:
+            continue
+        # Позиции с уже прошедшей оплатой не перераспределяем.
+        if _tx_payment_locked(tx, settled):
             continue
         tx.assignments = [
             BillItemAssignment(
@@ -2882,6 +3106,40 @@ async def handle_bills_payment_create(request: web.Request):
     return web.json_response(_serialize_payment_v2(payment))
 
 
+async def handle_bills_payment_received(request: web.Request):
+    """POST /api/bills/payments/received — кредитор фиксирует получение перевода.
+
+    Caller = кредитор (получатель). Платёж сразу confirmed (auto-confirm), как
+    /bills got в чате. body: {debtor, amount_minor, currency?, bill_ids?}.
+    """
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillPaymentV2, PaymentStatus
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    data = await request.json()
+
+    creditor_person, _ = repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
+        username=tg_user.get("username"),
+    )
+    payment = BillPaymentV2(
+        id=str(_uuid.uuid4()),
+        debtor=data["debtor"],
+        creditor=creditor_person.id,
+        amount_minor=int(data["amount_minor"]),
+        currency=data.get("currency", "BYN"),
+        status=PaymentStatus.CONFIRMED,
+        bill_ids=list(data.get("bill_ids", [])),
+        initiated_chat_id=data.get("initiated_chat_id"),
+    )
+    repository.db.bill_payments_v2.append(payment)
+    await repository.save()
+    return web.json_response(_serialize_payment_v2(payment))
+
+
 async def handle_bills_payment_confirm(request: web.Request):
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -3016,6 +3274,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills/circle", handle_bills_circle)
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
     app.router.add_post("/api/bills/payments", handle_bills_payment_create)
+    app.router.add_post("/api/bills/payments/received", handle_bills_payment_received)
     app.router.add_put("/api/bills/payments/{pid}/confirm", handle_bills_payment_confirm)
     app.router.add_put("/api/bills/payments/{pid}/reject", handle_bills_payment_reject)
     app.router.add_post("/api/bills/suggestions/{sid}/approve", handle_bills_suggestion_approve)
@@ -3029,7 +3288,10 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_patch("/api/bills/{id}/transactions/{tid}", handle_bills_tx_update)
     app.router.add_delete("/api/bills/{id}/transactions/{tid}", handle_bills_tx_delete)
     app.router.add_post("/api/bills/{id}/collect", handle_bills_collect)
+    app.router.add_delete("/api/bills/{id}/collect/{index}", handle_bills_collect_delete)
+    app.router.add_patch("/api/bills/{id}/collect/{index}", handle_bills_collect_edit)
     app.router.add_post("/api/bills/{id}/parse", handle_bills_parse)
+    app.router.add_post("/api/bills/{id}/share-image", handle_bills_share_image)
     app.router.add_put("/api/bills/{id}/creditor", handle_bills_set_creditor)
     app.router.add_put("/api/bills/{id}/participants", handle_bills_set_participants)
     app.router.add_put("/api/bills/{id}/distribution", handle_bills_distribute)

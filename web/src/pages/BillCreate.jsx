@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, ChevronDown, Plus, X, Users, Mic, Square, Image as ImageIcon,
-  Type, Sparkles, Loader2, Check, Trash2, Crown,
+  Type, Sparkles, Loader2, Check, Trash2, Crown, Pencil, Lock,
 } from 'lucide-react'
 import { api } from '../api/client'
 
@@ -331,6 +331,82 @@ function contextKind(chunk) {
   return m ? m[1] : 'Текст'
 }
 
+function contextBody(chunk) {
+  return String(chunk || '').replace(/^\[(Текст|Фото|Голосовое)\]\n?/, '')
+}
+
+// Карточка собранного куска: просмотр распознанного текста, правка, удаление.
+function ContextChunk({ chunk, index, onDelete, onEdit }) {
+  const k = contextKind(chunk)
+  const Icon = KIND_LABEL[k] || Type
+  const body = contextBody(chunk)
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState(body)
+  const [busy, setBusy] = useState(false)
+
+  const startEdit = () => { setVal(body); setEditing(true); setOpen(true) }
+  const save = async () => {
+    const v = val.trim()
+    if (!v || v === body) { setEditing(false); return }
+    setBusy(true)
+    try { await onEdit(index, v); setEditing(false) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <motion.div
+      layout
+      initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+      className="rounded-xl bg-spotify-green/10 border border-spotify-green/25 overflow-hidden"
+    >
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Icon size={13} className="text-spotify-green shrink-0" />
+        <button onClick={() => setOpen((o) => !o)} className="flex-1 min-w-0 text-left">
+          <span className="text-xs text-spotify-green">{k}</span>
+          {!open && body && (
+            <span className="text-xs text-spotify-text/70 ml-2 truncate inline-block max-w-[55%] align-bottom">{body}</span>
+          )}
+        </button>
+        <button onClick={startEdit} className="text-spotify-text/60 hover:text-white p-1" title="Изменить">
+          <Pencil size={14} />
+        </button>
+        <button onClick={() => onDelete(index)} className="text-spotify-text/60 hover:text-red-400 p-1" title="Удалить">
+          <Trash2 size={14} />
+        </button>
+        <button onClick={() => setOpen((o) => !o)} className="text-spotify-text/60 hover:text-white p-1">
+          <ChevronDown size={15} className={`transition ${open ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="px-3 pb-3"
+          >
+            {editing ? (
+              <div className="space-y-2">
+                <textarea
+                  value={val} onChange={(e) => setVal(e.target.value)} rows={4} autoFocus
+                  className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none focus:bg-white/10 resize-y"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg text-xs text-spotify-text hover:bg-white/5">Отмена</button>
+                  <button onClick={save} disabled={busy} className="px-3 py-1.5 rounded-lg text-xs bg-spotify-green/20 text-spotify-green hover:bg-spotify-green/30 disabled:opacity-50 inline-flex items-center gap-1">
+                    {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Сохранить
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-spotify-text whitespace-pre-wrap break-words">{body || <span className="opacity-50">пусто</span>}</p>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
 // Инлайн-редактируемое значение (название/кол-во/цена) с сохранением на blur/enter.
 function EditableCell({ value, onSave, className = '', type = 'text', placeholder = '' }) {
   const [v, setV] = useState(String(value ?? ''))
@@ -451,6 +527,18 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
       ? `[${data.kind === 'photo' ? 'Фото' : data.kind === 'voice' ? 'Голосовое' : 'Текст'}]\n${data.recognized}`
       : `[?]`])
     return data
+  }, [bill.id])
+
+  const deleteChunk = useCallback(async (index) => {
+    const prev = chunks
+    setChunks((c) => c.filter((_, i) => i !== index))
+    try { await api.delete(`/api/bills/${bill.id}/collect/${index}`) }
+    catch (e) { setChunks(prev); setError(e.message || 'Не удалось удалить') }
+  }, [bill.id, chunks])
+
+  const editChunk = useCallback(async (index, text) => {
+    const data = await api.patch(`/api/bills/${bill.id}/collect/${index}`, { text })
+    setChunks((c) => c.map((ch, i) => (i === index ? data.chunk : ch)))
   }, [bill.id])
 
   const addText = async () => {
@@ -574,26 +662,17 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
       </div>
       <p className="text-spotify-text text-sm mb-5 pl-8">Надиктуй, сфоткай чек или впиши позиции</p>
 
-      {/* собранные куски контекста */}
+      {/* собранные куски контекста — просмотр / правка / удаление */}
       <AnimatePresence>
         {chunks.length > 0 && (
           <motion.div
+            layout
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex flex-wrap gap-2 mb-4"
+            className="flex flex-col gap-2 mb-4"
           >
-            {chunks.map((c, i) => {
-              const k = contextKind(c)
-              const Icon = KIND_LABEL[k] || Type
-              return (
-                <motion.span
-                  key={i}
-                  initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                  className="px-3 py-1.5 rounded-full text-xs bg-spotify-green/15 border border-spotify-green/30 text-spotify-green inline-flex items-center gap-1.5"
-                >
-                  <Icon size={12} /> {k}
-                </motion.span>
-              )
-            })}
+            {chunks.map((c, i) => (
+              <ContextChunk key={i} chunk={c} index={i} onDelete={deleteChunk} onEdit={editChunk} />
+            ))}
           </motion.div>
         )}
       </AnimatePresence>
@@ -667,7 +746,13 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
       {/* кто платил — дефолт на весь счёт */}
       {positions.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-4">
-          <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Кто платил за всё</div>
+          <div className="text-xs uppercase tracking-wider text-spotify-text mb-2 inline-flex items-center gap-1.5">
+            Кто платил за всё
+            {positions.some((p) => p.locked) && <Lock size={11} className="text-spotify-green/70" />}
+          </div>
+          {positions.some((p) => p.locked) ? (
+            <div className="text-xs text-spotify-text/70">Плательщик зафиксирован — по части позиций уже прошла оплата.</div>
+          ) : (
           <div className="flex flex-wrap gap-2">
             {participantIds.map((pid) => {
               const active = payerId === pid
@@ -687,6 +772,7 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
               )
             })}
           </div>
+          )}
         </motion.div>
       )}
 
@@ -694,54 +780,78 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
       {positions.length > 0 && (
         <div className="space-y-2 mb-3">
           <div className="text-xs uppercase tracking-wider text-spotify-text">Позиции ({positions.length})</div>
-          {positions.map((tx) => (
+          {positions.map((tx) => {
+            const locked = !!tx.locked
+            return (
             <motion.div
               key={tx.id}
               layout
               initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-              className="bg-spotify-dark rounded-lg p-2.5"
+              className={`bg-spotify-dark rounded-lg p-2.5 ${locked ? 'opacity-70' : ''}`}
             >
               <div className="flex items-center gap-2">
-                <EditableCell
-                  value={tx.item_name}
-                  placeholder="Название"
-                  onSave={(v) => patchTx(tx.id, { item_name: v })}
-                  className="flex-1 text-white text-sm min-w-0"
-                />
-                <button onClick={() => deleteTx(tx.id)} className="shrink-0 text-spotify-text/60 hover:text-red-400 p-1">
-                  <X size={15} />
-                </button>
+                {locked ? (
+                  <span className="flex-1 text-white text-sm min-w-0 px-1.5 py-1 truncate">{tx.item_name}</span>
+                ) : (
+                  <EditableCell
+                    value={tx.item_name}
+                    placeholder="Название"
+                    onSave={(v) => patchTx(tx.id, { item_name: v })}
+                    className="flex-1 text-white text-sm min-w-0"
+                  />
+                )}
+                {locked ? (
+                  <span className="shrink-0 text-spotify-green/70 p-1" title="По позиции прошла оплата — правка заблокирована">
+                    <Lock size={14} />
+                  </span>
+                ) : (
+                  <button onClick={() => deleteTx(tx.id)} className="shrink-0 text-spotify-text/60 hover:text-red-400 p-1">
+                    <X size={15} />
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-2 mt-1.5">
                 <div className="inline-flex items-baseline text-spotify-text">
-                  <EditableCell
-                    value={tx.quantity}
-                    type="number"
-                    onSave={(v) => patchTx(tx.id, { quantity: Math.max(1, parseInt(v, 10) || 1) })}
-                    className="w-9 text-center text-white text-base font-semibold tabular-nums"
-                  />
+                  {locked ? (
+                    <span className="w-9 text-center text-white text-base font-semibold tabular-nums">{tx.quantity}</span>
+                  ) : (
+                    <EditableCell
+                      value={tx.quantity}
+                      type="number"
+                      onSave={(v) => patchTx(tx.id, { quantity: Math.max(1, parseInt(v, 10) || 1) })}
+                      className="w-9 text-center text-white text-base font-semibold tabular-nums"
+                    />
+                  )}
                   <span className="opacity-50 text-xs">×</span>
                 </div>
                 <div className="inline-flex items-baseline">
-                  <EditableCell
-                    value={(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}
-                    type="number"
-                    onSave={(v) => patchTx(tx.id, { unit_price_minor: Math.max(0, Math.round(parseFloat((v || '').replace(',', '.')) * 100) || 0) })}
-                    className="w-16 text-right text-gold text-base font-bold tabular-nums"
-                  />
+                  {locked ? (
+                    <span className="w-16 text-right text-gold text-base font-bold tabular-nums inline-block">{(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}</span>
+                  ) : (
+                    <EditableCell
+                      value={(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}
+                      type="number"
+                      onSave={(v) => patchTx(tx.id, { unit_price_minor: Math.max(0, Math.round(parseFloat((v || '').replace(',', '.')) * 100) || 0) })}
+                      className="w-16 text-right text-gold text-base font-bold tabular-nums"
+                    />
+                  )}
                   <span className="text-gold/70 text-xs ml-1">{cur}</span>
                 </div>
-                <PayerSelect
-                  value={tx.creditor}
-                  options={payerOptions}
-                  onChange={(pid) => patchTx(tx.id, { creditor: pid })}
-                  className="ml-auto"
-                  placeholder="кто платил"
-                  compact
-                />
+                {locked ? (
+                  <span className="ml-auto text-xs text-spotify-text/70 truncate max-w-[40%]">{namesById[tx.creditor] || '…'}</span>
+                ) : (
+                  <PayerSelect
+                    value={tx.creditor}
+                    options={payerOptions}
+                    onChange={(pid) => patchTx(tx.id, { creditor: pid })}
+                    className="ml-auto"
+                    placeholder="кто платил"
+                    compact
+                  />
+                )}
               </div>
             </motion.div>
-          ))}
+          )})}
         </div>
       )}
 
@@ -842,9 +952,20 @@ export function PeopleManage({ bill, onDone, onBack }) {
     api.get('/api/bills/circle').then((d) => setCircle(d.people || [])).catch(() => { /* noop */ })
   }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Люди, завязанные на оплаченные позиции — их нельзя убрать из состава.
+  const lockedPeople = (() => {
+    const s = new Set()
+    for (const tx of bill.transactions || []) {
+      if (!tx.locked) continue
+      if (tx.creditor) s.add(tx.creditor)
+      for (const a of tx.assignments || []) for (const d of (a.debtors || [])) s.add(d)
+    }
+    return s
+  })()
+
   const inRoster = (id) => roster.some((r) => r.id === id)
   const addChip = (p) => { if (!inRoster(p.id)) setRoster((r) => [...r, { id: p.id, display_name: p.name, username: p.username || '' }]) }
-  const removeId = (id) => setRoster((r) => r.filter((p) => p.id !== id))
+  const removeId = (id) => { if (!lockedPeople.has(id)) setRoster((r) => r.filter((p) => p.id !== id)) }
 
   const addManual = async () => {
     const raw = manualRaw.trim()
@@ -885,7 +1006,9 @@ export function PeopleManage({ bill, onDone, onBack }) {
               </div>
               {p.username && <div className="text-[11px] text-spotify-text truncate">@{p.username}</div>}
             </div>
-            {p.id !== bill.author_person_id && (
+            {lockedPeople.has(p.id) ? (
+              <span className="shrink-0 text-spotify-green/70 p-1" title="По его позициям прошла оплата — убрать нельзя"><Lock size={15} /></span>
+            ) : p.id !== bill.author_person_id && (
               <button onClick={() => removeId(p.id)} className="shrink-0 text-spotify-text/70 hover:text-red-400 p-1"><X size={16} /></button>
             )}
           </motion.div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock } from 'lucide-react'
 import { api } from '../api/client'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
@@ -378,7 +378,7 @@ function FxLayer({ fx, tx, currency, onDone }) {
 
 const SPECIAL_ICON = { split: Scissors, defer: RotateCcw, merge: Merge }
 
-function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode }) {
+function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, stats, currency, registerRef, onTapNode, lockedIds }) {
   const hotId = activeId || absorbId
   const scaleAnim = (id) => ({
     animate: { scale: absorbId === id ? [1, 1.7, 1] : activeId === id ? 1.45 : 1 },
@@ -421,8 +421,13 @@ function GraphField({ slots, actions, hub, nodeW, nodeH, activeId, absorbId, sta
                   borderColor: hot ? undefined : tint.border,
                   color: hot ? undefined : tint.fg,
                 }}
-                className={`rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${hot ? 'bg-gold text-black border-gold z-10' : ''}`}
+                className={`relative rounded-2xl border flex flex-col items-center justify-center text-center leading-tight shadow-lg shadow-black/40 ${hot ? 'bg-gold text-black border-gold z-10' : ''}`}
               >
+                {lockedIds?.has(s.id) && (
+                  <span className="absolute -top-1 -right-1 bg-spotify-black/80 rounded-full p-0.5 text-spotify-green" title="Есть оплаченная позиция">
+                    <Lock size={11} />
+                  </span>
+                )}
                 <span className="font-semibold text-xs truncate max-w-full px-1">{nodeAlias(s.person.display_name)}</span>
                 {st.total > 0 && <span className="text-[10px] mt-0.5 tabular-nums opacity-90">{formatMinor(st.total, currency)}</span>}
               </motion.button>
@@ -465,6 +470,7 @@ function SheetLine({ ln, currency, onFlyStart }) {
   const [dragging, setDragging] = useState(false)
   const x = useMotionValue(0)
   const y = useMotionValue(0)
+  const locked = !!ln.locked
 
   const handleDragEnd = (_e, info) => {
     setDragging(false)
@@ -476,6 +482,18 @@ function SheetLine({ ln, currency, onFlyStart }) {
       animate(x, 0, { type: 'spring', stiffness: 340, damping: 28 })
       animate(y, 0, { type: 'spring', stiffness: 340, damping: 28 })
     }
+  }
+
+  if (locked) {
+    return (
+      <div className="flex items-center justify-between bg-spotify-gray/60 rounded-xl px-3 py-2.5 opacity-70" title="По позиции прошла оплата — нельзя вернуть в колоду">
+        <div className="min-w-0">
+          <div className="text-sm text-white truncate">{ln.name}</div>
+          <div className="text-[11px] text-spotify-text tabular-nums">{ln.portion} · {formatMinor(ln.amount, currency)}</div>
+        </div>
+        <Lock size={14} className="ml-2 shrink-0 text-spotify-green/70" />
+      </div>
+    )
   }
 
   return (
@@ -701,8 +719,17 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     const lines = personStats[pid]?.lines || {}
     return Object.entries(lines).map(([txId, ln]) => ({
       txId, name: txById[txId]?.item_name || '?', amount: ln.amount, portion: ln.parts.join(' + '),
+      locked: !!txById[txId]?.locked,
     }))
   }, [personStats, txById])
+
+  // Люди, у которых есть оплаченная (заблокированная) позиция — их доли по этим
+  // позициям нельзя вернуть в колоду; на доске помечаем замком.
+  const lockedPersonIds = useMemo(() => {
+    const s = new Set()
+    for (const c of cards) if (c.owner && txById[c.txId]?.locked) s.add(c.owner)
+    return s
+  }, [cards, txById])
 
   const personCount = useCallback((pid) => personStats[pid]?.count || 0, [personStats])
 
@@ -859,9 +886,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   }, [layout.hub])
 
   const handleFlyStart = useCallback((ln, fromRect) => {
+    if (txById[ln.txId]?.locked) return
     returnLine(ln.txId, openPerson)
     setFlyingCard({ txId: ln.txId, name: ln.name, portion: ln.portion, fromRect })
-  }, [returnLine, openPerson])
+  }, [returnLine, openPerson, txById])
 
   // ── Rename ──
   const submitRename = useCallback(async () => {
@@ -971,6 +999,7 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
           stats={personStats}
           currency={currency}
           registerRef={registerRef}
+          lockedIds={lockedPersonIds}
           onTapNode={(id) => { if (!SPECIAL_KIND[id]) setOpenPerson(id) }}
         />
 
