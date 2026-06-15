@@ -2390,10 +2390,9 @@ async def handle_bills_share_image(request: web.Request):
     """
     import uuid as _uuid
     from telegram import InlineQueryResultCachedPhoto
-    from steward.helpers.bill_image import render_bill_summary_png
-    from steward.helpers.bills_money import (
-        apply_payments, compute_bill_debts, minor_to_display, net_debts,
-    )
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+    from steward.helpers.bill_image import render_bill_people_png
+    from steward.helpers.bills_money import minor_to_display, split_minor
 
     repository: Repository = request.app["repository"]
     bot = request.app.get("bot")
@@ -2410,24 +2409,35 @@ async def handle_bills_share_image(request: web.Request):
     if not ok:
         return web.json_response({"error": err}, status=403)
 
-    debts = compute_bill_debts(bill.transactions, bill.currency)
-    net = net_debts(debts)
-    bill_payments = [p for p in repository.db.bill_payments_v2 if bill.id in p.bill_ids]
-    apply_payments(net, bill_payments, clamp_zero=True)
-
+    # «Кто что взял»: для каждого человека — его позиции с долей (без неттинга
+    # платежей — это раскладка потребления, а не итог расчётов).
     names = {p.id: p.display_name for p in repository.db.bill_persons}
-    rows: list[tuple[str, str, str]] = []
-    for debtor, creds in net.items():
-        for creditor, amount in creds.items():
-            if amount > 0:
-                rows.append((
-                    names.get(debtor, "?"),
-                    names.get(creditor, "?"),
-                    minor_to_display(amount, bill.currency),
-                ))
-    rows.sort(key=lambda r: r[0].lower())
+    per_person: dict[str, list[tuple[str, int]]] = {}
+    for tx in bill.transactions:
+        for asg in tx.assignments:
+            debtors = [d for d in asg.debtors if d and d != UNKNOWN_PERSON_ID]
+            if not debtors:
+                continue
+            den = getattr(asg, "denominator", 1) or 1
+            asg_total = (tx.unit_price_minor * asg.unit_count + den // 2) // den
+            shares = split_minor(asg_total, len(asg.debtors))
+            for d, share in zip(asg.debtors, shares):
+                if d and d != UNKNOWN_PERSON_ID:
+                    per_person.setdefault(d, []).append((tx.item_name or "—", share))
 
-    png = render_bill_summary_png(bill.name, rows)
+    groups: list[dict] = []
+    for pid, items in sorted(per_person.items(), key=lambda kv: names.get(kv[0], "").lower()):
+        total = sum(s for _, s in items)
+        groups.append({
+            "name": names.get(pid, "?"),
+            "total": minor_to_display(total, bill.currency),
+            "items": [
+                {"label": label, "amount": minor_to_display(share, bill.currency)}
+                for label, share in items
+            ],
+        })
+
+    png = render_bill_people_png(bill.name, groups)
 
     uid = int(tg_user["id"])
     try:
@@ -2912,10 +2922,9 @@ async def handle_bills_finalize(request: web.Request):
 async def handle_bills_redistribute(request: web.Request):
     """Re-open a finalized bill on the board: move it back to `distributing`.
 
-    Blocked once any payment has settled — the same guard the chat editor uses,
-    so confirmed money is never silently re-split.
+    Оплаченные позиции при этом не страдают — пер-позиционная блокировка не даёт
+    их переназначить ни на доске, ни через `distribute`/`set_creditor`.
     """
-    from steward.data.models.bill_v2 import PaymentStatus
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -2929,12 +2938,6 @@ async def handle_bills_redistribute(request: web.Request):
         return web.json_response({"error": err}, status=403)
     if bill.closed:
         return web.json_response({"error": "bill closed"}, status=400)
-    settled = any(
-        bill.id in p.bill_ids and p.status in PaymentStatus.SETTLED
-        for p in repository.db.bill_payments_v2
-    )
-    if settled:
-        return web.json_response({"error": "bill has settled payments"}, status=409)
     bill.distribution_status = "distributing"
     bill.updated_at = datetime.datetime.now()
     await repository.save()

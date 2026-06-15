@@ -38,7 +38,13 @@ class EveryoneFeature(Feature):
         extra = ""
         for prefix in ("/everyone", "@everyone"):
             if text.startswith(prefix):
-                extra = text[len(prefix):].strip()
+                rest = text[len(prefix):]
+                # Команда вида «/everyone@botname» — суффикс-меншн бота сразу за
+                # командой (без пробела) не часть текста, отрезаем его.
+                if rest.startswith("@"):
+                    parts = rest.split(None, 1)
+                    rest = parts[1] if len(parts) > 1 else ""
+                extra = rest.strip()
                 break
         else:
             return False
