@@ -11,7 +11,7 @@ from steward.delayed_action.holiday_fetch import (
     parse_all_holidays,
 )
 from steward.framework import Feature, FeatureContext, subcommand
-from steward.helpers.formats import format_lined_list
+from steward.helpers.formats import escape_markdown, format_lined_list
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class HolidaysFeature(Feature):
         )
 
         if cache_entry and cache_entry.holidays:
-            holidays = list(enumerate(cache_entry.holidays, start=1))
+            holidays = list(enumerate([escape_markdown(h) for h in cache_entry.holidays], start=1))
             await ctx.reply("\n".join(["Праздники сегодня:", format_lined_list(holidays)]))
             return
 
@@ -66,7 +66,7 @@ class HolidaysFeature(Feature):
             await ctx.reply("Праздники не найдены на странице")
             return
 
-        holidays = list(enumerate(today_list, start=1))
+        holidays = list(enumerate([escape_markdown(h) for h in today_list], start=1))
         await ctx.reply("\n".join(["Праздники сегодня:", format_lined_list(holidays)]))
 
     @subcommand("refresh", description="Принудительно обновить праздники")
