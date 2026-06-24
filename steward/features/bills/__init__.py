@@ -1639,6 +1639,27 @@ class BillsFeature(Feature):
             currency=payment.currency,
         )
         await ctx.edit(msg)
+
+        if debtor_p and debtor_p.telegram_id:
+            amount_str = minor_to_display(payment.amount_minor, payment.currency)
+            bills_phrase = self._payment_bills_phrase(payment.bill_ids)
+            debtor_mention = (
+                f"[{fmt.md_inline(debtor_p.display_name)}]"
+                f"(tg://user?id={debtor_p.telegram_id})"
+            )
+            creditor_name = fmt.md_inline(creditor.display_name) if creditor else "?"
+            await send_bill_notification(
+                ctx.bot,
+                self.repository,
+                debtor_p,
+                f"✅ {debtor_mention}, {creditor_name} подтвердил получение "
+                f"твоего перевода *{amount_str}*{bills_phrase}.",
+                sender=creditor,
+                parse_mode="Markdown",
+                initiated_chat_id=payment.initiated_chat_id,
+                prefer_dm=True,
+            )
+
         await self.repository.save()
 
     def _confirm_and_split_payment(
@@ -1737,6 +1758,22 @@ class BillsFeature(Feature):
         for bill in auto_closed:
             msg += f"\n🔒 Счёт «{bill.name}» автоматически закрыт — все долги оплачены!"
         return msg
+
+    def _payment_bills_phrase(self, bill_ids: list[int]) -> str:
+        """Markdown-safe phrase naming the bill(s) a payment covers, e.g.
+        ' по счёту «X»' / ' по счетам «X», «Y»'. Empty if no named bills."""
+        names = [
+            b.name for bid in bill_ids
+            if (b := self.repository.get_bill_v2(bid))
+        ]
+        if not names:
+            return ""
+        if len(names) == 1:
+            return f" по счёту «{fmt.md_inline(names[0])}»"
+        shown = ", ".join(f"«{fmt.md_inline(n)}»" for n in names[:3])
+        if len(names) > 3:
+            shown += f" и ещё {len(names) - 3}"
+        return f" по счетам {shown}"
 
     # -- Wizard --
 
@@ -1952,15 +1989,18 @@ class BillsFeature(Feature):
             self.cb("bills:pay_reject").button("❌ Не получал", payment_id=payment.id),
         )
         mention = f"[{fmt.md_inline(creditor.display_name)}](tg://user?id={creditor.telegram_id})"
+        bills_phrase = self._payment_bills_phrase(all_bill_ids)
         notif = await send_bill_notification(
             bot,
             self.repository,
             creditor,
-            f"💸 {fmt.md_inline(debtor.display_name)} говорит, что перевёл {mention} *{amount_str}*\nПодтверди получение:",
+            f"💸 {fmt.md_inline(debtor.display_name)} говорит, что перевёл {mention} "
+            f"*{amount_str}*{bills_phrase}\nПодтверди получение:",
             sender=debtor,
             reply_markup=kb.to_markup(),
             parse_mode="Markdown",
             initiated_chat_id=chat_id,
+            prefer_dm=True,
         )
         if notif:
             payment.confirmation_chat_id = notif.chat_id
@@ -2043,14 +2083,22 @@ class BillsFeature(Feature):
             msg += "\n_(нет открытых долгов от этого человека — записано как кредит)_"
         await bot.send_message(chat_id=chat_id, text=msg)
 
+        alloc_phrase = self._payment_bills_phrase([bid for bid, _ in allocations])
+        debtor_mention = (
+            f"[{fmt.md_inline(debtor.display_name)}](tg://user?id={debtor.telegram_id})"
+            if debtor.telegram_id
+            else fmt.md_inline(debtor.display_name)
+        )
         await send_bill_notification(
             bot,
             self.repository,
             debtor,
-            f"✅ {fmt.md_inline(creditor.display_name)} подтвердил, что ты перевёл *{amount_str}*",
+            f"✅ {debtor_mention}, {fmt.md_inline(creditor.display_name)} "
+            f"подтвердил, что ты перевёл *{amount_str}*{alloc_phrase}.",
             sender=creditor,
             parse_mode="Markdown",
             initiated_chat_id=chat_id,
+            prefer_dm=True,
         )
         await self.repository.save()
         logger.info(

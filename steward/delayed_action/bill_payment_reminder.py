@@ -48,6 +48,7 @@ class BillPaymentReminderAction(DelayedAction):
         debtor = repository.get_bill_person(payment.debtor)
         debtor_name = debtor.display_name if debtor else "кто-то"
 
+        from steward.features.bills import fmt
         from steward.helpers.bills_diff import build_payment_reminder_phrase
         from steward.helpers.bills_money import minor_to_display
         from steward.helpers.bills_notifications import send_bill_notification
@@ -58,8 +59,18 @@ class BillPaymentReminderAction(DelayedAction):
             amount_minor=payment.amount_minor, currency=payment.currency,
         )
         amount_str = minor_to_display(payment.amount_minor, payment.currency)
+        bill_names = [
+            b.name for bid in payment.bill_ids
+            if (b := repository.get_bill_v2(bid))
+        ]
+        bills_phrase = (
+            f" по счёту «{fmt.md_inline(bill_names[0])}»" if len(bill_names) == 1
+            else f" по счетам {', '.join('«' + fmt.md_inline(n) + '»' for n in bill_names[:3])}"
+            if bill_names else ""
+        )
         text = (
-            f"💸 {debtor_name} говорит, что перевёл тебе *{amount_str}*\n\n"
+            f"💸 {fmt.md_inline(debtor_name)} говорит, что перевёл тебе "
+            f"*{amount_str}*{bills_phrase}\n\n"
             f"_{phrase}_\n\nПодтверди получение:"
         )
         kb = InlineKeyboardMarkup([[
@@ -70,6 +81,7 @@ class BillPaymentReminderAction(DelayedAction):
             context.bot, repository, creditor, text,
             sender=debtor, reply_markup=kb, parse_mode="Markdown",
             initiated_chat_id=payment.initiated_chat_id,
+            prefer_dm=True,
         )
         if msg:
             payment.confirmation_chat_id = msg.chat_id

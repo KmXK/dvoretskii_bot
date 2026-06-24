@@ -39,15 +39,18 @@ def find_best_notification_chat(
     prefs: "BillNotificationPrefs",
     *,
     initiated_chat_id: int | None = None,
+    prefer_dm: bool = False,
 ) -> int | None:
     """Return the best chat_id to send a notification to recipient.
 
     Priority order:
     1. Check quiet hours first — return None if quiet.
-    2. initiated_chat_id (the chat where the action happened) if both are members.
-    3. preferred_chat_ids (in order) where both are members.
-    4. Any common group chat.
-    5. DM as last resort.
+    2. If prefer_dm, the recipient's DM (personal actions like payment
+       confirmations shouldn't be dumped into a shared group).
+    3. initiated_chat_id (the chat where the action happened) if both are members.
+    4. preferred_chat_ids (in order) where both are members.
+    5. Any common group chat.
+    6. DM as last resort.
     """
     if not recipient.telegram_id:
         return None
@@ -60,6 +63,13 @@ def find_best_notification_chat(
     def both_present(cid: int) -> bool:
         members = user_ids_in_chats.get(cid, set())
         return rid in members and (sid is None or sid in members)
+
+    dm_chat = next((c for c in known_chats if c.id == rid), None)
+
+    # Personal action: prefer the recipient's DM, falling back to a group
+    # (with an inline mention) only when no DM exists.
+    if prefer_dm and dm_chat:
+        return dm_chat.id
 
     # 1. initiated_chat_id — where the action happened
     if initiated_chat_id and both_present(initiated_chat_id):
@@ -78,7 +88,6 @@ def find_best_notification_chat(
             return chat.id
 
     # 4. DM as last resort
-    dm_chat = next((c for c in known_chats if c.id == rid), None)
     if dm_chat:
         return dm_chat.id
 
@@ -95,8 +104,12 @@ async def send_bill_notification(
     reply_markup=None,
     parse_mode: str | None = None,
     initiated_chat_id: int | None = None,
+    prefer_dm: bool = False,
 ):
     """Send a notification to a BillPerson, finding the best chat automatically.
+
+    Set prefer_dm for personal actions (payment confirmations) so they land in
+    the recipient's DM instead of a shared group chat.
 
     Returns the sent Message or None if unreachable.
     """
@@ -118,6 +131,7 @@ async def send_bill_notification(
         user_ids_in_chats=user_ids_in_chats,
         prefs=prefs,
         initiated_chat_id=initiated_chat_id,
+        prefer_dm=prefer_dm,
     )
     if not chat_id:
         return None
