@@ -92,7 +92,7 @@ async def download_and_send_medias(
         medias = [
             InputMediaPhoto(file)
             if not videos_or_images[i][1]
-            else InputMediaVideo(file)
+            else InputMediaVideo(file, supports_streaming=True)
             for i, file in enumerate(results)
             if not isinstance(file, BaseException)
         ]
@@ -110,6 +110,7 @@ async def download_and_send_medias(
             )
             await message.reply_video(
                 results[0],
+                supports_streaming=True,
                 disable_notification=True,
                 reply_markup=reply_markup,
                 caption=caption,
