@@ -133,6 +133,12 @@ class ChannelSubscriptionDelayedAction(DelayedAction):
                         channel_entity, ids=post["id"]
                     )
                     if message:
+                        if message.fwd_from is not None:
+                            logger.info(
+                                f"Skipping forwarded post {post['id']} in channel "
+                                f"{subscription.channel_username}: not the channel's own post"
+                            )
+                            continue
                         await context.client.forward_messages(
                             subscription.chat_id,
                             message,
