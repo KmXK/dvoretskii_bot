@@ -226,8 +226,10 @@ class TestSend:
         # Приписанный текст ушёл в шапку перед альбомом.
         header_text = bot.send_message.call_args.kwargs.get("text") or bot.send_message.call_args.args[1]
         assert "смотри какая новость" in header_text
+        # 2 части альбома + маппинг на шапку (send_message → id 200).
         recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
-        assert len(recorded) == 2
+        assert len(recorded) == 3
+        assert any(m.dst_msg_id == 200 and m.src_msg_id == 0 for m in recorded)
 
     async def test_send_unknown_tunnel(self):
         repo = self._repo_with_tunnel()
@@ -281,8 +283,11 @@ class TestSendReply:
         result = await feature.chat(ctx)
         assert result is True
         recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
-        assert len(recorded) == 1
-        assert recorded[0].src_msg_id == 42
+        # Медиа идёт двумя сообщениями (шапка + контент) — маппинг на оба, чтобы
+        # реплай и на шапку, и на медиа уходил обратно в туннель.
+        assert len(recorded) == 2
+        assert recorded[0].src_msg_id == 42  # само медиа
+        assert recorded[1].src_msg_id == 0   # шапка (нет исходного сообщения)
 
     async def test_without_reply_hints(self):
         repo = self._repo_with_tunnel()
@@ -337,9 +342,13 @@ class TestSendReply:
         bot.copy_messages.assert_awaited_once()
         assert bot.copy_messages.call_args.kwargs["message_ids"] == [41, 42, 43]
         # На каждую часть альбома записан маппинг — реплай на любую уйдёт назад.
+        # Плюс маппинг на шапку (send_message → id 200), чтобы реплай на неё
+        # тоже уходил в туннель.
         recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
-        assert len(recorded) == 3
-        assert {m.dst_msg_id for m in recorded} == {201, 202, 203}
+        assert len(recorded) == 4
+        assert {m.dst_msg_id for m in recorded} == {200, 201, 202, 203}
+        header = next(m for m in recorded if m.dst_msg_id == 200)
+        assert header.src_msg_id == 0
 
 
 class TestCaptionSend:
@@ -373,10 +382,12 @@ class TestCaptionSend:
         result = await feature.chat(ctx)
         assert result is True
         recorded = [m for m in repo.db.tunnel_messages if m.tunnel_id == 1]
-        assert len(recorded) == 1
+        # Медиа = шапка + контент: маппинг на оба (реплай на любое уйдёт в туннель).
+        assert len(recorded) == 2
         assert recorded[0].src_chat == CHAT_A
         assert recorded[0].dst_chat == CHAT_B
-        assert recorded[0].src_msg_id == 70
+        assert recorded[0].src_msg_id == 70  # само медиа
+        assert recorded[1].src_msg_id == 0   # шапка «[чат] @user:»
 
     async def test_media_caption_no_text(self):
         repo = self._repo_with_tunnel()
@@ -385,7 +396,8 @@ class TestCaptionSend:
         ctx = self._media_caption_ctx(repo, bot, "/tunnel 1")
         result = await feature.chat(ctx)
         assert result is True
-        assert len([m for m in repo.db.tunnel_messages if m.tunnel_id == 1]) == 1
+        # Шапка + медиа → два маппинга.
+        assert len([m for m in repo.db.tunnel_messages if m.tunnel_id == 1]) == 2
 
     async def test_caption_unknown_tunnel(self):
         repo = self._repo_with_tunnel()
@@ -463,6 +475,42 @@ class TestReplyForwarding:
         )
         result = await feature.chat(ctx)
         assert result is True
+        back = [m for m in repo.db.tunnel_messages if m.src_chat == CHAT_B]
+        # Медиа-реплай уходит шапкой + контентом → два маппинга обратно в CHAT_A.
+        assert len(back) == 2
+        assert all(m.dst_chat == CHAT_A for m in back)
+
+    async def test_reply_to_header_message_forwarded_back(self):
+        """Основной фикс: медиа приходит двумя сообщениями (шапка «[чат] @user:»
+        + само фото). Реплай на шапку (message 1) раньше воспринимался ботом как
+        обычное сообщение; теперь он тоже уходит обратно в туннель."""
+        repo = base_repo()
+        repo.db.chat_tunnels.append(
+            ChatTunnel(id=1, chat_a=CHAT_A, chat_b=CHAT_B, chat_a_name="Чат А", chat_b_name="Чат Б", created_by=USER)
+        )
+        # Медиа из CHAT_A доставлено в CHAT_B: шапка (msg 20) + само фото (msg 21).
+        # Шапка не привязана к исходному сообщению → src_msg_id=0.
+        repo.db.tunnel_messages.append(
+            TunnelMessage(tunnel_id=1, src_chat=CHAT_A, src_msg_id=0, dst_chat=CHAT_B, dst_msg_id=20, sender_id=USER)
+        )
+        repo.db.tunnel_messages.append(
+            TunnelMessage(tunnel_id=1, src_chat=CHAT_A, src_msg_id=11, dst_chat=CHAT_B, dst_msg_id=21, sender_id=USER)
+        )
+        bot, _ = await make_bot()
+        feature = make_feature(repo, bot)
+
+        # Реплай именно на шапку (msg 20) в CHAT_B.
+        update = make_text_update("ответ на шапку", user_id=ADMIN, chat_id=CHAT_B)
+        update.message.reply_to_message = MagicMock(message_id=20)
+        from steward.bot.context import ChatBotContext
+
+        ctx = ChatBotContext(
+            repository=repo, bot=bot, client=MagicMock(), update=update,
+            tg_context=MagicMock(), metrics=MagicMock(), message=update.message,
+        )
+        result = await feature.chat(ctx)
+        assert result is True  # обработано туннелем, не ушло боту как обычное сообщение
+        # Ответ ушёл обратно в CHAT_A.
         back = [m for m in repo.db.tunnel_messages if m.src_chat == CHAT_B]
         assert len(back) == 1
         assert back[0].dst_chat == CHAT_A

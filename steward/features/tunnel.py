@@ -422,14 +422,18 @@ class TunnelFeature(Feature):
                 # все части и пересылаем группой, сохраняя их подписи. Приписку
                 # уносим в шапку перед альбомом.
                 ids = await self._album_message_ids(ctx, reply)
-                dst_ids, anchor = await self._relay_album(
+                dst_ids, anchor, head_id = await self._relay_album(
                     ctx, target, base_header, src_chat=ctx.chat_id,
                     message_ids=ids, body=extra or None,
                 )
                 self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
+                self._record_header(
+                    tunnel_id=tunnel_id, src_chat=ctx.chat_id, dst_chat=target,
+                    head_msg_id=head_id, sender_id=ctx.user_id,
+                )
             else:
                 header = f"{base_header}\n{extra}" if extra else base_header
-                dst_msg_id, anchor = await self._relay(ctx, target, header, copy_from=reply)
+                dst_msg_id, anchor, head_id = await self._relay(ctx, target, header, copy_from=reply)
                 self._record_message(
                     tunnel_id=tunnel_id,
                     src_chat=ctx.chat_id,
@@ -437,6 +441,10 @@ class TunnelFeature(Feature):
                     dst_chat=target,
                     dst_msg_id=dst_msg_id,
                     sender_id=ctx.user_id,
+                )
+                self._record_header(
+                    tunnel_id=tunnel_id, src_chat=ctx.chat_id, dst_chat=target,
+                    head_msg_id=head_id, sender_id=ctx.user_id,
                 )
         except Exception:
             logger.exception("tunnel %s: failed to forward replied message to %s", tunnel_id, target)
@@ -477,13 +485,17 @@ class TunnelFeature(Feature):
                 # команда, поэтому подписи частей убираем (remove_caption), а
                 # текст пользователя уносим в шапку.
                 ids = await self._album_message_ids(ctx, msg)
-                dst_ids, anchor = await self._relay_album(
+                dst_ids, anchor, head_id = await self._relay_album(
                     ctx, target, header, src_chat=ctx.chat_id, message_ids=ids,
                     body=body or None, strip_captions=True,
                 )
                 self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
+                self._record_header(
+                    tunnel_id=tunnel_id, src_chat=ctx.chat_id, dst_chat=target,
+                    head_msg_id=head_id, sender_id=ctx.user_id,
+                )
             else:
-                dst_msg_id, anchor = await self._relay(ctx, target, header, copy_from=msg, text=body)
+                dst_msg_id, anchor, head_id = await self._relay(ctx, target, header, copy_from=msg, text=body)
                 self._record_message(
                     tunnel_id=tunnel_id,
                     src_chat=ctx.chat_id,
@@ -491,6 +503,10 @@ class TunnelFeature(Feature):
                     dst_chat=target,
                     dst_msg_id=dst_msg_id,
                     sender_id=ctx.user_id,
+                )
+                self._record_header(
+                    tunnel_id=tunnel_id, src_chat=ctx.chat_id, dst_chat=target,
+                    head_msg_id=head_id, sender_id=ctx.user_id,
                 )
         except Exception:
             logger.exception("tunnel %s: failed to forward media to %s", tunnel_id, target)
@@ -543,15 +559,19 @@ class TunnelFeature(Feature):
         try:
             if self._album_id(msg) is not None:
                 ids = await self._album_message_ids(ctx, msg)
-                dst_ids, anchor = await self._relay_album(
+                dst_ids, anchor, head_id = await self._relay_album(
                     ctx, target_chat, header,
                     src_chat=ctx.chat_id, message_ids=ids, reply_to=reply_to,
                 )
                 self._record_album(
                     mapping.tunnel_id, ctx.chat_id, ids, target_chat, dst_ids, ctx.user_id
                 )
+                self._record_header(
+                    tunnel_id=mapping.tunnel_id, src_chat=ctx.chat_id,
+                    dst_chat=target_chat, head_msg_id=head_id, sender_id=ctx.user_id,
+                )
             else:
-                dst_msg_id, anchor = await self._relay(
+                dst_msg_id, anchor, head_id = await self._relay(
                     ctx, target_chat, header, copy_from=msg, reply_to=reply_to
                 )
                 # Цепочка реплаев работает в обе стороны: запоминаем новую пару.
@@ -562,6 +582,10 @@ class TunnelFeature(Feature):
                     dst_chat=target_chat,
                     dst_msg_id=dst_msg_id,
                     sender_id=ctx.user_id,
+                )
+                self._record_header(
+                    tunnel_id=mapping.tunnel_id, src_chat=ctx.chat_id,
+                    dst_chat=target_chat, head_msg_id=head_id, sender_id=ctx.user_id,
                 )
         except Exception:
             logger.exception(
@@ -640,6 +664,38 @@ class TunnelFeature(Feature):
                 dst_msg_id=dst_id,
                 sender_id=sender_id,
             )
+
+    def _record_header(
+        self,
+        *,
+        tunnel_id: int,
+        src_chat: int,
+        dst_chat: int,
+        head_msg_id: int | None,
+        sender_id: int,
+    ) -> None:
+        """Записать маппинг для служебной шапки-сообщения («message 1»:
+        «[чат] @user:»), которая уходит в туннель отдельным сообщением перед
+        медиа/альбомом.
+
+        Без этого реплай на шапку не находил маппинга в forward_reply и
+        воспринимался ботом как обычное сообщение (предлагал команды и т.п.).
+        Теперь реплай и на шапку, и на само медиа уходит обратно в туннель.
+
+        src_msg_id=0 — у шапки нет парного исходного сообщения на стороне
+        отправителя (это сгенерированный ботом текст), поэтому обратный реплай
+        прилетит в чат-источник без привязки к конкретному сообщению.
+        """
+        if head_msg_id is None:
+            return
+        self._record_message(
+            tunnel_id=tunnel_id,
+            src_chat=src_chat,
+            src_msg_id=0,
+            dst_chat=dst_chat,
+            dst_msg_id=head_msg_id,
+            sender_id=sender_id,
+        )
 
     def _prune(self, tunnel_id: int) -> None:
         for_tunnel = [m for m in self.tmsgs if m.tunnel_id == tunnel_id]
@@ -756,13 +812,14 @@ class TunnelFeature(Feature):
         body: str | None = None,
         strip_captions: bool = False,
         reply_to: int | None = None,
-    ) -> tuple[list[int], object | None]:
+    ) -> tuple[list[int], object | None, int | None]:
         """Доставить альбом одним вызовом copy_messages, сохранив группировку.
 
         Шапку (и `body`, если есть) шлём отдельным сообщением перед альбомом.
         `strip_captions=True` убирает подписи частей (для случая, когда подпись
         была командой `/tunnel N text`). Возвращает (id доставленных сообщений
-        в порядке `message_ids`, сообщение-шапку как якорь для хидрации ссылок).
+        в порядке `message_ids`, сообщение-шапку как якорь для хидрации ссылок,
+        message_id шапки — чтобы записать маппинг и для реплаев на неё).
         """
         head = f"{header}\n{body}" if body else header
         head_msg = await self._send_text(ctx, dst_chat, head, reply_to)
@@ -772,7 +829,8 @@ class TunnelFeature(Feature):
             message_ids=message_ids,
             remove_caption=strip_captions,
         )
-        return [m.message_id for m in copied], head_msg
+        head_id = head_msg.message_id if head_msg is not None else None
+        return [m.message_id for m in copied], head_msg, head_id
 
     async def _relay(
         self,
@@ -783,9 +841,9 @@ class TunnelFeature(Feature):
         copy_from=None,
         text: str | None = None,
         reply_to: int | None = None,
-    ) -> tuple[int, object | None]:
+    ) -> tuple[int, object | None, int | None]:
         """Доставить контент в dst_chat и вернуть (id доставленного сообщения,
-        якорь для хидрации ссылок).
+        якорь для хидрации ссылок, message_id шапки-сообщения или None).
 
         copy_from — исходное сообщение. Если оно нетекстовое (медиа/стикер/
         голос/…), оно копируется через copy_message; иначе пересылается текст.
@@ -795,20 +853,25 @@ class TunnelFeature(Feature):
         Якорь — реальное текстовое сообщение в чате-получателе (на него потом
         реплаит качалка видео по ссылке). Для медиа-ветки якоря нет (copy_to
         отдаёт лишь MessageId, а ссылку и так несёт само присланное медиа).
+
+        Шапка — отдельное сообщение только для медиа-ветки (там контент идёт
+        второй копией); для текста шапка и тело — одно сообщение, отдельного
+        message_id шапки нет (None).
         """
         is_media = copy_from is not None and copy_from.text is None
         if is_media:
             # Шапка отдельным сообщением, затем копия контента.
-            await self._send_text(ctx, dst_chat, header, reply_to)
+            head_msg = await self._send_text(ctx, dst_chat, header, reply_to)
             copied = await ctx.copy_to(
                 dst_chat, ctx.chat_id, copy_from.message_id, caption=text
             )
-            return copied.message_id, None
+            head_id = head_msg.message_id if head_msg is not None else None
+            return copied.message_id, None, head_id
 
         body = text if text is not None else (copy_from.text if copy_from is not None else None)
         full = f"{header}\n{body}" if body else header
         sent = await self._send_text(ctx, dst_chat, full, reply_to)
-        return sent.message_id, sent
+        return sent.message_id, sent, None
 
     # ------------------------------------------------------------------ #
     # Link hydration: качаем видео по ссылке на стороне приёмника
