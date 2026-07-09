@@ -9,6 +9,7 @@ import AppLayout from './layouts/AppLayout'
 import HomePage from './pages/HomePage'
 import Loader from './components/Loader'
 import WatchApproveGate from './watch/WatchApproveGate'
+import BillsDeepLinkGate from './pages/BillsDeepLinkGate'
 
 const ArmyPage = lazy(() => import('./pages/ArmyPage'))
 const BillsPage = lazy(() => import('./pages/BillsPage'))
@@ -46,6 +47,7 @@ export default function App() {
         <BrowserRouter>
           <AuthGate>
             <WatchApproveGate />
+            <BillsDeepLinkGate />
             <AppLayout>
               <AnimatePresence mode="wait">
                 <Suspense fallback={<PageFallback />}>

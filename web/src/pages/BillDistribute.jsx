@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { motion, animate, useMotionValue, useTransform, useSpring, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock, Share2, Loader2 } from 'lucide-react'
+import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock, Share2, Loader2, Minus, Plus, ChevronDown } from 'lucide-react'
 import WebApp from '@twa-dev/sdk'
 import { api } from '../api/client'
 
@@ -568,7 +568,91 @@ function PersonSheet({ open, onClose, person, lines, currency, total, onFlyStart
   )
 }
 
-const SPLIT_OPTIONS = [2, 3, 4]
+const SPLIT_OPTIONS = [2, 3, 4, 5, 6, 8]
+const MAX_WEIGHT = 20
+const MAX_ROWS = 8
+
+// Скроллер числа: pan-жест вверх/вниз меняет значение, ± по бокам — точная
+// правка. Один шаг = 22px pan-offset — комфортно для пальца на телефоне.
+function NumberSpinner({ value, onChange, min = 1, max = MAX_WEIGHT }) {
+  const startVal = useRef(value)
+  useEffect(() => { startVal.current = value }, [value])
+  return (
+    <div className="inline-flex items-center gap-1 select-none">
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(min, value - 1))}
+        className="w-8 h-8 rounded-lg bg-spotify-gray text-white flex items-center justify-center hover:bg-spotify-light-gray"
+      ><Minus size={14} /></button>
+      <motion.div
+        drag="y"
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={0.5}
+        dragMomentum={false}
+        onDragStart={() => { startVal.current = value }}
+        onDrag={(_e, info) => {
+          const step = Math.round(-info.offset.y / 22)
+          const next = Math.max(min, Math.min(max, startVal.current + step))
+          if (next !== value) onChange(next)
+        }}
+        onWheel={(e) => {
+          e.preventDefault()
+          const dir = e.deltaY > 0 ? -1 : 1
+          const next = Math.max(min, Math.min(max, value + dir))
+          if (next !== value) onChange(next)
+        }}
+        className="w-12 h-10 rounded-lg bg-white/5 text-white text-lg font-bold flex items-center justify-center touch-none cursor-grab active:cursor-grabbing tabular-nums"
+      >{value}</motion.div>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(max, value + 1))}
+        className="w-8 h-8 rounded-lg bg-spotify-gray text-white flex items-center justify-center hover:bg-spotify-light-gray"
+      ><Plus size={14} /></button>
+    </div>
+  )
+}
+
+// Мини-дропдаун выбора участника: без библиотек, без клика outside — Radix
+// Dialog поглощает клики, а close-on-outside тут не нужен.
+function PersonPicker({ value, options, onChange, placeholder = 'кому' }) {
+  const [open, setOpen] = useState(false)
+  const current = options.find((o) => o.id === value)
+  return (
+    <div className="relative flex-1 min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full inline-flex items-center justify-between gap-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-2 text-sm text-white transition"
+      >
+        <span className={`truncate ${current ? '' : 'text-spotify-text/70'}`}>{current?.display_name || placeholder}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+            transition={{ duration: 0.12 }}
+            className="absolute left-0 right-0 mt-1 z-30 max-h-52 overflow-y-auto rounded-xl bg-spotify-gray border border-white/10 shadow-xl shadow-black/50 py-1"
+          >
+            {options.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => { onChange(o.id); setOpen(false) }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10 transition"
+              >
+                <span className="truncate">{o.display_name}</span>
+                {o.id === value && <Check size={14} className="text-spotify-green shrink-0" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
@@ -591,7 +675,18 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [activeNode, setActiveNode] = useState(null)
   const [absorb, setAbsorb] = useState(null)
   const [splitPrompt, setSplitPrompt] = useState(false)
+  const [splitMode, setSplitMode] = useState('equal')
+  const [splitCustomN, setSplitCustomN] = useState('')
+  const [splitRows, setSplitRows] = useState([{ pid: null, w: 1 }, { pid: null, w: 1 }])
   const [flyingCard, setFlyingCard] = useState(null)
+
+  useEffect(() => {
+    if (splitPrompt) {
+      setSplitMode('equal')
+      setSplitCustomN('')
+      setSplitRows([{ pid: null, w: 1 }, { pid: null, w: 1 }])
+    }
+  }, [splitPrompt])
 
   const topCardRef = useRef(null)
   const nodeRefs = useRef({})
@@ -831,6 +926,31 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     })
   }, [top, mutate])
 
+  // Раздать верхнюю карту по пропорциям: rows = [{pid, w}], где `w` — вес.
+  // sum(w) становится новым знаменателем; для каждого получателя создаётся w
+  // именованных карт. Ячейки без pid или w<=0 отбрасываются.
+  const splitAndAssignTop = useCallback((rows) => {
+    if (!top) return
+    const clean = rows.filter((r) => r.pid && r.w > 0)
+    if (clean.length === 0) return
+    const sum = clean.reduce((s, r) => s + r.w, 0)
+    if (sum <= 0) return
+    mutate((prev) => {
+      const idx = prev.findIndex((c) => c.id === top.id)
+      if (idx === -1) return prev
+      const newDen = top.den * sum
+      const fresh = []
+      for (const r of clean) {
+        for (let i = 0; i < r.w; i++) {
+          fresh.push({ id: nextId(), txId: top.txId, den: newDen, owner: r.pid })
+        }
+      }
+      const next = [...prev]
+      next.splice(idx, 1, ...fresh)
+      return next
+    })
+  }, [top, mutate])
+
   const doMerge = useCallback((txId) => {
     mutate((prev) => {
       const loose = prev.filter((c) => c.txId === txId && c.owner === null)
@@ -860,6 +980,15 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     setFx({ type: 'split', txId: top.txId, den: top.den, n, nodeAnchor, hubAnchor: layout.hub })
   }, [top, fx, getNodeBoardPos, layout.hub])
 
+  const startSplitProportional = useCallback((rows) => {
+    if (!top || fx) return
+    const clean = rows.filter((r) => r.pid && r.w > 0)
+    if (clean.length < 2) return
+    const n = Math.min(clean.reduce((s, r) => s + r.w, 0), 24)
+    const nodeAnchor = getNodeBoardPos('__split__') || layout.hub
+    setFx({ type: 'split', txId: top.txId, den: top.den, n, rows: clean, nodeAnchor, hubAnchor: layout.hub })
+  }, [top, fx, getNodeBoardPos, layout.hub])
+
   const startMerge = useCallback(() => {
     if (!top || !canMerge || fx) return
     const nodeAnchor = getNodeBoardPos('__merge__') || layout.hub
@@ -869,11 +998,15 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const fxDone = useCallback(() => {
     setFx((cur) => {
       if (!cur) return null
-      if (cur.type === 'split') splitTop(cur.n)
-      else doMerge(cur.txId)
+      if (cur.type === 'split') {
+        if (cur.rows) splitAndAssignTop(cur.rows)
+        else splitTop(cur.n)
+      } else {
+        doMerge(cur.txId)
+      }
       return null
     })
-  }, [splitTop, doMerge])
+  }, [splitTop, splitAndAssignTop, doMerge])
 
   const returnLine = useCallback((txId, personId) => {
     mutate((prev) => prev.map((c) => (c.txId === txId && c.owner === personId ? { ...c, owner: null } : c)))
@@ -1110,23 +1243,126 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
         })()}
       </AnimatePresence>
 
-      {/* На сколько разделить (после сброса карты на ноду «делить») */}
+      {/* Разделить карту: равные доли или сразу на людей по пропорциям */}
       <Dialog.Root open={splitPrompt} onOpenChange={(v) => !v && setSplitPrompt(false)}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
           <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
-            bg-spotify-black rounded-2xl p-5 w-[calc(100%-2rem)] max-w-xs text-center">
-            <Dialog.Title className="text-white text-base font-bold mb-1">На сколько разделить?</Dialog.Title>
-            <p className="text-spotify-text text-xs mb-4">Карта превратится в доли и вернётся в колоду</p>
-            <div className="flex justify-center gap-2">
-              {SPLIT_OPTIONS.map((n) => (
+            bg-spotify-black rounded-2xl p-5 w-[calc(100%-2rem)] max-w-md max-h-[85vh] overflow-y-auto">
+            <Dialog.Title className="text-white text-base font-bold mb-1">Разделить карту</Dialog.Title>
+            <p className="text-spotify-text text-xs mb-3">
+              На равные доли — или сразу на людей по пропорциям
+            </p>
+
+            <div className="inline-flex rounded-lg bg-spotify-gray p-0.5 mb-4 w-full">
+              {[['equal', 'Поровну'], ['weights', 'Пропорции']].map(([v, label]) => (
                 <button
-                  key={n}
-                  onClick={() => { setSplitPrompt(false); startSplit(n) }}
-                  className="flex-1 py-3 rounded-xl bg-spotify-gray text-white text-lg font-bold hover:bg-spotify-light-gray transition-colors"
-                >÷{n}</button>
+                  key={v}
+                  onClick={() => setSplitMode(v)}
+                  className={`flex-1 py-1.5 rounded-md text-xs transition ${
+                    splitMode === v ? 'bg-gold text-black font-medium' : 'text-spotify-text'
+                  }`}
+                >{label}</button>
               ))}
             </div>
+
+            {splitMode === 'equal' && (
+              <div>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {SPLIT_OPTIONS.map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => { setSplitPrompt(false); startSplit(n) }}
+                      className="py-3 rounded-xl bg-spotify-gray text-white text-lg font-bold hover:bg-spotify-light-gray transition-colors"
+                    >÷{n}</button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-spotify-text text-sm">÷</span>
+                  <input
+                    inputMode="numeric"
+                    value={splitCustomN}
+                    onChange={(e) => setSplitCustomN(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const n = parseInt(splitCustomN, 10)
+                        if (n >= 2 && n <= 99) { setSplitPrompt(false); startSplit(n) }
+                      }
+                    }}
+                    placeholder="своё число"
+                    className="flex-1 bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
+                  />
+                  <button
+                    disabled={!splitCustomN || parseInt(splitCustomN, 10) < 2}
+                    onClick={() => {
+                      const n = parseInt(splitCustomN, 10)
+                      if (n >= 2 && n <= 99) { setSplitPrompt(false); startSplit(n) }
+                    }}
+                    className="bg-gold text-black rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-40 hover:bg-gold-2 transition-colors"
+                  >Ок</button>
+                </div>
+                <p className="text-spotify-text/70 text-[11px] mt-2 text-center">
+                  карта превратится в доли и вернётся в колоду
+                </p>
+              </div>
+            )}
+
+            {splitMode === 'weights' && (() => {
+              const active = splitRows.filter((r) => r.pid && r.w > 0)
+              const sum = active.reduce((s, r) => s + r.w, 0)
+              return (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    {splitRows.map((row, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <PersonPicker
+                          value={row.pid}
+                          options={participants}
+                          onChange={(pid) => setSplitRows((rs) => rs.map((r, j) => j === i ? { ...r, pid } : r))}
+                          placeholder={`доля ${i + 1} — кому`}
+                        />
+                        <NumberSpinner
+                          value={row.w}
+                          onChange={(w) => setSplitRows((rs) => rs.map((r, j) => j === i ? { ...r, w } : r))}
+                        />
+                        {splitRows.length > 2 && (
+                          <button
+                            onClick={() => setSplitRows((rs) => rs.filter((_, j) => j !== i))}
+                            className="text-red-400/70 hover:text-red-400 p-1"
+                            title="убрать долю"
+                          ><X size={14} /></button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {splitRows.length < MAX_ROWS && (
+                    <button
+                      onClick={() => setSplitRows((rs) => [...rs, { pid: null, w: 1 }])}
+                      className="w-full text-xs text-gold border border-dashed border-gold/50 rounded py-1.5 hover:bg-gold/10 transition"
+                    >+ ещё долю</button>
+                  )}
+
+                  {active.length >= 2 && sum > 0 && (
+                    <div className="rounded-lg bg-white/5 p-3 text-center">
+                      <div className="text-spotify-text text-[11px] mb-0.5">Итого</div>
+                      <div className="text-white text-sm tabular-nums">
+                        {active.map((r) => r.w).join(' + ')} = {sum}
+                      </div>
+                      <div className="text-spotify-text/80 text-[11px] mt-1 tabular-nums">
+                        {active.map((r) => `${(personsById[r.pid]?.display_name || '?').split(/\s+/)[0]} · ${r.w}/${sum}`).join(' · ')}
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    disabled={active.length < 2 || sum <= 0}
+                    onClick={() => { setSplitPrompt(false); startSplitProportional(splitRows) }}
+                    className="w-full bg-gold text-black rounded-xl py-2.5 font-medium disabled:opacity-40 hover:bg-gold-2 transition-colors"
+                  >Раздать по пропорциям</button>
+                </div>
+              )
+            })()}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
