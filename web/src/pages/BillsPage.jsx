@@ -906,7 +906,11 @@ export default function BillsPage() {
     [persons, userId]
   )
 
-  const filteredBills = bills.filter(b => tab === 'open' ? !b.closed : b.closed)
+  const filteredBills = bills.filter(b => {
+    if (tab === 'open' ? b.closed : !b.closed) return false
+    if (myPerson && !b.participants.includes(myPerson.id)) return false
+    return true
+  })
   const openBill = openBillId ? bills.find(b => b.id === openBillId) : null
   const isAuthor = openBill && myPerson && openBill.author_person_id === myPerson.id
 
