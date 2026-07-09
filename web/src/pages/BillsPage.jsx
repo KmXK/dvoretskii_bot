@@ -129,36 +129,93 @@ function useApi() {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-function DebtSummary({ bills, myPersonId, currency = 'BYN' }) {
-  const { iOwe, owedToMe } = useMemo(() => {
-    let iOwe = 0
-    let owedToMe = 0
+function DebtSummary({ bills, myPersonId, personsById = {}, currency = 'BYN' }) {
+  const { owe, owed } = useMemo(() => {
+    const owe = {}
+    const owed = {}
     for (const bill of bills) {
       if (bill.closed) continue
       if (bill.distribution_status && bill.distribution_status !== 'final') continue
       const net = computeBillDebts(bill)
       if (myPersonId && net[myPersonId]) {
-        for (const amt of Object.values(net[myPersonId])) iOwe += amt
+        for (const [c, amt] of Object.entries(net[myPersonId])) {
+          owe[c] = (owe[c] || 0) + amt
+        }
       }
       for (const [d, creds] of Object.entries(net)) {
-        if (d !== myPersonId && creds[myPersonId]) owedToMe += creds[myPersonId]
+        if (d !== myPersonId && creds[myPersonId]) {
+          owed[d] = (owed[d] || 0) + creds[myPersonId]
+        }
       }
     }
-    return { iOwe, owedToMe }
+    return { owe, owed }
   }, [bills, myPersonId])
 
+  const iOwe = Object.values(owe).reduce((s, a) => s + a, 0)
+  const owedToMe = Object.values(owed).reduce((s, a) => s + a, 0)
   if (!iOwe && !owedToMe) return null
+
   return (
     <div className="grid grid-cols-2 gap-3 mb-4">
-      <div className="bg-green-500/10 rounded-xl p-3">
-        <div className="text-xs text-green-300">Тебе должны</div>
-        <div className="text-xl font-bold text-green-400">{formatMinor(owedToMe, currency)}</div>
-      </div>
-      <div className="bg-red-500/10 rounded-xl p-3">
-        <div className="text-xs text-red-300">Ты должен</div>
-        <div className="text-xl font-bold text-red-400">{formatMinor(iOwe, currency)}</div>
-      </div>
+      <DebtColumn
+        tone="green"
+        title="Тебе должны"
+        total={owedToMe}
+        breakdown={owed}
+        personsById={personsById}
+        currency={currency}
+      />
+      <DebtColumn
+        tone="red"
+        title="Ты должен"
+        total={iOwe}
+        breakdown={owe}
+        personsById={personsById}
+        currency={currency}
+      />
     </div>
+  )
+}
+
+function DebtColumn({ tone, title, total, breakdown, personsById, currency }) {
+  const [open, setOpen] = useState(false)
+  const entries = useMemo(
+    () => Object.entries(breakdown).sort((a, b) => b[1] - a[1]),
+    [breakdown]
+  )
+  const empty = total === 0
+  const color = tone === 'green'
+    ? { bg: 'bg-green-500/10', hover: 'hover:bg-green-500/15', label: 'text-green-300', value: 'text-green-400', row: 'text-green-300/90' }
+    : { bg: 'bg-red-500/10',   hover: 'hover:bg-red-500/15',   label: 'text-red-300',   value: 'text-red-400',   row: 'text-red-300/90' }
+  return (
+    <motion.button
+      type="button"
+      layout
+      onClick={() => !empty && setOpen((o) => !o)}
+      whileTap={{ scale: empty ? 1 : 0.98 }}
+      className={`${color.bg} ${empty ? '' : color.hover} rounded-xl p-3 text-left w-full ${empty ? 'cursor-default' : 'cursor-pointer'} transition-colors`}
+    >
+      <div className={`text-xs ${color.label}`}>{title}</div>
+      <div className={`text-xl font-bold ${color.value} tabular-nums`}>{formatMinor(total, currency)}</div>
+      <AnimatePresence initial={false}>
+        {open && entries.length > 0 && (
+          <motion.ul
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            className="mt-2 space-y-1 overflow-hidden"
+          >
+            {entries.map(([pid, amt]) => (
+              <li key={pid} className={`flex items-center justify-between gap-2 text-xs ${color.row}`}>
+                <span className="truncate">{personsById[pid]?.display_name || '?'}</span>
+                <span className="tabular-nums shrink-0">{formatMinor(amt, currency)}</span>
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </motion.button>
   )
 }
 
@@ -935,7 +992,7 @@ export default function BillsPage() {
         <h1 className="text-2xl font-bold text-white mb-1">Счета</h1>
         <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
 
-        <DebtSummary bills={bills} myPersonId={myPerson?.id} />
+        <DebtSummary bills={bills} myPersonId={myPerson?.id} personsById={personsById} />
 
         <div className="flex gap-2 mb-4">
           <button
