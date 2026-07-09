@@ -908,7 +908,12 @@ export default function BillsPage() {
 
   const filteredBills = bills.filter(b => {
     if (tab === 'open' ? b.closed : !b.closed) return false
-    if (myPerson && !b.participants.includes(myPerson.id)) return false
+    if (tab === 'open' && myPerson && (!b.distribution_status || b.distribution_status === 'final')) {
+      const net = computeBillDebts(b)
+      const iOwe = net[myPerson.id] ? Object.values(net[myPerson.id]).some(a => a > 0) : false
+      const owedToMe = Object.entries(net).some(([d, creds]) => d !== myPerson.id && creds[myPerson.id] > 0)
+      if (!iOwe && !owedToMe) return false
+    }
     return true
   })
   const openBill = openBillId ? bills.find(b => b.id === openBillId) : null
