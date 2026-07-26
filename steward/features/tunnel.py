@@ -2,7 +2,7 @@ import logging
 import re
 
 from pyrate_limiter import BucketFullException
-from telegram import MessageOrigin, ReactionTypeEmoji
+from telegram import ReactionTypeEmoji
 
 from steward.data.models.chat_tunnel import ChatTunnel, TunnelMessage
 from steward.helpers.limiter import Duration, check_limit
@@ -425,7 +425,6 @@ class TunnelFeature(Feature):
                 dst_ids, anchor, head_id = await self._relay_album(
                     ctx, target, base_header, src_chat=ctx.chat_id,
                     message_ids=ids, body=extra or None,
-                    is_forward=self._is_forward(reply),
                 )
                 self._record_album(tunnel_id, ctx.chat_id, ids, target, dst_ids, ctx.user_id)
                 self._record_header(
@@ -563,7 +562,6 @@ class TunnelFeature(Feature):
                 dst_ids, anchor, head_id = await self._relay_album(
                     ctx, target_chat, header,
                     src_chat=ctx.chat_id, message_ids=ids, reply_to=reply_to,
-                    is_forward=self._is_forward(msg),
                 )
                 self._record_album(
                     mapping.tunnel_id, ctx.chat_id, ids, target_chat, dst_ids, ctx.user_id
@@ -773,16 +771,6 @@ class TunnelFeature(Feature):
         gid = getattr(msg, "media_group_id", None)
         return gid if isinstance(gid, str) and gid else None
 
-    def _is_forward(self, msg) -> bool:
-        """True, если это форвардированное сообщение (у него есть настоящий
-        forward_origin). isinstance-проверка нужна, чтобы MagicMock в тестах
-        (у которого forward_origin по умолчанию — новый мок, не None) не
-        уводил нас в forward-ветку."""
-        if msg is None:
-            return False
-        origin = getattr(msg, "forward_origin", None)
-        return isinstance(origin, MessageOrigin)
-
     async def _album_message_ids(self, ctx: FeatureContext, part) -> list[int]:
         """Все message_id альбома, которому принадлежит `part`.
 
@@ -824,35 +812,23 @@ class TunnelFeature(Feature):
         body: str | None = None,
         strip_captions: bool = False,
         reply_to: int | None = None,
-        is_forward: bool = False,
     ) -> tuple[list[int], object | None, int | None]:
-        """Доставить альбом одним вызовом copy_messages/forward_messages,
-        сохранив группировку.
+        """Доставить альбом одним вызовом copy_messages, сохранив группировку.
 
         Шапку (и `body`, если есть) шлём отдельным сообщением перед альбомом.
         `strip_captions=True` убирает подписи частей (для случая, когда подпись
-        была командой `/tunnel N text`). `is_forward=True` — форвардим альбом
-        целиком через forward_messages, сохраняя атрибуцию исходного канала;
-        strip_captions при этом игнорируется (у форварда caption не меняется).
-        Возвращает (id доставленных сообщений в порядке `message_ids`, шапку
-        как якорь для хидрации ссылок, message_id шапки — чтобы записать
-        маппинг и для реплаев на неё).
+        была командой `/tunnel N text`). Возвращает (id доставленных сообщений
+        в порядке `message_ids`, сообщение-шапку как якорь для хидрации ссылок,
+        message_id шапки — чтобы записать маппинг и для реплаев на неё).
         """
         head = f"{header}\n{body}" if body else header
         head_msg = await self._send_text(ctx, dst_chat, head, reply_to)
-        if is_forward:
-            copied = await self.bot.forward_messages(
-                chat_id=dst_chat,
-                from_chat_id=src_chat,
-                message_ids=message_ids,
-            )
-        else:
-            copied = await self.bot.copy_messages(
-                chat_id=dst_chat,
-                from_chat_id=src_chat,
-                message_ids=message_ids,
-                remove_caption=strip_captions,
-            )
+        copied = await self.bot.copy_messages(
+            chat_id=dst_chat,
+            from_chat_id=src_chat,
+            message_ids=message_ids,
+            remove_caption=strip_captions,
+        )
         head_id = head_msg.message_id if head_msg is not None else None
         return [m.message_id for m in copied], head_msg, head_id
 
@@ -869,34 +845,20 @@ class TunnelFeature(Feature):
         """Доставить контент в dst_chat и вернуть (id доставленного сообщения,
         якорь для хидрации ссылок, message_id шапки-сообщения или None).
 
-        copy_from — исходное сообщение. Форварды пересылаются через
-        forward_message (сохраняем атрибуцию исходного автора/канала), медиа —
-        через copy_message, текст — обычной отправкой.
+        copy_from — исходное сообщение. Если оно нетекстовое (медиа/стикер/
+        голос/…), оно копируется через copy_message; иначе пересылается текст.
         text — для медиа это новая подпись (override; "" убирает подпись,
-        None оставляет оригинальную); для текста — тело под шапкой; для
-        форварда — приписка в шапку (менять caption у форварда нельзя).
+        None оставляет оригинальную); для текста — тело под шапкой.
 
         Якорь — реальное текстовое сообщение в чате-получателе (на него потом
-        реплаит качалка видео по ссылке). Для медиа/форвард-ветки якоря нет
-        (ссылку и так несёт само присланное медиа).
+        реплаит качалка видео по ссылке). Для медиа-ветки якоря нет (copy_to
+        отдаёт лишь MessageId, а ссылку и так несёт само присланное медиа).
 
-        Шапка — отдельное сообщение для медиа- и форвард-веток; для текста
-        шапка и тело — одно сообщение, отдельного message_id шапки нет (None).
+        Шапка — отдельное сообщение только для медиа-ветки (там контент идёт
+        второй копией); для текста шапка и тело — одно сообщение, отдельного
+        message_id шапки нет (None).
         """
-        is_forward = self._is_forward(copy_from)
         is_media = copy_from is not None and copy_from.text is None
-
-        if is_forward:
-            head = f"{header}\n{text}" if text else header
-            head_msg = await self._send_text(ctx, dst_chat, head, reply_to)
-            forwarded = await self.bot.forward_message(
-                chat_id=dst_chat,
-                from_chat_id=ctx.chat_id,
-                message_id=copy_from.message_id,
-            )
-            head_id = head_msg.message_id if head_msg is not None else None
-            return forwarded.message_id, None, head_id
-
         if is_media:
             # Шапка отдельным сообщением, затем копия контента.
             head_msg = await self._send_text(ctx, dst_chat, header, reply_to)
