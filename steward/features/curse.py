@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from steward.data.models.curse import CurseParticipant, CursePunishment
 from steward.delayed_action.curse_punishment_digest import (
     CurseInterestDelayedAction,
+    CurseInterestForecastDelayedAction,
     CursePunishmentDigestDelayedAction,
 )
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
@@ -135,6 +136,10 @@ class CurseFeature(Feature):
             isinstance(a, CurseInterestDelayedAction)
             for a in self.delayed_actions
         )
+        has_forecast = any(
+            isinstance(a, CurseInterestForecastDelayedAction)
+            for a in self.delayed_actions
+        )
         changed = False
         if not has_digest:
             self.delayed_actions.add(
@@ -151,6 +156,16 @@ class CurseFeature(Feature):
                 CurseInterestDelayedAction(
                     generator=ConstantGenerator(
                         start=datetime(2025, 1, 1, 0, 0, tzinfo=_MSK),
+                        period=timedelta(days=1),
+                    )
+                )
+            )
+            changed = True
+        if not has_forecast:
+            self.delayed_actions.add(
+                CurseInterestForecastDelayedAction(
+                    generator=ConstantGenerator(
+                        start=datetime(2025, 1, 1, 20, 0, tzinfo=_MSK),
                         period=timedelta(days=1),
                     )
                 )

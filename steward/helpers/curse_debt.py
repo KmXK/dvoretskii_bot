@@ -131,6 +131,19 @@ class CurseDebtReportItem:
     interest_percent: float = CURSE_INTEREST_START_PERCENT
     interest_delta: int = 0
     interest_percent_added: float = 0.0
+    paid_since_interest: int = 0
+
+    @property
+    def next_delta(self) -> int:
+        return ceil(self.count * self.interest_percent / 100)
+
+    @property
+    def next_threshold(self) -> int:
+        return ceil(self.next_delta / 2)
+
+    @property
+    def left_to_threshold(self) -> int:
+        return max(self.next_threshold - self.paid_since_interest, 0)
 
 
 @dataclass
@@ -362,11 +375,13 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
                 interest_percent=debt.interest_percent,
                 interest_delta=debt.last_interest_delta,
                 interest_percent_added=debt.last_interest_percent_added,
+                paid_since_interest=debt.paid_since_interest,
             )
             continue
 
         item.count += debt.punishment_count
         item.interest_delta += debt.last_interest_delta
+        item.paid_since_interest += debt.paid_since_interest
         item.interest_percent = max(item.interest_percent, debt.interest_percent)
         item.interest_percent_added = max(
             item.interest_percent_added, debt.last_interest_percent_added
@@ -391,12 +406,16 @@ def _format_curse_debt_item(item: CurseDebtReportItem, interest_enabled: bool) -
     if not interest_enabled:
         return lines
 
-    if item.interest_delta > 0:
-        lines.append(f"Начислено за сутки: +{item.interest_delta}")
-
     rate = f"Ставка: {format_curse_percent(item.interest_percent)}%"
+    if item.interest_delta <= 0:
+        lines.append(rate)
+        return lines
+
+    lines.append(f"Начислено за сутки: +{item.interest_delta}")
     if item.interest_percent_added > 0:
         rate += f" (+{format_curse_percent(item.interest_percent_added)}% за пропуск)"
+    else:
+        rate += " (не поднялась)"
     lines.append(rate)
     return lines
 
@@ -420,6 +439,52 @@ def format_curse_debt_report(
             lines.extend(_format_curse_debt_item(item, entry.interest_enabled))
 
         if index != len(entries) - 1:
+            lines.append("")
+    return "\n".join(lines)
+
+
+def _format_curse_forecast_item(item: CurseDebtReportItem) -> list[str]:
+    lines = [
+        f"{item.title}: {item.count} (ставка {format_curse_percent(item.interest_percent)}%)",
+        f"В полночь начислится +{item.next_delta} → {item.count + item.next_delta}",
+    ]
+    if item.left_to_threshold <= 0:
+        lines.append(
+            f"Сделано {item.paid_since_interest} из {item.next_threshold} — ставка не вырастет"
+        )
+        return lines
+
+    grown = min(
+        CURSE_INTEREST_STEP_PERCENT,
+        max(CURSE_INTEREST_MAX_PERCENT - item.interest_percent, 0.0),
+    )
+    if grown <= 0:
+        lines.append(
+            f"Сделано {item.paid_since_interest} из {item.next_threshold} — "
+            f"ставка уже максимальная"
+        )
+        return lines
+
+    lines.append(
+        f"Сделано {item.paid_since_interest} из {item.next_threshold} — "
+        f"ещё {item.left_to_threshold}, иначе ставка станет "
+        f"{format_curse_percent(item.interest_percent + grown)}%"
+    )
+    return lines
+
+
+def format_curse_interest_forecast(entries: list[CurseDebtReportEntry]) -> str:
+    payable = [entry for entry in entries if entry.interest_enabled]
+    if not payable:
+        return ""
+
+    lines = ["Прогноз на полночь:", ""]
+    for index, entry in enumerate(payable):
+        lines.append(entry.name)
+        for item in entry.items:
+            lines.extend(_format_curse_forecast_item(item))
+
+        if index != len(payable) - 1:
             lines.append("")
     return "\n".join(lines)
 

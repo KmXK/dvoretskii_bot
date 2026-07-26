@@ -21,6 +21,7 @@ from steward.helpers.curse_debt import (
     apply_curse_interest_until,
     build_curse_debt_report_entries,
     format_curse_debt_report,
+    format_curse_interest_forecast,
     initialize_curse_debts,
     reduce_curse_debt,
     today_msk,
@@ -286,6 +287,77 @@ def test_report_shows_rate_accrual_and_growth():
     assert "Приседания: 1050" in report
     assert "Начислено за сутки: +50" in report
     assert "Ставка: 6% (+1% за пропуск)" in report
+
+
+def test_report_says_rate_did_not_grow_when_threshold_met():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Ставка: 5% (не поднялась)" in report
+
+
+def test_report_omits_accrual_line_before_first_tick():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=1.0)
+
+    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Ставка: 1%" in report
+    assert "не поднялась" not in report
+    assert "Начислено за сутки" not in report
+
+
+def test_forecast_tells_how_much_is_left_to_avoid_growth():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=12)
+
+    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "В полночь начислится +50 → 1050" in text
+    assert "Сделано 12 из 25 — ещё 13, иначе ставка станет 6%" in text
+
+
+def test_forecast_confirms_when_threshold_already_met():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
+
+    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Сделано 25 из 25 — ставка не вырастет" in text
+
+
+def test_forecast_notes_rate_is_already_maxed():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=100.0)
+
+    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "ставка уже максимальная" in text
+
+
+def test_forecast_skips_users_with_interest_disabled():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+            interest_enabled=False,
+        )
+    ]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+
+    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert text == ""
 
 
 def test_report_marks_disabled_interest():
