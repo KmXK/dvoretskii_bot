@@ -16,14 +16,18 @@ from steward.delayed_action.curse_punishment_digest import (
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.curse_debt import (
     CurseDebtReportEntry,
+    CurseDebtReportItem,
     accrue_curse_debt,
     apply_curse_interest_until,
+    build_curse_debt_report_entries,
     format_curse_debt_report,
     initialize_curse_debts,
+    reduce_curse_debt,
     today_msk,
 )
+from steward.data.models.user import User
 from steward.metrics.base import MetricSample
-from tests.conftest import DEFAULT_USER_ID, make_repository
+from tests.conftest import CHAT_ID, DEFAULT_USER_ID, make_repository
 
 
 def test_accrues_debt_only_for_selected_punishment_day():
@@ -55,7 +59,7 @@ def test_debt_report_mentions_users_by_default_for_digest():
         CurseDebtReportEntry(
             user_id=1,
             name="@test_user",
-            items=[("Отжимания", 10)],
+            items=[CurseDebtReportItem(title="Отжимания", count=10)],
         )
     ])
 
@@ -69,7 +73,7 @@ def test_debt_report_can_wrap_users_in_monospace_for_manual_command():
             CurseDebtReportEntry(
                 user_id=1,
                 name="@test_user",
-                items=[("Отжимания", 10)],
+                items=[CurseDebtReportItem(title="Отжимания", count=10)],
             )
         ],
         mention_users=False,
@@ -138,69 +142,168 @@ def test_does_not_accrue_for_unsubscribed_user():
     assert repo.db.curse_punishment_debts == []
 
 
-def test_applies_daily_compound_interest_until_target_date():
+def make_debt(repo, **overrides) -> CursePunishmentDebt:
+    repo.db.curse_punishments = [CursePunishment(id=1, coeff=4, title="Приседания")]
+    debt = CursePunishmentDebt(
+        id=1,
+        user_id=DEFAULT_USER_ID,
+        rule_id=1,
+        punishment_count=overrides.pop("punishment_count", 100),
+        last_interest_applied_date=overrides.pop("last_interest_applied_date", "2026-05-29"),
+        **overrides,
+    )
+    repo.db.curse_punishment_debts = [debt]
+    return debt
+
+
+def test_new_debt_starts_at_one_percent():
     repo = make_repository()
-    repo.db.curse_punishments = [
-        CursePunishment(id=1, coeff=4, title="приседаний", interest_percent=10.0)
-    ]
-    repo.db.curse_punishment_debts = [
-        CursePunishmentDebt(
-            id=1,
+    repo.db.curse_participants = [
+        CurseParticipant(
             user_id=DEFAULT_USER_ID,
-            rule_id=1,
-            punishment_count=100,
-            last_interest_applied_date="2026-05-28",
+            subscribed_at=datetime(2026, 5, 30, tzinfo=timezone.utc),
         )
     ]
+    repo.db.curse_punishments = [CursePunishment(id=1, coeff=4, title="Приседания")]
+
+    accrue_curse_debt(repo, DEFAULT_USER_ID, curse_count=1, today=date(2026, 5, 30))
+
+    assert repo.db.curse_punishment_debts[0].interest_percent == 1.0
+
+
+def test_percent_grows_by_one_each_lazy_day():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0)
 
     changed = apply_curse_interest_until(repo, date(2026, 5, 30))
 
     assert changed is True
-    assert repo.db.curse_punishment_debts[0].punishment_count == 121
-    assert repo.db.curse_punishment_debts[0].last_interest_applied_date == "2026-05-30"
+    assert debt.punishment_count == 1050
+    assert debt.last_interest_delta == 50
+    assert debt.interest_percent == 6.0
+    assert debt.last_interest_percent_added == 1.0
+    assert debt.last_interest_applied_date == "2026-05-30"
+
+
+def test_percent_does_not_grow_when_half_of_accrual_is_done():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 5.0
+    assert debt.last_interest_percent_added == 0.0
+    assert debt.punishment_count == 1050
+    assert debt.paid_since_interest == 0
+
+
+def test_percent_grows_when_done_below_half_of_accrual():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=24)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 6.0
+
+
+def test_percent_is_capped_at_hundred():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=10, interest_percent=100.0)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 100.0
+    assert debt.last_interest_percent_added == 0.0
+    assert debt.punishment_count == 20
+
+
+def test_percent_compounds_over_missed_days():
+    repo = make_repository()
+    debt = make_debt(
+        repo,
+        punishment_count=100,
+        interest_percent=1.0,
+        last_interest_applied_date="2026-05-28",
+    )
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.punishment_count == 104
+    assert debt.interest_percent == 3.0
+
+
+def test_done_counts_towards_threshold():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0)
+
+    reduce_curse_debt(repo, DEFAULT_USER_ID, rule_id=1, count=30)
+
+    assert debt.paid_since_interest == 30
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 5.0
 
 
 def test_interest_noops_when_already_applied_today():
     repo = make_repository()
-    repo.db.curse_punishments = [
-        CursePunishment(id=1, coeff=4, title="приседаний", interest_percent=10.0)
-    ]
-    repo.db.curse_punishment_debts = [
-        CursePunishmentDebt(
-            id=1,
-            user_id=DEFAULT_USER_ID,
-            rule_id=1,
-            punishment_count=100,
-            last_interest_applied_date="2026-05-30",
-        )
-    ]
+    debt = make_debt(repo, last_interest_applied_date="2026-05-30")
 
     changed = apply_curse_interest_until(repo, date(2026, 5, 30))
 
     assert changed is False
-    assert repo.db.curse_punishment_debts[0].punishment_count == 100
+    assert debt.punishment_count == 100
 
 
-def test_interest_advances_cursor_even_for_zero_percent():
+def test_disabled_participant_gets_no_interest_but_cursor_advances():
     repo = make_repository()
-    repo.db.curse_punishments = [
-        CursePunishment(id=1, coeff=4, title="приседаний", interest_percent=0.0)
-    ]
-    repo.db.curse_punishment_debts = [
-        CursePunishmentDebt(
-            id=1,
+    repo.db.curse_participants = [
+        CurseParticipant(
             user_id=DEFAULT_USER_ID,
-            rule_id=1,
-            punishment_count=100,
-            last_interest_applied_date="2026-05-29",
+            subscribed_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+            interest_enabled=False,
         )
     ]
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0)
 
     changed = apply_curse_interest_until(repo, date(2026, 5, 30))
 
     assert changed is True
-    assert repo.db.curse_punishment_debts[0].punishment_count == 100
-    assert repo.db.curse_punishment_debts[0].last_interest_applied_date == "2026-05-30"
+    assert debt.punishment_count == 1000
+    assert debt.interest_percent == 5.0
+    assert debt.last_interest_delta == 0
+    assert debt.last_interest_applied_date == "2026-05-30"
+
+
+def test_report_shows_rate_accrual_and_growth():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Приседания: 1050" in report
+    assert "Начислено за сутки: +50" in report
+    assert "Ставка: 6% (+1% за пропуск)" in report
+
+
+def test_report_marks_disabled_interest():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+            interest_enabled=False,
+        )
+    ]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+
+    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Проценты отключены" in report
+    assert "Ставка:" not in report
 
 
 async def test_initialize_backfills_legacy_metric_debt_once():
@@ -260,20 +363,9 @@ async def test_initialize_keeps_backfill_pending_when_metrics_fail():
 async def test_digest_action_does_not_apply_interest_before_reporting():
     repo = make_repository()
     repo.db.users = []
-    repo.db.curse_punishments = [
-        CursePunishment(id=1, coeff=10, title="приседаний", interest_percent=10.0)
-    ]
     today_date = today_msk()
     yesterday = (today_date - date.resolution).isoformat()
-    repo.db.curse_punishment_debts = [
-        CursePunishmentDebt(
-            id=1,
-            user_id=DEFAULT_USER_ID,
-            rule_id=1,
-            punishment_count=100,
-            last_interest_applied_date=yesterday,
-        )
-    ]
+    make_debt(repo, last_interest_applied_date=yesterday, interest_percent=10.0)
     action = CursePunishmentDigestDelayedAction(
         generator=ConstantGenerator(start=datetime.now(timezone.utc), period=date.resolution)
     )
@@ -288,20 +380,9 @@ async def test_digest_action_does_not_apply_interest_before_reporting():
 async def test_interest_action_applies_interest():
     repo = make_repository()
     repo.db.users = []
-    repo.db.curse_punishments = [
-        CursePunishment(id=1, coeff=10, title="приседаний", interest_percent=10.0)
-    ]
     today_date = today_msk()
     yesterday = (today_date - date.resolution).isoformat()
-    repo.db.curse_punishment_debts = [
-        CursePunishmentDebt(
-            id=1,
-            user_id=DEFAULT_USER_ID,
-            rule_id=1,
-            punishment_count=100,
-            last_interest_applied_date=yesterday,
-        )
-    ]
+    make_debt(repo, last_interest_applied_date=yesterday, interest_percent=10.0)
     action = CurseInterestDelayedAction(
         generator=ConstantGenerator(start=datetime.now(timezone.utc), period=date.resolution)
     )

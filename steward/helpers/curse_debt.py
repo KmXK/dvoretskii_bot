@@ -13,6 +13,10 @@ from steward.helpers.curse_punishment import get_current_curse_count
 logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Minsk")
 
+CURSE_INTEREST_START_PERCENT = 1.0
+CURSE_INTEREST_STEP_PERCENT = 1.0
+CURSE_INTEREST_MAX_PERCENT = 100.0
+
 
 def today_msk() -> date:
     return datetime.now(_MSK).date()
@@ -26,8 +30,24 @@ def _next_debt_id(repo: Repository) -> int:
     return max((debt.id for debt in repo.db.curse_punishment_debts), default=0) + 1
 
 
+def _find_participant(repo: Repository, user_id: int):
+    return next(
+        (participant for participant in repo.db.curse_participants if participant.user_id == user_id),
+        None,
+    )
+
+
 def _is_subscribed(repo: Repository, user_id: int) -> bool:
-    return any(participant.user_id == user_id for participant in repo.db.curse_participants)
+    return _find_participant(repo, user_id) is not None
+
+
+def is_curse_interest_enabled(repo: Repository, user_id: int) -> bool:
+    participant = _find_participant(repo, user_id)
+    return participant is None or participant.interest_enabled
+
+
+def format_curse_percent(value: float) -> str:
+    return f"{value:g}"
 
 
 def _find_debt(repo: Repository, user_id: int, rule_id: int) -> CursePunishmentDebt | None:
@@ -105,10 +125,20 @@ def select_curse_punishment_for_day(
 
 
 @dataclass
+class CurseDebtReportItem:
+    title: str
+    count: int
+    interest_percent: float = CURSE_INTEREST_START_PERCENT
+    interest_delta: int = 0
+    interest_percent_added: float = 0.0
+
+
+@dataclass
 class CurseDebtReportEntry:
     user_id: int
     name: str
-    items: list[tuple[str, int]]
+    items: list[CurseDebtReportItem]
+    interest_enabled: bool = True
 
 
 def _display_name(username: str | None, user_id: int) -> str:
@@ -215,29 +245,53 @@ def apply_curse_interest_until(repo: Repository, target_date: date) -> bool:
             )
             continue
 
+        interest_enabled = is_curse_interest_enabled(repo, debt.user_id)
         current_date = _parse_date_key(debt.last_interest_applied_date)
         while current_date < target_date:
             next_date = current_date + timedelta(days=1)
-            before = debt.punishment_count
-            if rule.interest_percent > 0:
-                debt.punishment_count = ceil(
-                    debt.punishment_count * (100 + rule.interest_percent) / 100
-                )
+            if interest_enabled:
+                _apply_curse_interest_day(debt, rule)
+            else:
+                debt.last_interest_delta = 0
+                debt.last_interest_percent_added = 0.0
+            debt.paid_since_interest = 0
             debt.last_interest_applied_date = date_key(next_date)
             current_date = next_date
             changed = True
-            logger.info(
-                "curse interest applied debt_id=%s user_id=%s rule_id=%s title=%r date=%s percent=%s before=%s after=%s",
-                debt.id,
-                debt.user_id,
-                rule.id,
-                rule.title,
-                debt.last_interest_applied_date,
-                rule.interest_percent,
-                before,
-                debt.punishment_count,
-            )
     return changed
+
+
+def _apply_curse_interest_day(debt: CursePunishmentDebt, rule: CursePunishment) -> None:
+    before = debt.punishment_count
+    delta = ceil(before * debt.interest_percent / 100)
+    threshold = ceil(delta / 2)
+    debt.punishment_count = before + delta
+
+    grown = 0.0
+    if debt.paid_since_interest < threshold:
+        grown = min(
+            CURSE_INTEREST_STEP_PERCENT,
+            max(CURSE_INTEREST_MAX_PERCENT - debt.interest_percent, 0.0),
+        )
+        debt.interest_percent += grown
+
+    debt.last_interest_delta = delta
+    debt.last_interest_percent_added = grown
+    logger.info(
+        "curse interest applied debt_id=%s user_id=%s rule_id=%s title=%r percent=%s "
+        "before=%s delta=%s after=%s paid=%s threshold=%s grown=%s",
+        debt.id,
+        debt.user_id,
+        rule.id,
+        rule.title,
+        debt.interest_percent,
+        before,
+        delta,
+        debt.punishment_count,
+        debt.paid_since_interest,
+        threshold,
+        grown,
+    )
 
 
 async def initialize_curse_debts(repo: Repository, metrics, today: date) -> bool:
@@ -282,7 +336,7 @@ async def initialize_curse_debts(repo: Repository, metrics, today: date) -> bool
 
 def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[CurseDebtReportEntry]:
     user_ids_in_chat = _user_ids_in_chat(repo, chat_id)
-    by_user_and_title: dict[int, dict[str, int]] = {}
+    by_user_and_title: dict[int, dict[str, CurseDebtReportItem]] = {}
 
     for debt in repo.db.curse_punishment_debts:
         if debt.punishment_count <= 0:
@@ -298,20 +352,53 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
                 debt.user_id,
             )
             continue
+
         user_items = by_user_and_title.setdefault(debt.user_id, {})
-        user_items[rule.title] = user_items.get(rule.title, 0) + debt.punishment_count
+        item = user_items.get(rule.title)
+        if item is None:
+            user_items[rule.title] = CurseDebtReportItem(
+                title=rule.title,
+                count=debt.punishment_count,
+                interest_percent=debt.interest_percent,
+                interest_delta=debt.last_interest_delta,
+                interest_percent_added=debt.last_interest_percent_added,
+            )
+            continue
+
+        item.count += debt.punishment_count
+        item.interest_delta += debt.last_interest_delta
+        item.interest_percent = max(item.interest_percent, debt.interest_percent)
+        item.interest_percent_added = max(
+            item.interest_percent_added, debt.last_interest_percent_added
+        )
 
     entries = [
         CurseDebtReportEntry(
             user_id=user_id,
             name=_user_name(repo, user_id),
-            items=sorted(items.items()),
+            items=sorted(items.values(), key=lambda item: item.title),
+            interest_enabled=is_curse_interest_enabled(repo, user_id),
         )
         for user_id, items in by_user_and_title.items()
         if items
     ]
     entries.sort(key=lambda entry: entry.name.lower())
     return entries
+
+
+def _format_curse_debt_item(item: CurseDebtReportItem, interest_enabled: bool) -> list[str]:
+    lines = [f"{item.title}: {item.count}"]
+    if not interest_enabled:
+        return lines
+
+    if item.interest_delta > 0:
+        lines.append(f"Начислено за сутки: +{item.interest_delta}")
+
+    rate = f"Ставка: {format_curse_percent(item.interest_percent)}%"
+    if item.interest_percent_added > 0:
+        rate += f" (+{format_curse_percent(item.interest_percent_added)}% за пропуск)"
+    lines.append(rate)
+    return lines
 
 
 def format_curse_debt_report(
@@ -326,11 +413,58 @@ def format_curse_debt_report(
     for index, entry in enumerate(entries):
         name = entry.name if mention_users else f"`{entry.name}`"
         lines.append(name)
-        for title, count in entry.items:
-            lines.append(f"{title}: {count}")
+        if not entry.interest_enabled:
+            lines.append("Проценты отключены")
+
+        for item in entry.items:
+            lines.extend(_format_curse_debt_item(item, entry.interest_enabled))
+
         if index != len(entries) - 1:
             lines.append("")
     return "\n".join(lines)
+
+
+def build_curse_interest_status(repo: Repository, chat_id: int) -> str:
+    user_ids_in_chat = _user_ids_in_chat(repo, chat_id)
+    participants = sorted(
+        (p for p in repo.db.curse_participants if p.user_id in user_ids_in_chat),
+        key=lambda p: _user_name(repo, p.user_id).lower(),
+    )
+    if not participants:
+        return "Подписчиков на наказания нет."
+
+    lines = ["Начисление процентов:", ""]
+    for participant in participants:
+        name = _user_name(repo, participant.user_id)
+        if not participant.interest_enabled:
+            lines.append(f"{name}: отключено")
+            continue
+
+        rates = _user_interest_rates(repo, participant.user_id)
+        if not rates:
+            base = format_curse_percent(CURSE_INTEREST_START_PERCENT)
+            lines.append(f"{name}: долгов нет (ставка нового долга {base}%)")
+            continue
+
+        lines.append(
+            f"{name}: "
+            + ", ".join(
+                f"{title} — {format_curse_percent(percent)}%" for title, percent in rates
+            )
+        )
+    return "\n".join(lines)
+
+
+def _user_interest_rates(repo: Repository, user_id: int) -> list[tuple[str, float]]:
+    rates = []
+    for debt in repo.db.curse_punishment_debts:
+        if debt.user_id != user_id or debt.punishment_count <= 0:
+            continue
+        rule = _rule_by_id(repo, debt.rule_id)
+        if rule is None:
+            continue
+        rates.append((rule.title, debt.interest_percent))
+    return sorted(rates)
 
 
 def find_user_debt(repo: Repository, user_id: int, rule_id: int) -> CursePunishmentDebt | None:
@@ -345,6 +479,7 @@ def reduce_curse_debt(repo: Repository, user_id: int, rule_id: int, count: int |
     before = debt.punishment_count
     paid = before if count is None else min(count, before)
     debt.punishment_count = before - paid
+    debt.paid_since_interest += paid
     if debt.punishment_count <= 0:
         repo.db.curse_punishment_debts.remove(debt)
     logger.info(

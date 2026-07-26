@@ -24,6 +24,10 @@ class CursePunishmentDebt:
     rule_id: int
     punishment_count: int
     last_interest_applied_date: str
+    interest_percent: float = 1.0
+    paid_since_interest: int = 0
+    last_interest_delta: int = 0
+    last_interest_percent_added: float = 0.0
 
 
 @dataclass
@@ -33,3 +37,4 @@ class CurseParticipant:
     last_done_at: datetime | None = None
     done_words_offset: int = 0
     source_chat_ids: list[int] = field(default_factory=list)
+    interest_enabled: bool = True

@@ -22,8 +22,8 @@ from steward.framework import (
 from steward.helpers.command_validation import ValidationArgumentsError
 from steward.helpers.curse_debt import (
     accrue_curse_debt,
-    apply_curse_interest_until,
     build_curse_debt_report_entries,
+    build_curse_interest_status,
     format_curse_debt_report,
     reduce_curse_debt,
     select_curse_punishment_for_day,
@@ -45,12 +45,26 @@ _PUNISHMENT_WEIGHT_QUESTION = (
     "Например, вес отжиманий: 2, вес приседаний: 1, "
     "следовательно отжимания будут наказанием дня в 2 раза чаще приседаний"
 )
-_PUNISHMENT_INTEREST_QUESTION = (
-    "Введите накопительный процент по наказанию. Если наказание не было выполнено день в день, "
-    "то в следующий день наказание нужно будет выполнить с процентами. "
-    "Например, 10 отжиманий было перенесено на следующий день, процент = 10, "
-    "тогда на следующий день ты будешь должен выполнить 11 отжиманий, а не 10"
-)
+
+
+def _resolve_user_id(feature: Feature, identifier: str) -> int | None:
+    identifier = identifier.strip().lstrip("@")
+    if not identifier:
+        return None
+    try:
+        return int(identifier)
+    except ValueError:
+        pass
+    target = identifier.lower()
+    user = next(
+        (
+            u
+            for u in feature.repository.db.users
+            if u.username and u.username.lower() == target
+        ),
+        None,
+    )
+    return user.id if user else None
 
 
 def _parse_words(raw: str) -> list[str]:
@@ -292,6 +306,47 @@ class CurseFeature(Feature):
         await self.curse_participants.save()
         await ctx.reply("Подписка на наказания отключена.")
 
+    @subcommand("percent", description="Ставки процентов по долгам")
+    async def show_interest(self, ctx: FeatureContext):
+        await ctx.reply(build_curse_interest_status(self.repository, ctx.chat_id))
+
+    @subcommand("percent on <user:str>", description="Включить проценты юзеру")
+    async def enable_interest(self, ctx: FeatureContext, user: str):
+        await self._set_interest(ctx, user, True)
+
+    @subcommand("percent off <user:str>", description="Отключить проценты юзеру")
+    async def disable_interest(self, ctx: FeatureContext, user: str):
+        await self._set_interest(ctx, user, False)
+
+    async def _set_interest(self, ctx: FeatureContext, user: str, enabled: bool):
+        if not await self._require_curse_admin(ctx):
+            return
+        user_id = _resolve_user_id(self, user)
+        if user_id is None:
+            await ctx.reply(f"Не нашёл юзера {user}.")
+            return
+        participant = self.curse_participants.find_by(user_id=user_id)
+        if participant is None:
+            await ctx.reply("Юзер не подписан на наказания.")
+            return
+        if participant.interest_enabled == enabled:
+            await ctx.reply(
+                "Проценты уже включены." if enabled else "Проценты уже отключены."
+            )
+            return
+
+        participant.interest_enabled = enabled
+        await self.curse_participants.save()
+        logger.info(
+            "curse interest toggled user_id=%s enabled=%s admin_user_id=%s",
+            user_id,
+            enabled,
+            ctx.user_id,
+        )
+        await ctx.reply(
+            f"Проценты для id {user_id} " + ("включены." if enabled else "отключены.")
+        )
+
     @subcommand("punishment add", description="Добавить наказание")
     async def start_add_punishment(self, ctx: FeatureContext):
         if not await self._require_curse_admin(ctx):
@@ -311,11 +366,6 @@ class CurseFeature(Feature):
             _PUNISHMENT_WEIGHT_QUESTION,
             validator=validate_message_text([_parse_positive_float]),
         ),
-        ask(
-            "interest_percent",
-            _PUNISHMENT_INTEREST_QUESTION,
-            validator=validate_message_text([_parse_non_negative_float]),
-        ),
     )
     async def punishment_add_done(
         self,
@@ -323,7 +373,6 @@ class CurseFeature(Feature):
         title: str,
         coeff: int,
         selection_weight: float,
-        interest_percent: float,
     ):
         if not await self._require_curse_admin(ctx):
             return
@@ -336,17 +385,15 @@ class CurseFeature(Feature):
                 id=0,
                 coeff=coeff,
                 title=title,
-                interest_percent=interest_percent,
                 selection_weight=selection_weight,
             )
         )
         await self.curse_punishments.save()
         logger.info(
-            "curse punishment added rule_id=%s title=%r coeff=%s interest=%s weight=%s admin_user_id=%s",
+            "curse punishment added rule_id=%s title=%r coeff=%s weight=%s admin_user_id=%s",
             punishment.id,
             punishment.title,
             punishment.coeff,
-            punishment.interest_percent,
             punishment.selection_weight,
             ctx.user_id,
         )
@@ -380,7 +427,7 @@ class CurseFeature(Feature):
 
     @on_callback(
         "curse:punishment_edit",
-        schema="<id:int>|<field:literal[title|coeff|weight|interest|delete]>",
+        schema="<id:int>|<field:literal[title|coeff|weight|delete]>",
     )
     async def cb_punishment_edit(self, ctx: FeatureContext, id: int, field: str):
         if not await self._require_curse_admin(ctx, toast=True):
@@ -433,10 +480,6 @@ class CurseFeature(Feature):
             punishment.coeff = parsed
         elif field == "weight":
             punishment.selection_weight = parsed
-        elif field == "interest":
-            if apply_curse_interest_until(self.repository, today_msk()):
-                await self.repository.save()
-            punishment.interest_percent = parsed
         else:
             await ctx.reply("Неизвестное поле.")
             return
@@ -524,8 +567,7 @@ class CurseFeature(Feature):
             f"Наказание #{punishment.id}\n\n"
             f"Название: {punishment.title}\n"
             f"Коэффициент: {punishment.coeff}\n"
-            f"Весовой коэффициент в наказании дня: {punishment.selection_weight}\n"
-            f"Ежедневный процент на долг: {punishment.interest_percent}%"
+            f"Весовой коэффициент в наказании дня: {punishment.selection_weight}"
         )
 
     def _punishment_edit_keyboard(self, punishment: CursePunishment) -> Keyboard:
@@ -536,10 +578,7 @@ class CurseFeature(Feature):
                     edit.button("Название", id=punishment.id, field="title"),
                     edit.button("Коэффициент", id=punishment.id, field="coeff"),
                 ],
-                [
-                    edit.button("Вес", id=punishment.id, field="weight"),
-                    edit.button("Процент", id=punishment.id, field="interest"),
-                ],
+                [edit.button("Вес", id=punishment.id, field="weight")],
                 [edit.button("Удалить", id=punishment.id, field="delete")],
             ]
         )
@@ -596,8 +635,6 @@ def _edit_field_question(field: str) -> str:
         return _PUNISHMENT_COEFF_QUESTION
     if field == "weight":
         return _PUNISHMENT_WEIGHT_QUESTION
-    if field == "interest":
-        return _PUNISHMENT_INTEREST_QUESTION
     return "Новое значение?"
 
 
@@ -611,8 +648,6 @@ def _parse_punishment_field(field: str, value):
         return _parse_positive_int(str(value))
     if field == "weight":
         return _parse_positive_float(str(value))
-    if field == "interest":
-        return _parse_non_negative_float(str(value))
     return Error("Неизвестное поле.")
 
 
@@ -623,6 +658,4 @@ def _punishment_field_value(punishment: CursePunishment, field: str):
         return punishment.coeff
     if field == "weight":
         return punishment.selection_weight
-    if field == "interest":
-        return punishment.interest_percent
     return None

@@ -310,23 +310,15 @@ class TestCursePunishment:
             title="ПРИСЕДАНИЯ",
             coeff=10,
             selection_weight=2.5,
-            interest_percent=5.5,
         )
 
         assert repo.db.curse_punishments == [
-            CursePunishment(
-                id=1,
-                coeff=10,
-                title="Приседания",
-                selection_weight=2.5,
-                interest_percent=5.5,
-            )
+            CursePunishment(id=1, coeff=10, title="Приседания", selection_weight=2.5)
         ]
         reply = get_reply_text(ctx.message.reply_text)
         assert "добавлено" in reply.lower()
         assert "Наказание #1" in reply
         assert "Название: Приседания" in reply
-        assert "Ежедневный процент на долг: 5.5%" in reply
 
     async def test_punishment_add_wizard_uses_expanded_questions(self):
         questions = [
@@ -342,10 +334,6 @@ class TestCursePunishment:
             "Введите весовой коэффициент данного наказания. Используется при выборе наказания дня. "
             "Например, вес отжиманий: 2, вес приседаний: 1, "
             "следовательно отжимания будут наказанием дня в 2 раза чаще приседаний",
-            "Введите накопительный процент по наказанию. Если наказание не было выполнено день в день, "
-            "то в следующий день наказание нужно будет выполнить с процентами. "
-            "Например, 10 отжиманий было перенесено на следующий день, процент = 10, "
-            "тогда на следующий день ты будешь должен выполнить 11 отжиманий, а не 10",
         ]
 
     async def test_punishment_add_wizard_accepts_numeric_coeff_message(self):
@@ -372,7 +360,6 @@ class TestCursePunishment:
             title="приседаний",
             coeff=10,
             selection_weight=2.5,
-            interest_percent=5.5,
         )
 
         assert len(repo.db.curse_punishments) == 1
@@ -381,20 +368,8 @@ class TestCursePunishment:
     async def test_show_punishments_uses_cards(self):
         repo = make_repository()
         repo.db.curse_punishments = [
-            CursePunishment(
-                id=1,
-                coeff=5,
-                title="Отжимания",
-                selection_weight=1.0,
-                interest_percent=1.5,
-            ),
-            CursePunishment(
-                id=2,
-                coeff=10,
-                title="Приседания",
-                selection_weight=2.0,
-                interest_percent=0.0,
-            ),
+            CursePunishment(id=1, coeff=5, title="Отжимания", selection_weight=1.0),
+            CursePunishment(id=2, coeff=10, title="Приседания", selection_weight=2.0),
         ]
 
         reply, ok = await invoke(CurseFeature, "/curse punishment", repo)
@@ -405,7 +380,6 @@ class TestCursePunishment:
         assert "Название: Отжимания" in reply
         assert "Коэффициент: 5" in reply
         assert "Весовой коэффициент в наказании дня: 1.0" in reply
-        assert "Ежедневный процент на долг: 1.5%" in reply
         assert "Наказание #2" in reply
         assert "Название: Приседания" in reply
 
@@ -413,13 +387,7 @@ class TestCursePunishment:
         repo = make_repository()
         repo.db.admin_ids = {DEFAULT_USER_ID}
         repo.db.curse_punishments = [
-            CursePunishment(
-                id=1,
-                coeff=10,
-                title="Приседания",
-                selection_weight=2.5,
-                interest_percent=5.5,
-            )
+            CursePunishment(id=1, coeff=10, title="Приседания", selection_weight=2.5)
         ]
         handler = CurseFeature()
         handler.repository = repo
@@ -433,10 +401,9 @@ class TestCursePunishment:
         assert "Название: Приседания" in reply
         assert "Коэффициент: 10" in reply
         assert "Весовой коэффициент в наказании дня: 2.5" in reply
-        assert "Ежедневный процент на долг: 5.5%" in reply
         markup = ctx.message.reply_text.call_args.kwargs["reply_markup"]
         labels = [button.text for row in markup.inline_keyboard for button in row]
-        assert labels == ["Название", "Коэффициент", "Вес", "Процент", "Удалить"]
+        assert labels == ["Название", "Коэффициент", "Вес", "Удалить"]
 
     async def test_punishment_edit_callback_starts_field_wizard(self):
         repo = make_repository()
@@ -504,7 +471,7 @@ class TestCursePunishment:
         invalid_ctx = make_text_context("abc")
         step_ctx = ChatStepContext(
             **invalid_ctx.__dict__,
-            session_context={"field": "interest"},
+            session_context={"field": "weight"},
         )
 
         assert await step.chat(step_ctx) is False
@@ -697,47 +664,81 @@ class TestCursePunishment:
         assert "отключена" in reply.lower()
         assert repo.db.curse_participants == []
 
-    async def test_edit_wizard_sets_punishment_interest_after_catchup(self):
+    async def test_percent_off_disables_interest_for_user(self):
         repo = make_repository()
-        today_date = today_msk()
         repo.db.admin_ids = {DEFAULT_USER_ID}
-        repo.db.curse_punishments = [
-            CursePunishment(id=1, coeff=10, title="приседаний", interest_percent=10.5)
+        repo.db.users = [User(id=999, username="lazy", chat_ids=[CHAT_ID])]
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=999, subscribed_at=datetime.now(timezone.utc))
         ]
-        yesterday = (today_date - timedelta(days=1)).isoformat()
-        today = today_date.isoformat()
+
+        reply, ok = await invoke(CurseFeature, "/curse percent off @lazy", repo)
+
+        assert ok
+        assert "отключены" in reply.lower()
+        assert repo.db.curse_participants[0].interest_enabled is False
+
+    async def test_percent_on_reenables_interest_for_user(self):
+        repo = make_repository()
+        repo.db.admin_ids = {DEFAULT_USER_ID}
+        repo.db.users = [User(id=999, username="lazy", chat_ids=[CHAT_ID])]
+        repo.db.curse_participants = [
+            CurseParticipant(
+                user_id=999,
+                subscribed_at=datetime.now(timezone.utc),
+                interest_enabled=False,
+            )
+        ]
+
+        reply, ok = await invoke(CurseFeature, "/curse percent on 999", repo)
+
+        assert ok
+        assert "включены" in reply.lower()
+        assert repo.db.curse_participants[0].interest_enabled is True
+
+    async def test_percent_off_rejects_non_admin(self):
+        repo = make_repository()
+        grant_curse_manage(repo)
+        repo.db.users = [User(id=999, username="lazy", chat_ids=[CHAT_ID])]
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=999, subscribed_at=datetime.now(timezone.utc))
+        ]
+
+        reply, ok = await invoke(CurseFeature, "/curse percent off @lazy", repo)
+
+        assert ok
+        assert "Недостаточно прав." in reply
+        assert repo.db.curse_participants[0].interest_enabled is True
+
+    async def test_percent_shows_current_rates(self):
+        repo = make_repository()
+        today = today_msk().isoformat()
+        repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID])]
+        repo.db.curse_punishments = [CursePunishment(id=1, coeff=5, title="Отжимания")]
+        repo.db.curse_participants = [
+            CurseParticipant(user_id=DEFAULT_USER_ID, subscribed_at=datetime.now(timezone.utc))
+        ]
         repo.db.curse_punishment_debts = [
             CursePunishmentDebt(
                 id=1,
                 user_id=DEFAULT_USER_ID,
                 rule_id=1,
                 punishment_count=100,
-                last_interest_applied_date=yesterday,
+                last_interest_applied_date=today,
+                interest_percent=7.0,
             )
         ]
-        handler = CurseFeature()
-        handler.repository = repo
-        handler.bot = MagicMock()
-        ctx = make_context("curse", repo=repo)
 
-        await handler.punishment_edit_field_done(
-            from_chat_context(ctx),
-            id=1,
-            field="interest",
-            value=20.5,
-        )
+        reply, ok = await invoke(CurseFeature, "/curse percent", repo)
 
-        reply = get_reply_text(ctx.message.reply_text)
-        assert "20.5" in reply
-        assert repo.db.curse_punishments[0].interest_percent == 20.5
-        assert repo.db.curse_punishment_debts[0].punishment_count == 111
-        assert repo.db.curse_punishment_debts[0].last_interest_applied_date == today
+        assert ok
+        assert "@testuser: Отжимания — 7%" in reply
 
     async def test_edit_wizard_updates_punishment_coeff_for_future_accrual(self):
         repo = make_repository()
         repo.db.admin_ids = {DEFAULT_USER_ID}
         repo.db.curse_punishments = [
-            CursePunishment(id=1, coeff=10, title="приседаний", interest_percent=0.0)
+            CursePunishment(id=1, coeff=10, title="приседаний")
         ]
         handler = CurseFeature()
         handler.repository = repo
