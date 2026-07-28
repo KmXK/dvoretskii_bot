@@ -21,7 +21,8 @@ from steward.helpers.curse_debt import (
     apply_curse_interest_until,
     build_curse_debt_report_entries,
     format_curse_debt_report,
-    format_curse_interest_forecast,
+    format_curse_day_outcome,
+    format_curse_day_plan,
     initialize_curse_debts,
     reduce_curse_debt,
     today_msk,
@@ -207,15 +208,63 @@ def test_percent_grows_when_done_below_half_of_accrual():
     assert debt.interest_percent == 6.0
 
 
-def test_percent_is_capped_at_hundred():
+def test_percent_has_no_upper_cap():
     repo = make_repository()
     debt = make_debt(repo, punishment_count=10, interest_percent=100.0)
 
     apply_curse_interest_until(repo, date(2026, 5, 30))
 
-    assert debt.interest_percent == 100.0
-    assert debt.last_interest_percent_added == 0.0
+    assert debt.interest_percent == 101.0
     assert debt.punishment_count == 20
+
+
+def test_triple_norm_drops_percent_and_skips_accrual():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=150)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.punishment_count == 1000
+    assert debt.interest_percent == 4.0
+    assert debt.last_interest_delta == 0
+    assert debt.last_interest_percent_added == -1.0
+
+
+def test_just_below_triple_norm_still_accrues():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=149)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.punishment_count == 1050
+    assert debt.interest_percent == 5.0
+
+
+def test_percent_never_drops_below_one():
+    repo = make_repository()
+    debt = make_debt(repo, punishment_count=1000, interest_percent=1.0, paid_since_interest=30)
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 1.0
+    assert debt.punishment_count == 1000
+    assert debt.last_interest_percent_added == 0.0
+
+
+def test_percent_drops_at_most_one_per_day():
+    repo = make_repository()
+    debt = make_debt(
+        repo,
+        punishment_count=1000,
+        interest_percent=9.0,
+        paid_since_interest=900,
+        last_interest_applied_date="2026-05-28",
+    )
+
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    assert debt.interest_percent == 9.0
+    assert debt.punishment_count == 1080
 
 
 def test_percent_compounds_over_missed_days():
@@ -276,74 +325,50 @@ def test_disabled_participant_gets_no_interest_but_cursor_advances():
     assert debt.last_interest_applied_date == "2026-05-30"
 
 
-def test_report_shows_rate_accrual_and_growth():
-    repo = make_repository()
-    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
-    make_debt(repo, punishment_count=1000, interest_percent=5.0)
-    apply_curse_interest_until(repo, date(2026, 5, 30))
-
-    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
-
-    assert "Приседания: 1050" in report
-    assert "Начислено за сутки: +50" in report
-    assert "Ставка: 6% (+1% за пропуск)" in report
-
-
-def test_report_says_rate_did_not_grow_when_threshold_met():
-    repo = make_repository()
-    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
-    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
-    apply_curse_interest_until(repo, date(2026, 5, 30))
-
-    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
-
-    assert "Ставка: 5% (не поднялась)" in report
-
-
-def test_report_omits_accrual_line_before_first_tick():
-    repo = make_repository()
-    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
-    make_debt(repo, punishment_count=1000, interest_percent=1.0)
-
-    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
-
-    assert "Ставка: 1%" in report
-    assert "не поднялась" not in report
-    assert "Начислено за сутки" not in report
-
-
-def test_forecast_tells_how_much_is_left_to_avoid_growth():
+def test_plan_tells_both_thresholds():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
     make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=12)
 
-    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+    text = format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID))
 
-    assert "В полночь начислится +50 → 1050" in text
-    assert "Сделано 12 из 25 — ещё 13, иначе ставка станет 6%" in text
+    assert "Приседания: 1000, ставка 5%, сделано 12" in text
+    assert "Начислится +50, ставка вырастет до 6%" in text
+    assert "Ещё 13 — ставка не вырастет, 138 — упадёт" in text
 
 
-def test_forecast_confirms_when_threshold_already_met():
+def test_plan_when_keep_threshold_met():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
     make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
 
-    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+    text = format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID))
 
-    assert "Сделано 25 из 25 — ставка не вырастет" in text
+    assert "Начислится +50, ставка не вырастет" in text
+    assert "Ещё 125 — и вместо начисления ставка упадёт на 1%" in text
 
 
-def test_forecast_notes_rate_is_already_maxed():
+def test_plan_when_down_threshold_met():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
-    make_debt(repo, punishment_count=1000, interest_percent=100.0)
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=150)
 
-    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+    text = format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID))
 
-    assert "ставка уже максимальная" in text
+    assert "Норма перевыполнена: начисления не будет, ставка → 4%" in text
 
 
-def test_forecast_skips_users_with_interest_disabled():
+def test_plan_at_minimum_rate_says_rate_cannot_drop():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=1.0, paid_since_interest=30)
+
+    text = format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "ставка уже минимальная" in text
+
+
+def test_plan_skips_users_with_interest_disabled():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
     repo.db.curse_participants = [
@@ -355,9 +380,68 @@ def test_forecast_skips_users_with_interest_disabled():
     ]
     make_debt(repo, punishment_count=1000, interest_percent=5.0)
 
-    text = format_curse_interest_forecast(build_curse_debt_report_entries(repo, CHAT_ID))
+    assert format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID)) == ""
 
-    assert text == ""
+
+def test_plan_matches_what_the_tick_actually_does():
+    for paid in (0, 12, 25, 100, 149, 150, 400):
+        repo = make_repository()
+        repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+        debt = make_debt(
+            repo, punishment_count=997, interest_percent=5.0, paid_since_interest=paid
+        )
+        item = build_curse_debt_report_entries(repo, CHAT_ID)[0].items[0]
+        planned_delta = item.next_delta
+        planned_grows = item.left_to_keep > 0
+        planned_drops = item.left_to_down <= 0
+
+        apply_curse_interest_until(repo, date(2026, 5, 30))
+
+        applied = debt.last_interest_delta
+        assert applied == (0 if planned_drops else planned_delta), paid
+        assert (debt.last_interest_percent_added > 0) is (planned_grows and not planned_drops), paid
+        assert (debt.last_interest_percent_added < 0) is planned_drops, paid
+
+
+def test_outcome_reports_accrual_and_growth():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    text = format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Приседания: 1000 → 1050 (+50), ставка 5% → 6%" in text
+
+
+def test_outcome_reports_drop_without_accrual():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=150)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    text = format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Приседания: 1000 — без начисления, ставка 5% → 4%" in text
+
+
+def test_outcome_reports_unchanged_rate():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0, paid_since_interest=25)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    text = format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Приседания: 1000 → 1050 (+50), ставка 5% без изменений" in text
+
+
+def test_outcome_empty_before_first_tick():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    make_debt(repo, punishment_count=1000, interest_percent=1.0)
+
+    assert format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID)) == ""
 
 
 def test_report_marks_disabled_interest():
@@ -374,8 +458,8 @@ def test_report_marks_disabled_interest():
 
     report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
 
-    assert "Проценты отключены" in report
-    assert "Ставка:" not in report
+    assert "Приседания: 1000 (проценты отключены)" in report
+    assert "ставка" not in report
 
 
 async def test_initialize_backfills_legacy_metric_debt_once():

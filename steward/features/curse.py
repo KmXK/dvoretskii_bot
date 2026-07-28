@@ -128,10 +128,6 @@ class CurseFeature(Feature):
 
     @on_init
     async def _setup_digest(self):
-        has_digest = any(
-            isinstance(a, CursePunishmentDigestDelayedAction)
-            for a in self.delayed_actions
-        )
         has_interest = any(
             isinstance(a, CurseInterestDelayedAction)
             for a in self.delayed_actions
@@ -141,16 +137,12 @@ class CurseFeature(Feature):
             for a in self.delayed_actions
         )
         changed = False
-        if not has_digest:
-            self.delayed_actions.add(
-                CursePunishmentDigestDelayedAction(
-                    generator=ConstantGenerator(
-                        start=datetime(2025, 1, 1, 22, 22, tzinfo=_MSK),
-                        period=timedelta(days=1),
-                    )
-                )
-            )
+        for stale in [
+            a for a in self.delayed_actions if isinstance(a, CursePunishmentDigestDelayedAction)
+        ]:
+            self.delayed_actions.remove(stale)
             changed = True
+
         if not has_interest:
             self.delayed_actions.add(
                 CurseInterestDelayedAction(
