@@ -20,6 +20,7 @@ from steward.helpers.curse_debt import (
     accrue_curse_debt,
     apply_curse_interest_until,
     build_curse_debt_report_entries,
+    format_curse_debt_progress,
     format_curse_debt_report,
     format_curse_day_outcome,
     format_curse_day_plan,
@@ -401,6 +402,44 @@ def test_plan_matches_what_the_tick_actually_does():
         assert applied == (0 if planned_drops else planned_delta), paid
         assert (debt.last_interest_percent_added > 0) is (planned_grows and not planned_drops), paid
         assert (debt.last_interest_percent_added < 0) is planned_drops, paid
+
+
+def test_progress_after_done_shows_forecast():
+    repo = make_repository()
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+
+    reduce_curse_debt(repo, DEFAULT_USER_ID, 1, 12)
+    text = format_curse_debt_progress(repo, DEFAULT_USER_ID, 1)
+
+    assert "До полуночи:" in text
+    assert "Приседания: 988, ставка 5%, сделано 12" in text
+    assert "Начислится +50, ставка вырастет до 6%" in text
+    assert "Ещё 13 — ставка не вырастет, 138 — упадёт" in text
+
+
+def test_progress_is_empty_when_debt_closed():
+    repo = make_repository()
+    make_debt(repo, punishment_count=10, interest_percent=5.0)
+
+    reduce_curse_debt(repo, DEFAULT_USER_ID, 1, 10)
+
+    assert format_curse_debt_progress(repo, DEFAULT_USER_ID, 1) == ""
+
+
+def test_progress_is_empty_when_interest_disabled():
+    repo = make_repository()
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 5, 28, tzinfo=timezone.utc),
+            interest_enabled=False,
+        )
+    ]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+
+    reduce_curse_debt(repo, DEFAULT_USER_ID, 1, 12)
+
+    assert format_curse_debt_progress(repo, DEFAULT_USER_ID, 1) == ""
 
 
 def test_outcome_reports_accrual_and_growth():

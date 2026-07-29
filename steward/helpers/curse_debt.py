@@ -491,6 +491,29 @@ def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
     return "\n".join(lines)
 
 
+def format_curse_debt_progress(repo: Repository, user_id: int, rule_id: int) -> str:
+    if not is_curse_interest_enabled(repo, user_id):
+        return ""
+
+    debt = _find_debt(repo, user_id, rule_id)
+    if debt is None or debt.punishment_count <= 0:
+        return ""
+
+    rule = _rule_by_id(repo, rule_id)
+    if rule is None:
+        return ""
+
+    item = CurseDebtReportItem(
+        title=rule.title,
+        count=debt.punishment_count,
+        interest_percent=debt.interest_percent,
+        interest_delta=debt.last_interest_delta,
+        interest_percent_added=debt.last_interest_percent_added,
+        paid_since_interest=debt.paid_since_interest,
+    )
+    return "\n".join(["До полуночи:", *_format_curse_plan_item(item)])
+
+
 def _format_curse_outcome_item(item: CurseDebtReportItem) -> str:
     rate = format_curse_percent(item.interest_percent)
     before = item.count - item.interest_delta

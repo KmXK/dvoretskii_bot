@@ -25,6 +25,7 @@ from steward.helpers.curse_debt import (
     accrue_curse_debt,
     build_curse_debt_report_entries,
     build_curse_interest_status,
+    format_curse_debt_progress,
     format_curse_debt_report,
     reduce_curse_debt,
     select_curse_punishment_for_day,
@@ -562,9 +563,12 @@ class CurseFeature(Feature):
             )
             return
 
-        await ctx.reply(
-            f"Засчитано: {paid} {punishment.title}. Осталось: {remaining} {punishment.title}."
-        )
+        text = f"Засчитано: {paid} {punishment.title}. Осталось: {remaining} {punishment.title}."
+        progress = format_curse_debt_progress(self.repository, user_id, punishment.id)
+        if progress:
+            text += "\n\n" + progress
+
+        await ctx.reply(text)
 
     def _punishment_edit_text(self, punishment: CursePunishment) -> str:
         return self._punishment_text(punishment)
