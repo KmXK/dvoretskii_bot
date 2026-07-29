@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 TIMEZONE = ZoneInfo("Europe/Minsk")
 CHECK_TIME = time(hour=9, minute=0)
+SIREN_LINE = "🚨" * 12
 
 
 _CELEBRITY_PROMPT = """Сегодня день рождения у публичной личности. Нужно уведомить чат друзей о факте — самого именинника в чате нет, поздравлять его напрямую НЕ надо.
@@ -73,7 +74,7 @@ class BirthdayChecker:
             if b.day == day and b.month == month:
                 try:
                     text = await self._make_greeting(b, now.year)
-                    await self._bot.send_message(b.chat_id, text)
+                    await self._bot.send_message(b.chat_id, f"{SIREN_LINE}\n\n{text}\n\n{SIREN_LINE}")
                 except Exception:
                     logger.exception(f"Failed to congratulate {b.name} in chat {b.chat_id}")
 
