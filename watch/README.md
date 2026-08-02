@@ -33,7 +33,7 @@ gradle wrapper            # один раз, если нет gradle/wrapper/grad
 
 ### Базовый URL бота
 
-По умолчанию `https://tg.kmxk.ru`. Переопредели, не трогая код, — добавь в
+По умолчанию `https://dvoretskii.nigger.by`. Переопредели, не трогая код, — добавь в
 `watch/local.properties`:
 
 ```

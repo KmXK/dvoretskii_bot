@@ -6,7 +6,7 @@
 # so no SSH or direct VM access is needed.
 #
 # Reads from ../.env:
-#   PROD_API_URL      https://tg.kmxk.ru   (required; no trailing slash needed)
+#   PROD_API_URL      https://dvoretskii.nigger.by   (required; no trailing slash needed)
 #   PROD_BOT_TOKEN    prod bot token       (required; falls back to TELEGRAM_BOT_TOKEN)
 #   ADMIN_USER_ID     your telegram id     (required; must be a bot admin)
 #

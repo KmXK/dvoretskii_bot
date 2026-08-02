@@ -18,7 +18,7 @@ android {
         // Базовый URL бота. Переопредели в local.properties (BOT_BASE_URL=...)
         // или прямо здесь. Должен быть https и без хвостового слэша.
         val baseUrl = (project.findProperty("BOT_BASE_URL") as String?)
-            ?: "https://tg.kmxk.ru"
+            ?: "https://dvoretskii.nigger.by"
         buildConfigField("String", "BOT_BASE_URL", "\"$baseUrl\"")
     }
 
