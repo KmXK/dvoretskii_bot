@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import WebApp from '@twa-dev/sdk'
+import { Ellipsis, Flag, PencilLine, RotateCcw, Undo2, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
@@ -246,6 +247,110 @@ function BouncingBallLoader({ label }) {
   )
 }
 
+function ScoreboardActionsSheet({
+  isPointMode,
+  isPadel,
+  partyInProgress,
+  hasMatches,
+  onUndoPoint,
+  onManualScore,
+  onUndoParty,
+  onCloseSession,
+  onClose,
+}) {
+  const actions = []
+  if (isPointMode && partyInProgress) {
+    actions.push({
+      label: 'Убрать последнее очко',
+      detail: 'Вернуть счёт на один шаг назад',
+      icon: <Undo2 size={20} />,
+      onClick: onUndoPoint,
+    })
+  }
+
+  if (isPointMode && !isPadel) {
+    actions.push({
+      label: 'Записать счёт партии',
+      detail: 'Завершить партию готовым счётом',
+      icon: <PencilLine size={20} />,
+      onClick: onManualScore,
+    })
+  }
+
+  if (hasMatches) {
+    actions.push({
+      label: 'Отменить последнюю партию',
+      detail: 'Удалить её из истории',
+      icon: <RotateCcw size={20} />,
+      onClick: onUndoParty,
+    })
+  }
+
+  actions.push({
+    label: 'Закрыть сессию',
+    detail: 'Сохранить результат и закончить игру',
+    icon: <Flag size={20} />,
+    onClick: onCloseSession,
+    destructive: true,
+  })
+
+  const run = (action) => {
+    onClose()
+    action()
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[54] bg-black/70 backdrop-blur-sm flex items-end justify-center"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        className="w-full max-w-xl rounded-t-3xl border-t border-zinc-700 bg-zinc-900 px-4 pt-4 shadow-2xl"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="text-lg font-black text-white">Действия</div>
+            <div className="text-xs text-zinc-500">Редкие команды не мешают табло</div>
+          </div>
+          <button onClick={onClose} className="rounded-full bg-zinc-800 p-2 text-zinc-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-2">
+          {actions.map(({ label, detail, icon, onClick, destructive }) => (
+            <button
+              key={label}
+              onClick={() => run(onClick)}
+              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors ${
+                destructive
+                  ? 'border-red-500/20 bg-red-500/10 hover:bg-red-500/15'
+                  : 'border-zinc-700/70 bg-zinc-800/70 hover:bg-zinc-800'
+              }`}
+            >
+              <span className={`rounded-xl p-2 ${destructive ? 'bg-red-500/15 text-red-300' : 'bg-white/5 text-zinc-200'}`}>
+                {icon}
+              </span>
+              <span className="min-w-0">
+                <span className={`block font-bold ${destructive ? 'text-red-200' : 'text-white'}`}>{label}</span>
+                <span className="block text-xs text-zinc-500">{detail}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ── FinishPartySheet: ввод итогового счёта ────────────────────────────────────
 
 function FinishPartySheet({ state, defaultWinnerSide, onSubmit, onClose }) {
@@ -470,6 +575,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const [errorBanner, setErrorBanner] = useState(null)
   const [now, setNow] = useState(Date.now())
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
   const [finishOpen, setFinishOpen] = useState(false)
   const [finishWinnerSide, setFinishWinnerSide] = useState('a')
   const [scoreMode, setScoreMode] = useState('score')
@@ -802,6 +908,15 @@ export default function TennisScoreboard({ onBackToLobby }) {
           >
             {muted ? '🔇' : '🔊'}
           </button>
+          {!isClosed && canEdit && (
+            <button
+              onClick={() => setActionsOpen(true)}
+              className="rounded-lg p-1.5 text-zinc-300 hover:bg-white/10 hover:text-white"
+              title="Действия"
+            >
+              <Ellipsis size={20} />
+            </button>
+          )}
           {status === 'reconnecting' && <span className="text-amber-300 text-xs animate-pulse">·реконн</span>}
           {isClosed && <span className="text-zinc-300 text-xs">·закрыта{closeReason === 'timeout' ? ' (таймаут)' : ''}</span>}
         </div>
@@ -868,11 +983,11 @@ export default function TennisScoreboard({ onBackToLobby }) {
         )}
       </div>
 
-      <div
-        className="shrink-0 bg-black/80 backdrop-blur-sm border-t border-zinc-800 px-3 pt-3"
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
-      >
-        {!isClosed && canEdit && (
+      {!isClosed && canEdit && (
+        <div
+          className="shrink-0 bg-black/80 backdrop-blur-sm border-t border-zinc-800 px-3 pt-3"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
+        >
           <div className="grid grid-cols-2 gap-2">
             <motion.button
               whileTap={{ scale: 0.95 }}
@@ -893,51 +1008,21 @@ export default function TennisScoreboard({ onBackToLobby }) {
               <span className="relative text-xs opacity-80 mt-1 truncate max-w-[90%]">{nameB}</span>
             </motion.button>
           </div>
-        )}
-        <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
-          {!isClosed && canEdit && isPointMode && partyInProgress && (
-            <button
-              onClick={handleUndoPoint}
-              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
-            >
-              ↩ убрать очко
-            </button>
-          )}
-          {!isClosed && canEdit && isPointMode && !isPadel && (
-            <button
-              onClick={() => openFinish(curB > curA ? 'b' : 'a')}
-              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
-            >
-              ✎ счёт вручную
-            </button>
-          )}
-          {!isClosed && canEdit && partyIndex > 0 && (
-            <button
-              onClick={handleUndo}
-              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
-            >
-              ↶ отменить партию
-            </button>
-          )}
-          <div className="flex-1" />
-          {!isClosed && canEdit && (
-            <button
-              onClick={handleClose}
-              className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
-            >
-              Закрыть сессию
-            </button>
-          )}
-          {isClosed && onBackToLobby && (
-            <button
-              onClick={onBackToLobby}
-              className="text-zinc-200 hover:text-white text-xs px-4 py-2 rounded-full bg-zinc-800 border border-zinc-700"
-            >
-              В лобби
-            </button>
-          )}
         </div>
-      </div>
+      )}
+      {isClosed && onBackToLobby && (
+        <div
+          className="shrink-0 border-t border-zinc-800 bg-black/80 px-3 pt-3 backdrop-blur-sm"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
+        >
+          <button
+            onClick={onBackToLobby}
+            className="w-full rounded-2xl border border-zinc-700 bg-zinc-800 py-3 font-bold text-zinc-200 hover:text-white"
+          >
+            В лобби
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {errorBanner && (
@@ -949,6 +1034,22 @@ export default function TennisScoreboard({ onBackToLobby }) {
           >
             {errorBanner}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {actionsOpen && (
+          <ScoreboardActionsSheet
+            isPointMode={isPointMode}
+            isPadel={isPadel}
+            partyInProgress={partyInProgress}
+            hasMatches={partyIndex > 0}
+            onUndoPoint={handleUndoPoint}
+            onManualScore={() => openFinish(curB > curA ? 'b' : 'a')}
+            onUndoParty={handleUndo}
+            onCloseSession={handleClose}
+            onClose={() => setActionsOpen(false)}
+          />
         )}
       </AnimatePresence>
 

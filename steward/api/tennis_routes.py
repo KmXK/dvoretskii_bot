@@ -401,21 +401,44 @@ async def list_opponents(request: web.Request) -> web.Response:
     repository: Repository = request.app["repository"]
     my_user = next((u for u in repository.db.users if u.id == me), None)
     my_chats = set(getattr(my_user, "chat_ids", []) or []) if my_user else set()
+    chat_names = {chat.id: chat.name for chat in repository.db.chats}
+    users_by_id = {user.id: user for user in repository.db.users}
+
+    def make_candidate(
+        user_id: int,
+        shared_chats: set[int],
+        played_against: int = 0,
+    ) -> dict:
+        user = users_by_id.get(user_id)
+        ordered_chats = sorted(
+            shared_chats,
+            key=lambda chat_id: chat_names.get(chat_id, str(chat_id)).lower(),
+        )
+        return {
+            "id": user_id,
+            "username": (user.username or "") if user else "",
+            "name": (
+                getattr(user, "first_name", None)
+                or _spoken_name(repository, user_id, f"id{user_id}")
+            ),
+            "shared_chats": ordered_chats,
+            "shared_chat_names": [
+                chat_names.get(chat_id, str(chat_id)) for chat_id in ordered_chats
+            ],
+            "played_against": played_against,
+        }
 
     candidates: dict[int, dict] = {}
     for u in repository.db.users:
         if u.id == me:
             continue
+
         chats = set(getattr(u, "chat_ids", []) or [])
-        if my_chats and not (chats & my_chats):
+        shared_chats = chats & my_chats
+        if not shared_chats:
             continue
-        candidates[u.id] = {
-            "id": u.id,
-            "username": u.username or "",
-            "name": _spoken_name(repository, u.id, f"id{u.id}"),
-            "shared_chats": list(chats & my_chats) if my_chats else [],
-            "played_against": 0,
-        }
+
+        candidates[u.id] = make_candidate(u.id, shared_chats)
 
     # подсветим тех, с кем играл — сортируем выше
     for s in repository.db.tennis_sessions:
@@ -428,14 +451,7 @@ async def list_opponents(request: web.Request) -> web.Response:
         if other in candidates:
             candidates[other]["played_against"] += 1
         else:
-            user = next((u for u in repository.db.users if u.id == other), None)
-            candidates[other] = {
-                "id": other,
-                "username": (user.username or "") if user else "",
-                "name": _spoken_name(repository, other, f"id{other}"),
-                "shared_chats": [],
-                "played_against": 1,
-            }
+            candidates[other] = make_candidate(other, set(), played_against=1)
 
     ordered = sorted(
         candidates.values(),

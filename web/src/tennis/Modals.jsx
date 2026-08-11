@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Download, Pencil, Play, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, Download, Pencil, Play, Search, Trash2, X } from 'lucide-react'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 import { SPORT_LIST, DEFAULT_SPORT, sportMeta } from './sports'
@@ -132,40 +132,119 @@ export function SheetShell({ title, onClose, children, maxHeight = '90svh' }) {
 
 // ── NewSessionSheet ───────────────────────────────────────────────────────────
 
-// Компактный выбор игрока: чипсы из общих чатов + ручной ввод @username/id.
-function PlayerPicker({ label, opponents, selectedId, customRaw, onPick, onCustom, accent = 'rose' }) {
+function PlayerPicker({
+  label,
+  opponents,
+  selectedId,
+  customRaw,
+  onPick,
+  onCustom,
+  accent = 'rose',
+  excludedIds = [],
+}) {
+  const [expanded, setExpanded] = useState(false)
   const activeCls = accent === 'sky'
     ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
     : accent === 'indigo'
       ? 'bg-indigo-soft border-indigo/60 text-indigo'
       : 'bg-rose-500/20 border-rose-400/60 text-rose-200'
+  const selected = opponents.find((opponent) => opponent.id === selectedId)
+  const blockedIds = new Set(excludedIds.filter((id) => id != null && id !== selectedId))
+  const availableOpponents = opponents.filter((opponent) => !blockedIds.has(opponent.id))
+  const query = customRaw.trim().toLocaleLowerCase('ru')
+  const filteredOpponents = availableOpponents.filter((opponent) => {
+    if (!query) return true
+    const chatNames = (opponent.shared_chat_names || []).join(' ')
+    return `${opponent.name} ${opponent.username} ${chatNames}`.toLocaleLowerCase('ru').includes(query)
+  })
+  const selectedDetails = selected
+    ? [selected.username ? `@${selected.username}` : '', ...(selected.shared_chat_names || [])].filter(Boolean).join(' · ')
+    : ''
+
+  const selectOpponent = (id) => {
+    onPick(id)
+    setExpanded(false)
+  }
+
   return (
-    <div className="mb-3">
+    <div className="mb-4">
       <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">{label}</div>
-      {opponents.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-2">
-          {opponents.slice(0, 12).map((o) => (
-            <motion.button
-              key={o.id}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => onPick(o.id)}
-              className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                selectedId === o.id ? activeCls : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
-              }`}
-            >
-              {o.name}
-              {o.played_against > 0 && <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>}
-            </motion.button>
-          ))}
-        </div>
-      )}
-      <input
-        type="text"
-        value={customRaw}
-        onChange={(e) => onCustom(e.target.value)}
-        placeholder="@username или id"
-        className="w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors"
-      />
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
+          selected ? activeCls : 'border-white/10 bg-white/5 text-white hover:bg-white/10'
+        }`}
+      >
+        <span className="min-w-0">
+          <span className="block truncate font-semibold">
+            {selected?.name || (customRaw ? `Вручную: ${customRaw}` : 'Выбрать из знакомых')}
+          </span>
+          <span className="block truncate text-xs opacity-65">
+            {selectedDetails || `${availableOpponents.length} знакомых из общих чатов`}
+          </span>
+        </span>
+        <ChevronDown size={18} className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 rounded-2xl border border-white/10 bg-black/20 p-2">
+              <div className="relative mb-2">
+                <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-spotify-text" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={customRaw}
+                  onChange={(event) => onCustom(event.target.value)}
+                  placeholder="Имя, @username или чат"
+                  className="w-full rounded-xl bg-white/5 py-2.5 pl-9 pr-3 text-sm text-white outline-none placeholder:text-spotify-text/70 focus:bg-white/10"
+                />
+              </div>
+              <div className="max-h-56 space-y-1 overflow-y-auto overscroll-contain">
+                {filteredOpponents.map((opponent) => (
+                  <button
+                    type="button"
+                    key={opponent.id}
+                    onClick={() => selectOpponent(opponent.id)}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-white/10"
+                  >
+                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-black ${
+                      accent === 'sky' ? 'bg-sky-500/15 text-sky-300' : 'bg-rose-500/15 text-rose-300'
+                    }`}>
+                      {(opponent.name || '?').slice(0, 1).toLocaleUpperCase('ru')}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate font-semibold text-white">{opponent.name}</span>
+                        {opponent.played_against > 0 && (
+                          <span className="shrink-0 text-[10px] text-gold">играли {opponent.played_against}</span>
+                        )}
+                      </span>
+                      <span className="block truncate text-xs text-spotify-text">
+                        {[opponent.username ? `@${opponent.username}` : '', ...(opponent.shared_chat_names || [])].filter(Boolean).join(' · ') || `id ${opponent.id}`}
+                      </span>
+                    </span>
+                    {selectedId === opponent.id && <Check size={18} className="shrink-0 text-spotify-green" />}
+                  </button>
+                ))}
+                {filteredOpponents.length === 0 && (
+                  <div className="px-3 py-4 text-center text-sm text-spotify-text">
+                    {query
+                      ? `Не нашли «${customRaw}». Можно оставить @username или id для ручного ввода.`
+                      : 'Бот пока не видел знакомых в общих чатах.'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -275,36 +354,15 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
           })}
         </div>
 
-        <div className="text-xs uppercase tracking-wider text-spotify-text mb-2">Оппонент</div>
-        {opponents.length === 0 ? (
-          <p className="text-spotify-text text-sm mb-3">Кандидатов из общих чатов не нашлось — впиши @username вручную.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2 mb-3">
-            {opponents.slice(0, 12).map((o) => (
-              <motion.button
-                key={o.id}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => { setSelectedId(o.id); setCustomRaw('') }}
-                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                  selectedId === o.id
-                    ? 'bg-sky-500/20 border-sky-400/60 text-sky-200'
-                    : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
-                }`}
-              >
-                {o.name}
-                {o.played_against > 0 && (
-                  <span className="ml-1 text-[10px] opacity-70">·{o.played_against}</span>
-                )}
-              </motion.button>
-            ))}
-          </div>
-        )}
-        <input
-          type="text"
-          value={customRaw}
-          onChange={(e) => { setCustomRaw(e.target.value); setSelectedId(null) }}
-          placeholder={isPadel ? 'Соперник (@username или id)' : '@username или id'}
-          className="w-full rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/70 outline-none focus:bg-white/10 transition-colors mb-4"
+        <PlayerPicker
+          label="Оппонент"
+          accent="sky"
+          opponents={opponents}
+          selectedId={selectedId}
+          customRaw={customRaw}
+          excludedIds={[partnerId, oppPartnerId]}
+          onPick={(id) => { setSelectedId(id); setCustomRaw('') }}
+          onCustom={(value) => { setCustomRaw(value); setSelectedId(null) }}
         />
 
         <AnimatePresence initial={false}>
@@ -321,6 +379,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
                 opponents={opponents}
                 selectedId={partnerId}
                 customRaw={partnerRaw}
+                excludedIds={[selectedId, oppPartnerId]}
                 onPick={(id) => { setPartnerId(id); setPartnerRaw('') }}
                 onCustom={(v) => { setPartnerRaw(v); setPartnerId(null) }}
               />
@@ -330,6 +389,7 @@ export function NewSessionSheet({ open, onClose, onCreated }) {
                 opponents={opponents}
                 selectedId={oppPartnerId}
                 customRaw={oppPartnerRaw}
+                excludedIds={[selectedId, partnerId]}
                 onPick={(id) => { setOppPartnerId(id); setOppPartnerRaw('') }}
                 onCustom={(v) => { setOppPartnerRaw(v); setOppPartnerId(null) }}
               />
