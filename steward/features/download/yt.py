@@ -25,12 +25,13 @@ from telegram import (
 from steward.data.repository import Repository
 from steward.features.download import video_cache
 from steward.features.download.callbacks import (
+    download_file,
     download_and_send_medias,
     send_media_files,
 )
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.media import has_audio_stream
+from steward.helpers.media import has_audio_stream, is_video_file, run_ffmpeg
 
 _TIKTOK_AUTO_LIMIT = "TIKTOK_AUTO_TRANSCRIBE"
 _TIKTOK_AUTO_MAX_DURATION_SEC = 5 * 60
@@ -423,11 +424,18 @@ async def download_image_files(
     cookie_file: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Качает медиа поста через gallery-dl в `dir`.
-    Возвращает (картинки, аудио) — отсортированные пути."""
+    Возвращает (медиа, аудио) — отсортированные пути."""
     args: list[str] = []
     if os.environ.get("DOWNLOAD_PROXY"):
         args += ["--proxy", os.environ.get("DOWNLOAD_PROXY") or ""]
-    args += ["--verbose", "-f", "{num}.{extension}", "-D", dir]
+    args += [
+        "--verbose",
+        "--write-metadata",
+        "-f",
+        "{num}.{extension}",
+        "-D",
+        dir,
+    ]
     if cookie_file:
         args += ["-C", cookie_file]
     args.append(url)
@@ -451,9 +459,55 @@ async def download_image_files(
     all_files = [
         os.path.join(dir, x)
         for x in sorted(
-            os.listdir(dir), key=lambda x: f"{int(x.split('.')[0]):03d}"
+            (x for x in os.listdir(dir) if not x.endswith(".json")),
+            key=lambda x: f"{int(x.split('.')[0]):03d}",
         )
     ]
+
+    for media_path in all_files:
+        metadata_path = media_path + ".json"
+        if not is_video_file(media_path) or not os.path.exists(metadata_path):
+            continue
+
+        if await has_audio_stream(Path(media_path)):
+            continue
+
+        with open(metadata_path) as file:
+            metadata = json.load(file)
+
+        audio_url = metadata.get("music", {}).get("playUrl")
+        if not audio_url:
+            continue
+
+        audio_path = media_path + ".audio"
+        async with download_file(audio_url, use_proxy=True) as audio_file:
+            with open(audio_path, "wb") as output:
+                while chunk := audio_file.read(1024 * 1024):
+                    output.write(chunk)
+
+        merged_path = media_path + ".merged.mp4"
+        await run_ffmpeg(
+            "-i",
+            media_path,
+            "-i",
+            audio_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            merged_path,
+        )
+        os.replace(merged_path, media_path)
+        os.remove(audio_path)
+        logger.info("Добавлена аудиодорожка в %s", media_path)
+
     images = [x for x in all_files if not x.endswith(".mp3")]
     audios = [x for x in all_files if x.endswith(".mp3")]
     return images, audios
