@@ -7,15 +7,21 @@ services:
     environment:
       - WEB_APP_URL=https://${DOMAIN}
       - METRICS_ENABLED=true
+      - TELEGRAM_API_HOST=
     expose:
       - "${METRICS_PORT:-9090}"
-    depends_on:
+    depends_on: !override
+      - flaresolverr
       - fluentbit
     logging:
       driver: fluentd
       options:
         fluentd-address: localhost:24224
         tag: app.logs
+
+  telegram-api:
+    profiles:
+      - local-telegram-api
 
   web:
     build:

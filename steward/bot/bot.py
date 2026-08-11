@@ -161,15 +161,21 @@ class Bot:
             .pool_timeout(300)
             .connect_timeout(300)
             .media_write_timeout(300)
-            .local_mode(True)
         )
 
-        if local_server is not None:
+        if local_server:
             applicationBuilder = (
                 applicationBuilder.base_url(local_server + "/bot")
                 .base_file_url(local_server + "/file/bot")
                 .local_mode(True)
             )
+        else:
+            proxy = environ.get("DOWNLOAD_PROXY")
+            if proxy:
+                applicationBuilder = (
+                    applicationBuilder.proxy(proxy)
+                    .get_updates_proxy(proxy)
+                )
 
         from steward.bot.message_splitter import patch_send_message
         patch_send_message()
