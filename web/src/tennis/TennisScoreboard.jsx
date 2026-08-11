@@ -134,6 +134,9 @@ function CourtLines() {
 // Имя игрока с «мячом подачи» на его стороне.
 function ServeName({ name, side, isServer }) {
   const colorCls = side === 'a' ? 'text-rose-300' : 'text-sky-300'
+  const activeCls = side === 'a'
+    ? 'border-rose-400/70 bg-rose-500/15 shadow-[0_0_30px_rgba(244,63,94,0.14)]'
+    : 'border-sky-400/70 bg-sky-500/15 shadow-[0_0_30px_rgba(56,189,248,0.14)]'
   const ball = isServer && (
     <motion.span
       initial={{ scale: 0, rotate: -90 }}
@@ -141,20 +144,30 @@ function ServeName({ name, side, isServer }) {
       transition={{ type: 'spring', stiffness: 360, damping: 18 }}
       className="inline-flex drop-shadow-[0_0_8px_rgba(205,250,63,0.6)]"
     >
-      <TennisBall size={16} />
+      <TennisBall size={22} />
     </motion.span>
   )
   return (
-    <div className="flex items-center gap-1.5 min-w-0 max-w-[42vw]">
-      {side === 'a' && ball}
-      <span className={`${colorCls} text-sm font-semibold uppercase tracking-wider truncate`}>{name}</span>
-      {side === 'b' && ball}
+    <div className={`flex-1 min-w-0 rounded-2xl border px-3 py-2.5 transition-colors ${
+      isServer ? activeCls : 'border-zinc-800 bg-zinc-900/55'
+    }`}>
+      <div className={`flex items-center gap-2 ${side === 'b' ? 'justify-end' : ''}`}>
+        {side === 'a' && ball}
+        <span className={`${colorCls} text-base sm:text-lg font-black uppercase tracking-wide truncate`}>{name}</span>
+        {side === 'b' && ball}
+      </div>
+      <div className={`mt-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
+        side === 'b' ? 'text-right' : ''
+      } ${isServer ? 'text-lime-300' : 'invisible'}`}>
+        подаёт
+      </div>
     </div>
   )
 }
 
 // Большое «прыгающее» число очка — приземляется как мяч при каждом изменении.
-function BounceNumber({ value, side, active, big = true }) {
+function BounceNumber({ value, side, active, extraLarge = false }) {
+  const hasWideValue = String(value).length > 1
   const colorCls = side === 'a'
     ? (active ? 'text-rose-400' : 'text-rose-300/40')
     : (active ? 'text-sky-400' : 'text-sky-300/40')
@@ -170,8 +183,12 @@ function BounceNumber({ value, side, active, big = true }) {
       animate={{ y: 0, scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 520, damping: 17 }}
       className={`font-black tabular-nums leading-none ${colorCls}`}
-      // vmin — счёт масштабируется по меньшей стороне экрана, в альбоме не распирает по высоте.
-      style={{ fontSize: big ? 'clamp(60px, 22vmin, 184px)' : 'clamp(36px, 12vmin, 90px)', ...glow }}
+      style={{
+        fontSize: extraLarge
+          ? hasWideValue ? 'clamp(80px, 27vmin, 220px)' : 'clamp(104px, 36vmin, 300px)'
+          : hasWideValue ? 'clamp(64px, 22vmin, 180px)' : 'clamp(76px, 28vmin, 230px)',
+        ...glow,
+      }}
     >
       {value}
     </motion.span>
@@ -454,6 +471,8 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const [now, setNow] = useState(Date.now())
   const [historyOpen, setHistoryOpen] = useState(false)
   const [finishOpen, setFinishOpen] = useState(false)
+  const [finishWinnerSide, setFinishWinnerSide] = useState('a')
+  const [scoreMode, setScoreMode] = useState('score')
   const [editIdx, setEditIdx] = useState(null)
   const [winsCelebrate, setWinsCelebrate] = useState(false)
   const [muted, setMuted] = useState(() => {
@@ -644,6 +663,11 @@ export default function TennisScoreboard({ onBackToLobby }) {
     send({ type: 'point', side })
   }
 
+  const openFinish = (side) => {
+    setFinishWinnerSide(side)
+    setFinishOpen(true)
+  }
+
   const handleUndoPoint = () => {
     if (!canEdit || isClosed) return
     try { window.Telegram?.WebApp?.HapticFeedback?.impactOccurred?.('light') } catch { /* noop */ }
@@ -711,9 +735,9 @@ export default function TennisScoreboard({ onBackToLobby }) {
   const [winsA, winsB] = state.wins ?? [0, 0]
   const partyIndex = state.matches?.length ?? 0
   const currentPartyNumber = isClosed ? partyIndex : partyIndex + 1
-  const firstServerName = state.first_server === 'a' ? nameA : nameB
   const sp = sportMeta(state.sport)
   const isPadel = state.sport === 'padel'
+  const isPointMode = isPadel || scoreMode === 'points'
   const padel = state.padel
   const [curA, curB] = state.current_score ?? [0, 0]
   // Для падела «партия в процессе» определяется по journal'у очков, а не по сетам.
@@ -721,6 +745,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
     ? (state.points_log?.length ?? 0) > 0
     : (curA > 0 || curB > 0)
   const currentServer = state.current_server
+  const currentServerName = currentServer === 'a' ? nameA : nameB
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-zinc-950 to-black overflow-hidden flex flex-col">
@@ -728,9 +753,8 @@ export default function TennisScoreboard({ onBackToLobby }) {
         className="pointer-events-none absolute inset-0"
         style={{ background: 'radial-gradient(120% 60% at 50% 42%, rgba(205,250,63,0.07), transparent 60%)' }}
       />
-      {/* Top bar */}
       <div
-        className="shrink-0 flex items-center justify-between gap-2 px-3 bg-black/80 backdrop-blur-sm border-b border-zinc-800 text-white text-sm font-mono"
+        className="shrink-0 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 bg-black/80 backdrop-blur-sm border-b border-zinc-800 text-white text-sm font-mono"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 6px)', paddingBottom: '6px' }}
       >
         <button
@@ -740,7 +764,31 @@ export default function TennisScoreboard({ onBackToLobby }) {
         >
           <span>⏱ {fmtClock(elapsedSec)}</span>
         </button>
-        <div className="flex items-center gap-1">
+        {!isClosed && !isPadel ? (
+          <div className="grid grid-cols-2 rounded-xl border border-zinc-700 bg-zinc-900 p-0.5 text-xs font-sans">
+            <button
+              onClick={() => setScoreMode('score')}
+              aria-pressed={!isPointMode}
+              className={`rounded-lg px-3 py-1.5 font-bold transition-colors ${
+                !isPointMode ? 'bg-white text-zinc-950' : 'text-zinc-400'
+              }`}
+            >
+              Счёт
+            </button>
+            <button
+              onClick={() => setScoreMode('points')}
+              aria-pressed={isPointMode}
+              className={`rounded-lg px-3 py-1.5 font-bold transition-colors ${
+                isPointMode ? 'bg-white text-zinc-950' : 'text-zinc-400'
+              }`}
+            >
+              Очки
+            </button>
+          </div>
+        ) : (
+          <span className="text-zinc-500 text-xs font-sans">{sp.labelShort}</span>
+        )}
+        <div className="flex items-center justify-end gap-1">
           {!isClosed && canEdit && !sp.winnerServes && (
             <button
               onClick={handleServeToggle}
@@ -759,26 +807,34 @@ export default function TennisScoreboard({ onBackToLobby }) {
         </div>
       </div>
 
-      {/* Центр: крупно — счёт текущей партии, мелко — счёт по партиям */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 min-h-0 relative">
         <CourtLines />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-rose-950/30 to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-gradient-to-l from-sky-950/30 to-transparent" />
 
-        {/* Имена + мяч подачи */}
-        <div className="relative z-10 flex items-center justify-center gap-3 w-full max-w-md mb-3 landscape:mb-1.5">
+        <div className="relative z-10 flex items-stretch justify-center gap-2 w-full max-w-xl mb-4 landscape:mb-2">
           <ServeName name={nameA} side="a" isServer={!isClosed && currentServer === 'a'} />
-          <span className="text-zinc-600 text-[11px] font-semibold uppercase tracking-wider shrink-0">vs</span>
           <ServeName name={nameB} side="b" isServer={!isClosed && currentServer === 'b'} />
         </div>
 
-        {/* Герой: либо очки текущей партии, либо (если закрыто) итог по партиям */}
+        <div className="relative z-10 text-zinc-500 text-[10px] font-bold uppercase tracking-[0.24em] mb-2">
+          {isClosed || !isPointMode ? 'Счёт по партиям' : `Очки · партия ${currentPartyNumber}`}
+        </div>
+
         {isClosed ? (
           <div className="relative z-10 flex items-end justify-center gap-5">
-            <BounceNumber value={winsA} side="a" active />
+            <BounceNumber value={winsA} side="a" active extraLarge />
             <span className="text-zinc-700 font-light pb-3" style={{ fontSize: 'clamp(32px, 11vmin, 80px)' }}>:</span>
-            <BounceNumber value={winsB} side="b" active />
+            <BounceNumber value={winsB} side="b" active extraLarge />
           </div>
         ) : isPadel && padel ? (
           <PadelHero padel={padel} currentServer={currentServer} />
+        ) : !isPointMode ? (
+          <div className="relative z-10 flex items-end justify-center gap-5">
+            <BounceNumber value={winsA} side="a" active extraLarge />
+            <span className="text-zinc-700 font-light pb-4" style={{ fontSize: 'clamp(40px, 13vmin, 96px)' }}>:</span>
+            <BounceNumber value={winsB} side="b" active extraLarge />
+          </div>
         ) : (
           <div className="relative z-10 flex items-end justify-center gap-5">
             <BounceNumber value={curA} side="a" active={currentServer !== 'b'} />
@@ -787,17 +843,16 @@ export default function TennisScoreboard({ onBackToLobby }) {
           </div>
         )}
 
-        {/* Мелкий счёт по партиям; на финише плашка пульсирует и крупнеет */}
-        {!isClosed && (
+        {!isClosed && isPointMode && (
           <WinsPill winsA={winsA} winsB={winsB} celebrate={winsCelebrate} label={isPadel ? 'Сеты' : 'Партии'} />
         )}
 
-        <div className="relative z-10 text-zinc-400 text-sm mt-5 landscape:mt-2">
+        <div className="relative z-10 text-zinc-400 text-sm mt-4 landscape:mt-1">
           {isPadel ? 'Матч' : 'Партия'} <span className="text-white font-semibold">{currentPartyNumber}</span>
         </div>
         {!isClosed && (
-          <div className="relative z-10 text-zinc-500 text-xs mt-1.5">
-            {sp.emoji} {sp.winnerServes ? 'подаёт' : 'первая подача —'} {firstServerName}
+          <div className="relative z-10 text-lime-300/80 text-xs font-semibold mt-1.5">
+            {sp.emoji} подаёт {currentServerName}
           </div>
         )}
 
@@ -813,36 +868,34 @@ export default function TennisScoreboard({ onBackToLobby }) {
         )}
       </div>
 
-      {/* Нижняя зона: главная кнопка + действия */}
       <div
         className="shrink-0 bg-black/80 backdrop-blur-sm border-t border-zinc-800 px-3 pt-3"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}
       >
-        {/* Point-by-point: тап = очко. Две большие зоны под каждого игрока. */}
         {!isClosed && canEdit && (
           <div className="grid grid-cols-2 gap-2">
             <motion.button
               whileTap={{ scale: 0.95 }}
-              onClick={() => handlePoint('a')}
+              onClick={() => isPointMode ? handlePoint('a') : openFinish('a')}
               className="relative overflow-hidden bg-gradient-to-br from-rose-600 to-rose-800 text-white py-6 landscape:py-3 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-rose-400/30"
             >
               <TennisBall size={56} className="absolute -right-3 -top-3 opacity-15 rotate-12" />
-              <span className="relative text-3xl leading-none">+1</span>
+              <span className="relative text-2xl leading-none">{isPointMode ? '+1' : 'Победа'}</span>
               <span className="relative text-xs opacity-80 mt-1 truncate max-w-[90%]">{nameA}</span>
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.95 }}
-              onClick={() => handlePoint('b')}
+              onClick={() => isPointMode ? handlePoint('b') : openFinish('b')}
               className="relative overflow-hidden bg-gradient-to-br from-sky-600 to-sky-800 text-white py-6 landscape:py-3 rounded-2xl font-bold shadow-lg flex flex-col items-center ring-1 ring-sky-400/30"
             >
               <TennisBall size={56} className="absolute -left-3 -top-3 opacity-15 -rotate-12" />
-              <span className="relative text-3xl leading-none">+1</span>
+              <span className="relative text-2xl leading-none">{isPointMode ? '+1' : 'Победа'}</span>
               <span className="relative text-xs opacity-80 mt-1 truncate max-w-[90%]">{nameB}</span>
             </motion.button>
           </div>
         )}
         <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
-          {!isClosed && canEdit && partyInProgress && (
+          {!isClosed && canEdit && isPointMode && partyInProgress && (
             <button
               onClick={handleUndoPoint}
               className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
@@ -850,9 +903,9 @@ export default function TennisScoreboard({ onBackToLobby }) {
               ↩ убрать очко
             </button>
           )}
-          {!isClosed && canEdit && !isPadel && (
+          {!isClosed && canEdit && isPointMode && !isPadel && (
             <button
-              onClick={() => setFinishOpen(true)}
+              onClick={() => openFinish(curB > curA ? 'b' : 'a')}
               className="text-zinc-400 hover:text-white text-xs px-3 py-1.5 rounded-full border border-zinc-700"
             >
               ✎ счёт вручную
@@ -914,6 +967,7 @@ export default function TennisScoreboard({ onBackToLobby }) {
         {finishOpen && (
           <FinishPartySheet
             state={state}
+            defaultWinnerSide={finishWinnerSide}
             onSubmit={handleSubmit}
             onClose={() => setFinishOpen(false)}
           />
