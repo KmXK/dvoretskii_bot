@@ -149,6 +149,25 @@ class Bot:
             handler.repository = repository
             handler._all_handlers = handlers
 
+    async def _retry_telethon(self, wait_seconds: int) -> None:
+        while True:
+            await asyncio.sleep(wait_seconds)
+            try:
+                await self.client.start(
+                    bot_token=environ.get("TELEGRAM_BOT_TOKEN", "")
+                )
+                logger.info("Telethon подключён после FloodWait")
+                return
+            except FloodWaitError as error:
+                wait_seconds = error.seconds
+                logger.error(
+                    "Telethon повторно ограничен на %s секунд",
+                    wait_seconds,
+                )
+            except Exception:
+                logger.exception("Не удалось повторно подключить Telethon")
+                return
+
     def start(
         self,
         token: str,
@@ -256,6 +275,7 @@ class Bot:
                 "Telethon недоступен ещё %s секунд, запускаем Bot API без него",
                 error.seconds,
             )
+            asyncio.ensure_future(self._retry_telethon(error.seconds))
             client_context = nullcontext()
 
         with client_context:
