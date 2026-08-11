@@ -26,7 +26,7 @@ from steward.data.repository import Repository
 from steward.features.download import video_cache
 from steward.features.download.callbacks import (
     download_and_send_medias,
-    send_images,
+    send_media_files,
 )
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
@@ -469,7 +469,7 @@ def make_images_loader(
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
             images, audios = await download_image_files(url, dir, cookie_file)
 
-            await send_images(message, images)
+            await send_media_files(message, images)
 
             if len(audios) > 0:
                 with open(os.path.join(dir, audios[0]), "rb") as file:

@@ -59,7 +59,7 @@ from steward.features.download.yt import (
 )
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.media import fetch_tg_file_to
+from steward.helpers.media import fetch_tg_file_to, is_video_file
 from steward.metrics import ContextMetrics
 
 logger = logging.getLogger(__name__)
@@ -150,13 +150,34 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
             raise RuntimeError("gallery-dl не нашёл медиа")
         chat_id = _upload_chat_id()
 
-        async def upload_photo(path: str) -> CachedMedia:
+        async def upload_media(path: str) -> CachedMedia:
+            is_video = is_video_file(path)
             with open(path, "rb") as file:
-                msg = await bot.send_photo(chat_id, file, disable_notification=True)
-            if not msg.photo:
-                raise RuntimeError("служебная загрузка вернула не фото")
+                if is_video:
+                    msg = await bot.send_video(
+                        chat_id,
+                        file,
+                        supports_streaming=True,
+                        disable_notification=True,
+                    )
+                else:
+                    msg = await bot.send_photo(
+                        chat_id,
+                        file,
+                        disable_notification=True,
+                    )
+
+            if is_video:
+                if msg.video is None:
+                    raise RuntimeError("служебная загрузка вернула не видео")
+                media = CachedMedia(file_id=msg.video.file_id, kind="video")
+            else:
+                if not msg.photo:
+                    raise RuntimeError("служебная загрузка вернула не фото")
+                media = CachedMedia(file_id=msg.photo[-1].file_id, kind="photo")
+
             await _delete_quietly(bot, msg)
-            return CachedMedia(file_id=msg.photo[-1].file_id, kind="photo")
+            return media
 
         async def upload_audio(path: str) -> CachedMedia:
             with open(path, "rb") as file:
@@ -166,7 +187,7 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
             await _delete_quietly(bot, msg)
             return CachedMedia(file_id=msg.audio.file_id, kind="audio")
 
-        tasks = [upload_photo(p) for p in images[:_MEDIA_LIMIT]]
+        tasks = [upload_media(p) for p in images[:_MEDIA_LIMIT]]
         tasks += [upload_audio(p) for p in audios[:1]]
         return list(await asyncio.gather(*tasks))
 

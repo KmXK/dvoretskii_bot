@@ -15,6 +15,12 @@ from telegram.ext import ExtBot
 
 logger = logging.getLogger(__name__)
 
+_VIDEO_SUFFIXES = frozenset({".mkv", ".mov", ".mp4", ".webm"})
+
+
+def is_video_file(path: str | Path) -> bool:
+    return Path(path).suffix.lower() in _VIDEO_SUFFIXES
+
 
 def _strip_file_url(file_path: str) -> str:
     if not (file_path.startswith("http://") or file_path.startswith("https://")):

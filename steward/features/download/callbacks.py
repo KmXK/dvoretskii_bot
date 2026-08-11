@@ -16,6 +16,7 @@ from telegram import (
 
 from steward.data.repository import Repository
 from steward.helpers import morphy
+from steward.helpers.media import is_video_file
 
 logger = logging.getLogger("download_controller")
 
@@ -147,21 +148,33 @@ async def download_and_send_medias(
         raise
 
 
-async def send_images(
+async def send_media_files(
     message: Message,
-    images: list[str],
+    media_paths: list[str],
     retries_count: int = 5,
 ):
-    logger.info(
-        f"Отправляется {morphy.make_agree_with_number('картинка', len(images))}"
-    )
+    logger.info("Отправляется медиа: %s", len(media_paths))
 
-    medias: list[InputMediaPhoto] = []
+    if len(media_paths) == 1 and is_video_file(media_paths[0]):
+        with open(media_paths[0], "rb") as file:
+            await message.reply_video(
+                file,
+                supports_streaming=True,
+                disable_notification=True,
+            )
+
+        logger.info("Медиа отправлено")
+        return
+
+    medias: list[InputMediaPhoto | InputMediaVideo] = []
 
     with ExitStack() as stack:
-        for image_path in images:
-            file = stack.enter_context(open(image_path, "rb"))
-            medias.append(InputMediaPhoto(file))
+        for media_path in media_paths:
+            file = stack.enter_context(open(media_path, "rb"))
+            if is_video_file(media_path):
+                medias.append(InputMediaVideo(file, supports_streaming=True))
+            else:
+                medias.append(InputMediaPhoto(file))
 
         for i in range(0, len(medias), 10):
             retry = 0
@@ -177,7 +190,7 @@ async def send_images(
                     await asyncio.sleep(5)
                     retry += 1
 
-            if i + 10 < len(images):
+            if i + 10 < len(media_paths):
                 await asyncio.sleep(2)
 
-    logger.info("Картинки отправлены")
+    logger.info("Медиа отправлены")
