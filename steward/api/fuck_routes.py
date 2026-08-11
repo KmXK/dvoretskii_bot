@@ -43,6 +43,7 @@ from steward.api.auth import (
 from steward.data.repository import Repository
 from steward.helpers.avatars import (
     cached_avatar_path,
+    has_cached_avatar,
     save_photo_from_url,
     try_fetch_from_bot,
 )
@@ -136,7 +137,6 @@ _AVATAR_BG_TASKS: set[asyncio.Task] = set()
 
 
 def _schedule_bot_avatar_fallback(request: web.Request, user_id: int) -> None:
-    from steward.helpers.avatars import has_cached_avatar
     if has_cached_avatar(user_id):
         return
     bot = request.app.get("bot")
@@ -167,6 +167,23 @@ async def _capture_avatar_on_auth(
     _schedule_bot_avatar_fallback(request, user_id)
 
 
+def _schedule_avatar_capture(
+    request: web.Request, user_id: int, photo_url: str | None
+) -> None:
+    if has_cached_avatar(user_id):
+        return
+
+    async def _do():
+        try:
+            await _capture_avatar_on_auth(request, user_id, photo_url)
+        except Exception:
+            logger.exception("avatar capture for %s failed", user_id)
+
+    task = asyncio.create_task(_do())
+    _AVATAR_BG_TASKS.add(task)
+    task.add_done_callback(_AVATAR_BG_TASKS.discard)
+
+
 async def handle_auth_webapp(request: web.Request):
     repository: Repository = request.app["repository"]
     body = await request.json()
@@ -179,10 +196,7 @@ async def handle_auth_webapp(request: web.Request):
         await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
     except Exception:
         logger.exception("auth/webapp: ingest_user failed for %s — continuing", uid)
-    try:
-        await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
-    except Exception:
-        logger.exception("auth/webapp: avatar capture failed for %s — continuing", uid)
+    _schedule_avatar_capture(request, uid, user.get("photo_url"))
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
     return resp
@@ -204,10 +218,7 @@ async def handle_auth_widget(request: web.Request):
         await _ingest_auth_user(repository, uid, user.get("username"), user.get("first_name"))
     except Exception:
         logger.exception("auth/widget: ingest_user failed for %s — continuing", uid)
-    try:
-        await _capture_avatar_on_auth(request, uid, user.get("photo_url"))
-    except Exception:
-        logger.exception("auth/widget: avatar capture failed for %s — continuing", uid)
+    _schedule_avatar_capture(request, uid, user.get("photo_url"))
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
     return resp
@@ -216,7 +227,10 @@ async def handle_auth_widget(request: web.Request):
 async def handle_auth_oidc(request: web.Request):
     repository: Repository = request.app["repository"]
     body = await request.json()
-    user = validate_oidc_id_token(str(body.get("id_token", "")))
+    user = await asyncio.to_thread(
+        validate_oidc_id_token,
+        str(body.get("id_token", "")),
+    )
     if not user:
         logger.info("auth/oidc: invalid id_token (origin=%s)", request.headers.get("Origin"))
         return web.json_response({"error": "invalid id_token"}, status=403)
@@ -227,10 +241,7 @@ async def handle_auth_oidc(request: web.Request):
         logger.exception("auth/oidc: ingest_user failed for %s — continuing", uid)
     photo_url = user.get("photo_url")
     logger.info("auth/oidc: photo_url for %s = %s", uid, photo_url or "<empty>")
-    try:
-        await _capture_avatar_on_auth(request, uid, photo_url)
-    except Exception:
-        logger.exception("auth/oidc: avatar capture failed for %s — continuing", uid)
+    _schedule_avatar_capture(request, uid, photo_url)
     resp = web.json_response({"user_id": uid})
     set_session_cookie(resp, uid)
     return resp

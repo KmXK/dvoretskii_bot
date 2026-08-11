@@ -21,6 +21,26 @@ INIT_DATA_HEADER = "X-Init-Data"
 
 TELEGRAM_OIDC_ISSUER = "https://oauth.telegram.org"
 TELEGRAM_OIDC_JWKS_URL = "https://oauth.telegram.org/.well-known/jwks.json"
+TELEGRAM_OIDC_JWKS = {
+    "keys": [
+        {
+            "alg": "RS256",
+            "e": "AQAB",
+            "ext": True,
+            "key_ops": ["verify"],
+            "kty": "RSA",
+            "n": (
+                "5RneLtsKvVcxdv6gu6gxEQu30Cru5NiMQnY6SNr9ZyZFZ4ya-pfHNuaZXJ6QPG0J"
+                "SFwoxeOkEO2-eZN_REVPm448PvjjsR1eQdZ5QpEkNxnItFcmxkHH91v5cgf52_"
+                "EI9BGO-MT6f1vaBSg3uWHFlDxI7J2AYxNvd1_Nf3TkgrrR7gyJFTmEIai5RefGnA"
+                "0KGNYDlRIGUzrz2F05n6gTaHFT_iHL5UHatTZA4GCiUSjIOuwqu5pE5uZge20TF"
+                "v3cxXMQaFw_xv1pgQt_Rq8eoCN7TS0RQ0zjWKiad-W286BcFectXsUm03p5Nq_k"
+                "Y4mf_7rqwX_B8yy_bBreyKn7RQ"
+            ),
+            "kid": "oidc-1",
+        },
+    ],
+}
 
 
 def _bot_token() -> str:
@@ -80,8 +100,24 @@ def _get_jwks_client():
     global _jwks_client
     if _jwks_client is None:
         import jwt
-        _jwks_client = jwt.PyJWKClient(TELEGRAM_OIDC_JWKS_URL, cache_keys=True)
+        _jwks_client = jwt.PyJWKClient(
+            TELEGRAM_OIDC_JWKS_URL,
+            cache_keys=True,
+            timeout=5,
+        )
     return _jwks_client
+
+
+def _bundled_signing_key(id_token: str):
+    import jwt
+    key_id = jwt.get_unverified_header(id_token).get("kid")
+    key_data = next(
+        (key for key in TELEGRAM_OIDC_JWKS["keys"] if key.get("kid") == key_id),
+        None,
+    )
+    if key_data is None:
+        return None
+    return jwt.PyJWK.from_dict(key_data)
 
 
 def validate_oidc_id_token(id_token: str) -> dict[str, Any] | None:
@@ -90,7 +126,10 @@ def validate_oidc_id_token(id_token: str) -> dict[str, Any] | None:
         return None
     try:
         import jwt
-        signing_key = _get_jwks_client().get_signing_key_from_jwt(id_token)
+        signing_key = _bundled_signing_key(id_token)
+        if signing_key is None:
+            signing_key = _get_jwks_client().get_signing_key_from_jwt(id_token)
+
         claims = jwt.decode(
             id_token,
             signing_key.key,

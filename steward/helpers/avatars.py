@@ -14,10 +14,12 @@ resolution by `@username` (`save_photo_from_file_id`).
 from __future__ import annotations
 
 import logging
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+from aiohttp_socks import ProxyConnector
 from PIL import Image, ImageDraw, ImageFont
 from telegram.ext import ExtBot
 
@@ -119,8 +121,10 @@ async def save_photo_from_url(user_id: int, url: str) -> Optional[Path]:
         return None
     try:
         from aiohttp import ClientSession, ClientTimeout
+        proxy_url = os.environ.get("DOWNLOAD_PROXY")
+        connector = ProxyConnector.from_url(proxy_url) if proxy_url else None
         timeout = ClientTimeout(total=10)
-        async with ClientSession(timeout=timeout) as session:
+        async with ClientSession(connector=connector, timeout=timeout) as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     logger.info("avatar: photo_url for %s returned HTTP %s", user_id, resp.status)
