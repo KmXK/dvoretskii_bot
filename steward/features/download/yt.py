@@ -321,6 +321,36 @@ async def download_video_file(
     return info, filepath
 
 
+def _get_gallery_audio_url(metadata: Any) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+
+    video = metadata.get("video")
+    if isinstance(video, dict):
+        audio_infos = video.get("bitrateAudioInfo") or []
+        if isinstance(audio_infos, dict):
+            audio_infos = [audio_infos]
+
+        for audio_info in audio_infos:
+            if not isinstance(audio_info, dict):
+                continue
+
+            urls = audio_info.get("UrlList")
+            if not isinstance(urls, dict):
+                continue
+
+            for key in ("MainUrl", "BackupUrl", "FallbackUrl"):
+                audio_url = urls.get(key)
+                if audio_url:
+                    return audio_url
+
+    music = metadata.get("music")
+    if isinstance(music, dict):
+        return music.get("playUrl") or None
+
+    return None
+
+
 def make_video_loader(
     type_name: str,
     cookie_file: str | None = None,
@@ -475,7 +505,7 @@ async def download_image_files(
         with open(metadata_path) as file:
             metadata = json.load(file)
 
-        audio_url = metadata.get("music", {}).get("playUrl")
+        audio_url = _get_gallery_audio_url(metadata)
         if not audio_url:
             continue
 
