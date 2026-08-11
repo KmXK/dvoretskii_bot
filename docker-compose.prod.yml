@@ -17,44 +17,6 @@ services:
         fluentd-address: localhost:24224
         tag: app.logs
 
-  telegram-api-proxy:
-    image: ghcr.io/tun2proxy/tun2proxy-ubuntu:v0.8.1
-    command:
-      - --proxy
-      - ${DOWNLOAD_PROXY}
-      - --dns
-      - virtual
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    sysctls:
-      - net.ipv6.conf.default.disable_ipv6=0
-    ports:
-      - "${TELEGRAM_API_PORT:-8081}:8081"
-    networks:
-      bot:
-        aliases:
-          - telegram-api
-    restart: unless-stopped
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          awk '$$1 == "tun0" && $$8 == "00000080" { found = 1 } END { exit !found }' /proc/net/route
-      interval: 2s
-      timeout: 1s
-      retries: 15
-
-  telegram-api:
-    depends_on:
-      telegram-api-proxy:
-        condition: service_healthy
-    network_mode: service:telegram-api-proxy
-    ports: !reset []
-    networks: !reset []
-    restart: unless-stopped
-
   web:
     build:
       context: ./web

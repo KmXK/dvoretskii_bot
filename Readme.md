@@ -11,7 +11,6 @@
 | `bot` | Telegram бот (Python) |
 | `web` | Mini App (React + Vite, порт 5173) |
 | `telegram-api` | Локальный Telegram Bot API |
-| `telegram-api-proxy` | SOCKS5-маршрутизация Telegram Bot API — только прод |
 | `caddy` | HTTPS reverse proxy (Let's Encrypt) — только прод |
 | `localhost.run` | HTTPS туннель — только dev |
 | `fluentbit` | Логирование в Yandex Cloud — только прод |
