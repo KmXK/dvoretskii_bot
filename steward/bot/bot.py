@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import nullcontext
 from os import environ
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, unquote, urlparse
@@ -24,6 +25,7 @@ from telegram.ext import (
     filters,
 )
 from telethon import TelegramClient, connection
+from telethon.errors import FloodWaitError
 
 from steward.bot.context import (
     BotActionContext,
@@ -241,14 +243,22 @@ class Bot:
                     proxy["port"],
                 )
         self.client = TelegramClient(
-            ".steward_session",
+            environ.get("TELETHON_SESSION_PATH", ".steward_session"),
             api_id=int(environ.get("TELEGRAM_API_ID", "")),
             api_hash=environ.get("TELEGRAM_API_HASH", ""),
             **client_kwargs,
         )
-        self.client.start(bot_token=environ.get("TELEGRAM_BOT_TOKEN", ""))
+        client_context: Any = self.client
+        try:
+            self.client.start(bot_token=environ.get("TELEGRAM_BOT_TOKEN", ""))
+        except FloodWaitError as error:
+            logger.error(
+                "Telethon недоступен ещё %s секунд, запускаем Bot API без него",
+                error.seconds,
+            )
+            client_context = nullcontext()
 
-        with self.client:
+        with client_context:
             self.delayed_action_handler = DelayedActionHandler(
                 self.repository,
                 self.bot,

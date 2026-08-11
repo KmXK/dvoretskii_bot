@@ -11,6 +11,7 @@ services:
       - bot_logs:/var/log
       - ./db.json:/app/db.json
       - telegram_data:/data:ro
+      - telethon_session:/telethon-session
       - ./data:/app/data
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
@@ -34,6 +35,7 @@ services:
       - DEEPSEEK_KEY=${DEEPSEEK_KEY}
       - TELEGRAM_API_ID=${TELEGRAM_API_ID}
       - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELETHON_SESSION_PATH=/telethon-session/steward
       - TELEGRAM_API_HOST=http://telegram-api:8081
       - WEB_APP_URL=https://${DOMAIN}
       - METRICS_ENABLED=${METRICS_ENABLED:-false}
@@ -149,6 +151,7 @@ services:
 
 volumes:
   telegram_data:
+  telethon_session:
   bot_logs:
   victoriametrics_data:
 
