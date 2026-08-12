@@ -79,7 +79,6 @@ BASELINE: dict[str, set[str]] = {
 
     # Media-heavy features that still call send_voice/reply_text for media output.
     # These should move to ctx.reply()/ctx.reply_media() once the helpers exist.
-    "voice_video/__init__.py": {"raw_telegram_send"},
     "voice_video/conversion.py": {"raw_telegram_send"},
     "voice_video/transcription.py": {"raw_telegram_send"},
     "multiply.py": {"raw_telegram_send"},
