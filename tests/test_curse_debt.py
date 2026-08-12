@@ -57,17 +57,16 @@ def test_accrues_debt_only_for_selected_punishment_day():
     ]
 
 
-def test_debt_report_escapes_users():
+def test_debt_report_does_not_render_users_as_mentions():
     report = format_curse_debt_report([
         CurseDebtReportEntry(
             user_id=1,
-            name="@test_user",
+            name="@\u200btest_user",
             items=[CurseDebtReportItem(title="Отжимания", count=10)],
         )
     ])
 
-    assert "`@test_user`" in report
-    assert "\n@test_user\n" not in report
+    assert "\n@\u200btest_user\n" in report
 
 
 def test_accrue_selects_weighted_punishment_day_once_when_missing():

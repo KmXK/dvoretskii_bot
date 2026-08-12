@@ -203,7 +203,7 @@ class TestCurseIncrement:
         assert repo.db.curse_punishment_days == [
             CursePunishmentDay(date=today, rule_id=1)
         ]
-        assert "@testuser" in reply
+        assert "@\u200btestuser" in reply
         assert "Отжимания: 10" in reply
 
     async def test_root_command_does_not_apply_interest(self):
@@ -259,8 +259,7 @@ class TestCurseIncrement:
         reply, ok = await invoke(CurseFeature, "/curse", repo)
 
         assert ok
-        assert "`@test_user`" in reply
-        assert "\n@test_user\n" not in reply
+        assert "@\u200btest_user" in reply
 
     async def test_root_command_explains_when_no_punishments_configured(self):
         reply, ok = await invoke(CurseFeature, "/curse", make_repository())
@@ -538,7 +537,7 @@ class TestCursePunishment:
 
         reply, ok = await invoke(CurseFeature, "/curse punishment today", repo)
         assert ok
-        assert "@testuser" in reply
+        assert "@\u200btestuser" in reply
         assert "Отжимания: 10" in reply
         assert "@other" not in reply
 
@@ -732,7 +731,7 @@ class TestCursePunishment:
         reply, ok = await invoke(CurseFeature, "/curse percent", repo)
 
         assert ok
-        assert "@testuser: Отжимания — 7%" in reply
+        assert "@\u200btestuser: Отжимания — 7%" in reply
 
     async def test_edit_wizard_updates_punishment_coeff_for_future_accrual(self):
         repo = make_repository()

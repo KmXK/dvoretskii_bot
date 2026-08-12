@@ -177,7 +177,7 @@ class CurseDebtReportEntry:
 
 
 def _display_name(username: str | None, user_id: int) -> str:
-    return f"@{username}" if username else f"@{user_id}"
+    return f"@\u200b{username}" if username else f"@\u200b{user_id}"
 
 
 def _user_name(repo: Repository, user_id: int) -> str:
@@ -431,7 +431,7 @@ def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        lines.append(f"`{entry.name}`")
+        lines.append(entry.name)
         for item in entry.items:
             if entry.interest_enabled:
                 lines.extend(_format_curse_plan_item(item))
@@ -477,7 +477,7 @@ def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["До полуночи:", ""]
     for index, entry in enumerate(payable):
-        lines.append(f"`{entry.name}`")
+        lines.append(entry.name)
         for item in entry.items:
             lines.extend(_format_curse_plan_item(item))
 
@@ -543,7 +543,7 @@ def format_curse_day_outcome(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Итог за сутки:", ""]
     for index, entry in enumerate(payable):
-        lines.append(f"`{entry.name}`")
+        lines.append(entry.name)
         for item in entry.items:
             lines.append(_format_curse_outcome_item(item))
 
