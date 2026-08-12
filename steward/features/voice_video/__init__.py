@@ -251,6 +251,11 @@ class VoiceVideoFeature(Feature):
                 pending.speaker_fallback_name,
             )
             transcription = await transcribe_voice(audio_path, speaker_name)
+            if not transcription:
+                self._pending.pop(request_id, None)
+                await self._remove_voice_prompt(bot_message)
+                return
+
             await self._process_transcribed_curses(ctx, initiator, transcription)
 
             ai_text = _detect_dvoretskii_prefix(transcription) if transcription else None

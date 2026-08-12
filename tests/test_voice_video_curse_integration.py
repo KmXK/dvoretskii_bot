@@ -141,6 +141,32 @@ async def test_auto_voice_transcription_removes_prompt_after_download_error(monk
     assert feature._pending == {}
 
 
+async def test_auto_voice_transcription_removes_prompt_when_speech_is_empty(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    source_message = ctx.message
+    bot_message = MagicMock()
+    bot_message.delete = AsyncMock()
+    create_reply = AsyncMock()
+
+    monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=Path("/tmp/audio.ogg")))
+    monkeypatch.setattr("steward.features.voice_video.transcribe_voice", AsyncMock(return_value=None))
+    monkeypatch.setattr("steward.features.voice_video.create_transcription_reply", create_reply)
+
+    await feature._run_auto_transcription(
+        ctx,
+        "request-id",
+        _pending(),
+        source_message,
+        bot_message,
+    )
+
+    bot_message.delete.assert_awaited_once()
+    create_reply.assert_not_awaited()
+    assert feature._pending == {}
+
+
 async def test_resolve_audio_path_downloads_telegram_file():
     feature = VoiceVideoFeature()
     ctx = MagicMock()
