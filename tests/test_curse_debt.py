@@ -57,7 +57,7 @@ def test_accrues_debt_only_for_selected_punishment_day():
     ]
 
 
-def test_debt_report_mentions_users_by_default_for_digest():
+def test_debt_report_escapes_users():
     report = format_curse_debt_report([
         CurseDebtReportEntry(
             user_id=1,
@@ -65,22 +65,6 @@ def test_debt_report_mentions_users_by_default_for_digest():
             items=[CurseDebtReportItem(title="Отжимания", count=10)],
         )
     ])
-
-    assert "\n@test_user\n" in report
-    assert "`@test_user`" not in report
-
-
-def test_debt_report_can_wrap_users_in_monospace_for_manual_command():
-    report = format_curse_debt_report(
-        [
-            CurseDebtReportEntry(
-                user_id=1,
-                name="@test_user",
-                items=[CurseDebtReportItem(title="Отжимания", count=10)],
-            )
-        ],
-        mention_users=False,
-    )
 
     assert "`@test_user`" in report
     assert "\n@test_user\n" not in report

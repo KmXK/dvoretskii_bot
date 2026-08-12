@@ -425,18 +425,13 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
     return entries
 
 
-def format_curse_debt_report(
-    entries: list[CurseDebtReportEntry],
-    *,
-    mention_users: bool = True,
-) -> str:
+def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
     if not entries:
         return "Сегодня наказаний нет."
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        name = entry.name if mention_users else f"`{entry.name}`"
-        lines.append(name)
+        lines.append(f"`{entry.name}`")
         for item in entry.items:
             if entry.interest_enabled:
                 lines.extend(_format_curse_plan_item(item))
@@ -482,7 +477,7 @@ def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["До полуночи:", ""]
     for index, entry in enumerate(payable):
-        lines.append(entry.name)
+        lines.append(f"`{entry.name}`")
         for item in entry.items:
             lines.extend(_format_curse_plan_item(item))
 
@@ -548,7 +543,7 @@ def format_curse_day_outcome(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Итог за сутки:", ""]
     for index, entry in enumerate(payable):
-        lines.append(entry.name)
+        lines.append(f"`{entry.name}`")
         for item in entry.items:
             lines.append(_format_curse_outcome_item(item))
 

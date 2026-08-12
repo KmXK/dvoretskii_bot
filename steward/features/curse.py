@@ -270,7 +270,7 @@ class CurseFeature(Feature):
         if day_changed:
             await self.repository.save()
         entries = build_curse_debt_report_entries(self.repository, ctx.chat_id)
-        report = format_curse_debt_report(entries, mention_users=False)
+        report = format_curse_debt_report(entries)
         if punishment is None:
             await ctx.reply(
                 "Наказание дня не выбрано: нет наказаний с положительным весом.\n\n"
