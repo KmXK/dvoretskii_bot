@@ -2,6 +2,7 @@ import asyncio
 import dataclasses
 import logging
 import random
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -147,6 +148,7 @@ class VoiceVideoFeature(Feature):
                 markdown=False,
             )
             return
+        audio_path: Path | None = None
         try:
             audio_path = await self._resolve_audio_path(ctx, reply.voice.file_id)
             await create_video_reply(
@@ -160,6 +162,8 @@ class VoiceVideoFeature(Feature):
         except Exception as e:
             logger.exception("voice_to_video command failed: %s", e)
             await ctx.reply("Не удалось сделать видео", markdown=False)
+        finally:
+            self._remove_audio_path(audio_path)
 
     @on_message
     async def on_voice(self, ctx: FeatureContext) -> bool:
@@ -236,6 +240,7 @@ class VoiceVideoFeature(Feature):
         initiator,
         bot_message,
     ) -> None:
+        audio_path: Path | None = None
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
 
@@ -261,7 +266,7 @@ class VoiceVideoFeature(Feature):
                 kb = self._build_actions_keyboard(request_id, pending)
                 return kb.to_markup() if kb is not None else None
 
-            await create_transcription_reply(
+            transcription = await create_transcription_reply(
                 self.repository,
                 initiator,
                 audio_path,
@@ -274,13 +279,16 @@ class VoiceVideoFeature(Feature):
                 reply_markup_provider=reply_markup_provider,
                 pretranscribed=transcription,
             )
+            if transcription is None:
+                self._pending.pop(request_id, None)
+                await self._remove_voice_prompt(bot_message)
+                return
         except Exception as e:
             logger.exception("Auto-transcription failed: %s", e)
-            try:
-                await bot_message.edit_text("Не удалось сделать расшифровку")
-            except Exception:
-                pass
+            self._pending.pop(request_id, None)
+            await self._remove_voice_prompt(bot_message)
         finally:
+            self._remove_audio_path(audio_path)
             if pending.request_clicked or not pending.request_allowed:
                 self._pending.pop(request_id, None)
 
@@ -376,6 +384,7 @@ class VoiceVideoFeature(Feature):
         except Exception as e:
             logger.debug("keyboard update failed: %s", e)
 
+        audio_path: Path | None = None
         try:
             audio_path = await self._resolve_audio_path(ctx, pending.file_id)
             if action == "transcribe":
@@ -394,18 +403,20 @@ class VoiceVideoFeature(Feature):
                     reply_markup_provider=reply_markup_provider,
                 )
                 await self._process_transcribed_curses(ctx, initiator, transcription)
+                if transcription is None:
+                    self._pending.pop(request_id, None)
+                    await self._remove_voice_prompt(message)
+                    return
             elif action == "request":
                 await self._create_router_request(ctx, audio_path)
             if pending.transcribe_clicked and pending.request_clicked:
                 self._pending.pop(request_id, None)
         except Exception as e:
             logger.exception("Error processing voice callback: %s", e)
-            try:
-                await message.reply_text(
-                    f"Не получилось обработать {'расшифровку' if action == 'transcribe' else 'запрос'}, попробуй ещё раз"
-                )
-            except Exception:
-                pass
+            self._pending.pop(request_id, None)
+            await self._remove_voice_prompt(message)
+        finally:
+            self._remove_audio_path(audio_path)
 
     async def _process_transcribed_curses(
         self,
@@ -425,13 +436,37 @@ class VoiceVideoFeature(Feature):
         tg_file = await ctx.bot.get_file(file_id)
         if not tg_file.file_path:
             raise Exception("File path is not available")
-        fp = tg_file.file_path
-        if "/file/bot" in fp:
-            fp = fp.split("/file/bot", 1)[1].split("/", 1)[1]
-        audio_path = Path(f"/data/{ctx.bot.token}/{fp}")
-        if not audio_path.exists():
-            raise Exception(f"File not found: {audio_path}")
+
+        suffix = Path(tg_file.file_path).suffix
+        with tempfile.NamedTemporaryFile(
+            prefix="dvoretskii_voice_",
+            suffix=suffix,
+            delete=False,
+        ) as temporary_file:
+            audio_path = Path(temporary_file.name)
+
+        try:
+            await tg_file.download_to_drive(custom_path=audio_path)
+        except Exception:
+            self._remove_audio_path(audio_path)
+            raise
         return audio_path
+
+    @staticmethod
+    def _remove_audio_path(audio_path: Path | None) -> None:
+        if audio_path is None:
+            return
+
+        try:
+            audio_path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Unable to remove temporary voice file %s: %s", audio_path, e)
+
+    async def _remove_voice_prompt(self, message) -> None:
+        try:
+            await message.delete()
+        except Exception as e:
+            logger.warning("Unable to remove voice prompt: %s", e)
 
     async def _create_router_request(self, ctx: FeatureContext, audio_path: Path):
         callback_query = ctx.callback_query
@@ -444,7 +479,6 @@ class VoiceVideoFeature(Feature):
             with_speaker_labels=False,
         )
         if not transcription:
-            await message.reply_text("Не удалось распознать голос для запроса")
             return
         request_text = f"дворецкий, {transcription.strip()}"
         router_message = _RouterMessageProxy(
@@ -465,8 +499,5 @@ class VoiceVideoFeature(Feature):
         for handler in all_handlers:
             if handler.__class__.__name__ != "AiRouterHandler":
                 continue
-            handled = await handler.chat(chat_context)
-            if not handled:
-                await message.reply_text("Не удалось обработать запрос из голосового")
+            await handler.chat(chat_context)
             return
-        await message.reply_text("Роутер команд недоступен")

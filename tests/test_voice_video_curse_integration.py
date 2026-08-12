@@ -113,3 +113,44 @@ async def test_auto_voice_transcription_respects_disabled_curse_capability(monke
     ctx.metrics.inc.assert_not_called()
     source_message.set_reaction.assert_not_called()
     assert repo.db.curse_punishment_debts == []
+
+
+async def test_auto_voice_transcription_removes_prompt_after_download_error(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    source_message = ctx.message
+    bot_message = MagicMock()
+    bot_message.delete = AsyncMock()
+
+    monkeypatch.setattr(
+        feature,
+        "_resolve_audio_path",
+        AsyncMock(side_effect=FileNotFoundError("missing voice")),
+    )
+
+    await feature._run_auto_transcription(
+        ctx,
+        "request-id",
+        _pending(),
+        source_message,
+        bot_message,
+    )
+
+    bot_message.delete.assert_awaited_once()
+    assert feature._pending == {}
+
+
+async def test_resolve_audio_path_downloads_telegram_file():
+    feature = VoiceVideoFeature()
+    ctx = MagicMock()
+    tg_file = MagicMock()
+    tg_file.file_path = "voice/example.oga"
+    tg_file.download_to_drive = AsyncMock()
+    ctx.bot.get_file = AsyncMock(return_value=tg_file)
+
+    audio_path = await feature._resolve_audio_path(ctx, "file-id")
+
+    tg_file.download_to_drive.assert_awaited_once_with(custom_path=audio_path)
+    assert audio_path.exists()
+    feature._remove_audio_path(audio_path)
