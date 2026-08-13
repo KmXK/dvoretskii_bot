@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from html import escape as html_escape
 from math import ceil, isfinite
 from random import choices
 from zoneinfo import ZoneInfo
@@ -178,6 +179,10 @@ class CurseDebtReportEntry:
 
 def _display_name(username: str | None, user_id: int) -> str:
     return f"@\u200b{username}" if username else f"@\u200b{user_id}"
+
+
+def _format_curse_user_tag(name: str) -> str:
+    return f"<code>{html_escape(name)}</code>"
 
 
 def _user_name(repo: Repository, user_id: int) -> str:
@@ -431,22 +436,29 @@ def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        lines.append(entry.name)
+        lines.append(_format_curse_user_tag(entry.name))
         for item in entry.items:
             if entry.interest_enabled:
-                lines.extend(_format_curse_plan_item(item))
+                lines.extend(_format_curse_plan_item(item, escape_html=True))
             else:
-                lines.append(f"{item.title}: {item.count} (проценты отключены)")
+                lines.append(
+                    f"{html_escape(item.title)}: {item.count} (проценты отключены)"
+                )
 
         if index != len(entries) - 1:
             lines.append("")
     return "\n".join(lines)
 
 
-def _format_curse_plan_item(item: CurseDebtReportItem) -> list[str]:
+def _format_curse_plan_item(
+    item: CurseDebtReportItem,
+    *,
+    escape_html: bool = False,
+) -> list[str]:
     rate = format_curse_percent(item.interest_percent)
+    title = html_escape(item.title) if escape_html else item.title
     lines = [
-        f"{item.title}: {item.count}, ставка {rate}%, сделано {item.paid_since_interest}"
+        f"{title}: {item.count}, ставка {rate}%, сделано {item.paid_since_interest}"
     ]
 
     if item.left_to_down <= 0:
@@ -477,9 +489,9 @@ def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["До полуночи:", ""]
     for index, entry in enumerate(payable):
-        lines.append(entry.name)
+        lines.append(_format_curse_user_tag(entry.name))
         for item in entry.items:
-            lines.extend(_format_curse_plan_item(item))
+            lines.extend(_format_curse_plan_item(item, escape_html=True))
 
         if index != len(payable) - 1:
             lines.append("")
@@ -513,21 +525,22 @@ def _format_curse_outcome_item(item: CurseDebtReportItem) -> str:
     rate = format_curse_percent(item.interest_percent)
     before = item.count - item.interest_delta
     before_rate = format_curse_percent(item.interest_percent - item.interest_percent_added)
+    title = html_escape(item.title)
 
     if item.interest_percent_added < 0:
         return (
-            f"{item.title}: {item.count} — без начисления, "
+            f"{title}: {item.count} — без начисления, "
             f"ставка {before_rate}% → {rate}%"
         )
 
     if item.interest_percent_added > 0:
         return (
-            f"{item.title}: {before} → {item.count} (+{item.interest_delta}), "
+            f"{title}: {before} → {item.count} (+{item.interest_delta}), "
             f"ставка {before_rate}% → {rate}%"
         )
 
     return (
-        f"{item.title}: {before} → {item.count} (+{item.interest_delta}), "
+        f"{title}: {before} → {item.count} (+{item.interest_delta}), "
         f"ставка {rate}% без изменений"
     )
 
@@ -543,7 +556,7 @@ def format_curse_day_outcome(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Итог за сутки:", ""]
     for index, entry in enumerate(payable):
-        lines.append(entry.name)
+        lines.append(_format_curse_user_tag(entry.name))
         for item in entry.items:
             lines.append(_format_curse_outcome_item(item))
 

@@ -66,7 +66,7 @@ def test_debt_report_does_not_render_users_as_mentions():
         )
     ])
 
-    assert "\n@\u200btest_user\n" in report
+    assert "<code>@\u200btest_user</code>" in report
 
 
 def test_accrue_selects_weighted_punishment_day_once_when_missing():

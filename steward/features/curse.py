@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
+from html import escape as html_escape
 from zoneinfo import ZoneInfo
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
@@ -274,10 +275,17 @@ class CurseFeature(Feature):
         if punishment is None:
             await ctx.reply(
                 "Наказание дня не выбрано: нет наказаний с положительным весом.\n\n"
-                + report
+                + report,
+                html=True,
             )
             return
-        await ctx.reply("Наказание дня:\n\n" + self._punishment_text(punishment) + "\n\n" + report)
+        await ctx.reply(
+            "Наказание дня:\n\n"
+            + self._punishment_text(punishment, html=True)
+            + "\n\n"
+            + report,
+            html=True,
+        )
 
     @subcommand("subscribe", description="Подписаться")
     @subcommand("punishment subscribe")
@@ -573,10 +581,11 @@ class CurseFeature(Feature):
     def _punishment_edit_text(self, punishment: CursePunishment) -> str:
         return self._punishment_text(punishment)
 
-    def _punishment_text(self, punishment: CursePunishment) -> str:
+    def _punishment_text(self, punishment: CursePunishment, *, html: bool = False) -> str:
+        title = html_escape(punishment.title) if html else punishment.title
         return (
             f"Наказание #{punishment.id}\n\n"
-            f"Название: {punishment.title}\n"
+            f"Название: {title}\n"
             f"Коэффициент: {punishment.coeff}\n"
             f"Весовой коэффициент в наказании дня: {punishment.selection_weight}"
         )

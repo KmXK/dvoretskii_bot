@@ -33,7 +33,7 @@ async def _broadcast_curse_report(context: DelayedActionContext, formatter) -> N
         if not text:
             continue
 
-        await context.bot.send_message(chat_id, text)
+        await context.bot.send_message(chat_id, text, parse_mode="HTML")
 
 
 @dataclass(kw_only=True)
