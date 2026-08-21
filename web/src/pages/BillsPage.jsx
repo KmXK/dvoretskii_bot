@@ -25,6 +25,19 @@ function formatMinor(minor, currency = 'BYN') {
   return CURRENCY_PREFIX.has(currency) ? `${sign}${sym}${amt}` : `${sign}${amt} ${sym}`
 }
 
+function formatDateTime(value) {
+  if (!value) return 'дата неизвестна'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'дата неизвестна'
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 function splitMinor(total, n) {
   if (n <= 0) return []
   const base = Math.floor(total / n)
@@ -62,6 +75,8 @@ function buildPeopleGroups(bill) {
 // ── Debt computation (matches steward/helpers/bills_money.py) ────────────────
 
 function computeBillDebts(bill) {
+  if (bill.debts !== null && bill.debts !== undefined) return bill.debts
+
   const debts = {}
   for (const tx of bill.transactions) {
     if (tx.creditor === '__unknown__') continue
@@ -219,6 +234,33 @@ function DebtColumn({ tone, title, total, breakdown, personsById, currency }) {
   )
 }
 
+function CreditSummary({ credits, myPersonId, personsById }) {
+  if (!myPersonId || credits.length === 0) return null
+
+  return (
+    <div className="bg-gold/10 rounded-xl p-3 mb-4">
+      <div className="text-gold text-xs font-semibold mb-2">Переплаты</div>
+      <div className="space-y-1.5">
+        {credits.map((credit) => {
+          const mine = credit.debtor === myPersonId
+          const personId = mine ? credit.creditor : credit.debtor
+          const person = personsById[personId]?.display_name || '?'
+          return (
+            <div key={`${credit.debtor}:${credit.creditor}:${credit.currency}`} className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-spotify-text truncate">
+                {mine ? `Твоя переплата у ${person}` : `${person} переплатил тебе`}
+              </span>
+              <span className="text-gold font-semibold tabular-nums shrink-0">
+                {formatMinor(credit.amount_minor, credit.currency)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function BillCard({ bill, myPersonId, personsById, onOpen }) {
   const myNet = useMemo(() => {
     if (bill.distribution_status && bill.distribution_status !== 'final') return 0
@@ -257,6 +299,14 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
       <div className="text-xs text-spotify-text">
         {author?.display_name || '?'} · {bill.transactions.length} поз. · {bill.participants.length} уч.
       </div>
+      <div className="text-xs text-spotify-text/70 mt-0.5">
+        Создан {formatDateTime(bill.created_at)}
+      </div>
+      {bill.applied_credit_minor > 0 && (
+        <div className="text-xs text-gold mt-1">
+          Учтена переплата {formatMinor(bill.applied_credit_minor, bill.currency)}
+        </div>
+      )}
       {myNet !== 0 && (
         <div className={`mt-2 text-sm font-semibold ${myNet > 0 ? 'text-red-400' : 'text-green-400'}`}>
           {myNet > 0 ? '−' : '+'}{formatMinor(Math.abs(myNet), bill.currency)}
@@ -668,6 +718,9 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
             <div className="text-xs text-spotify-text mt-1">
               автор: {personsById[bill.author_person_id]?.display_name || '?'}
             </div>
+            <div className="text-xs text-spotify-text mt-1">
+              создан: {formatDateTime(bill.created_at)}
+            </div>
           </div>
           {isAuthor && (
             <div className="flex gap-2">
@@ -687,6 +740,12 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
           )}
         </div>
       </div>
+
+      {bill.applied_credit_minor > 0 && (
+        <div className="bg-gold/10 text-gold rounded-xl p-3 mb-4 text-sm">
+          Учтена переплата: <span className="font-semibold">{formatMinor(bill.applied_credit_minor, bill.currency)}</span>
+        </div>
+      )}
 
       {suggestions.length > 0 && (
         <div className="bg-yellow-500/10 rounded-xl p-3 mb-4">
@@ -854,6 +913,7 @@ export default function BillsPage() {
   const { userId } = useAuth()
   const [bills, setBills] = useState([])
   const [persons, setPersons] = useState([])
+  const [credits, setCredits] = useState([])
   const [tab, setTab] = useState('open')
   const [scopeAll, setScopeAll] = useState(false)
   const [openBillId, setOpenBillId] = useState(null)
@@ -869,6 +929,7 @@ export default function BillsPage() {
       const data = await api(`/api/bills${scopeAll ? '?scope=all' : ''}`)
       setBills(data.bills || [])
       setPersons(data.persons || [])
+      setCredits(data.credits || [])
       setError(null)
     } catch (e) {
       setError(e.message)
@@ -1002,6 +1063,7 @@ export default function BillsPage() {
         <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
 
         <DebtSummary bills={bills} myPersonId={myPerson?.id} personsById={personsById} />
+        <CreditSummary credits={credits} myPersonId={myPerson?.id} personsById={personsById} />
 
         <div className="flex gap-2 mb-4">
           <button

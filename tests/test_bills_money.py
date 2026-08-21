@@ -1,11 +1,14 @@
 """Tests for steward/helpers/bills_money.py — int kopeck arithmetic."""
 from steward.data.models.bill_v2 import (
     BillItemAssignment,
+    BillPaymentV2,
     BillTransaction,
+    BillV2,
     UNKNOWN_PERSON_ID,
 )
 from steward.helpers.bills_money import (
     apply_payments,
+    compute_bill_balances,
     compute_bill_debts,
     minor_from_float,
     minor_to_display,
@@ -251,3 +254,99 @@ class TestDistributePaymentAmount:
         )
         result = apply_payments(debts, [forward, refund])
         assert result["a"]["b"] == 250
+
+
+class TestComputeBillBalances:
+    @staticmethod
+    def _bill(bill_id: int, amount_minor: int) -> BillV2:
+        return BillV2(
+            id=bill_id,
+            name=f"Счёт {bill_id}",
+            author_person_id="kirill",
+            participants=["kirill", "dmitrux"],
+            transactions=[
+                BillTransaction(
+                    id=f"tx-{bill_id}",
+                    item_name="Позиция",
+                    creditor="kirill",
+                    unit_price_minor=amount_minor,
+                    assignments=[
+                        BillItemAssignment(
+                            unit_count=1,
+                            debtors=["dmitrux"],
+                        )
+                    ],
+                )
+            ],
+        )
+
+    def test_carries_overpayment_to_new_bill(self):
+        old_bill = self._bill(1, 10000)
+        old_bill.closed = True
+        payment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2800,
+            status="confirmed",
+            bill_ids=[],
+        )
+        new_bill = self._bill(2, 3200)
+
+        balances, credits = compute_bill_balances(
+            [old_bill, new_bill],
+            [payment],
+        )
+
+        assert balances[1] == {}
+        assert balances[2]["dmitrux"]["kirill"] == 400
+        assert credits == {}
+
+    def test_keeps_unused_overpayment_visible(self):
+        payment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2800,
+            status="confirmed",
+            bill_ids=[],
+        )
+
+        balances, credits = compute_bill_balances([], [payment])
+
+        assert balances == {}
+        assert credits == {("dmitrux", "kirill", "BYN"): 2800}
+
+    def test_carries_bill_specific_excess_forward(self):
+        first = self._bill(1, 1000)
+        second = self._bill(2, 500)
+        payment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1200,
+            status="confirmed",
+            bill_ids=[1],
+        )
+
+        balances, credits = compute_bill_balances([first, second], [payment])
+
+        assert balances[1] == {}
+        assert balances[2]["dmitrux"]["kirill"] == 300
+        assert credits == {}
+
+    def test_ignores_payment_for_bill_outside_scope(self):
+        visible = self._bill(2, 500)
+        payment = BillPaymentV2(
+            id="other-bill-payment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1000,
+            status="confirmed",
+            bill_ids=[1],
+        )
+
+        balances, credits = compute_bill_balances([visible], [payment])
+
+        assert balances[2]["dmitrux"]["kirill"] == 500
+        assert credits == {}

@@ -833,30 +833,12 @@ class BillsFeature(Feature):
         across the given open bills (after applying payments)."""
         if not person_id:
             return False, False
-        from steward.helpers.bills_money import (
-            apply_payments, compute_bill_debts, net_debts,
+        owe, owed, _ = fmt._compute_balances(
+            bills,
+            person_id,
+            self.repository.db.bill_payments_v2,
         )
-        payments = self.repository.db.bill_payments_v2
-        has_owe = False
-        has_owed = False
-        for bill in bills:
-            if bill.closed:
-                continue
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            net = net_debts(raw)
-            bp = [p for p in payments if bill.id in p.bill_ids]
-            after = apply_payments(net, bp, clamp_zero=True)
-            if not has_owe:
-                if any(amt > 0 for amt in after.get(person_id, {}).values()):
-                    has_owe = True
-            if not has_owed:
-                for debtor, creds in after.items():
-                    if debtor != person_id and creds.get(person_id, 0) > 0:
-                        has_owed = True
-                        break
-            if has_owe and has_owed:
-                break
-        return has_owe, has_owed
+        return bool(owe), bool(owed)
 
     async def _render_bill(
         self, ctx: FeatureContext, bill_id: int, *, mode: str = "positions", edit: bool
@@ -884,8 +866,20 @@ class BillsFeature(Feature):
             rich = fmt.format_bill_people_rich(bill, by_id)
             plain = fmt.format_bill_people(bill, by_id)
         else:
-            rich = fmt.format_bill_detail_rich(bill, pid, by_id, payments)
-            plain = fmt.format_bill_detail(bill, pid, by_id, payments)
+            rich = fmt.format_bill_detail_rich(
+                bill,
+                pid,
+                by_id,
+                payments,
+                self.repository.db.bills_v2,
+            )
+            plain = fmt.format_bill_detail(
+                bill,
+                pid,
+                by_id,
+                payments,
+                self.repository.db.bills_v2,
+            )
         await self._send_view(
             ctx,
             rich,
@@ -1279,8 +1273,20 @@ class BillsFeature(Feature):
             payments = self.repository.db.bill_payments_v2
             await self._send_view(
                 ctx,
-                fmt.format_bill_detail_rich(bill, pid, by_id, payments),
-                fmt.format_bill_detail(bill, pid, by_id, payments),
+                fmt.format_bill_detail_rich(
+                    bill,
+                    pid,
+                    by_id,
+                    payments,
+                    self.repository.db.bills_v2,
+                ),
+                fmt.format_bill_detail(
+                    bill,
+                    pid,
+                    by_id,
+                    payments,
+                    self.repository.db.bills_v2,
+                ),
                 keyboard=fmt.kb_bill(self, bill, pid, is_admin, payments),
                 edit=True,
             )
@@ -1669,23 +1675,24 @@ class BillsFeature(Feature):
         FIFO allocation across open bills with matching debt. Returns
         (allocations, residual, auto_closed_bills)."""
         from steward.helpers.bills_money import (
-            apply_payments,
-            compute_bill_debts,
+            compute_bill_balances,
             distribute_payment_amount,
-            net_debts,
         )
 
+        other_payments = [
+            other
+            for other in self.repository.db.bill_payments_v2
+            if other.id != payment.id
+        ]
+        balances, _ = compute_bill_balances(
+            self.repository.db.bills_v2,
+            other_payments,
+        )
         bills_with_debt: list[tuple[int, int]] = []
         for bill in sorted(self.repository.db.bills_v2, key=lambda b: b.created_at):
             if bill.closed:
                 continue
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            net = net_debts(raw)
-            other_payments = [
-                p for p in self.repository.db.bill_payments_v2
-                if p.id != payment.id and bill.id in p.bill_ids
-            ]
-            after = apply_payments(net, other_payments, clamp_zero=True)
+            after = balances.get(bill.id, {})
             debt = after.get(payment.debtor, {}).get(payment.creditor, 0)
             if debt > 0:
                 bills_with_debt.append((bill.id, debt))
@@ -1719,14 +1726,15 @@ class BillsFeature(Feature):
         self.repository.db.bill_payments_v2.extend(children)
 
         auto_closed: list[BillV2] = []
+        balances, _ = compute_bill_balances(
+            self.repository.db.bills_v2,
+            self.repository.db.bill_payments_v2,
+        )
         for bill_id, _ in allocations:
             bill = self.repository.get_bill_v2(bill_id)
             if not bill or bill.closed:
                 continue
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            net = net_debts(raw)
-            bp = [p for p in self.repository.db.bill_payments_v2 if bill_id in p.bill_ids]
-            after = apply_payments(net, bp, clamp_zero=True)
+            after = balances.get(bill_id, {})
             if not any(a > 0 for creds in after.values() for a in creds.values()):
                 bill.closed = True
                 bill.closed_at = datetime.now()
@@ -1854,7 +1862,12 @@ class BillsFeature(Feature):
             await send_callback(fmt.format_draft_saved(bill, by_id), keyboard=kb)
             return
 
-        text = fmt.format_bill_created(bill, by_id)
+        text = fmt.format_bill_created(
+            bill,
+            by_id,
+            self.repository.db.bill_payments_v2,
+            self.repository.db.bills_v2,
+        )
         if header is not None:
             text = header + "\n" + "\n".join(text.splitlines()[1:])
         kb = fmt.kb_bill(
@@ -1926,17 +1939,19 @@ class BillsFeature(Feature):
     # -- Payment helpers --
 
     def _find_bill_ids_for_pair(self, debtor_id: str, creditor_id: str) -> list[int]:
-        from steward.helpers.bills_money import compute_bill_debts, net_debts, apply_payments
+        from steward.helpers.bills_money import compute_bill_balances
+
+        balances, _ = compute_bill_balances(
+            self.repository.db.bills_v2,
+            self.repository.db.bill_payments_v2,
+        )
         result = []
         for bill in self.repository.db.bills_v2:
             if bill.closed:
                 continue
             if debtor_id not in bill.participants and debtor_id != bill.author_person_id:
                 continue
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            net = net_debts(raw)
-            bp = [p for p in self.repository.db.bill_payments_v2 if bill.id in p.bill_ids]
-            after = apply_payments(net, bp, clamp_zero=True)
+            after = balances.get(bill.id, {})
             if after.get(debtor_id, {}).get(creditor_id, 0) > 0:
                 result.append(bill.id)
         return result

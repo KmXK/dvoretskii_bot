@@ -7,6 +7,7 @@ from steward.data.models.bill_v2 import BillPerson, BillV2, UNKNOWN_PERSON_ID
 from steward.framework import Button, Keyboard
 from steward.helpers.bills_money import (
     apply_payments,
+    compute_bill_balances,
     compute_bill_debts,
     minor_to_display,
     net_debts,
@@ -198,15 +199,9 @@ def _compute_balances(bills: list[BillV2], person_id: str | None, payments: list
     owed: dict[str, int] = defaultdict(int)
     pair_totals: dict[tuple[str, str], int] = defaultdict(int)
 
+    balances, _ = compute_bill_balances(bills, payments)
     for bill in bills:
-        if bill.closed:
-            continue
-        if getattr(bill, "distribution_status", "final") != "final":
-            continue
-        raw = compute_bill_debts(bill.transactions, bill.currency)
-        net = net_debts(raw)
-        bp = [p for p in payments if bill.id in p.bill_ids]
-        after = apply_payments(net, bp, clamp_zero=True)
+        after = balances.get(bill.id, {})
         for debtor, creds in after.items():
             for creditor, amt in creds.items():
                 if amt > 0:
@@ -222,6 +217,31 @@ def _compute_balances(bills: list[BillV2], person_id: str | None, payments: list
     return owe, owed, pair_totals
 
 
+def _person_credits(
+    bills: list[BillV2],
+    person_id: str | None,
+    payments: list,
+) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], int]]:
+    if not person_id:
+        return {}, {}
+
+    _, credits = compute_bill_balances(bills, payments)
+    mine: dict[tuple[str, str], int] = {}
+    held: dict[tuple[str, str], int] = {}
+    for (debtor, creditor, currency), amount in credits.items():
+        if debtor == person_id:
+            mine[(creditor, currency)] = amount
+        if creditor == person_id:
+            held[(debtor, currency)] = amount
+    return mine, held
+
+
+def _created_at(value) -> str:
+    if hasattr(value, "strftime"):
+        return value.strftime("%d.%m.%Y %H:%M")
+    return "?"
+
+
 def format_overview(
     bills: list[BillV2],
     person_id: str | None,
@@ -231,6 +251,7 @@ def format_overview(
     all_mode: bool = False,
 ) -> str:
     owe, owed, _ = _compute_balances(bills, person_id, payments)
+    my_credits, held_credits = _person_credits(bills, person_id, payments)
 
     open_count = sum(1 for b in bills if not b.closed)
     closed_count = sum(1 for b in bills if b.closed)
@@ -256,7 +277,23 @@ def format_overview(
         lines.append("🥺 *Ты должен:*")
         lines.append(_mono_table(["Кому", "Сумма"], rows))
         lines.append("")
-    if not owe and not owed and not all_mode:
+    if my_credits:
+        rows = [
+            [pname(pid, by_id), minor_to_display(amount, currency)]
+            for (pid, currency), amount in sorted(my_credits.items(), key=lambda item: -item[1])
+        ]
+        lines.append("💰 *Твои переплаты:*")
+        lines.append(_mono_table(["У кого", "Сумма"], rows))
+        lines.append("")
+    if held_credits:
+        rows = [
+            [pname(pid, by_id), minor_to_display(amount, currency)]
+            for (pid, currency), amount in sorted(held_credits.items(), key=lambda item: -item[1])
+        ]
+        lines.append("💰 *Переплатили тебе:*")
+        lines.append(_mono_table(["Кто", "Сумма"], rows))
+        lines.append("")
+    if not owe and not owed and not my_credits and not held_credits and not all_mode:
         lines.append("_Нет открытых долгов_ ✨\n")
 
     return "\n".join(lines)
@@ -288,12 +325,15 @@ def format_audit(bills: list[BillV2], payments: list) -> str:
 
 def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
     out: list[str] = []
+    balances, _ = compute_bill_balances(bills, payments)
     for bill in sorted(bills, key=lambda b: (b.closed, -b.id)):
         gross = sum(tx.unit_price_minor * tx.quantity for tx in bill.transactions)
-        raw = compute_bill_debts(bill.transactions, bill.currency)
-        net = net_debts(raw)
         bp = [p for p in payments if bill.id in p.bill_ids]
-        after = apply_payments(net, bp, clamp_zero=True)
+        if bill.closed:
+            raw = compute_bill_debts(bill.transactions, bill.currency)
+            after = apply_payments(net_debts(raw), bp, clamp_zero=True)
+        else:
+            after = balances.get(bill.id, {})
         outstanding = sum(
             amt for creds in after.values() for amt in creds.values() if amt > 0
         )
@@ -306,7 +346,7 @@ def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
         out.append(
             f"{flag} `#{bill.id}` *{name}* — {len(bill.transactions)} поз., "
             f"{len(bill.participants)} уч., итог {minor_to_display(gross, bill.currency)}, "
-            f"оплат {len(bp)}{debt_part}"
+            f"создан {_created_at(bill.created_at)}, оплат {len(bp)}{debt_part}"
         )
     if not out:
         return ["_(нет счетов)_"]
@@ -318,6 +358,7 @@ def format_bill_detail(
     person_id: str | None,
     by_id: dict[str, BillPerson],
     payments: list,
+    all_bills: list[BillV2] | None = None,
 ) -> str:
     status = "🔒 Закрыт" if bill.closed else "🔓 Открыт"
     incomplete = sum(1 for tx in bill.transactions if tx.incomplete)
@@ -326,6 +367,7 @@ def format_bill_detail(
     lines = [
         f"🧾 *{md_inline(bill.name)}* \\#{bill.id}  {status}",
         f"Автор: {mname(bill.author_person_id, by_id)} · {bill.currency}",
+        f"Создан: {_created_at(bill.created_at)}",
         f"📋 Позиций: {len(bill.transactions)}{inc_str}",
         "",
         _tx_table(bill.transactions[:20], by_id, bill.currency),
@@ -336,8 +378,24 @@ def format_bill_detail(
     raw = compute_bill_debts(bill.transactions, bill.currency)
     net = net_debts(raw)
     bp = [p for p in payments if bill.id in p.bill_ids]
-    after = apply_payments(net, bp, clamp_zero=True)
+    before_carry = apply_payments(net, bp, clamp_zero=True)
+    if bill.closed:
+        after = before_carry
+        carryover = 0
+    else:
+        balances, _ = compute_bill_balances(all_bills or [bill], payments)
+        after = balances.get(bill.id, {})
+        carryover = sum(
+            amount for creditors in before_carry.values() for amount in creditors.values()
+            if amount > 0
+        ) - sum(
+            amount for creditors in after.values() for amount in creditors.values()
+            if amount > 0
+        )
     any_debt = any(amt > 0 for creds in after.values() for amt in creds.values())
+
+    if carryover > 0:
+        lines.append(f"\n💰 Учтена переплата: {minor_to_display(carryover, bill.currency)}")
 
     if any_debt:
         lines.append("\n⚖️ Кто кому:")
@@ -356,9 +414,15 @@ def format_bill_detail(
     return "\n".join(lines)
 
 
-def format_bill_created(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
+def format_bill_created(
+    bill: BillV2,
+    by_id: dict[str, BillPerson],
+    payments: list | None = None,
+    all_bills: list[BillV2] | None = None,
+) -> str:
     lines = [
         f"✅ Счёт «{md_inline(bill.name)}» \\#{bill.id} создан!",
+        f"Создан: {_created_at(bill.created_at)}",
         f"Позиций: {len(bill.transactions)} · Участников: {len(bill.participants)}",
     ]
     incomplete = sum(1 for tx in bill.transactions if tx.incomplete)
@@ -367,10 +431,25 @@ def format_bill_created(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
 
     raw = compute_bill_debts(bill.transactions, bill.currency)
     net = net_debts(raw)
-    any_debt = any(amt > 0 for creds in net.values() for amt in creds.values())
+    if payments is not None:
+        balances, _ = compute_bill_balances(all_bills or [bill], payments)
+        after = balances.get(bill.id, {})
+    else:
+        after = net
+    carried = sum(
+        amount for creditors in net.values() for amount in creditors.values()
+        if amount > 0
+    ) - sum(
+        amount for creditors in after.values() for amount in creditors.values()
+        if amount > 0
+    )
+    if carried > 0:
+        lines.append(f"💰 Учтена переплата: {minor_to_display(carried, bill.currency)}")
+
+    any_debt = any(amt > 0 for creds in after.values() for amt in creds.values())
     if any_debt:
         lines.append("\n⚖️ Кто кому:")
-        lines.append(_debt_table(net, by_id, bill.currency))
+        lines.append(_debt_table(after, by_id, bill.currency))
 
     return "\n".join(lines)
 
@@ -385,6 +464,7 @@ def format_overview_rich(
 ) -> str:
     """Native-table (sendRichMessage) variant of format_overview."""
     owe, owed, _ = _compute_balances(bills, person_id, payments)
+    my_credits, held_credits = _person_credits(bills, person_id, payments)
     open_count = sum(1 for b in bills if not b.closed)
     closed_count = sum(1 for b in bills if b.closed)
     title = "Все счета" if all_mode else "Мои счета"
@@ -400,7 +480,19 @@ def format_overview_rich(
         parts.append(_rich_table(["Кому", "Сумма"], [
             [pname(pid, by_id), minor_to_display(amt)] for pid, amt in sorted(owe.items(), key=lambda x: -x[1])
         ]))
-    if not owe and not owed and not all_mode:
+    if my_credits:
+        parts.append("## 💰 Твои переплаты")
+        parts.append(_rich_table(["У кого", "Сумма"], [
+            [pname(pid, by_id), minor_to_display(amount, currency)]
+            for (pid, currency), amount in sorted(my_credits.items(), key=lambda item: -item[1])
+        ]))
+    if held_credits:
+        parts.append("## 💰 Переплатили тебе")
+        parts.append(_rich_table(["Кто", "Сумма"], [
+            [pname(pid, by_id), minor_to_display(amount, currency)]
+            for (pid, currency), amount in sorted(held_credits.items(), key=lambda item: -item[1])
+        ]))
+    if not owe and not owed and not my_credits and not held_credits and not all_mode:
         parts.append("_Нет открытых долгов_ ✨")
     return "\n\n".join(parts)
 
@@ -431,6 +523,7 @@ def format_bill_detail_rich(
     person_id: str | None,
     by_id: dict[str, BillPerson],
     payments: list,
+    all_bills: list[BillV2] | None = None,
 ) -> str:
     status = "🔒 Закрыт" if bill.closed else "🔓 Открыт"
     incomplete = sum(1 for tx in bill.transactions if tx.incomplete)
@@ -438,6 +531,7 @@ def format_bill_detail_rich(
     parts = [
         f"# 🧾 {cell_md(bill.name)} #{bill.id}",
         f"{status} · **Автор:** {cell_md(pname(bill.author_person_id, by_id))} · {bill.currency}",
+        f"**Создан:** {_created_at(bill.created_at)}",
         f"**Позиций:** {len(bill.transactions)}{inc}",
     ]
     if bill.transactions:
@@ -452,7 +546,23 @@ def format_bill_detail_rich(
     raw = compute_bill_debts(bill.transactions, bill.currency)
     net = net_debts(raw)
     bp = [p for p in payments if bill.id in p.bill_ids]
-    after = apply_payments(net, bp, clamp_zero=True)
+    before_carry = apply_payments(net, bp, clamp_zero=True)
+    if bill.closed:
+        after = before_carry
+        carryover = 0
+    else:
+        balances, _ = compute_bill_balances(all_bills or [bill], payments)
+        after = balances.get(bill.id, {})
+        carryover = sum(
+            amount for creditors in before_carry.values() for amount in creditors.values()
+            if amount > 0
+        ) - sum(
+            amount for creditors in after.values() for amount in creditors.values()
+            if amount > 0
+        )
+    if carryover > 0:
+        parts.append(f"💰 **Учтена переплата:** {minor_to_display(carryover, bill.currency)}")
+
     drows = _debt_rows(after, by_id, bill.currency)
     if drows:
         parts.append("## ⚖️ Кто кому")
@@ -496,6 +606,7 @@ def format_bill_people_rich(
     parts = [
         f"# 🧾 {cell_md(bill.name)} #{bill.id}",
         f"{status} · **Автор:** {cell_md(pname(bill.author_person_id, by_id))} · {bill.currency}",
+        f"**Создан:** {_created_at(bill.created_at)}",
         "## 👥 Кто что взял",
     ]
     groups = _people_breakdown(bill)
@@ -516,7 +627,12 @@ def format_bill_people(
     bill: BillV2,
     by_id: dict[str, BillPerson],
 ) -> str:
-    lines = [f"🧾 *{md_inline(bill.name)}* \\#{bill.id}", "", "👥 *Кто что взял:*"]
+    lines = [
+        f"🧾 *{md_inline(bill.name)}* \\#{bill.id}",
+        f"Создан: {_created_at(bill.created_at)}",
+        "",
+        "👥 *Кто что взял:*",
+    ]
     groups = _people_breakdown(bill)
     if not groups:
         lines.append("_Позиции ещё не распределены_")
@@ -679,7 +795,8 @@ def format_draft_saved(bill: BillV2, by_id: dict[str, BillPerson]) -> str:
     """Message shown after a collected bill is saved as a draft."""
     return (
         f"📥 Собрал счёт «{md_inline(bill.name)}» \\#{bill.id}: "
-        f"{len(bill.transactions)} поз., {len(bill.participants)} уч.\n\n"
+        f"{len(bill.transactions)} поз., {len(bill.participants)} уч.\n"
+        f"Создан: {_created_at(bill.created_at)}\n\n"
         "Теперь распредели позиции по людям — перетаскиванием в приложении.\n"
         "_Счёт уже сохранён и числится недозаполненным; можно вернуться к нему позже._"
     )
@@ -806,24 +923,7 @@ def kb_pay_global(
     back_to_overview: bool = False,
 ) -> tuple[str, Keyboard]:
     """NET debts across ALL open bills between this person and others."""
-    from collections import defaultdict
-    total_owe: dict[str, int] = defaultdict(int)
-
-    for bill in all_bills:
-        if bill.closed:
-            continue
-        raw = compute_bill_debts(bill.transactions, bill.currency)
-        net = net_debts(raw)
-        bp = [p for p in payments if bill.id in p.bill_ids]
-        after = apply_payments(net, bp, clamp_zero=True)
-        for cred, amt in after.get(person_id, {}).items():
-            if amt > 0:
-                total_owe[cred] += amt
-        for deb, creds in after.items():
-            if deb != person_id and creds.get(person_id, 0) > 0:
-                total_owe[person_id] = total_owe.get(person_id, 0)
-
-    my_debts = {c: a for c, a in total_owe.items() if a > 0 and c != person_id}
+    my_debts, _, _ = _compute_balances(all_bills, person_id, payments)
 
     def _back_btn():
         if back_to_overview:
@@ -861,20 +961,7 @@ def kb_got_global(
     back_to_overview: bool = False,
 ) -> tuple[str, Keyboard]:
     """NET debts owed TO this person across all open bills, with quick-confirm buttons."""
-    from collections import defaultdict
-    owed_to_me: dict[str, int] = defaultdict(int)
-
-    for bill in all_bills:
-        if bill.closed:
-            continue
-        raw = compute_bill_debts(bill.transactions, bill.currency)
-        net = net_debts(raw)
-        bp = [p for p in payments if bill.id in p.bill_ids]
-        after = apply_payments(net, bp, clamp_zero=True)
-        for debtor, creds in after.items():
-            amt = creds.get(person_id, 0)
-            if amt > 0:
-                owed_to_me[debtor] += amt
+    _, owed_to_me, _ = _compute_balances(all_bills, person_id, payments)
 
     def _back_btn():
         if back_to_overview:
@@ -904,7 +991,10 @@ def kb_got_global(
 def kb_bill_buttons(feature: "BillsFeature", bills: list[BillV2]) -> list[Button]:
     """Build view-bill buttons for a list of bills (used in list views)."""
     return [
-        feature.cb("bills:view").button(f"#{b.id} {b.name[:18]}", bill_id=b.id)
+        feature.cb("bills:view").button(
+            f"#{b.id} {b.name[:12]} · {_created_at(b.created_at)}",
+            bill_id=b.id,
+        )
         for b in bills
     ]
 
@@ -1011,6 +1101,8 @@ def render_history_table(
             b = bills_by_id.get(bid)
             bname = (b.name[:14] if b else f"#{bid}") if b else f"#{bid}"
             bill_part = f"#{bid} {bname}"
+        elif p.status in ("confirmed", "auto_confirmed"):
+            bill_part = "возврат" if getattr(p, "is_refund", False) else "переплата"
         rows.append([d, ico, who, amt, bill_part])
     table = _mono_table(["Дата", "", "Кто", "Сумма", "Счёт"], rows)
     return f"{head}\n{table}" if head else table

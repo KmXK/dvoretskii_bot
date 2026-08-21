@@ -166,3 +166,90 @@ def apply_payments(
                 if clamp_zero and debts[p.debtor][p.creditor] < 0:
                     debts[p.debtor][p.creditor] = 0
     return debts
+
+
+def compute_bill_balances(
+    bills,
+    payments,
+) -> tuple[dict[int, dict[str, dict[str, int]]], dict[tuple[str, str, str], int]]:
+    from steward.data.models.bill_v2 import PaymentStatus
+
+    ordered_bills = sorted(bills, key=lambda bill: (bill.created_at, bill.id))
+    bills_by_id = {bill.id: bill for bill in ordered_bills}
+    balances: dict[int, dict[str, dict[str, int]]] = {
+        bill.id: net_debts(compute_bill_debts(bill.transactions, bill.currency))
+        for bill in ordered_bills
+    }
+    credits: dict[tuple[str, str, str], int] = {}
+
+    for payment in payments:
+        if payment.status not in PaymentStatus.SETTLED:
+            continue
+
+        currency = getattr(payment, "currency", "BYN")
+        credit_key = (payment.debtor, payment.creditor, currency)
+        matching_bill_ids = [
+            bill_id
+            for bill_id in payment.bill_ids
+            if bill_id in bills_by_id and bills_by_id[bill_id].currency == currency
+        ]
+        if payment.bill_ids and not matching_bill_ids:
+            continue
+
+        if getattr(payment, "is_refund", False):
+            remaining = payment.amount_minor
+            available = credits.get(credit_key, 0)
+            used = min(available, remaining)
+            if used:
+                credits[credit_key] = available - used
+                remaining -= used
+
+            if remaining:
+                target_ids = matching_bill_ids
+                if not target_ids:
+                    target_ids = [
+                        bill.id
+                        for bill in ordered_bills
+                        if not bill.closed and bill.currency == currency
+                    ]
+                if target_ids:
+                    target = balances.get(target_ids[0])
+                    if target is not None:
+                        target.setdefault(payment.creditor, {})
+                        target[payment.creditor][payment.debtor] = (
+                            target[payment.creditor].get(payment.debtor, 0) + remaining
+                        )
+            continue
+
+        remaining = payment.amount_minor
+        for bill_id in matching_bill_ids:
+            debt = balances[bill_id].get(payment.debtor, {}).get(payment.creditor, 0)
+            applied = min(max(debt, 0), remaining)
+            if applied:
+                balances[bill_id][payment.debtor][payment.creditor] -= applied
+                remaining -= applied
+            if remaining == 0:
+                break
+
+        if remaining:
+            credits[credit_key] = credits.get(credit_key, 0) + remaining
+
+    for bill in ordered_bills:
+        if bill.closed or getattr(bill, "distribution_status", "final") != "final":
+            balances[bill.id] = {}
+            continue
+
+        balance = balances[bill.id]
+        for (debtor, creditor, currency), amount in list(credits.items()):
+            if amount <= 0 or bill.currency != currency:
+                continue
+
+            debt = balance.get(debtor, {}).get(creditor, 0)
+            applied = min(max(debt, 0), amount)
+            if applied:
+                balance[debtor][creditor] -= applied
+                credits[(debtor, creditor, currency)] -= applied
+
+        balances[bill.id] = net_debts(balance)
+
+    return balances, {key: amount for key, amount in credits.items() if amount > 0}
