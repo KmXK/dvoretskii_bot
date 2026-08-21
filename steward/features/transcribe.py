@@ -47,6 +47,7 @@ _OPTIONS_HELP = (
 class AutoVideoTranscriptionFeature(Feature):
     """Маркер отдельного тогла для авторасшифровки скачанных видео."""
 
+    settings_slug = "autovideo"
     settings_label = "Автотранскрибация видео"
     description = "Автоматически расшифровывать короткие скачанные видео"
 

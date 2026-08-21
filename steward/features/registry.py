@@ -218,6 +218,9 @@ def feature_group_primary(feature_cls: type) -> type:
 
 def feature_slug(feature_cls: type) -> str:
     primary = feature_group_primary(feature_cls)
+    custom_slug = getattr(primary, "settings_slug", None)
+    if custom_slug:
+        return custom_slug
     return primary.__name__.removesuffix("Feature").lower()
 
 

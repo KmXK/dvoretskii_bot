@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 from steward.features.download.yt import _auto_video_transcription_enabled
-from steward.features.registry import features_in_capability
+from steward.features.registry import feature_slug, features_in_capability
 from steward.features.settings import SettingsFeature
 from steward.features.transcribe import (
     AutoVideoTranscriptionFeature,
@@ -32,3 +32,13 @@ def test_automatic_video_transcription_uses_its_own_setting():
         -1001,
         AutoVideoTranscriptionFeature,
     )
+
+
+def test_automatic_video_setting_callback_fits_telegram_limit():
+    slug = feature_slug(AutoVideoTranscriptionFeature)
+    callback_data = (
+        f"settings:feat_toggle|-1009999999999|transcribe|{slug}"
+    )
+
+    assert slug == "autovideo"
+    assert len(callback_data.encode("utf-8")) <= 64
