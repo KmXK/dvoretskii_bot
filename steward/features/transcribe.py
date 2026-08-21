@@ -28,6 +28,48 @@ _NOT_MEDIA = (
     "Это не голосовое / видео / аудио. Пришли медиа или /stop."
 )
 _CURSE_SOURCE_DEFAULT = object()
+_OPTION_VALUES = {
+    "on": True,
+    "off": False,
+    "yes": True,
+    "no": False,
+    "true": True,
+    "false": False,
+    "1": True,
+    "0": False,
+}
+_OPTIONS_HELP = (
+    "Параметры: full=on|off summary=on|off. "
+    "По умолчанию: full=on summary=on. Хотя бы один результат должен быть включён."
+)
+
+
+class AutoVideoTranscriptionFeature(Feature):
+    """Маркер отдельного тогла для авторасшифровки скачанных видео."""
+
+    settings_label = "Автотранскрибация видео"
+    description = "Автоматически расшифровывать короткие скачанные видео"
+
+
+def _parse_output_options(options: str) -> tuple[bool, bool] | None:
+    full_text = True
+    summarize = True
+    seen: set[str] = set()
+    for token in options.split():
+        key, separator, raw_value = token.partition("=")
+        if not separator or key not in {"full", "summary"} or key in seen:
+            return None
+        value = _OPTION_VALUES.get(raw_value.lower())
+        if value is None:
+            return None
+        seen.add(key)
+        if key == "full":
+            full_text = value
+        else:
+            summarize = value
+    if not full_text and not summarize:
+        return None
+    return full_text, summarize
 
 
 def _resolve_file_id(obj: Any) -> tuple[str, bool] | None:
@@ -107,14 +149,43 @@ class _AwaitMediaStep(Step):
 
 class TranscribeFeature(Feature):
     command = "transcribe"
-    description = "Расшифровка аудио/видео (ответом на сообщение или сессией)"
+    settings_label = "Ручная транскрибация (/transcribe)"
+    description = "Ручная расшифровка аудио/видео (ответом или сессией)"
     help_examples = [
         "/transcribe ответом на голосовое — расшифровать его",
         "/transcribe — открыть сессию и потом прислать голос",
+        "/transcribe full=off — только краткая суммаризация",
+        "/transcribe summary=off — только полный текст",
     ]
 
     @subcommand("", description="Сессия ожидания медиа, либо reply / attach")
     async def run(self, ctx: FeatureContext):
+        await self._run_with_options(ctx, full_text=True, summarize=True)
+
+    @subcommand(
+        "<options:rest>",
+        description="full=on|off summary=on|off",
+        catchall=True,
+    )
+    async def run_with_options(self, ctx: FeatureContext, options: str):
+        parsed = _parse_output_options(options)
+        if parsed is None:
+            await ctx.reply(_OPTIONS_HELP, markdown=False)
+            return
+        full_text, summarize = parsed
+        await self._run_with_options(
+            ctx,
+            full_text=full_text,
+            summarize=summarize,
+        )
+
+    async def _run_with_options(
+        self,
+        ctx: FeatureContext,
+        *,
+        full_text: bool,
+        summarize: bool,
+    ):
         message = ctx.message
         if message is None:
             return
@@ -130,6 +201,8 @@ class TranscribeFeature(Feature):
                 is_video_note=is_video_note,
                 source_message=source_message,
                 curse_source_message=curse_source_message,
+                full_text=full_text,
+                summarize=summarize,
             )
             return
 
@@ -144,6 +217,8 @@ class TranscribeFeature(Feature):
             _prompt_chat_id=prompt.chat_id if prompt is not None else None,
             _prompt_message_id=prompt.message_id if prompt is not None else None,
             _activating_message_id=message.message_id,
+            full_text=full_text,
+            summarize=summarize,
         )
 
     @wizard("transcribe:wait_media", step("media", _AwaitMediaStep()))
@@ -160,6 +235,8 @@ class TranscribeFeature(Feature):
         _prompt_chat_id: int | None = None,
         _prompt_message_id: int | None = None,
         _activating_message_id: int | None = None,
+        full_text: bool = True,
+        summarize: bool = True,
         **_,
     ):
         if _prompt_chat_id and _prompt_message_id:
@@ -192,6 +269,8 @@ class TranscribeFeature(Feature):
                 None,
                 speaker_first_name,
                 video_path=audio_path if is_video_note else None,
+                include_full_text=full_text,
+                summarize=summarize,
             )
             await self._process_transcribed_curses(ctx, source_message, transcription)
         except Exception as e:
@@ -208,6 +287,8 @@ class TranscribeFeature(Feature):
         is_video_note: bool,
         source_message: Message,
         curse_source_message: Message | None | object = _CURSE_SOURCE_DEFAULT,
+        full_text: bool = True,
+        summarize: bool = True,
     ):
         audio_path: Path | None = None
         try:
@@ -230,6 +311,8 @@ class TranscribeFeature(Feature):
                 sender.first_name if sender else None,
                 video_path=audio_path if is_video_note else None,
                 edit_message=placeholder,
+                include_full_text=full_text,
+                summarize=summarize,
             )
             if curse_source_message is _CURSE_SOURCE_DEFAULT:
                 curse_source_message = source_message

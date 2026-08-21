@@ -29,6 +29,7 @@ from steward.features.download.callbacks import (
     download_and_send_medias,
     send_media_files,
 )
+from steward.features.transcribe import AutoVideoTranscriptionFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
 from steward.helpers.media import has_audio_stream, is_video_file, run_ffmpeg
@@ -58,6 +59,17 @@ TIKTOK_VIDEO_FORMAT = (
 TIKTOK_FALLBACK_FORMAT = "download_addr/download/b"
 
 _CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
+
+
+def _auto_video_transcription_enabled(
+    repository: Repository,
+    message: Message,
+    supported: bool,
+) -> bool:
+    return supported and repository.is_capability_enabled(
+        message.chat_id,
+        AutoVideoTranscriptionFeature,
+    )
 
 
 def _make_caption(info: Any) -> str | None:
@@ -362,6 +374,12 @@ def make_video_loader(
     async def wrapper(repository: Repository, url: str, message: Message) -> None:
         pre_call()
 
+        auto_transcription_enabled = _auto_video_transcription_enabled(
+            repository,
+            message,
+            auto_transcribe_short,
+        )
+
         logger.info(f"trying get video from {type_name}...")
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
@@ -372,7 +390,7 @@ def make_video_loader(
                 cookie_file=cookie_file,
                 video_format=video_format,
                 fallback_format=fallback_format,
-                get_comments=auto_transcribe_short,
+                get_comments=auto_transcription_enabled,
             )
 
             width: Any = None
@@ -385,7 +403,7 @@ def make_video_loader(
 
             will_auto_transcribe = False
             if (
-                auto_transcribe_short
+                auto_transcription_enabled
                 and duration is not None
                 and duration < _TIKTOK_AUTO_MAX_DURATION_SEC
             ):

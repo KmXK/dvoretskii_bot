@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
-from steward.features.transcribe import TranscribeFeature
+from steward.features.transcribe import TranscribeFeature, _parse_output_options
 from steward.framework.types import from_chat_context
 from tests.conftest import DEFAULT_USER_ID, make_repository, make_text_context
 
@@ -24,6 +24,19 @@ def _prepare_repo():
     ]
     repo.is_capability_enabled = MagicMock(return_value=True)
     return repo
+
+
+def test_transcribe_output_options_keep_current_defaults():
+    assert _parse_output_options("") == (True, True)
+    assert _parse_output_options("full=off") == (False, True)
+    assert _parse_output_options("summary=off") == (True, False)
+    assert _parse_output_options("summary=on full=off") == (False, True)
+
+
+def test_transcribe_output_options_reject_empty_or_unknown_output():
+    assert _parse_output_options("full=off summary=off") is None
+    assert _parse_output_options("text=off") is None
+    assert _parse_output_options("full=maybe") is None
 
 
 async def test_transcribe_command_counts_curses_for_source_voice_author(monkeypatch):
@@ -192,3 +205,28 @@ async def test_transcribe_removes_temporary_file_after_processing(monkeypatch, t
     )
 
     assert not audio_path.exists()
+
+
+async def test_transcribe_passes_selected_output_options(monkeypatch, tmp_path):
+    repo = make_repository()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo))
+    audio_path = tmp_path / "audio.ogg"
+    audio_path.write_bytes(b"audio")
+    create_reply = AsyncMock(return_value="text")
+
+    monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=audio_path))
+    monkeypatch.setattr("steward.features.transcribe.create_transcription_reply", create_reply)
+    monkeypatch.setattr(feature, "_process_transcribed_curses", AsyncMock())
+
+    await feature._transcribe(
+        ctx,
+        file_id="file-id",
+        is_video_note=False,
+        source_message=ctx.message,
+        full_text=False,
+        summarize=True,
+    )
+
+    assert create_reply.await_args.kwargs["include_full_text"] is False
+    assert create_reply.await_args.kwargs["summarize"] is True

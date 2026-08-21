@@ -51,7 +51,7 @@ from steward.features.timezone import TimezoneFeature
 from steward.features.todo import TodoFeature
 from steward.features.settings import SettingsFeature
 from steward.features.shazam import ShazamFeature
-from steward.features.transcribe import TranscribeFeature
+from steward.features.transcribe import AutoVideoTranscriptionFeature, TranscribeFeature
 from steward.features.translate import TranslateFeature
 from steward.features.tts import TtsTestFeature
 from steward.features.tunnel import TunnelFeature
@@ -152,7 +152,8 @@ def all_features() -> list[Handler]:
 # и т.п.). Первый класс группы — primary, по нему берётся slug, label, описание.
 CAPABILITIES_GROUPED: dict[str, list[list[type]]] = {
     "ai":         [[AIFeature], [AiRelatedFeature], [PashaFeature], [DianaFeature], [TranslateFeature]],
-    "transcribe": [[TranscribeFeature], [ShazamFeature], [MultiplyFeature], [VoiceVideoFeature]],
+    "transcribe": [[TranscribeFeature], [AutoVideoTranscriptionFeature], [ShazamFeature],
+                   [MultiplyFeature], [VoiceVideoFeature]],
     "rules":      [[RuleFeature, RuleAnswerFeature]],
     "fun":        [[JokeFeature], [TarotFeature], [FuckFeature], [SexFeature], [ReactFeature],
                    [WatchFeature], [EveryoneFeature], [TennisFeature]],

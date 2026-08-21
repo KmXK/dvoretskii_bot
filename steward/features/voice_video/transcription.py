@@ -161,8 +161,10 @@ async def _summary_stream(
 
 
 def _compose_message(summary: str, spoiler_html: str) -> str:
-    if summary:
+    if summary and spoiler_html:
         body = f"{html.escape(summary)}\n\n{spoiler_html}"
+    elif summary:
+        body = html.escape(summary)
     else:
         body = spoiler_html
     if len(body) > _TG_TEXT_LIMIT:
@@ -258,6 +260,8 @@ def _fit_transcription_into_caption(
     body: str,
     visual_description: str | None,
     existing_caption_html: str,
+    *,
+    reserve_summary: bool = True,
 ) -> str | None:
     """HTML «Расшифровка»-блока (+ опционально «🎬 Визуал»), усечённый чтобы
     итоговый caption влез в 1024 символа. Возвращает None, если даже минимума
@@ -267,7 +271,8 @@ def _fit_transcription_into_caption(
         visual_html = "\n" + spoiler_block(visual_description, header="🎬 Визуал")
 
     base = len(existing_caption_html) + (1 if existing_caption_html else 0)
-    base += _CAPTION_SUMMARY_RESERVED + 1  # newline перед расшифровкой
+    if reserve_summary:
+        base += _CAPTION_SUMMARY_RESERVED + 1  # newline перед расшифровкой
     available = _TG_CAPTION_LIMIT - base - len(visual_html)
 
     trans_overhead = len(spoiler_block("", header="Расшифровка"))
@@ -383,7 +388,12 @@ async def create_transcription_reply(
     pretranscribed: str | None = None,
     caption_message=None,
     existing_caption_html: str = "",
+    include_full_text: bool = True,
+    summarize: bool = True,
 ) -> str | None:
+    if not include_full_text and not summarize:
+        raise ValueError("At least one transcription output must be enabled")
+
     speaker_name = build_speaker_name(
         repository,
         speaker_user_id,
@@ -444,10 +454,31 @@ async def create_transcription_reply(
     )
 
     if caption_message is not None:
-        caption_trans_html = _fit_transcription_into_caption(
-            body, visual_description, existing_caption_html
-        )
-        if caption_trans_html is not None:
+        caption_trans_html = ""
+        if include_full_text:
+            fitted = _fit_transcription_into_caption(
+                body,
+                visual_description,
+                existing_caption_html,
+                reserve_summary=summarize,
+            )
+            if fitted is None:
+                # Не влезает в caption — падаем на обычный reply-флоу ниже,
+                # используя caption_message как reply_target.
+                reply_target = caption_message
+            else:
+                caption_trans_html = fitted
+
+        if not include_full_text or caption_trans_html:
+            if not summarize:
+                final_text = _compose_caption(
+                    existing_caption_html,
+                    "",
+                    caption_trans_html,
+                    placeholder=False,
+                )
+                await _edit_caption_html(caption_message, final_text)
+                return transcription
             try:
                 stream = await _summary_stream(
                     transcription, natural_name, visual_description
@@ -457,6 +488,13 @@ async def create_transcription_reply(
                 final_text = _compose_caption(
                     existing_caption_html, "", caption_trans_html, placeholder=False
                 )
+                if not caption_trans_html:
+                    final_text = _compose_caption(
+                        existing_caption_html,
+                        "Не удалось сделать суммаризацию",
+                        "",
+                        placeholder=False,
+                    )
                 await _edit_caption_html(caption_message, final_text)
                 return transcription
             try:
@@ -469,23 +507,18 @@ async def create_transcription_reply(
             except Exception as e:
                 logger.exception("caption streaming failed: %s", e)
             return transcription
-        # Не влезает в caption — падаем на обычный reply-флоу ниже,
-        # используя caption_message как reply_target.
-        reply_target = caption_message
 
-    transcription_spoiler = spoiler_block(body)
-    spoiler_html = transcription_spoiler
-    if visual_description:
-        spoiler_html = transcription_spoiler + "\n" + spoiler_block(
-            visual_description, header="🎬 Визуал"
-        )
+    spoiler_html = ""
+    if include_full_text:
+        spoiler_html = spoiler_block(body)
+        if visual_description:
+            spoiler_html += "\n" + spoiler_block(
+                visual_description, header="🎬 Визуал"
+            )
 
-    try:
-        stream = await _summary_stream(transcription, natural_name, visual_description)
-    except Exception as e:
-        logger.exception("summary stream init failed: %s", e)
+    if not summarize:
+        markup = reply_markup_provider() if reply_markup_provider else None
         if edit_message is not None:
-            markup = reply_markup_provider() if reply_markup_provider else None
             try:
                 await edit_message.edit_text(
                     spoiler_html,
@@ -494,10 +527,33 @@ async def create_transcription_reply(
                 )
                 bot_message = edit_message
             except Exception as edit_err:
-                logger.warning("failed to edit message with spoiler: %s", edit_err)
+                logger.warning("failed to edit message with transcription: %s", edit_err)
                 bot_message = await reply_target.reply_html(spoiler_html)
         else:
             bot_message = await reply_target.reply_html(spoiler_html)
+        if bot_message is not None:
+            await _register_ai_reply_target(repository, reply_target, bot_message)
+        return transcription
+
+    try:
+        stream = await _summary_stream(transcription, natural_name, visual_description)
+    except Exception as e:
+        logger.exception("summary stream init failed: %s", e)
+        fallback_html = spoiler_html or "Не удалось сделать суммаризацию"
+        if edit_message is not None:
+            markup = reply_markup_provider() if reply_markup_provider else None
+            try:
+                await edit_message.edit_text(
+                    fallback_html,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                )
+                bot_message = edit_message
+            except Exception as edit_err:
+                logger.warning("failed to edit message with spoiler: %s", edit_err)
+                bot_message = await reply_target.reply_html(fallback_html)
+        else:
+            bot_message = await reply_target.reply_html(fallback_html)
     else:
         bot_message = await _stream_summary_with_spoiler(
             reply_target,

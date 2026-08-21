@@ -670,9 +670,12 @@ class SettingsFeature(Feature):
             return ""
         names: list[str] = []
         for cls in classes:
+            settings_label = getattr(cls, "settings_label", None)
             command = getattr(cls, "command", None)
             if command:
                 names.append(f"/{command}")
+            elif settings_label:
+                names.append(settings_label)
             else:
                 names.append(cls.__name__.removesuffix("Feature"))
         return ", ".join(names)
@@ -686,6 +689,9 @@ class SettingsFeature(Feature):
         return "on"
 
     def _feature_button_label(self, cls: type) -> str:
+        settings_label = getattr(cls, "settings_label", None)
+        if settings_label:
+            return settings_label
         command = getattr(cls, "command", None)
         if command:
             return f"/{command}"
