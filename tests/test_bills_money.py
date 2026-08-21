@@ -350,3 +350,49 @@ class TestComputeBillBalances:
 
         assert balances[2]["dmitrux"]["kirill"] == 500
         assert credits == {}
+
+    def test_partially_writes_off_credit(self):
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2800,
+            status="confirmed",
+            bill_ids=[],
+        )
+        write_off = BillPaymentV2(
+            id="write-off",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1000,
+            status="confirmed",
+            bill_ids=[],
+            is_refund=True,
+        )
+
+        _, credits = compute_bill_balances([], [overpayment, write_off])
+
+        assert credits == {("dmitrux", "kirill", "BYN"): 1800}
+
+    def test_fully_writes_off_credit(self):
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2800,
+            status="confirmed",
+            bill_ids=[],
+        )
+        write_off = BillPaymentV2(
+            id="write-off",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2800,
+            status="confirmed",
+            bill_ids=[],
+            is_refund=True,
+        )
+
+        _, credits = compute_bill_balances([], [overpayment, write_off])
+
+        assert credits == {}

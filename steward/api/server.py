@@ -3217,6 +3217,67 @@ async def handle_bills_payment_received(request: web.Request):
     return web.json_response(_serialize_payment_v2(payment))
 
 
+async def handle_bills_credit_write_off(request: web.Request):
+    import uuid as _uuid
+    from steward.data.models.bill_v2 import BillPaymentV2, PaymentStatus
+    from steward.helpers.bills_money import compute_bill_balances
+
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+
+    data = await request.json()
+    debtor_id = str(data.get("debtor") or "")
+    creditor_id = str(data.get("creditor") or "")
+    currency = str(data.get("currency") or "BYN")
+    try:
+        amount_minor = int(data.get("amount_minor", 0))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid amount"}, status=400)
+
+    debtor = repository.get_bill_person(debtor_id)
+    creditor = repository.get_bill_person(creditor_id)
+    if not debtor or not creditor or debtor.id == creditor.id:
+        return web.json_response({"error": "invalid credit pair"}, status=400)
+
+    caller = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
+    is_admin = repository.is_admin(int(tg_user["id"]))
+    if not is_admin and (not caller or caller.id not in (debtor.id, creditor.id)):
+        return web.json_response({"error": "no access to this credit"}, status=403)
+
+    _, credits = compute_bill_balances(
+        repository.db.bills_v2,
+        repository.db.bill_payments_v2,
+    )
+    available = credits.get((debtor.id, creditor.id, currency), 0)
+    if amount_minor <= 0:
+        return web.json_response({"error": "amount must be positive"}, status=400)
+    if amount_minor > available:
+        return web.json_response({
+            "error": "amount exceeds current credit",
+            "available_minor": available,
+        }, status=409)
+
+    payment = BillPaymentV2(
+        id=str(_uuid.uuid4()),
+        debtor=debtor.id,
+        creditor=creditor.id,
+        amount_minor=amount_minor,
+        currency=currency,
+        status=PaymentStatus.CONFIRMED,
+        bill_ids=[],
+        is_refund=True,
+    )
+    repository.db.bill_payments_v2.append(payment)
+    await repository.save()
+    return web.json_response({
+        "payment": _serialize_payment_v2(payment),
+        "written_off_minor": amount_minor,
+        "remaining_credit_minor": available - amount_minor,
+    })
+
+
 async def handle_bills_payment_confirm(request: web.Request):
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -3352,6 +3413,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
     app.router.add_post("/api/bills/payments", handle_bills_payment_create)
     app.router.add_post("/api/bills/payments/received", handle_bills_payment_received)
+    app.router.add_post("/api/bills/credits/write-off", handle_bills_credit_write_off)
     app.router.add_put("/api/bills/payments/{pid}/confirm", handle_bills_payment_confirm)
     app.router.add_put("/api/bills/payments/{pid}/reject", handle_bills_payment_reject)
     app.router.add_post("/api/bills/suggestions/{sid}/approve", handle_bills_suggestion_approve)

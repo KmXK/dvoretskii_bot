@@ -235,30 +235,145 @@ function DebtColumn({ tone, title, total, breakdown, personsById, currency }) {
   )
 }
 
-function CreditSummary({ credits, myPersonId, personsById }) {
+function CreditSummary({ credits, myPersonId, personsById, onChanged }) {
+  const api = useApi()
+  const [selected, setSelected] = useState(null)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
   if (!myPersonId || credits.length === 0) return null
 
+  const openWriteOff = (credit) => {
+    setSelected(credit)
+    setValue((credit.amount_minor / 100).toFixed(credit.amount_minor % 100 === 0 ? 0 : 2))
+    setError(null)
+  }
+
+  const closeWriteOff = () => {
+    if (busy) return
+    setSelected(null)
+    setValue('')
+    setError(null)
+  }
+
+  const submitWriteOff = async () => {
+    const amountMinor = Math.round(Number(value.replace(',', '.')) * 100)
+    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+      setError('Укажи сумму больше нуля')
+      return
+    }
+    if (amountMinor > selected.amount_minor) {
+      setError('Нельзя списать больше текущей переплаты')
+      return
+    }
+
+    setBusy(true)
+    setError(null)
+    try {
+      await api('/api/bills/credits/write-off', {
+        method: 'POST',
+        body: {
+          debtor: selected.debtor,
+          creditor: selected.creditor,
+          currency: selected.currency,
+          amount_minor: amountMinor,
+        },
+      })
+      setSelected(null)
+      setValue('')
+      await onChanged()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const selectedMine = selected?.debtor === myPersonId
+  const selectedPersonId = selectedMine ? selected?.creditor : selected?.debtor
+  const selectedPerson = personsById[selectedPersonId]?.display_name || '?'
+
   return (
-    <div className="bg-gold/10 rounded-xl p-3 mb-4">
-      <div className="text-gold text-xs font-semibold mb-2">Переплаты</div>
-      <div className="space-y-1.5">
-        {credits.map((credit) => {
-          const mine = credit.debtor === myPersonId
-          const personId = mine ? credit.creditor : credit.debtor
-          const person = personsById[personId]?.display_name || '?'
-          return (
-            <div key={`${credit.debtor}:${credit.creditor}:${credit.currency}`} className="flex items-center justify-between gap-3 text-sm">
-              <span className="text-spotify-text truncate">
-                {mine ? `Твоя переплата у ${person}` : `${person} переплатил тебе`}
-              </span>
-              <span className="text-gold font-semibold tabular-nums shrink-0">
-                {formatMinor(credit.amount_minor, credit.currency)}
-              </span>
-            </div>
-          )
-        })}
+    <>
+      <div className="bg-gold/10 rounded-xl p-3 mb-4">
+        <div className="text-gold text-xs font-semibold mb-2">Переплаты</div>
+        <div className="space-y-2">
+          {credits.map((credit) => {
+            const mine = credit.debtor === myPersonId
+            const personId = mine ? credit.creditor : credit.debtor
+            const person = personsById[personId]?.display_name || '?'
+            return (
+              <div key={`${credit.debtor}:${credit.creditor}:${credit.currency}`} className="flex items-center gap-2 text-sm">
+                <span className="text-spotify-text truncate flex-1">
+                  {mine ? `Твоя переплата у ${person}` : `${person} переплатил тебе`}
+                </span>
+                <span className="text-gold font-semibold tabular-nums shrink-0">
+                  {formatMinor(credit.amount_minor, credit.currency)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openWriteOff(credit)}
+                  className="text-xs bg-gold/20 text-gold rounded-lg px-2 py-1 hover:bg-gold/30 transition-colors"
+                >Списать</button>
+              </div>
+            )
+          })}
+        </div>
       </div>
-    </div>
+
+      <Dialog.Root open={selected !== null} onOpenChange={(open) => { if (!open) closeWriteOff() }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
+          <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
+            bg-spotify-black rounded-2xl p-5 w-[calc(100%-2rem)] max-w-sm">
+            <Dialog.Title className="text-white text-lg font-bold mb-2">Списать переплату</Dialog.Title>
+            <Dialog.Description className="text-spotify-text text-sm mb-4">
+              {selectedMine ? `Твоя переплата у ${selectedPerson}` : `${selectedPerson} переплатил тебе`}
+            </Dialog.Description>
+            {selected && (
+              <div className="space-y-3">
+                <div className="text-xs text-spotify-text">
+                  Доступно: <span className="text-gold font-semibold">{formatMinor(selected.amount_minor, selected.currency)}</span>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    inputMode="decimal"
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                    className="flex-1 min-w-0 bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setValue((selected.amount_minor / 100).toFixed(selected.amount_minor % 100 === 0 ? 0 : 2))}
+                    className="bg-spotify-gray text-white text-xs rounded-lg px-3"
+                  >Всё</button>
+                </div>
+                <div className="text-xs text-spotify-text/70">
+                  Исходный перевод останется в истории, а списание появится отдельной корректировкой.
+                </div>
+                {error && <div className="text-red-400 text-xs">{error}</div>}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={closeWriteOff}
+                    disabled={busy}
+                    className="flex-1 bg-spotify-gray text-white rounded-lg py-2 disabled:opacity-50"
+                  >Отмена</button>
+                  <button
+                    type="button"
+                    onClick={submitWriteOff}
+                    disabled={busy}
+                    className="flex-1 bg-gold text-black rounded-lg py-2 font-medium disabled:opacity-50"
+                  >{busy ? '...' : 'Списать'}</button>
+                </div>
+              </div>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
   )
 }
 
@@ -1064,7 +1179,12 @@ export default function BillsPage() {
         <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
 
         <DebtSummary bills={bills} myPersonId={myPerson?.id} personsById={personsById} />
-        <CreditSummary credits={credits} myPersonId={myPerson?.id} personsById={personsById} />
+        <CreditSummary
+          credits={credits}
+          myPersonId={myPerson?.id}
+          personsById={personsById}
+          onChanged={reload}
+        />
 
         <div className="flex gap-2 mb-4">
           <button
