@@ -27,7 +27,8 @@ function formatMinor(minor, currency = 'BYN') {
 
 function formatDateTime(value) {
   if (!value) return 'дата неизвестна'
-  const date = new Date(value)
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`
+  const date = new Date(normalized)
   if (Number.isNaN(date.getTime())) return 'дата неизвестна'
   return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',

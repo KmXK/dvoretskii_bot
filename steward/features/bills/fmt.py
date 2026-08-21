@@ -1,6 +1,7 @@
 """Message formatting and keyboards for /bills."""
 from __future__ import annotations
 
+from datetime import timedelta, timezone
 from typing import TYPE_CHECKING
 
 from steward.data.models.bill_v2 import BillPerson, BillV2, UNKNOWN_PERSON_ID
@@ -238,7 +239,9 @@ def _person_credits(
 
 def _created_at(value) -> str:
     if hasattr(value, "strftime"):
-        return value.strftime("%d.%m.%Y %H:%M")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M")
     return "?"
 
 
