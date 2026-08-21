@@ -1,24 +1,31 @@
 import asyncio
 import logging
-from dataclasses import dataclass
 
 from steward.framework import (
     Feature,
     FeatureContext,
+    ask,
     collection,
-    on_message,
     subcommand,
+    wizard,
 )
 from steward.helpers.command_validation import ValidationArgumentsError
+from steward.helpers.validation import Error, validate_message_text
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class _PendingStandAdd:
-    stand_name: str
-    description: str | None = None
-    step: str = "description"
+def _strip_nonempty(value: str):
+    value = value.strip()
+    return value or Error("Сообщение пустое, пришли текст.")
+
+
+def _parse_owner_identifier(value: str, state: dict):
+    key = value.strip().lstrip("@").lower()
+    target_user_id = state["_owner_ids"].get(key)
+    if target_user_id is None:
+        return Error("Пользователь не найден. Укажи @username или user_id.")
+    return target_user_id
 
 
 class StandsFeature(Feature):
@@ -31,10 +38,6 @@ class StandsFeature(Feature):
     ]
 
     users = collection("users")
-
-    def __init__(self):
-        super().__init__()
-        self._pending_add: dict[int, _PendingStandAdd] = {}
 
     @subcommand("", description="Список")
     async def view(self, ctx: FeatureContext):
@@ -51,10 +54,16 @@ class StandsFeature(Feature):
                 f"Пользователь «{stand_name}» уже привязан к @{existing.username or existing.id}"
             )
             return
-        self._pending_add[ctx.user_id] = _PendingStandAdd(stand_name=stand_name)
-        await ctx.reply(
-            f"Добавляем пользователя «{stand_name}».\n"
-            "Пришли описание пользователя одним сообщением."
+        owner_ids: dict[str, int] = {}
+        for user in self.users:
+            owner_ids[str(user.id)] = user.id
+            if user.username:
+                owner_ids[user.username.lower()] = user.id
+        await self.start_wizard(
+            "stands:add",
+            ctx,
+            stand_name=stand_name,
+            _owner_ids=owner_ids,
         )
 
     @subcommand("remove <name:rest>", description="Удалить пользователя")
@@ -71,58 +80,58 @@ class StandsFeature(Feature):
         await self.users.save()
         await ctx.reply(f"Пользователь «{stand_name}» удален.")
 
-    @on_message
-    async def handle_pending(self, ctx: FeatureContext) -> bool:
-        if ctx.message is None:
-            return False
-        text = ctx.message.text or ""
-        if text.startswith("/"):
-            return False
-        pending = self._pending_add.get(ctx.user_id)
-        if pending is None:
-            return False
-        trimmed = text.strip()
-        if not trimmed:
-            await ctx.reply("Сообщение пустое, пришли текст.")
-            return True
-
-        if pending.step == "description":
-            pending.description = trimmed
-            pending.step = "user"
-            await ctx.reply("Теперь укажи владельца (@username или user_id).")
-            return True
-
-        target = self._by_identifier(trimmed)
+    @wizard(
+        "stands:add",
+        ask(
+            "description",
+            lambda state: (
+                f"Добавляем пользователя «{state['stand_name']}».\n"
+                "Пришли описание пользователя одним сообщением."
+            ),
+            validator=validate_message_text([_strip_nonempty]),
+            force_reply=True,
+        ),
+        ask(
+            "target_user_id",
+            "Теперь укажи владельца (@username или user_id).",
+            validator=validate_message_text([_parse_owner_identifier]),
+            force_reply=True,
+        ),
+    )
+    async def add_done(
+        self,
+        ctx: FeatureContext,
+        stand_name: str,
+        description: str,
+        target_user_id: int,
+        **_,
+    ):
+        target = self.users.find_by(id=target_user_id)
         if target is None:
-            await ctx.reply("Пользователь не найден. Укажи @username или user_id.")
-            return True
+            await ctx.reply("Пользователь больше не найден. Запусти добавление заново.")
+            return
 
-        assert pending.description is not None
         if target.stand_name and target.stand_name.strip():
             await ctx.reply(
                 f"У @{target.username or target.id} уже есть пользователь «{target.stand_name}»."
             )
-            self._pending_add.pop(ctx.user_id, None)
-            return True
+            return
 
-        same = self._by_stand(pending.stand_name)
+        same = self._by_stand(stand_name)
         if same is not None and same.id != target.id:
-            await ctx.reply(f"Пользователь «{pending.stand_name}» уже привязан к другому владельцу.")
-            self._pending_add.pop(ctx.user_id, None)
-            return True
+            await ctx.reply(f"Пользователь «{stand_name}» уже привязан к другому владельцу.")
+            return
 
-        target.stand_name = pending.stand_name
-        target.stand_description = pending.description
+        target.stand_name = stand_name
+        target.stand_description = description
         target.stand_aliases = []
         await self.users.save()
-        self._pending_add.pop(ctx.user_id, None)
         await ctx.reply(
             f"Готово. Пользователь «{target.stand_name}» сохранен для @{target.username or target.id}."
         )
         asyncio.create_task(
-            self._extract_aliases(target.id, pending.stand_name, pending.description)
+            self._extract_aliases(target.id, stand_name, description)
         )
-        return True
 
     async def _extract_aliases(self, user_id: int, stand_name: str, description: str) -> None:
         try:
@@ -173,15 +182,4 @@ class StandsFeature(Feature):
         target = stand_name.strip().lower()
         return self.users.find_one(
             lambda u: u.stand_name and u.stand_name.strip().lower() == target
-        )
-
-    def _by_identifier(self, identifier: str):
-        value = identifier.strip().lstrip("@")
-        if not value:
-            return None
-        if value.isdigit():
-            return self.users.find_by(id=int(value))
-        target = value.lower()
-        return self.users.find_one(
-            lambda u: u.username and u.username.lower() == target
         )

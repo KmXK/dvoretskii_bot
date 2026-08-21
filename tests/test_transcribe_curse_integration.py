@@ -133,3 +133,62 @@ async def test_transcribe_command_respects_disabled_curse_capability(monkeypatch
     ctx.metrics.inc.assert_not_called()
     source_message.set_reaction.assert_not_called()
     assert repo.db.curse_punishment_debts == []
+
+
+async def test_transcribe_downloads_remote_file_to_temporary_path(monkeypatch):
+    repo = make_repository()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo))
+    downloaded_paths: list[Path] = []
+
+    async def fake_fetch(bot, file_id, destination):
+        assert bot is ctx.bot
+        assert file_id == "remote-file-id"
+        destination.write_bytes(b"audio")
+        downloaded_paths.append(destination)
+        return destination
+
+    monkeypatch.setattr(
+        "steward.features.transcribe.fetch_tg_file_to",
+        fake_fetch,
+    )
+
+    audio_path = await feature._resolve_audio_path(ctx, "remote-file-id")
+
+    assert audio_path == downloaded_paths[0]
+    assert audio_path.read_bytes() == b"audio"
+    feature._remove_audio_path(audio_path)
+    assert not audio_path.exists()
+
+
+async def test_transcribe_removes_temporary_file_after_processing(monkeypatch, tmp_path):
+    repo = make_repository()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo))
+    source_message = ctx.message
+    audio_path = tmp_path / "audio.ogg"
+    audio_path.write_bytes(b"audio")
+
+    monkeypatch.setattr(
+        feature,
+        "_resolve_audio_path",
+        AsyncMock(return_value=audio_path),
+    )
+    monkeypatch.setattr(
+        "steward.features.transcribe.create_transcription_reply",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        feature,
+        "_process_transcribed_curses",
+        AsyncMock(),
+    )
+
+    await feature._transcribe(
+        ctx,
+        file_id="file-id",
+        is_video_note=False,
+        source_message=source_message,
+    )
+
+    assert not audio_path.exists()

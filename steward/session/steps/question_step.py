@@ -1,5 +1,7 @@
 from typing import Callable
 
+from telegram import ForceReply
+
 from steward.helpers.validation import Error, Validator, call_validator_callable
 from steward.session.step import Step
 
@@ -15,12 +17,17 @@ class QuestionStep(Step):
         question: str | Callable[[dict], str],
         filter_answer: Validator,
         write_question: Callable[[dict], bool] = lambda c: True,
+        force_reply: bool = False,
     ):
         self.key = key
         self.question = question
         self.filter_answer = filter_answer
         self.is_waiting = False
         self.write_question = write_question
+        self.force_reply = force_reply
+
+    def _reply_markup(self):
+        return ForceReply(selective=True) if self.force_reply else None
 
     async def chat(self, context):
         if not self.is_waiting:
@@ -28,7 +35,8 @@ class QuestionStep(Step):
                 await context.message.reply_text(
                     self.question(context.session_context)
                     if callable(self.question)
-                    else self.question
+                    else self.question,
+                    reply_markup=self._reply_markup(),
                 )
             self.is_waiting = True
             return False  # to stay on this handler in session
@@ -54,7 +62,8 @@ class QuestionStep(Step):
                 await context.callback_query.message.chat.send_message(
                     self.question(context.session_context)
                     if callable(self.question)
-                    else self.question
+                    else self.question,
+                    reply_markup=self._reply_markup(),
                 )
             self.is_waiting = True
         return False

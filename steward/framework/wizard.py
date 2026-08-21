@@ -28,6 +28,7 @@ class _AskStepSpec:
     key: str
     question: str | Callable[[dict], str]
     validator: Validator | None = None
+    force_reply: bool = False
     when: Callable[[SessionContext], bool] | None = None
 
     def build(self) -> Step:
@@ -38,6 +39,7 @@ class _AskStepSpec:
             key=self.key,
             question=self.question,
             filter_answer=validator,
+            force_reply=self.force_reply,
         )
         if self.when is not None:
             return _ConditionalStep(step, self.when)
@@ -182,9 +184,16 @@ def ask(
     question: str | Callable[[dict], str],
     *,
     validator: Validator | None = None,
+    force_reply: bool = False,
     when: Callable[[SessionContext], bool] | None = None,
 ) -> _AskStepSpec:
-    return _AskStepSpec(key=key, question=question, validator=validator, when=when)
+    return _AskStepSpec(
+        key=key,
+        question=question,
+        validator=validator,
+        force_reply=force_reply,
+        when=when,
+    )
 
 
 def ask_message(

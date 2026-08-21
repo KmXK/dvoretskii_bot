@@ -1,4 +1,5 @@
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from steward.features.curse_metric import CurseMetricFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.framework import Feature, FeatureContext, step, subcommand, wizard
 from steward.helpers.curse_processing import process_transcribed_curse_text
+from steward.helpers.media import fetch_tg_file_to
 from steward.session.context import ChatStepContext
 from steward.session.step import Step
 
@@ -172,6 +174,7 @@ class TranscribeFeature(Feature):
             return
 
         source_message = ctx.message
+        audio_path: Path | None = None
         try:
             audio_path = await self._resolve_audio_path(ctx, file_id)
         except Exception as e:
@@ -194,6 +197,8 @@ class TranscribeFeature(Feature):
         except Exception as e:
             logger.exception("/transcribe session: failed: %s", e)
             await ctx.reply("Не удалось сделать расшифровку", markdown=False)
+        finally:
+            self._remove_audio_path(audio_path)
 
     async def _transcribe(
         self,
@@ -204,6 +209,7 @@ class TranscribeFeature(Feature):
         source_message: Message,
         curse_source_message: Message | None | object = _CURSE_SOURCE_DEFAULT,
     ):
+        audio_path: Path | None = None
         try:
             audio_path = await self._resolve_audio_path(ctx, file_id)
         except Exception as e:
@@ -234,6 +240,8 @@ class TranscribeFeature(Feature):
                 await placeholder.edit_text("Не удалось сделать расшифровку")
             except Exception:
                 pass
+        finally:
+            self._remove_audio_path(audio_path)
 
     async def _process_transcribed_curses(
         self,
@@ -250,13 +258,24 @@ class TranscribeFeature(Feature):
         )
 
     async def _resolve_audio_path(self, ctx: FeatureContext, file_id: str) -> Path:
-        tg_file = await ctx.bot.get_file(file_id)
-        if not tg_file.file_path:
-            raise Exception("File path is not available")
-        fp = tg_file.file_path
-        if "/file/bot" in fp:
-            fp = fp.split("/file/bot", 1)[1].split("/", 1)[1]
-        audio_path = Path(f"/data/{ctx.bot.token}/{fp}")
-        if not audio_path.exists():
-            raise Exception(f"File not found: {audio_path}")
-        return audio_path
+        with tempfile.NamedTemporaryFile(
+            prefix="dvoretskii_transcribe_",
+            suffix=".media",
+            delete=False,
+        ) as temporary_file:
+            audio_path = Path(temporary_file.name)
+
+        try:
+            return await fetch_tg_file_to(ctx.bot, file_id, audio_path)
+        except Exception:
+            self._remove_audio_path(audio_path)
+            raise
+
+    @staticmethod
+    def _remove_audio_path(audio_path: Path | None) -> None:
+        if audio_path is None:
+            return
+        try:
+            audio_path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("Unable to remove /transcribe file %s: %s", audio_path, e)
