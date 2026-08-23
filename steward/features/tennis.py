@@ -7,8 +7,12 @@ WebSocket-хендлер и фоновая корутина TTL. Сама фич
 from __future__ import annotations
 
 import os
+import html as html_lib
+import logging
 from datetime import datetime
 from typing import Any
+
+import telegram
 
 from steward.data.models.tennis import TennisMatch, TennisSession
 from steward.framework import (
@@ -21,6 +25,7 @@ from steward.framework import (
     collection,
     confirm,
     on_init,
+    on_callback,
     resource_author,
     subcommand,
     wizard,
@@ -40,6 +45,8 @@ from steward.tennis.engine import (
     sport_meta,
 )
 from steward.tennis.room_manager import get_manager
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_aggregate_score(text: str) -> tuple[int, int]:
@@ -86,7 +93,10 @@ from steward.tennis.import_parser import (
 
 
 def _format_user(users_collection, user_id: int) -> str:
-    user = users_collection.find_by(id=user_id)
+    if hasattr(users_collection, "find_by"):
+        user = users_collection.find_by(id=user_id)
+    else:
+        user = next((item for item in users_collection if item.id == user_id), None)
     if user is None:
         return f"id{user_id}"
     if getattr(user, "username", None):
@@ -124,6 +134,47 @@ def _format_session_line(session: TennisSession, users) -> str:
     )
     parties = "агрегат" if session.is_aggregate_only else f"{len(session.matches)} парт."
     return f"{emoji} #{session.id} {date} · {name_a} {wins_a}:{wins_b} {name_b} · {parties}{tag}"
+
+
+def _session_stats_text(session: TennisSession, users) -> str:
+    wins_a, wins_b = session_wins(session)
+    name_a = html_lib.escape(_format_user(users, session.player_a_id))
+    name_b = html_lib.escape(_format_user(users, session.player_b_id))
+    duration = None
+    if session.ended_at is not None:
+        duration = max(0, int((session.ended_at - session.started_at).total_seconds()))
+    lines = [
+        f"<b>Сессия #{session.id}</b>",
+        f"{html_lib.escape(sport_meta(session.sport)['label'])} · "
+        f"{session.started_at.strftime('%d.%m.%Y %H:%M')}",
+        "",
+        f"<b>{name_a} {wins_a}:{wins_b} {name_b}</b>",
+    ]
+    if session.is_aggregate_only:
+        lines.append("Сохранён только итоговый счёт — партий нет.")
+    elif session.matches:
+        lines.extend(["", "<b>Партии:</b>"])
+        points_a = points_b = 0
+        for index, match in enumerate(session.matches, 1):
+            score = "—"
+            if match.score_a is not None and match.score_b is not None:
+                score = f"{match.score_a}:{match.score_b}"
+                points_a += match.score_a
+                points_b += match.score_b
+            winner = name_a if match.winner == SIDE_A else name_b
+            lines.append(f"{index}. <code>{score}</code> · {winner}")
+        lines.extend([
+            "",
+            f"Партий: {len(session.matches)} · очки: {points_a}:{points_b}",
+        ])
+    if duration is not None:
+        minutes, seconds = divmod(duration, 60)
+        lines.append(f"Длительность: {minutes}:{seconds:02d}")
+    if session.closed_reason == "timeout":
+        lines.append("Завершена по таймауту")
+    elif session.ended_at is None:
+        lines.append("Сессия ещё идёт")
+    return "\n".join(lines)
 
 
 def _build_webapp_keyboard(bot, chat_id: int, is_private: bool) -> Keyboard | None:
@@ -247,7 +298,16 @@ class TennisFeature(Feature):
 
     @subcommand("", description="Список последних сессий")
     async def list_(self, ctx: FeatureContext):
-        chat_sessions = self.sessions.filter(chat_id=ctx.chat_id)
+        chat_sessions = [
+            session for session in self.sessions.filter(chat_id=ctx.chat_id)
+            if ctx.user_id in (
+                session.player_a_id,
+                session.player_b_id,
+                session.player_a2_id,
+                session.player_b2_id,
+                session.initiator_id,
+            )
+        ]
         chat_sessions.sort(key=lambda s: s.started_at, reverse=True)
         if not chat_sessions:
             await ctx.reply(
@@ -255,8 +315,67 @@ class TennisFeature(Feature):
                 "Запусти live: /tennis start или импортируй прошедшую: /tennis add."
             )
             return
-        lines = [_format_session_line(s, self.users) for s in chat_sessions[:10]]
-        await ctx.reply("Последние сессии:\n" + "\n".join(lines))
+        recent = chat_sessions[:5]
+        keyboard = Keyboard([
+            [self.cb("tennis:session").button(f"Сессия #{s.id}", session_id=s.id)]
+            for s in recent
+        ])
+        rich = self._render_recent_rich(recent)
+        try:
+            await ctx.bot.do_api_request(
+                "sendRichMessage",
+                api_kwargs={
+                    "chat_id": ctx.chat_id,
+                    "rich_message": {"markdown": rich},
+                    "reply_markup": keyboard.to_markup().to_dict(),
+                },
+            )
+        except telegram.error.TelegramError as error:
+            logger.warning("tennis rich list failed, using HTML fallback: %s", error)
+            await ctx.reply(
+                "<b>Твои последние сессии</b>\n\n"
+                + "\n".join(html_lib.escape(_format_session_line(s, self.users)) for s in recent),
+                keyboard=keyboard,
+                html=True,
+                markdown=False,
+            )
+
+    def _render_recent_rich(self, sessions: list[TennisSession]) -> str:
+        lines = [
+            "# Твои последние сессии",
+            "",
+            "| № | Дата | Игроки | Счёт |",
+            "|--:|:-----|:-----|:----:|",
+        ]
+        for session in sessions:
+            wins_a, wins_b = session_wins(session)
+            name_a = _format_user(self.users, session.player_a_id).replace("|", "\\|")
+            name_b = _format_user(self.users, session.player_b_id).replace("|", "\\|")
+            date = session.started_at.strftime("%d.%m")
+            lines.append(
+                f"| {session.id} | {date} | {name_a} - {name_b} | **{wins_a}:{wins_b}** |"
+            )
+        lines.extend(["", "Нажми кнопку ниже, чтобы посмотреть партии и статистику."])
+        return "\n".join(lines)
+
+    @on_callback("tennis:session", schema="<session_id:int>")
+    async def view_session_callback(self, ctx: FeatureContext, session_id: int):
+        session = self.sessions.find_by(id=session_id)
+        if session is None or ctx.user_id not in (
+            session.player_a_id,
+            session.player_b_id,
+            session.player_a2_id,
+            session.player_b2_id,
+            session.initiator_id,
+        ):
+            await ctx.toast("Сессия не найдена", show_alert=True)
+            return
+        await ctx.reply(
+            _session_stats_text(session, self.users),
+            html=True,
+            markdown=False,
+        )
+        await ctx.toast()
 
     @subcommand("start", description="Запустить live-сессию (визард)")
     async def start_wizard_cmd(self, ctx: FeatureContext):

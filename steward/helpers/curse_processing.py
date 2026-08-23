@@ -3,6 +3,7 @@ from typing import Any
 
 from steward.data.repository import Repository
 from steward.helpers.curse_debt import accrue_curse_debt, today_msk
+from steward.helpers.curse_streak import record_curses
 from steward.helpers.curse_detector import CurseDetector
 from steward.metrics.base import ContextMetrics, Labels
 
@@ -71,7 +72,10 @@ async def process_curse_text(
         except Exception:
             logger.warning("failed to set curse reaction", exc_info=True)
 
-    if accrue_curse_debt(repo, user_id, count, today_msk()):
+    today = today_msk()
+    changed = record_curses(repo, user_id, count, today)
+    changed = accrue_curse_debt(repo, user_id, count, today) or changed
+    if changed:
         await repo.save()
     return count
 

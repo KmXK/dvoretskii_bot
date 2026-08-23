@@ -37,7 +37,13 @@ from .channel_subscription import ChannelSubscription
 from .chat import Chat
 from .chat_tunnel import ChatTunnel, TunnelMessage
 from .command_alias import CommandAlias
-from .curse import CurseParticipant, CursePunishment, CursePunishmentDay, CursePunishmentDebt
+from .curse import (
+    CurseParticipant,
+    CursePunishment,
+    CursePunishmentDay,
+    CursePunishmentDebt,
+    CurseStreak,
+)
 from .feature_request import FeatureRequest
 from .fuck_asset import FuckAsset
 from .holiday_cache import HolidayCache
@@ -63,6 +69,7 @@ class Database:
     curse_punishments: list[CursePunishment] = field(default_factory=list)
     curse_punishment_debts: list[CursePunishmentDebt] = field(default_factory=list)
     curse_punishment_days: list[CursePunishmentDay] = field(default_factory=list)
+    curse_streaks: list[CurseStreak] = field(default_factory=list)
     curse_debts_backfilled: bool = False
     curse_words: set[str] = field(default_factory=set)
     curse_ignore_words: set[str] = field(default_factory=set)
@@ -111,7 +118,7 @@ class Database:
     tunnel_messages: list[TunnelMessage] = field(default_factory=list)
     paired_devices: list[PairedDevice] = field(default_factory=list)
 
-    version: int = 42
+    version: int = 43
 
 
 PARSE_CONFIG = Config(

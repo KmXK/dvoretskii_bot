@@ -5,6 +5,7 @@ import pytest
 from telegram import ForceReply
 
 from steward.data.models.user import User
+from steward.features import ai
 from steward.features.stands import StandsFeature
 from steward.session.session_registry import (
     session_last_activity,
@@ -12,6 +13,7 @@ from steward.session.session_registry import (
     try_get_session_handler,
 )
 from tests.conftest import (
+    CHAT_ID,
     DEFAULT_USER_ID,
     get_reply_text,
     invoke,
@@ -30,6 +32,7 @@ def _user(
     return User(
         id=user_id, username=username,
         stand_name=stand_name, stand_description=stand_description,
+        chat_ids=[CHAT_ID, -1001, -1002],
     )
 
 
@@ -67,20 +70,51 @@ class TestStandsView:
 
     async def test_shows_stands(self):
         repo = make_repository()
-        repo.db.users = [_user(stand_name="StarPlatinum", stand_description="A powerful stand")]
+        repo.db.users = [
+            _user(
+                stand_name="StarPlatinum",
+                stand_description="A powerful stand",
+            )
+        ]
         reply, ok = await invoke(StandsFeature, "/stands", repo)
         assert ok
         assert "StarPlatinum" in reply
+
+    def test_ai_context_uses_only_stands_of_current_chat_members(self, monkeypatch):
+        repo = make_repository()
+        repo.db.users = [
+            User(
+                id=1,
+                chat_ids=[-1001],
+                stand_name="StarPlatinum",
+                stand_description="first user",
+            ),
+            User(
+                id=2,
+                chat_ids=[-1001, -1002],
+                stand_name="CrazyDiamond",
+                stand_description="shared user",
+            ),
+        ]
+        monkeypatch.setitem(ai._REPO_HOLDER, "repo", repo)
+
+        block = ai._build_users_descriptions_block(-1002)
+
+        assert "CrazyDiamond" in block
+        assert "StarPlatinum" not in block
 
 
 class TestStandsRemove:
     async def test_removes_stand(self):
         repo = make_repository()
-        repo.db.users = [_user(stand_name="StarPlatinum", stand_description="desc")]
+        repo.db.users = [
+            _user(stand_name="StarPlatinum", stand_description="desc")
+        ]
         reply, ok = await invoke(StandsFeature, "/stands remove StarPlatinum", repo)
         assert ok
         assert "удален" in reply
         assert repo.db.users[0].stand_name is None
+        assert repo.db.users[0].stand_description is None
 
     async def test_not_found(self):
         reply, ok = await invoke(StandsFeature, "/stands remove Unknown", make_repository())
@@ -168,9 +202,42 @@ class TestStandsAddFlow:
         assert try_get_session_handler(ctx1.update) is session1
         assert try_get_session_handler(ctx2.update) is session2
 
+    async def test_list_filters_global_stands_by_chat_membership(self):
+        repo = make_repository()
+        repo.db.users = [
+            User(
+                id=1,
+                chat_ids=[-1001],
+                stand_name="StandOne",
+                stand_description="first",
+            ),
+            User(
+                id=2,
+                chat_ids=[-1001, -1002],
+                stand_name="StandTwo",
+                stand_description="second",
+            ),
+            User(
+                id=3,
+                chat_ids=[-1002],
+                stand_name="StandThree",
+                stand_description="third",
+            ),
+        ]
+
+        reply1, _ = await invoke(StandsFeature, "/stands", repo, chat_id=-1001)
+        reply2, _ = await invoke(StandsFeature, "/stands", repo, chat_id=-1002)
+
+        assert "StandOne" in reply1 and "StandTwo" in reply1
+        assert "StandThree" not in reply1
+        assert "StandTwo" in reply2 and "StandThree" in reply2
+        assert "StandOne" not in reply2
+
     async def test_add_already_taken_stand_name(self):
         repo = make_repository()
-        repo.db.users = [_user(stand_name="StarPlatinum", stand_description="desc")]
+        repo.db.users = [
+            _user(stand_name="StarPlatinum", stand_description="desc")
+        ]
         reply, ok = await invoke(StandsFeature, "/stands add StarPlatinum", repo)
         assert ok
         assert "уже привязан" in reply

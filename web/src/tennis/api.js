@@ -3,6 +3,7 @@ import { api } from '../api/client'
 export const tennisApi = {
   listSessions: (limit = 30) => api.get(`/api/tennis/sessions?limit=${limit}`),
   getSession: (id) => api.get(`/api/tennis/sessions/${id}`),
+  shareSession: (id) => api.post(`/api/tennis/sessions/${id}/share-image`, {}),
   createSession: (body) => api.post('/api/tennis/sessions', body),
   deleteSession: (id) => api.delete(`/api/tennis/sessions/${id}`),
   deleteMatch: (id, idx) => api.delete(`/api/tennis/sessions/${id}/matches/${idx}`),

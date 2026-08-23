@@ -38,3 +38,14 @@ class CurseParticipant:
     done_words_offset: int = 0
     source_chat_ids: list[int] = field(default_factory=list)
     interest_enabled: bool = True
+
+
+@dataclass
+class CurseStreak:
+    """Глобальный пользовательский стрик полных дней без мата."""
+
+    user_id: int
+    days: int = 0
+    last_finalized_date: str = ""
+    last_curse_date: str = ""
+    curses_on_last_curse_date: int = 0

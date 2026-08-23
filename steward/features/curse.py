@@ -34,6 +34,7 @@ from steward.helpers.curse_debt import (
 )
 from steward.helpers.formats import spoiler_block
 from steward.helpers.validation import Error, validate_message_text
+from steward.helpers.curse_streak import record_curses
 
 
 _MSK = ZoneInfo("Europe/Minsk")
@@ -173,7 +174,10 @@ class CurseFeature(Feature):
         if n <= 0:
             raise ValidationArgumentsError()
         ctx.metrics.inc("bot_curse_words_total", value=n)
-        if accrue_curse_debt(self.repository, ctx.user_id, n, today_msk()):
+        today = today_msk()
+        changed = record_curses(self.repository, ctx.user_id, n, today)
+        changed = accrue_curse_debt(self.repository, ctx.user_id, n, today) or changed
+        if changed:
             await self.repository.save()
         await ctx.reply(f"Добавил {n} плохих слов.")
 

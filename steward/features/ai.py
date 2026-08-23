@@ -36,22 +36,25 @@ _ONLINE_PHRASES = (
 )
 
 
-def _build_users_descriptions_block() -> str:
+def _build_users_descriptions_block(chat_id: int | None = None) -> str:
     repo = _REPO_HOLDER["repo"]
     if repo is None:
         return "- Пока нет описаний."
     descriptions = []
     for user in repo.db.users:
-        if not user.stand_name or not user.stand_description:
+        if chat_id is not None and chat_id not in (user.chat_ids or []):
             continue
-        descriptions.append(f"- {user.stand_name.strip()}: {user.stand_description.strip()}")
+        if user.stand_name and user.stand_description:
+            descriptions.append(
+                f"- {user.stand_name.strip()}: {user.stand_description.strip()}"
+            )
     if not descriptions:
         return "- Пока нет описаний."
     return "\n".join(descriptions)
 
 
-def _build_system_prompt() -> str:
-    users = _build_users_descriptions_block()
+def _build_system_prompt(chat_id: int | None = None) -> str:
+    users = _build_users_descriptions_block(chat_id)
     return GROK_SHORT_AGGRESSIVE.replace("{{USERS_DESCRIPTIONS}}", users)
 
 
@@ -59,8 +62,8 @@ _ONLINE_STYLE_SUFFIX = """\
 Когда ссылаешься на источник из веб-поиска — оборачивай в Markdown-ссылку САМУ фразу из текста, к которой относится источник: [часть фразы](url). НЕ используй сноски, цифры в скобках, [[1]], [1], (1) и не приклеивай ссылки в конце предложения отдельно. Ссылка должна быть органичной частью предложения, без отдельных пометок «источник» или подобного. Если на одну фразу несколько источников — выбери самый релевантный, остальные не показывай."""
 
 
-def _build_online_system_prompt() -> str:
-    return _build_system_prompt() + "\n\n" + _ONLINE_STYLE_SUFFIX
+def _build_online_system_prompt(chat_id: int | None = None) -> str:
+    return _build_system_prompt(chat_id) + "\n\n" + _ONLINE_STYLE_SUFFIX
 
 
 _ROUTER_PROMPT = """Решаешь, нужен ли веб-поиск чтобы ответить на запрос.
@@ -129,17 +132,17 @@ async def _online_aware_placeholder(text: str, needs_web: bool) -> str | None:
     return await try_contextual_placeholder(text, _quick_call)
 
 
-async def _online_stream(uid, msgs):
+async def _online_stream(uid, msgs, chat_id: int | None = None):
     return await make_openrouter_stream(
         uid,
         OpenRouterModel.GROK_4_FAST_ONLINE,
         msgs,
-        _build_online_system_prompt(),
+        _build_online_system_prompt(chat_id),
     )
 
 
-async def _offline_stream(uid, msgs):
-    return await make_text_stream(uid, Model.SMART, msgs, _build_system_prompt())
+async def _offline_stream(uid, msgs, chat_id: int | None = None):
+    return await make_text_stream(uid, Model.SMART, msgs, _build_system_prompt(chat_id))
 
 
 async def _ai_call(uid, msgs):
@@ -178,7 +181,10 @@ async def _ask_streaming(ctx: FeatureContext, full_text: str):
     if needs_web:
         logger.info("ai router: routed to :online (stream/pre)")
 
-    stream_call = _online_stream if needs_web else _offline_stream
+    base_stream_call = _online_stream if needs_web else _offline_stream
+
+    async def stream_call(uid, msgs):
+        return await base_stream_call(uid, msgs, ctx.chat_id)
 
     await execute_ai_request_streaming(
         ctx,

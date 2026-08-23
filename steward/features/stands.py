@@ -41,7 +41,7 @@ class StandsFeature(Feature):
 
     @subcommand("", description="Список")
     async def view(self, ctx: FeatureContext):
-        await ctx.reply(self._build_list())
+        await ctx.reply(self._build_list(ctx.chat_id))
 
     @subcommand("add <name:rest>", description="Добавить пользователя")
     async def add(self, ctx: FeatureContext, name: str):
@@ -51,11 +51,14 @@ class StandsFeature(Feature):
         existing = self._by_stand(stand_name)
         if existing is not None:
             await ctx.reply(
-                f"Пользователь «{stand_name}» уже привязан к @{existing.username or existing.id}"
+                f"Пользователь «{stand_name}» уже привязан к "
+                f"@{existing.username or existing.id}"
             )
             return
         owner_ids: dict[str, int] = {}
         for user in self.users:
+            if ctx.chat_id not in (user.chat_ids or []):
+                continue
             owner_ids[str(user.id)] = user.id
             if user.username:
                 owner_ids[user.username.lower()] = user.id
@@ -71,12 +74,13 @@ class StandsFeature(Feature):
         stand_name = name.strip()
         if not stand_name:
             raise ValidationArgumentsError()
-        user = self._by_stand(stand_name)
+        user = self._visible_by_stand(ctx.chat_id, stand_name)
         if user is None:
             await ctx.reply(f"Пользователь «{stand_name}» не найден.")
             return
         user.stand_name = None
         user.stand_description = None
+        user.stand_aliases = []
         await self.users.save()
         await ctx.reply(f"Пользователь «{stand_name}» удален.")
 
@@ -127,13 +131,16 @@ class StandsFeature(Feature):
         target.stand_aliases = []
         await self.users.save()
         await ctx.reply(
-            f"Готово. Пользователь «{target.stand_name}» сохранен для @{target.username or target.id}."
+            f"Готово. Пользователь «{target.stand_name}» сохранен для "
+            f"@{target.username or target.id}."
         )
         asyncio.create_task(
             self._extract_aliases(target.id, stand_name, description)
         )
 
-    async def _extract_aliases(self, user_id: int, stand_name: str, description: str) -> None:
+    async def _extract_aliases(
+        self, user_id: int, stand_name: str, description: str
+    ) -> None:
         try:
             from steward.helpers.ai import YandexModelTypes, make_yandex_ai_query
             response = await make_yandex_ai_query(
@@ -161,9 +168,11 @@ class StandsFeature(Feature):
         except Exception as e:
             logger.warning("Failed to extract aliases for user %d: %s", user_id, e)
 
-    def _build_list(self) -> str:
+    def _build_list(self, chat_id: int) -> str:
         items = []
         for user in self.users:
+            if chat_id not in (user.chat_ids or []):
+                continue
             if not user.stand_name or not user.stand_description:
                 continue
             owner = f"@{user.username}" if user.username else str(user.id)
@@ -181,5 +190,12 @@ class StandsFeature(Feature):
     def _by_stand(self, stand_name: str):
         target = stand_name.strip().lower()
         return self.users.find_one(
-            lambda u: u.stand_name and u.stand_name.strip().lower() == target
+            lambda user: user.stand_name
+            and user.stand_name.strip().lower() == target
         )
+
+    def _visible_by_stand(self, chat_id: int, stand_name: str):
+        user = self._by_stand(stand_name)
+        if user is None or chat_id not in (user.chat_ids or []):
+            return None
+        return user

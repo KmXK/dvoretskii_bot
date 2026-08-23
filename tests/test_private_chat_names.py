@@ -38,4 +38,21 @@ async def test_migration_v41_names_private_chats():
     assert chats[222] == "ЛС: @petya"
     assert chats[333] == "ЛС: 333"
     assert chats[-100500] == "Моя группа"
-    assert repository.db.version == 42
+    assert repository.db.version == 43
+
+
+async def test_migration_v42_initializes_curse_streaks():
+    repository = Repository(
+        SeededStorage(
+            {
+                "version": 42,
+                "admin_ids": [],
+                "users": [],
+            }
+        )
+    )
+
+    await repository.migrate()
+
+    assert repository.db.version == 43
+    assert repository.db.curse_streaks == []

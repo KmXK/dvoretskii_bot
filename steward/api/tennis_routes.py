@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Any
 
 from aiohttp import web
+from telegram import InlineQueryResultCachedPhoto
 
 from steward.api.auth import require_user
 from steward.data.models.tennis import TennisMatch, TennisSession
@@ -22,6 +24,7 @@ from steward.tennis.engine import (
     normalize_sport,
     player_stats,
     session_wins,
+    sport_meta,
 )
 from steward.tennis.engine import is_valid_party_score
 from steward.tennis.import_parser import BulkEntry, parse_bulk_history
@@ -127,7 +130,13 @@ def _resolve_user(repository: Repository, identifier: Any) -> int | None:
 
 def _user_can_modify(session: TennisSession, user_id: int) -> bool:
     """Кто может администрировать сессию (закрыть, удалить и т.п.)."""
-    return user_id in (session.player_a_id, session.player_b_id, session.initiator_id)
+    return user_id in (
+        session.player_a_id,
+        session.player_b_id,
+        session.player_a2_id,
+        session.player_b2_id,
+        session.initiator_id,
+    )
 
 
 def _is_player(session: TennisSession, user_id: int) -> bool:
@@ -166,6 +175,81 @@ async def get_session(request: web.Request) -> web.Response:
     if not _user_can_modify(session, user_id):
         return web.json_response({"error": "forbidden"}, status=403)
     return web.json_response(_serialize_session(repository, session, detailed=True))
+
+
+async def share_session(request: web.Request) -> web.Response:
+    """Подготовить PNG с ходом сессии для Telegram WebApp.shareMessage."""
+    from steward.helpers.tennis_image import render_tennis_session_png
+
+    user_id = require_user(request)
+    repository: Repository = request.app["repository"]
+    bot = request.app.get("bot")
+    if bot is None:
+        return web.json_response({"error": "bot unavailable"}, status=503)
+    try:
+        sid = int(request.match_info["id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad id"}, status=400)
+    session = next((s for s in repository.db.tennis_sessions if s.id == sid), None)
+    if session is None:
+        return web.json_response({"error": "not found"}, status=404)
+    if not _user_can_modify(session, user_id):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    wins_a, wins_b = session_wins(session)
+    name_a = _spoken_name(repository, session.player_a_id, "игрок А")
+    name_b = _spoken_name(repository, session.player_b_id, "игрок Б")
+    duration = None
+    if session.ended_at is not None:
+        seconds = max(0, int((session.ended_at - session.started_at).total_seconds()))
+        duration = f"{seconds // 60}:{seconds % 60:02d}"
+    rounds = [
+        (
+            match.score_a,
+            match.score_b,
+            name_a if match.winner == SIDE_A else name_b,
+        )
+        for match in session.matches
+    ]
+    png = render_tennis_session_png(
+        session_id=session.id,
+        sport=sport_meta(session.sport)["label"],
+        date=session.started_at.strftime("%d.%m.%Y %H:%M"),
+        player_a=name_a,
+        player_b=name_b,
+        wins_a=wins_a,
+        wins_b=wins_b,
+        rounds=rounds,
+        duration=duration,
+    )
+    try:
+        message = await bot.send_photo(
+            chat_id=user_id,
+            photo=png,
+            disable_notification=True,
+        )
+        file_id = message.photo[-1].file_id
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=message.message_id)
+        except Exception:
+            pass
+        result = InlineQueryResultCachedPhoto(
+            id=uuid.uuid4().hex,
+            photo_file_id=file_id,
+            caption=f"🏓 Сессия #{session.id}: {name_a} {wins_a}:{wins_b} {name_b}",
+        )
+        prepared = await bot.save_prepared_inline_message(
+            user_id,
+            result,
+            allow_user_chats=True,
+            allow_group_chats=True,
+            allow_channel_chats=True,
+            allow_bot_chats=False,
+        )
+    except Exception as error:
+        logger.warning("tennis share preparation failed session=%s: %s", sid, error)
+        return web.json_response({"error": "не удалось подготовить картинку"}, status=502)
+    return web.json_response({"prepared_message_id": prepared.id})
 
 
 async def create_session(request: web.Request) -> web.Response:
@@ -723,6 +807,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/tennis/sessions", list_sessions)
     app.router.add_post("/api/tennis/sessions", create_session)
     app.router.add_get("/api/tennis/sessions/{id}", get_session)
+    app.router.add_post("/api/tennis/sessions/{id}/share-image", share_session)
     app.router.add_post("/api/tennis/sessions/{id}/point", add_point)
     app.router.add_post("/api/tennis/sessions/{id}/undo_point", undo_point)
     app.router.add_delete("/api/tennis/sessions/{id}", delete_session)

@@ -709,12 +709,17 @@ class Repository:
                     chat["name"] = f"ЛС: {who or chat['id']}"
             data["version"] = 42
 
+        if data.get("version") == 42:
+            data.setdefault("curse_streaks", [])
+            data["version"] = 43
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
             data["curse_ignore_words"] = []
         data.setdefault("curse_punishment_debts", [])
         data.setdefault("curse_punishment_days", [])
+        data.setdefault("curse_streaks", [])
         data.setdefault("curse_debts_backfilled", False)
         for punishment in data.get("curse_punishments", []):
             punishment.setdefault("interest_percent", 0.0)

@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from steward.api import tennis_routes
 from steward.data.models.chat import Chat
@@ -67,3 +67,39 @@ async def test_list_opponents_keeps_previous_opponents_outside_shared_chats(monk
             "played_against": 1,
         },
     ]
+
+
+async def test_share_session_prepares_native_telegram_message(monkeypatch):
+    repository = make_repository()
+    repository.db.users = [
+        User(id=1, username="me"),
+        User(id=2, username="alice"),
+    ]
+    repository.db.tennis_sessions = [
+        TennisSession(
+            id=7,
+            chat_id=-100,
+            player_a_id=1,
+            player_b_id=2,
+            started_at=datetime(2026, 8, 23, 18, 0),
+        )
+    ]
+    bot = MagicMock()
+    sent = MagicMock(message_id=99)
+    sent.photo = [MagicMock(file_id="photo-file-id")]
+    bot.send_photo = AsyncMock(return_value=sent)
+    bot.delete_message = AsyncMock()
+    bot.save_prepared_inline_message = AsyncMock(
+        return_value=MagicMock(id="prepared-123")
+    )
+    request = MagicMock()
+    request.app = {"repository": repository, "bot": bot}
+    request.match_info = {"id": "7"}
+    monkeypatch.setattr(tennis_routes, "require_user", lambda _: 1)
+
+    response = await tennis_routes.share_session(request)
+    payload = json.loads(response.text)
+
+    assert payload == {"prepared_message_id": "prepared-123"}
+    bot.send_photo.assert_awaited_once()
+    bot.save_prepared_inline_message.assert_awaited_once()

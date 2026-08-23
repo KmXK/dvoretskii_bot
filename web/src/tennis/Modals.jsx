@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, ChevronDown, Download, Pencil, Play, Search, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, Download, Loader2, Pencil, Play, Search, Share2, Trash2, X } from 'lucide-react'
+import WebApp from '@twa-dev/sdk'
 import { tennisApi } from './api'
 import { useConfirmDialog } from './ConfirmDialog'
 import { SPORT_LIST, DEFAULT_SPORT, sportMeta } from './sports'
@@ -848,6 +849,7 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [editIdx, setEditIdx] = useState(null)
+  const [sharing, setSharing] = useState(false)
   const { confirm, element: confirmEl } = useConfirmDialog()
 
   useEffect(() => {
@@ -908,12 +910,29 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
     }
   }
 
+  const handleShare = async () => {
+    if (!WebApp.isVersionAtLeast?.('8.0') || typeof WebApp.shareMessage !== 'function') {
+      setError('Обновите Telegram — нужен шеринг сообщений версии 8.0+')
+      return
+    }
+    setSharing(true)
+    setError(null)
+    try {
+      const { prepared_message_id: preparedMessageId } = await tennisApi.shareSession(sessionId)
+      WebApp.shareMessage(preparedMessageId)
+    } catch (e) {
+      setError(e.message || 'Не удалось подготовить картинку')
+    } finally {
+      setSharing(false)
+    }
+  }
+
   if (!open) return null
 
   return (
     <AnimatePresence>
       <SheetShell title={data ? `Сессия #${data.id}` : 'Сессия'} onClose={onClose}>
-        {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+        {error && <p role="alert" className="text-red-400 text-sm mb-3">{error}</p>}
         {!data && !error && <p className="text-spotify-text text-sm">Загружаем…</p>}
         {data && (
           <>
@@ -977,6 +996,17 @@ export function SessionDetailsSheet({ sessionId, currentUserId, open, onClose, o
                 </ol>
               </>
             )}
+
+            <motion.button
+              whileTap={{ scale: 0.98 }}
+              onClick={handleShare}
+              disabled={sharing}
+              aria-busy={sharing}
+              className="w-full min-h-11 mb-3 flex items-center justify-center gap-2 rounded-xl border border-gold/30 bg-gold/15 px-4 py-3 text-sm font-semibold text-gold transition-colors hover:bg-gold/25 disabled:opacity-50"
+            >
+              {sharing ? <Loader2 size={17} className="animate-spin" /> : <Share2 size={17} />}
+              {sharing ? 'Готовим картинку…' : 'Поделиться результатом'}
+            </motion.button>
 
             {data.initiator_id === currentUserId && (
               <motion.button
