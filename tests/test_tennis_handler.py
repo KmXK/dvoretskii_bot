@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from steward.data.models.tennis import TennisMatch, TennisSession
 from steward.data.models.user import User
@@ -38,6 +38,42 @@ async def test_tennis_default_command_sends_rich_recent_sessions_table():
     assert "reply_markup" in call.kwargs["api_kwargs"]
 
 
+async def test_tennis_default_command_includes_sessions_from_other_chats():
+    repo = make_repository()
+    repo.db.users = [
+        User(id=DEFAULT_USER_ID, username="me"),
+        User(id=2, username="opponent"),
+    ]
+    repo.db.tennis_sessions = [
+        TennisSession(
+            id=7,
+            chat_id=-100999,
+            player_a_id=DEFAULT_USER_ID,
+            player_b_id=2,
+            started_at=datetime(2026, 8, 20, 18, 0),
+            matches=[
+                TennisMatch(
+                    datetime(2026, 8, 20, 18, 0),
+                    "a",
+                    score_a=11,
+                    score_b=7,
+                )
+            ],
+        )
+    ]
+    ctx = make_context("tennis", repo=repo, chat_id=-100123)
+    feature = TennisFeature()
+    feature.repository = repo
+    feature.bot = MagicMock()
+
+    await feature.chat(ctx)
+
+    markdown = ctx.bot.do_api_request.await_args.kwargs["api_kwargs"][
+        "rich_message"
+    ]["markdown"]
+    assert "| 7 | 20.08 | @me - @opponent | **1:0** |" in markdown
+
+
 def test_session_stats_contains_each_party_and_totals():
     repo = make_repository()
     repo.db.users = [
@@ -63,3 +99,43 @@ def test_session_stats_contains_each_party_and_totals():
     assert "<code>9:11</code>" in text
     assert "Партий: 2 · очки: 20:18" in text
     assert "Длительность: 25:00" in text
+
+
+async def test_session_callback_edits_current_message_and_keeps_navigation():
+    repo = make_repository()
+    repo.db.users = [
+        User(id=DEFAULT_USER_ID, username="me"),
+        User(id=2, username="opponent"),
+    ]
+    repo.db.tennis_sessions = [
+        TennisSession(
+            id=4,
+            chat_id=CHAT_ID,
+            player_a_id=DEFAULT_USER_ID,
+            player_b_id=2,
+            started_at=datetime(2026, 8, 23, 18, 0),
+            matches=[
+                TennisMatch(
+                    datetime(2026, 8, 23, 18, 0),
+                    "a",
+                    score_a=11,
+                    score_b=7,
+                )
+            ],
+        )
+    ]
+    feature = TennisFeature()
+    feature.repository = repo
+    feature.bot = MagicMock()
+    ctx = MagicMock()
+    ctx.user_id = DEFAULT_USER_ID
+    ctx.edit = AsyncMock()
+    ctx.toast = AsyncMock()
+
+    await feature.view_session_callback(ctx, 4)
+
+    ctx.edit.assert_awaited_once()
+    assert "Сессия #4" in ctx.edit.await_args.args[0]
+    keyboard = ctx.edit.await_args.kwargs["keyboard"]
+    assert keyboard.rows
+    ctx.toast.assert_awaited_once()

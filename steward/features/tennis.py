@@ -298,28 +298,14 @@ class TennisFeature(Feature):
 
     @subcommand("", description="Список последних сессий")
     async def list_(self, ctx: FeatureContext):
-        chat_sessions = [
-            session for session in self.sessions.filter(chat_id=ctx.chat_id)
-            if ctx.user_id in (
-                session.player_a_id,
-                session.player_b_id,
-                session.player_a2_id,
-                session.player_b2_id,
-                session.initiator_id,
-            )
-        ]
-        chat_sessions.sort(key=lambda s: s.started_at, reverse=True)
-        if not chat_sessions:
+        recent = self._recent_user_sessions(ctx.user_id)
+        if not recent:
             await ctx.reply(
                 "Сессий пока нет.\n"
                 "Запусти live: /tennis start или импортируй прошедшую: /tennis add."
             )
             return
-        recent = chat_sessions[:5]
-        keyboard = Keyboard([
-            [self.cb("tennis:session").button(f"Сессия #{s.id}", session_id=s.id)]
-            for s in recent
-        ])
+        keyboard = self._recent_sessions_keyboard(recent)
         rich = self._render_recent_rich(recent)
         try:
             await ctx.bot.do_api_request(
@@ -339,6 +325,26 @@ class TennisFeature(Feature):
                 html=True,
                 markdown=False,
             )
+
+    def _recent_user_sessions(self, user_id: int) -> list[TennisSession]:
+        sessions = [
+            session for session in self.sessions
+            if user_id in (
+                session.player_a_id,
+                session.player_b_id,
+                session.player_a2_id,
+                session.player_b2_id,
+                session.initiator_id,
+            )
+        ]
+        sessions.sort(key=lambda session: session.started_at, reverse=True)
+        return sessions[:5]
+
+    def _recent_sessions_keyboard(self, sessions: list[TennisSession]) -> Keyboard:
+        return Keyboard([
+            [self.cb("tennis:session").button(f"Сессия #{s.id}", session_id=s.id)]
+            for s in sessions
+        ])
 
     def _render_recent_rich(self, sessions: list[TennisSession]) -> str:
         lines = [
@@ -370,8 +376,11 @@ class TennisFeature(Feature):
         ):
             await ctx.toast("Сессия не найдена", show_alert=True)
             return
-        await ctx.reply(
+        await ctx.edit(
             _session_stats_text(session, self.users),
+            keyboard=self._recent_sessions_keyboard(
+                self._recent_user_sessions(ctx.user_id)
+            ),
             html=True,
             markdown=False,
         )
