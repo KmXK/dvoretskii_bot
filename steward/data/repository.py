@@ -212,7 +212,7 @@ class Repository:
         if chat_id > 0 and chat_id == user_id:
             return True
         s = self.chat_settings_for(chat_id)
-        return user_id in s.chat_admins and self.user_is_in_chat(user_id, chat_id)
+        return user_id in s.chat_admins
 
     def permissions_of(self, user_id: int | None) -> set[str]:
         if user_id is None:
