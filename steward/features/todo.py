@@ -96,6 +96,9 @@ class TodoFeature(Feature):
     @paginated("todos", per_page=10, header="Список событий")
     def todos_page(self, ctx: FeatureContext, metadata: str):
         chat_id = int(metadata)
+        if chat_id != ctx.chat_id:
+            return [], (lambda batch: "Нет доступа к событиям другого чата"), None
+
         items = [t for t in self.todos if t.chat_id == chat_id and not t.is_done]
         render = lambda batch: format_lined_list(
             items=[(t.id, t.text) for t in batch], delimiter=". "
@@ -125,7 +128,7 @@ class TodoFeature(Feature):
         ))
         assigned = 0
         for identifier in state["reward_users"]:
-            user = self._resolve_user(identifier)
+            user = self._resolve_user(identifier, ctx.chat_id)
             if user is not None and reward.id not in user.reward_ids:
                 user.reward_ids.append(reward.id)
                 assigned += 1
@@ -136,13 +139,5 @@ class TodoFeature(Feature):
             parse_mode="HTML",
         )
 
-    def _resolve_user(self, identifier: str):
-        identifier = identifier.lstrip("@")
-        try:
-            return self.users.find_by(id=int(identifier))
-        except ValueError:
-            pass
-        target = identifier.lower()
-        return self.users.find_one(
-            lambda u: u.username and u.username.lower() == target
-        )
+    def _resolve_user(self, identifier: str, chat_id: int):
+        return self.repository.find_user_in_chat(identifier, chat_id)

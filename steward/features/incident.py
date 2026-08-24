@@ -152,6 +152,9 @@ class IncidentFeature(Feature):
     def incidents_page(self, ctx: FeatureContext, metadata: str):
         chat_str, _, mode = metadata.partition(":")
         chat_id = int(chat_str)
+        if chat_id != ctx.chat_id:
+            return [], (lambda batch: "Нет доступа к инцидентам другого чата"), None
+
         mode = mode or "open"
         items = [i for i in self.incidents if i.chat_id == chat_id]
         if mode == "open":

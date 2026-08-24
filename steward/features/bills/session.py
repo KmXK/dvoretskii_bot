@@ -423,11 +423,23 @@ class _BillCollectStep(Step):
 
         if text.startswith("@"):
             username = text.lstrip("@")
-            person = repo.get_bill_person_by_username(username)
+            visible_persons = feature._visible_persons(
+                st.origin_chat_id,
+                st.caller_tid,
+            )
+            person = next(
+                (
+                    candidate
+                    for candidate in visible_persons
+                    if candidate.telegram_username == username
+                ),
+                None,
+            )
             if not person:
-                real_user = next(
-                    (u for u in repo.db.users if getattr(u, "username", None) == username),
-                    None,
+                real_user = feature._visible_user(
+                    st.origin_chat_id,
+                    st.caller_tid,
+                    username,
                 )
                 if real_user:
                     person, _ = repo.get_or_create_bill_person(
@@ -438,7 +450,10 @@ class _BillCollectStep(Step):
             if not person:
                 person, _ = repo.get_or_create_anonymous_person(f"@{username}")
         else:
-            all_persons = repo.db.bill_persons
+            all_persons = feature._visible_persons(
+                st.origin_chat_id,
+                st.caller_tid,
+            )
             users_map = {u.id: u for u in repo.db.users}
             person, _ = match_name(
                 text,
@@ -594,7 +609,10 @@ class _BillCollectStep(Step):
                 seen[key] = raw
 
         users_map = {u.id: u for u in repo.db.users}
-        all_persons = repo.db.bill_persons
+        all_persons = feature._visible_persons(
+            st.origin_chat_id,
+            st.caller_tid,
+        )
         resolve_queue = []
         resolved = dict(st.resolved_map)
 
@@ -984,7 +1002,7 @@ class _BillCollectStep(Step):
         if idx < 0 or idx >= len(sorted_keys):
             return
         raw_key = sorted_keys[idx]
-        persons = feature.repository.db.bill_persons
+        persons = feature._visible_persons(st.origin_chat_id, st.caller_tid)
         kb = fmt.kb_change_pick(feature, idx, persons)
         try:
             await context.callback_query.edit_message_text(

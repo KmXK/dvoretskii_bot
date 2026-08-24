@@ -138,6 +138,7 @@ def _make_message_mock(
     message.from_user.username = "testuser"
     message.from_user.name = "testuser"
     message.from_user.first_name = "Test"
+    message.from_user.is_bot = False
     message.message_id = 1
     message.forward_origin = None
 

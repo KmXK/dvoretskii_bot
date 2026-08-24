@@ -102,16 +102,30 @@ class BillsFeature(Feature):
         broader cross-chat lookup so the user can still reference people
         from any of their groups by name.
         """
-        author = next((u for u in self.repository.db.users if u.id == author_tid), None)
-        if not author:
-            return [p for p in self.repository.db.bill_persons if p.telegram_id]
-        users_map = self._users()
         is_dm = origin_chat_id is None or origin_chat_id == author_tid
-        scope = set(author.chat_ids) if is_dm else {origin_chat_id}
-        return [
-            p for p in self.repository.db.bill_persons
-            if p.telegram_id and (u := users_map.get(p.telegram_id)) and set(u.chat_ids) & scope
-        ]
+        if is_dm:
+            return self.repository.bill_persons_visible_to_user(author_tid)
+        return self.repository.bill_persons_for_chat(origin_chat_id)
+
+    def _visible_persons(self, chat_id: int, caller_tid: int) -> list:
+        if self._is_dm(chat_id, caller_tid):
+            return self.repository.bill_persons_visible_to_user(caller_tid)
+        return self.repository.bill_persons_for_chat(chat_id)
+
+    def _visible_user(self, chat_id: int, caller_tid: int, username: str):
+        if self._is_dm(chat_id, caller_tid):
+            users = self.repository.users_visible_to_user(caller_tid)
+        else:
+            users = self.repository.users_in_chat(chat_id)
+        normalized = username.lower()
+        return next(
+            (
+                user
+                for user in users
+                if user.username and user.username.lower() == normalized
+            ),
+            None,
+        )
 
     def _match_kwargs(self, caller_tid: int, origin_chat_id: int) -> dict:
         """Build kwargs for match_name: chat_nicknames_index + scoped_chat_ids.
@@ -148,13 +162,18 @@ class BillsFeature(Feature):
             username = target.lstrip("@")
             if not username:
                 return None, "Пустой @."
-            person = self.repository.get_bill_person_by_username(username)
+            visible_persons = self._visible_persons(ctx.chat_id, ctx.user_id)
+            person = next(
+                (
+                    person
+                    for person in visible_persons
+                    if person.telegram_username
+                    and person.telegram_username.lower() == username.lower()
+                ),
+                None,
+            )
             if not person:
-                user = next(
-                    (u for u in self.repository.db.users
-                     if (u.username or "").lower() == username.lower()),
-                    None,
-                )
+                user = self._visible_user(ctx.chat_id, ctx.user_id, username)
                 if user:
                     display = (user.username or str(user.id))
                     person, _ = self.repository.get_or_create_bill_person(
@@ -168,7 +187,7 @@ class BillsFeature(Feature):
 
         person, candidates = match_name(
             target,
-            self.repository.db.bill_persons,
+            self._visible_persons(ctx.chat_id, ctx.user_id),
             self._users(),
             caller_telegram_id=ctx.user_id,
             origin_chat_id=ctx.chat_id,
@@ -435,9 +454,13 @@ class BillsFeature(Feature):
         if self._is_dm(chat_id, caller_tid):
             caller = users_map.get(caller_tid)
             scoped_chat_ids = set(getattr(caller, "chat_ids", []) or []) if caller else set()
-            users = [u for u in self.repository.db.users if set(u.chat_ids or []) & scoped_chat_ids]
+            users = [
+                user
+                for user in self.repository.db.users
+                if set(user.chat_ids or []) & scoped_chat_ids and not user.is_bot
+            ]
         else:
-            users = [u for u in self.repository.db.users if chat_id in (u.chat_ids or [])]
+            users = self.repository.users_in_chat(chat_id)
 
         scored: list[tuple[int, str, float]] = []
         for u in users:
@@ -582,7 +605,7 @@ class BillsFeature(Feature):
         target_name, alias = m.group(1).strip(), m.group(2).strip()
         person, candidates = match_name(
             target_name,
-            self.repository.db.bill_persons,
+            self._visible_persons(ctx.chat_id, ctx.user_id),
             self._users(),
             caller_telegram_id=ctx.user_id,
             origin_chat_id=ctx.chat_id,
@@ -2042,7 +2065,7 @@ class BillsFeature(Feature):
         )
         debtor, candidates = match_name(
             target_name,
-            self.repository.db.bill_persons,
+            self._visible_persons(chat_id, from_user.id),
             self._users(),
             caller_telegram_id=from_user.id,
             origin_chat_id=chat_id,
@@ -2140,7 +2163,7 @@ class BillsFeature(Feature):
         )
         creditor, candidates = match_name(
             target_name.lstrip("@"),
-            self.repository.db.bill_persons,
+            self._visible_persons(chat_id, from_user.id),
             self._users(),
             caller_telegram_id=from_user.id,
             origin_chat_id=chat_id,

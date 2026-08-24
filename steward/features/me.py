@@ -57,6 +57,9 @@ class MeFeature(Feature):
     @paginated("rewards", per_page=10, header="Ваши достижения", parse_mode="HTML")
     def rewards_page(self, ctx: FeatureContext, metadata: str):
         user_id = int(metadata)
+        if user_id != ctx.user_id:
+            return [], (lambda batch: "Нет доступа к чужому профилю"), None
+
         user = self.users.find_by(id=user_id)
         rewards_map = {r.id: r for r in self.rewards}
         items = [

@@ -56,9 +56,7 @@ class StandsFeature(Feature):
             )
             return
         owner_ids: dict[str, int] = {}
-        for user in self.users:
-            if ctx.chat_id not in (user.chat_ids or []):
-                continue
+        for user in ctx.repository.users_in_chat(ctx.chat_id):
             owner_ids[str(user.id)] = user.id
             if user.username:
                 owner_ids[user.username.lower()] = user.id
@@ -170,9 +168,7 @@ class StandsFeature(Feature):
 
     def _build_list(self, chat_id: int) -> str:
         items = []
-        for user in self.users:
-            if chat_id not in (user.chat_ids or []):
-                continue
+        for user in self.repository.users_in_chat(chat_id):
             if not user.stand_name or not user.stand_description:
                 continue
             owner = f"@{user.username}" if user.username else str(user.id)

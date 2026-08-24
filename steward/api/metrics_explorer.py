@@ -221,7 +221,7 @@ async def handle_metrics_catalog(request: web.Request):
     user_items = [
         {"id": u.id, "name": _user_label(u)}
         for u in repository.db.users
-        if admin or u.id in users
+        if not u.is_bot and (admin or u.id in users)
     ]
     user_items.sort(key=lambda u: u["name"].lower())
 

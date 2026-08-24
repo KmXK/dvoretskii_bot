@@ -290,6 +290,15 @@ class SettingsFeature(Feature):
         if not self._can_manage_chat(ctx, chat_id):
             await ctx.toast("Только chat-admin или global-admin")
             return
+
+        user = next(
+            (user for user in ctx.repository.users_in_chat(chat_id) if user.id == user_id),
+            None,
+        )
+        if user is None:
+            await ctx.toast("Пользователь не состоит в этом чате")
+            return
+
         settings = ctx.repository.chat_settings_for(chat_id)
         if user_id in settings.chat_admins:
             settings.chat_admins.discard(user_id)
@@ -303,6 +312,9 @@ class SettingsFeature(Feature):
     @paginated("caps", per_page=50, header="", parse_mode="markdown")
     def caps_page(self, ctx: FeatureContext, metadata: str):
         chat_id = int(metadata) if metadata else 0
+        if not self._can_view_chat(ctx, chat_id):
+            return [], (lambda batch: "Нет доступа к настройкам этого чата"), None
+
         chat = ctx.repository.get_chat(chat_id)
         chat_name = chat.name if chat else str(chat_id)
         settings = ctx.repository.chat_settings_for(chat_id)
@@ -351,6 +363,9 @@ class SettingsFeature(Feature):
     def feats_page(self, ctx: FeatureContext, metadata: str):
         parts = metadata.split("|", 1)
         chat_id = int(parts[0]) if parts and parts[0] else 0
+        if not self._can_view_chat(ctx, chat_id):
+            return [], (lambda batch: "Нет доступа к настройкам этого чата"), None
+
         cap = parts[1] if len(parts) > 1 else ""
         chat = ctx.repository.get_chat(chat_id)
         chat_name = chat.name if chat else str(chat_id)
@@ -416,10 +431,12 @@ class SettingsFeature(Feature):
     @paginated("admins", per_page=50, header="👥 Чат-админы", parse_mode="markdown")
     def admins_page(self, ctx: FeatureContext, metadata: str):
         chat_id = int(metadata) if metadata else 0
-        settings = ctx.repository.chat_settings_for(chat_id)
         can_manage = self._can_manage_chat(ctx, chat_id)
+        if not can_manage:
+            return [], (lambda batch: "Только chat-admin или global-admin"), None
 
-        members = [u for u in ctx.repository.db.users if chat_id in (u.chat_ids or [])]
+        settings = ctx.repository.chat_settings_for(chat_id)
+        members = ctx.repository.users_in_chat(chat_id)
         members.sort(key=lambda u: (u.id not in settings.chat_admins, (u.username or "").lower(), u.id))
 
         def display(u) -> str:
@@ -492,6 +509,9 @@ class SettingsFeature(Feature):
 
     @paginated("role_view", per_page=100, header="", parse_mode="markdown")
     def role_view_page(self, ctx: FeatureContext, metadata: str):
+        if not ctx.repository.is_admin(ctx.user_id):
+            return [], (lambda batch: "Только global-admin"), None
+
         role_id = int(metadata) if metadata else 0
         role = next((r for r in ctx.repository.db.roles if r.id == role_id), None)
         if role is None:
@@ -663,6 +683,12 @@ class SettingsFeature(Feature):
             return True
         return ctx.repository.is_chat_admin(ctx.user_id, chat_id)
 
+    def _can_view_chat(self, ctx: FeatureContext, chat_id: int) -> bool:
+        return self._can_manage_chat(ctx, chat_id) or ctx.repository.user_is_in_chat(
+            ctx.user_id,
+            chat_id,
+        )
+
     def _cap_feature_summary(self, cap: str, settings: ChatSettings) -> str:
         """Compact 'in this group: /a, /b, /c' for the caps overview line."""
         classes = _features_in(cap)
@@ -706,13 +732,18 @@ class SettingsFeature(Feature):
         if target.startswith("@"):
             username = target[1:].lower()
             for u in self.repository.db.users:
-                if u.username and u.username.lower() == username:
+                if not u.is_bot and u.username and u.username.lower() == username:
                     return u.id
             return None
         try:
-            return int(target)
+            user_id = int(target)
         except ValueError:
             return None
+        user = next(
+            (user for user in self.repository.db.users if user.id == user_id),
+            None,
+        )
+        return user_id if user and not user.is_bot else None
 
     # Static no-op callback so disabled toggles do not raise
     @on_callback("settings:noop", schema="")

@@ -230,12 +230,13 @@ class TennisFeature(Feature):
         if not identifier:
             return None
         try:
-            return self.users.find_by(id=int(identifier))
+            user = self.users.find_by(id=int(identifier))
+            return user if user and not user.is_bot else None
         except ValueError:
             pass
         target = identifier.lower()
         return self.users.find_one(
-            lambda u: u.username and u.username.lower() == target
+            lambda u: not u.is_bot and u.username and u.username.lower() == target
         )
 
     def _active_session_for(self, user_id: int, chat_id: int | None = None) -> TennisSession | None:

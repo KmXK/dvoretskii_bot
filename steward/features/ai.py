@@ -42,6 +42,8 @@ def _build_users_descriptions_block(chat_id: int | None = None) -> str:
         return "- Пока нет описаний."
     descriptions = []
     for user in repo.db.users:
+        if user.is_bot:
+            continue
         if chat_id is not None and chat_id not in (user.chat_ids or []):
             continue
         if user.stand_name and user.stand_description:

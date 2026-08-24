@@ -111,19 +111,19 @@ def _resolve_user(repository: Repository, identifier: Any) -> int | None:
     """Возвращает user_id по идентификатору. Принимает int (id), str (@username|id)."""
     if isinstance(identifier, int):
         user = next((u for u in repository.db.users if u.id == identifier), None)
-        return user.id if user else None
+        return user.id if user and not user.is_bot else None
     if not isinstance(identifier, str) or not identifier.strip():
         return None
     raw = identifier.strip().lstrip("@")
     try:
         uid = int(raw)
         user = next((u for u in repository.db.users if u.id == uid), None)
-        return user.id if user else None
+        return user.id if user and not user.is_bot else None
     except ValueError:
         pass
     target = raw.lower()
     for u in repository.db.users:
-        if u.username and u.username.lower() == target:
+        if not u.is_bot and u.username and u.username.lower() == target:
             return u.id
     return None
 
@@ -514,7 +514,7 @@ async def list_opponents(request: web.Request) -> web.Response:
 
     candidates: dict[int, dict] = {}
     for u in repository.db.users:
-        if u.id == me:
+        if u.id == me or u.is_bot:
             continue
 
         chats = set(getattr(u, "chat_ids", []) or [])

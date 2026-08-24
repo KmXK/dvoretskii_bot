@@ -74,9 +74,18 @@ class ChatCollectFeature(Feature):
             user_id = from_user.id
             username = from_user.username
             first_name = from_user.first_name
+            is_bot = from_user.is_bot
             existing_user = self._users_by_id.get(user_id)
             if existing_user is None:
-                self.users.add(User(user_id, username, [chat_id], first_name=first_name))
+                self.users.add(
+                    User(
+                        user_id,
+                        username,
+                        [chat_id],
+                        first_name=first_name,
+                        is_bot=is_bot,
+                    )
+                )
                 changed = True
             else:
                 if existing_user.username != username:
@@ -84,6 +93,9 @@ class ChatCollectFeature(Feature):
                     changed = True
                 if first_name and existing_user.first_name != first_name:
                     existing_user.first_name = first_name
+                    changed = True
+                if existing_user.is_bot != is_bot:
+                    existing_user.is_bot = is_bot
                     changed = True
                 if not hasattr(existing_user, "chat_ids"):
                     existing_user.chat_ids = []

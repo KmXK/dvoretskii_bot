@@ -10,8 +10,18 @@ from tests.conftest import CHAT_ID, DEFAULT_USER_ID, invoke, make_context, make_
 TARGET_ID = 99999
 
 
-def _user(user_id: int, username: str = "target") -> User:
-    return User(id=user_id, username=username)
+def _user(
+    user_id: int,
+    username: str = "target",
+    chat_ids: list[int] | None = None,
+    is_bot: bool = False,
+) -> User:
+    return User(
+        id=user_id,
+        username=username,
+        chat_ids=chat_ids or [CHAT_ID],
+        is_bot=is_bot,
+    )
 
 
 def _active_ban(user_id: int) -> BannedUser:
@@ -62,6 +72,26 @@ class TestBanCommand:
         reply, ok = await invoke(BanFeature, "/ban @target 30m", repo)
         assert ok
         assert any(b.user_id == TARGET_ID for b in repo.db.banned_users)
+
+    async def test_does_not_ban_user_from_another_chat(self):
+        repo = make_repository()
+        repo.db.users = [_user(TARGET_ID, chat_ids=[CHAT_ID - 1])]
+
+        reply, ok = await invoke(BanFeature, f"/ban {TARGET_ID} 1h", repo)
+
+        assert ok
+        assert "не найден" in reply
+        assert repo.db.banned_users == []
+
+    async def test_does_not_ban_bot(self):
+        repo = make_repository()
+        repo.db.users = [_user(TARGET_ID, username="target_bot", is_bot=True)]
+
+        reply, ok = await invoke(BanFeature, "/ban @target_bot 1h", repo)
+
+        assert ok
+        assert "не найден" in reply
+        assert repo.db.banned_users == []
 
     async def test_stop_clears_all_bans(self):
         repo = make_repository()

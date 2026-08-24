@@ -59,10 +59,7 @@ def _can_manage_chat(repo: Repository, user_id: int, chat_id: int) -> bool:
 
 
 def _is_member(repo: Repository, user_id: int, chat_id: int) -> bool:
-    user = next((u for u in repo.db.users if u.id == user_id), None)
-    if user is None:
-        return False
-    return chat_id in (user.chat_ids or [])
+    return repo.user_is_in_chat(user_id, chat_id)
 
 
 # ── Chat settings ────────────────────────────────────────────────────────────
@@ -145,6 +142,8 @@ async def handle_chat_admin_add(request: web.Request):
     target = int(body.get("user_id", 0))
     if target == 0:
         return web.json_response({"error": "user_id required"}, status=400)
+    if not repo.user_is_in_chat(target, chat_id):
+        return web.json_response({"error": "user is not a chat member"}, status=400)
     settings = _settings_for(repo, chat_id)
     settings.chat_admins.add(target)
     await repo.save()
@@ -253,6 +252,9 @@ async def handle_role_user_add(request: web.Request):
     target = int(body.get("user_id", 0))
     if target == 0:
         return web.json_response({"error": "user_id required"}, status=400)
+    user = _user_for(repo, target)
+    if user is None or user.is_bot:
+        return web.json_response({"error": "user not found"}, status=400)
     role = next((r for r in repo.db.roles if r.id == role_id), None)
     if role is None:
         return web.json_response({"error": "not found"}, status=404)

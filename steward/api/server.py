@@ -2081,6 +2081,7 @@ async def handle_bills_list(request: web.Request):
     balances, credits = compute_bill_balances(bills, payments)
     person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
     person_id = person.id if person else None
+    visible_persons = repository.bill_persons_visible_to_user(int(tg_user["id"]))
     return web.json_response({
         "bills": [
             _serialize_bill_v2(
@@ -2090,7 +2091,7 @@ async def handle_bills_list(request: web.Request):
             )
             for bill in bills
         ],
-        "persons": [_serialize_bill_person(p) for p in repository.db.bill_persons],
+        "persons": [_serialize_bill_person(p) for p in visible_persons],
         "credits": [
             _serialize_bill_credit(key, amount)
             for key, amount in credits.items()
@@ -2119,7 +2120,12 @@ async def handle_bills_get(request: web.Request):
     return web.json_response(_serialize_bill_v2(bill, payments, debts))
 
 
-def _resolve_bill_participants(repository: "Repository", caller, entries) -> list[str]:
+def _resolve_bill_participants(
+    repository: "Repository",
+    caller,
+    entries,
+    visible_person_ids: set[str],
+) -> list[str]:
     """Resolve a web guest list to ordered BillPerson ids (caller always first).
 
     Each entry is {person_id} for someone known, or {name}/{username} to add ad-hoc.
@@ -2136,24 +2142,23 @@ def _resolve_bill_participants(repository: "Repository", caller, entries) -> lis
             continue
         if entry.get("person_id"):
             p = repository.get_bill_person(entry["person_id"])
-            _add(p.id if p else None)
+            _add(p.id if p and p.id in visible_person_ids else None)
         elif entry.get("username"):
             uname = str(entry["username"]).lstrip("@").strip()
             if not uname:
                 continue
-            person = repository.get_bill_person_by_username(uname)
+            person = next(
+                (
+                    person
+                    for person in repository.db.bill_persons
+                    if person.id in visible_person_ids
+                    and person.telegram_username
+                    and person.telegram_username.lower() == uname.lower()
+                ),
+                None,
+            )
             if not person:
-                user = next(
-                    (u for u in repository.db.users if (u.username or "").lower() == uname.lower()),
-                    None,
-                )
-                if user:
-                    person, _ = repository.get_or_create_bill_person(
-                        telegram_id=user.id, display_name=user.username or str(user.id),
-                        username=user.username,
-                    )
-                else:
-                    person, _ = repository.get_or_create_anonymous_person(f"@{uname}")
+                person, _ = repository.get_or_create_anonymous_person(f"@{uname}")
             _add(person.id)
         elif entry.get("name"):
             person, _ = repository.get_or_create_anonymous_person(str(entry["name"]).strip())
@@ -2179,7 +2184,16 @@ async def handle_bills_resolve_people(request: web.Request):
         username=tg_user.get("username"),
     )
     data = await request.json()
-    ids = _resolve_bill_participants(repository, caller, data.get("participants"))
+    visible_person_ids = {
+        person.id
+        for person in repository.bill_persons_visible_to_user(int(tg_user["id"]))
+    }
+    ids = _resolve_bill_participants(
+        repository,
+        caller,
+        data.get("participants"),
+        visible_person_ids,
+    )
     people = []
     for pid in ids:
         p = repository.get_bill_person(pid)
@@ -2212,9 +2226,27 @@ async def handle_bills_create(request: web.Request):
         username=tg_user.get("username"),
     )
 
-    # Optional initial guest list (web create-from-scratch wizard). Each entry is
-    # {person_id} for someone already known, or {name}/{username} to add ad-hoc.
-    participant_ids = _resolve_bill_participants(repository, caller, data.get("participants"))
+    user = next(
+        (user for user in repository.db.users if user.id == int(tg_user["id"])),
+        None,
+    )
+    if (
+        origin_chat_id is not None
+        and origin_chat_id != int(tg_user["id"])
+        and (user is None or origin_chat_id not in (user.chat_ids or []))
+    ):
+        return web.json_response({"error": "origin chat is not available"}, status=403)
+
+    if origin_chat_id is not None and origin_chat_id != int(tg_user["id"]):
+        visible_persons = repository.bill_persons_for_chat(origin_chat_id)
+    else:
+        visible_persons = repository.bill_persons_visible_to_user(int(tg_user["id"]))
+    participant_ids = _resolve_bill_participants(
+        repository,
+        caller,
+        data.get("participants"),
+        {person.id for person in visible_persons},
+    )
 
     is_draft = bool(data.get("draft"))
     bill = BillV2(
@@ -2266,11 +2298,13 @@ async def handle_bills_circle(request: web.Request):
             cand[p.id] = c
         return c
 
-    for p in repository.db.bill_persons:
+    for p in repository.bill_persons_visible_to_user(me_tid):
         if not p.telegram_id:
             continue
         u = users_by_id.get(p.telegram_id)
-        if my_chats and (not u or not (set(getattr(u, "chat_ids", []) or []) & my_chats)):
+        if not u or u.is_bot:
+            continue
+        if not set(getattr(u, "chat_ids", []) or []) & my_chats:
             continue
         _ensure(p)
 
@@ -2704,7 +2738,16 @@ async def handle_bills_set_participants(request: web.Request):
         username=tg_user.get("username"),
     )
     data = await request.json()
-    ids = _resolve_bill_participants(repository, caller, data.get("participants"))
+    visible_person_ids = {
+        person.id
+        for person in repository.bill_persons_visible_to_user(int(tg_user["id"]))
+    }
+    ids = _resolve_bill_participants(
+        repository,
+        caller,
+        data.get("participants"),
+        visible_person_ids,
+    )
     removed = set(bill.participants) - set(ids)
     if removed:
         settled = _bill_settled_pairs(repository, bill)
@@ -3325,7 +3368,8 @@ async def handle_bills_persons(request: web.Request):
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
-    return web.json_response([_serialize_bill_person(p) for p in repository.db.bill_persons])
+    people = repository.bill_persons_visible_to_user(int(tg_user["id"]))
+    return web.json_response([_serialize_bill_person(person) for person in people])
 
 
 async def handle_bills_diff_get(request: web.Request):

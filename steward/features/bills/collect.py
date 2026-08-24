@@ -145,7 +145,7 @@ def _resolve_names(
     resolve_queue with candidate lists, exactly like session._ingest_ai_rows.
     """
     users_map = {u.id: u for u in repo.db.users}
-    all_persons = repo.db.bill_persons
+    all_persons = chat_persons
     mkwargs = match_kwargs_for(repo, caller_tid)
 
     seen: dict[str, str] = {}

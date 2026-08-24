@@ -61,6 +61,23 @@ class TestRankPersonMatches:
             caller_telegram_id=10, origin_chat_id=200,
         )
         assert ranked[0][0].id == "1"
+        assert len(ranked) == 1
+
+    def test_other_chat_user_is_not_a_candidate(self):
+        caller_user = User(id=10, chat_ids=[200])
+        target_user = User(id=20, chat_ids=[300])
+        users_by_id = {10: caller_user, 20: target_user}
+        person = _person("1", "Лёша", telegram_id=20)
+
+        ranked = rank_person_matches(
+            "Лёша",
+            [person],
+            users_by_id,
+            caller_telegram_id=10,
+            origin_chat_id=200,
+        )
+
+        assert ranked == []
 
 
 class TestMatchName:

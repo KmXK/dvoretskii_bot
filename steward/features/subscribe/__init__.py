@@ -83,6 +83,9 @@ class SubscribeFeature(Feature):
     @paginated("subs", per_page=15, header="Подписки на каналы")
     def subs_page(self, ctx: FeatureContext, metadata: str):
         chat_id = int(metadata)
+        if chat_id != ctx.chat_id:
+            return [], (lambda batch: "Нет доступа к подпискам другого чата"), None
+
         items = self.channel_subscriptions.filter(chat_id=chat_id)
 
         def render(batch):

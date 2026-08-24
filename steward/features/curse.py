@@ -51,23 +51,8 @@ _PUNISHMENT_WEIGHT_QUESTION = (
 )
 
 
-def _resolve_user_id(feature: Feature, identifier: str) -> int | None:
-    identifier = identifier.strip().lstrip("@")
-    if not identifier:
-        return None
-    try:
-        return int(identifier)
-    except ValueError:
-        pass
-    target = identifier.lower()
-    user = next(
-        (
-            u
-            for u in feature.repository.db.users
-            if u.username and u.username.lower() == target
-        ),
-        None,
-    )
+def _resolve_user_id(feature: Feature, identifier: str, chat_id: int) -> int | None:
+    user = feature.repository.find_user_in_chat(identifier, chat_id)
     return user.id if user else None
 
 
@@ -341,7 +326,7 @@ class CurseFeature(Feature):
     async def _set_interest(self, ctx: FeatureContext, user: str, enabled: bool):
         if not await self._require_curse_admin(ctx):
             return
-        user_id = _resolve_user_id(self, user)
+        user_id = _resolve_user_id(self, user, ctx.chat_id)
         if user_id is None:
             await ctx.reply(f"Не нашёл юзера {user}.")
             return

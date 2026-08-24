@@ -124,7 +124,7 @@ class RewardFeature(Feature):
             return
         resolved, errors = [], []
         for identifier in users.split():
-            user = self._resolve_user(identifier)
+            user = self._resolve_user(identifier, ctx.chat_id)
             if user is None:
                 errors.append(f"`{identifier}` — не найден")
                 continue
@@ -151,7 +151,7 @@ class RewardFeature(Feature):
             return
         resolved, errors = [], []
         for identifier in users.split():
-            user = self._resolve_user(identifier)
+            user = self._resolve_user(identifier, ctx.chat_id)
             if user is None:
                 errors.append(f"`{identifier}` — не найден")
                 continue
@@ -206,13 +206,5 @@ class RewardFeature(Feature):
             parse_mode="HTML",
         )
 
-    def _resolve_user(self, identifier: str):
-        identifier = identifier.lstrip("@")
-        try:
-            return self.users.find_by(id=int(identifier))
-        except ValueError:
-            pass
-        target = identifier.lower()
-        return self.users.find_one(
-            lambda u: u.username and u.username.lower() == target
-        )
+    def _resolve_user(self, identifier: str, chat_id: int):
+        return self.repository.find_user_in_chat(identifier, chat_id)

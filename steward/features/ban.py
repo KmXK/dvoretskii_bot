@@ -44,7 +44,7 @@ class BanFeature(Feature):
     async def stop_one(self, ctx: FeatureContext, identifier: str):
         chat_id = ctx.chat_id
         sender_id = ctx.user_id
-        user = self._resolve_user(identifier)
+        user = self._resolve_user(identifier, chat_id)
         if user is None:
             await ctx.reply(f"Пользователь {identifier} не найден")
             return
@@ -66,7 +66,7 @@ class BanFeature(Feature):
         if self._is_sender_banned(chat_id, ctx.user_id):
             return False
 
-        user = self._resolve_user(identifier)
+        user = self._resolve_user(identifier, chat_id)
         if user is None:
             await ctx.reply(f"Пользователь {identifier} не найден")
             return
@@ -84,15 +84,8 @@ class BanFeature(Feature):
             f"Бан для {display} включен на {format_timedelta(delta)}. Сообщения будут удаляться."
         )
 
-    def _resolve_user(self, identifier: str) -> User | None:
-        identifier = identifier.lstrip("@")
-        try:
-            return self.users.find_by(id=int(identifier))
-        except ValueError:
-            pass
-        return self.users.find_one(
-            lambda u: u.username and u.username.lower() == identifier.lower()
-        )
+    def _resolve_user(self, identifier: str, chat_id: int) -> User | None:
+        return self.repository.find_user_in_chat(identifier, chat_id)
 
     def _is_sender_banned(self, chat_id: int, user_id: int) -> bool:
         return any(b.chat_id == chat_id and b.user_id == user_id for b in self.banned)

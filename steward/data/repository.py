@@ -137,6 +137,43 @@ class Repository:
             return False
         return user_id in self.db.admin_ids
 
+    def users_in_chat(self, chat_id: int):
+        return [
+            user
+            for user in self.db.users
+            if chat_id in (user.chat_ids or []) and not user.is_bot
+        ]
+
+    def find_user_in_chat(self, identifier: str, chat_id: int):
+        normalized = identifier.strip().lstrip("@").lower()
+        if not normalized:
+            return None
+
+        try:
+            user_id = int(normalized)
+        except ValueError:
+            user_id = None
+
+        for user in self.users_in_chat(chat_id):
+            if user_id is not None and user.id == user_id:
+                return user
+            if user.username and user.username.lower() == normalized:
+                return user
+        return None
+
+    def user_is_in_chat(self, user_id: int, chat_id: int) -> bool:
+        return any(user.id == user_id for user in self.users_in_chat(chat_id))
+
+    def users_visible_to_user(self, user_id: int):
+        user = next((user for user in self.db.users if user.id == user_id), None)
+        chat_ids = set(user.chat_ids or []) if user and not user.is_bot else set()
+        return [
+            candidate
+            for candidate in self.db.users
+            if not candidate.is_bot
+            and set(candidate.chat_ids or []) & chat_ids
+        ]
+
     def chat_settings_for(self, chat_id: int):
         from steward.data.models.chat_settings import ChatSettings
         from steward.features.registry import ALL_CAPABILITIES
@@ -175,7 +212,7 @@ class Repository:
         if chat_id > 0 and chat_id == user_id:
             return True
         s = self.chat_settings_for(chat_id)
-        return user_id in s.chat_admins
+        return user_id in s.chat_admins and self.user_is_in_chat(user_id, chat_id)
 
     def permissions_of(self, user_id: int | None) -> set[str]:
         if user_id is None:
@@ -713,6 +750,35 @@ class Repository:
             data.setdefault("curse_streaks", [])
             data["version"] = 43
 
+        if data.get("version") == 43:
+            bot_ids = set()
+            for user in data.get("users", []):
+                if not isinstance(user, dict):
+                    continue
+
+                username = user.get("username")
+                is_bot = bool(username and username.lower().endswith("bot"))
+                user["is_bot"] = is_bot
+                if is_bot:
+                    bot_ids.add(user.get("id"))
+
+            for settings in data.get("chat_settings", []):
+                if isinstance(settings, dict):
+                    settings["chat_admins"] = [
+                        user_id
+                        for user_id in settings.get("chat_admins", [])
+                        if user_id not in bot_ids
+                    ]
+
+            data["user_roles"] = [
+                user_role
+                for user_role in data.get("user_roles", [])
+                if not isinstance(user_role, dict)
+                or user_role.get("user_id") not in bot_ids
+            ]
+
+            data["version"] = 44
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
@@ -859,6 +925,53 @@ class Repository:
             if p.id == person_id:
                 return p
         return None
+
+    def bill_persons_for_chat(self, chat_id: int):
+        human_ids = {user.id for user in self.users_in_chat(chat_id)}
+        person_ids = {
+            person.id
+            for person in self.db.bill_persons
+            if (
+                person.telegram_id in human_ids
+                or str(chat_id) in (person.chat_last_seen or {})
+            )
+        }
+        for bill in self.db.bills_v2:
+            if bill.origin_chat_id != chat_id:
+                continue
+
+            person_ids.add(bill.author_person_id)
+            person_ids.update(bill.participants)
+
+        return [
+            person
+            for person in self.db.bill_persons
+            if person.id in person_ids
+        ]
+
+    def bill_persons_visible_to_user(self, user_id: int):
+        user = next((user for user in self.db.users if user.id == user_id), None)
+        chat_ids = set(user.chat_ids or []) if user and not user.is_bot else set()
+        person_ids = {
+            person.id
+            for chat_id in chat_ids
+            for person in self.bill_persons_for_chat(chat_id)
+        }
+        caller = self.get_bill_person_by_telegram_id(user_id)
+        if caller is not None:
+            person_ids.add(caller.id)
+            for bill in self.db.bills_v2:
+                if caller.id not in {bill.author_person_id, *bill.participants}:
+                    continue
+
+                person_ids.add(bill.author_person_id)
+                person_ids.update(bill.participants)
+
+        return [
+            person
+            for person in self.db.bill_persons
+            if person.id in person_ids
+        ]
 
     def get_or_create_bill_person(
         self,

@@ -144,9 +144,9 @@ def _format_section(items: list[MetricSample], label: str) -> str:
 
 
 def _monkey_leaderboard(repo: Repository, scope: _Scope, chat_id: int, top_n: int):
-    users = repo.db.users
+    users = [user for user in repo.db.users if not user.is_bot]
     if scope == _Scope.CHAT:
-        users = [u for u in users if chat_id in u.chat_ids]
+        users = repo.users_in_chat(chat_id)
     ranked = sorted(users, key=lambda u: u.monkeys, reverse=True)[:top_n]
     return [(u.username or str(u.id), u.monkeys) for u in ranked if u.monkeys > 0]
 
@@ -184,6 +184,10 @@ class StatsFeature(Feature):
         offset: int,
         chat_id: int,
     ):
+        if scope == _Scope.ALL.value and not ctx.repository.is_admin(ctx.user_id):
+            scope = _Scope.CHAT.value
+        if scope == _Scope.CHAT.value:
+            chat_id = ctx.chat_id
         text, kb = await self._build_main(
             ctx, _Scope(scope), _Period(period), offset, chat_id
         )
@@ -204,6 +208,10 @@ class StatsFeature(Feature):
         idx: int,
         chat_id: int,
     ):
+        if scope == _Scope.ALL.value and not ctx.repository.is_admin(ctx.user_id):
+            scope = _Scope.CHAT.value
+        if scope == _Scope.CHAT.value:
+            chat_id = ctx.chat_id
         text, kb = await self._build_detail(
             ctx, _Scope(scope), _Period(period), idx, chat_id
         )
@@ -219,6 +227,7 @@ class StatsFeature(Feature):
         view: str,
         view_offset: int,
         chat_id: int,
+        include_all: bool,
     ) -> list[list[Button]]:
         cb_main = self.cb("stats:main")
         cb_detail = self.cb("stats:detail")
@@ -228,13 +237,14 @@ class StatsFeature(Feature):
                 return cb_main(scope=s.value, period=p.value, offset=view_offset, chat_id=chat_id)
             return cb_detail(scope=s.value, period=p.value, idx=view_offset, chat_id=chat_id)
 
+        scopes = list(_Scope) if include_all else [_Scope.CHAT]
         return [
             [
                 Button(
                     text=f"· {_SCOPE_LABELS[s]} ·" if s == scope else _SCOPE_LABELS[s],
                     callback_data=cb(s, period),
                 )
-                for s in _Scope
+                for s in scopes
             ],
             [
                 Button(
@@ -268,7 +278,14 @@ class StatsFeature(Feature):
                 sections.append(_format_section(result, s.label))
         header = f"📊 {_SCOPE_LABELS[scope]} | {_PERIOD_LABELS[period]}"
         text = header + "\n\n" + "\n\n".join(sections)
-        rows = self._switch_rows(scope, period, "main", offset, chat_id)
+        rows = self._switch_rows(
+            scope,
+            period,
+            "main",
+            offset,
+            chat_id,
+            ctx.repository.is_admin(ctx.user_id),
+        )
         cb_detail = self.cb("stats:detail")
         rows.append([
             Button(
@@ -340,7 +357,14 @@ class StatsFeature(Feature):
                 for i, item in enumerate(current, 1):
                     lines.append(_format_line(i, item, prev_map))
                 text = "\n".join(lines)
-        rows = self._switch_rows(scope, period, "detail", idx, chat_id)
+        rows = self._switch_rows(
+            scope,
+            period,
+            "detail",
+            idx,
+            chat_id,
+            ctx.repository.is_admin(ctx.user_id),
+        )
         cb_main = self.cb("stats:main")
         rows.append([
             Button(

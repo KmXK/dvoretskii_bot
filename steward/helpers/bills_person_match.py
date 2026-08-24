@@ -125,6 +125,23 @@ def rank_person_matches(
     for p in bill_persons:
         if p.id in seen_pids:
             continue
+
+        visible_chat_ids = set(scoped_chat_ids or [])
+        if origin_chat_id is not None:
+            visible_chat_ids.add(origin_chat_id)
+        if visible_chat_ids:
+            if p.telegram_id:
+                person_user = users_by_id.get(p.telegram_id)
+                if not person_user or person_user.is_bot:
+                    continue
+                if not set(person_user.chat_ids or []) & visible_chat_ids:
+                    continue
+            elif not {
+                str(chat_id)
+                for chat_id in visible_chat_ids
+            } & set((p.chat_last_seen or {}).keys()):
+                continue
+
         names = _names_for_person(p, users_by_id)
         if name_lower in names:
             base = 1000.0
