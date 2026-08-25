@@ -114,26 +114,21 @@ def _name(repository, user_id: int) -> str:
 
 
 def participant_ids_in_chat(repository, chat_id: int) -> list[int]:
-    users_by_id = {user.id: user for user in repository.db.users}
-    participant_ids = set()
-    for participant in repository.db.curse_participants:
-        user = users_by_id.get(participant.user_id)
-        chat_ids = set(user.chat_ids or []) if user is not None else set()
-        chat_ids.update(participant.source_chat_ids)
-        if chat_id in chat_ids:
-            participant_ids.add(participant.user_id)
-    return sorted(participant_ids)
+    return sorted(
+        participant.user_id
+        for participant in repository.db.curse_participants
+        if chat_id in participant.source_chat_ids
+    )
 
 
 def curse_report_chat_ids(repository) -> list[int]:
-    chat_ids = set()
-    users_by_id = {user.id: user for user in repository.db.users}
-    for participant in repository.db.curse_participants:
-        user = users_by_id.get(participant.user_id)
-        if user is not None:
-            chat_ids.update(user.chat_ids or [])
-        chat_ids.update(participant.source_chat_ids)
-    return sorted(chat_ids)
+    return sorted(
+        {
+            chat_id
+            for participant in repository.db.curse_participants
+            for chat_id in participant.source_chat_ids
+        }
+    )
 
 
 def hourly_curse_counts(repository, user_id: int, day: date) -> list[int]:

@@ -586,10 +586,12 @@ async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
         CurseParticipant(
             user_id=DEFAULT_USER_ID,
             subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
         ),
         CurseParticipant(
             user_id=second_user_id,
             subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
         ),
     ]
     repo.db.curse_streaks = [CurseStreak(user_id=second_user_id, days=4)]

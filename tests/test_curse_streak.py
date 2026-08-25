@@ -97,7 +97,7 @@ def test_streak_is_global_but_renders_in_every_subscribed_chat():
     assert "сейчас 2 дня" in second
 
 
-def test_participant_is_visible_in_every_known_user_chat():
+def test_participant_is_not_visible_without_subscription_in_chat():
     other_chat = -100999
     repo = _repo()
     repo.db.users[0].chat_ids = [CHAT_ID, other_chat]
@@ -105,8 +105,8 @@ def test_participant_is_visible_in_every_known_user_chat():
 
     text = format_curse_streak_forecast(repo, other_chat, date(2026, 8, 22))
 
-    assert "сейчас 2 дня" in text
-    assert curse_report_chat_ids(repo) == [CHAT_ID, other_chat]
+    assert text == ""
+    assert curse_report_chat_ids(repo) == [CHAT_ID]
 
 
 def test_hourly_counts_have_24_points_and_accumulate_by_hour():
@@ -133,6 +133,7 @@ def test_chart_contains_zero_line_for_participant_without_curses():
         CurseParticipant(
             user_id=second_user_id,
             subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
         )
     )
     day = date(2026, 8, 22)
