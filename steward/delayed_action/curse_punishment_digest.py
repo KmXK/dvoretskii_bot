@@ -1,10 +1,13 @@
+import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
+from io import BytesIO
 
 from steward.delayed_action.base import DelayedAction
 from steward.delayed_action.context import DelayedActionContext
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.helpers.class_mark import class_mark
+from steward.helpers.curse_chart import build_curse_chart_series, render_curse_chart_png
 from steward.helpers.curse_debt import (
     apply_curse_interest_until,
     build_curse_debt_report_entries,
@@ -13,26 +16,47 @@ from steward.helpers.curse_debt import (
     today_msk,
 )
 from steward.helpers.curse_streak import (
+    curse_report_chat_ids,
     finalize_curse_streaks,
     format_curse_streak_forecast,
     format_curse_streak_outcome,
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _curse_chat_ids(repository) -> list[int]:
-    return sorted(
-        {
-            chat_id
-            for participant in repository.db.curse_participants
-            for chat_id in participant.source_chat_ids
-        }
-    )
+    return curse_report_chat_ids(repository)
+
+
+async def _send_curse_chart(
+    context: DelayedActionContext,
+    chat_id: int,
+    chart_day: date,
+) -> None:
+    try:
+        series = build_curse_chart_series(context.repository, chat_id, chart_day)
+        chart = render_curse_chart_png(series, chart_day)
+        if chart is None:
+            return
+
+        photo = BytesIO(chart)
+        photo.name = f"curse-{chart_day.isoformat()}.png"
+        await context.bot.send_photo(chat_id, photo=photo)
+    except Exception:
+        logger.exception(
+            "curse hourly chart failed chat_id=%s day=%s",
+            chat_id,
+            chart_day,
+        )
 
 
 async def _broadcast_curse_report(
     context: DelayedActionContext,
     debt_formatter=None,
     streak_formatter=None,
+    chart_day: date | None = None,
 ) -> None:
     for chat_id in _curse_chat_ids(context.repository):
         sections: list[str] = []
@@ -49,6 +73,8 @@ async def _broadcast_curse_report(
         if not sections:
             continue
         await context.bot.send_message(chat_id, "\n\n".join(sections), parse_mode="HTML")
+        if chart_day is not None:
+            await _send_curse_chart(context, chat_id, chart_day)
 
 
 @dataclass(kw_only=True)
@@ -98,4 +124,5 @@ class CurseInterestDelayedAction(DelayedAction):
             lambda repository, chat_id: format_curse_streak_outcome(
                 repository, chat_id, outcomes
             ),
+            today - timedelta(days=1),
         )

@@ -7,6 +7,7 @@ from steward.data.models.curse import (
     CursePunishment,
     CursePunishmentDebt,
     CursePunishmentDay,
+    CurseStreak,
 )
 from steward.delayed_action.context import DelayedActionContext
 from steward.delayed_action.curse_punishment_digest import (
@@ -28,6 +29,7 @@ from steward.helpers.curse_debt import (
     reduce_curse_debt,
     today_msk,
 )
+from steward.helpers.curse_streak import record_curses
 from steward.data.models.user import User
 from steward.metrics.base import MetricSample
 from tests.conftest import CHAT_ID, DEFAULT_USER_ID, make_repository
@@ -570,3 +572,47 @@ async def test_interest_action_applies_interest():
 
     assert repo.db.curse_punishment_debts[0].punishment_count == 110
     assert repo.db.curse_punishment_debts[0].last_interest_applied_date == today_date.isoformat()
+
+
+async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
+    repo = make_repository()
+    completed_day = today_msk() - date.resolution
+    second_user_id = DEFAULT_USER_ID + 1
+    repo.db.users = [
+        User(id=DEFAULT_USER_ID, username="cursing", chat_ids=[CHAT_ID]),
+        User(id=second_user_id, username="clean", chat_ids=[CHAT_ID]),
+    ]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        ),
+        CurseParticipant(
+            user_id=second_user_id,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        ),
+    ]
+    repo.db.curse_streaks = [CurseStreak(user_id=second_user_id, days=4)]
+    record_curses(repo, DEFAULT_USER_ID, 2, completed_day, hour=18)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.send_photo = AsyncMock()
+    action = CurseInterestDelayedAction(
+        generator=ConstantGenerator(
+            start=datetime.now(timezone.utc),
+            period=date.resolution,
+        )
+    )
+    context = DelayedActionContext(repo, bot, MagicMock(), MagicMock())
+
+    await action.execute(context)
+
+    bot.send_message.assert_awaited_once()
+    text = bot.send_message.await_args.args[1]
+    assert "cursing" in text
+    assert "clean" in text
+    bot.send_photo.assert_awaited_once()
+    assert bot.send_photo.await_args.args[0] == CHAT_ID
+    assert bot.send_photo.await_args.kwargs["photo"].name == (
+        f"curse-{completed_day.isoformat()}.png"
+    )

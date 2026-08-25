@@ -49,3 +49,5 @@ class CurseStreak:
     last_finalized_date: str = ""
     last_curse_date: str = ""
     curses_on_last_curse_date: int = 0
+    hourly_curse_date: str = ""
+    hourly_curse_counts: list[int] = field(default_factory=lambda: [0] * 24)
