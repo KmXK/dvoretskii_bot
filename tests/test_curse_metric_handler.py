@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
@@ -73,6 +74,25 @@ class TestCurseMetricFeature:
 
         assert not ok
         metrics.inc.assert_not_called()
+
+    async def test_counts_self_forwarded_messages(self):
+        repo = make_repository()
+        repo.db.curse_words = {"мат"}
+        metrics = MagicMock()
+        feature = _make_feature(repo)
+        ctx = make_text_context("мат", repo=repo, metrics=metrics)
+        ctx.message.forward_origin = SimpleNamespace(
+            sender_user=SimpleNamespace(
+                id=DEFAULT_USER_ID,
+                username="testuser",
+                first_name="Test",
+            )
+        )
+
+        ok = await feature.chat(ctx)
+
+        assert not ok
+        metrics.inc.assert_called_once_with("bot_curse_words_total", value=1)
 
     async def test_skips_commands(self):
         repo = make_repository()

@@ -10,6 +10,7 @@ from steward.features.voice_video.transcription import create_transcription_repl
 from steward.framework import Feature, FeatureContext, step, subcommand, wizard
 from steward.helpers.curse_processing import process_transcribed_curse_text
 from steward.helpers.media import fetch_tg_file_to
+from steward.helpers.message_origin import resolve_message_author
 from steward.session.context import ChatStepContext
 from steward.session.step import Step
 
@@ -136,10 +137,11 @@ class _AwaitMediaStep(Step):
         file_id, is_video_note = resolved
         sc["file_id"] = file_id
         sc["is_video_note"] = is_video_note
-        from_user = message.from_user
-        sc["speaker_user_id"] = from_user.id if from_user else None
-        sc["speaker_username"] = from_user.username if from_user else None
-        sc["speaker_first_name"] = from_user.first_name if from_user else None
+        author = resolve_message_author(message)
+        sc["speaker_user_id"] = author.user_id
+        sc["speaker_username"] = author.username
+        sc["speaker_first_name"] = author.first_name
+        sc["speaker_fallback_name"] = author.fallback_name
         sc["media_chat_id"] = message.chat_id
         sc["media_message_id"] = message.message_id
         return True
@@ -202,6 +204,7 @@ class TranscribeFeature(Feature):
                 is_video_note=is_video_note,
                 source_message=source_message,
                 curse_source_message=curse_source_message,
+                speaker_source=source,
                 full_text=full_text,
                 summarize=summarize,
             )
@@ -231,6 +234,7 @@ class TranscribeFeature(Feature):
         speaker_user_id: int | None = None,
         speaker_username: str | None = None,
         speaker_first_name: str | None = None,
+        speaker_fallback_name: str | None = None,
         media_chat_id: int | None = None,
         media_message_id: int | None = None,
         _prompt_chat_id: int | None = None,
@@ -267,7 +271,7 @@ class TranscribeFeature(Feature):
                 audio_path,
                 speaker_user_id,
                 speaker_username,
-                None,
+                speaker_fallback_name,
                 speaker_first_name,
                 video_path=audio_path if is_video_note else None,
                 include_full_text=full_text,
@@ -288,6 +292,7 @@ class TranscribeFeature(Feature):
         is_video_note: bool,
         source_message: Message,
         curse_source_message: Message | None | object = _CURSE_SOURCE_DEFAULT,
+        speaker_source: Any | None = None,
         full_text: bool = True,
         summarize: bool = True,
     ):
@@ -299,17 +304,18 @@ class TranscribeFeature(Feature):
             await ctx.reply("Не получилось забрать файл, попробуй ещё раз", markdown=False)
             return
 
-        sender = source_message.from_user
+        author_source = speaker_source if speaker_source is not None else source_message
+        author = resolve_message_author(author_source)
         placeholder = await ctx.reply("Слушаю…", markdown=False)
         try:
             transcription = await create_transcription_reply(
                 self.repository,
                 source_message,
                 audio_path,
-                sender.id if sender else None,
-                sender.username if sender else None,
-                None,
-                sender.first_name if sender else None,
+                author.user_id,
+                author.username,
+                author.fallback_name,
+                author.first_name,
                 video_path=audio_path if is_video_note else None,
                 edit_message=placeholder,
                 include_full_text=full_text,

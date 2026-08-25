@@ -5,6 +5,7 @@ from steward.data.repository import Repository
 from steward.helpers.curse_debt import accrue_curse_debt, today_msk
 from steward.helpers.curse_streak import record_curses
 from steward.helpers.curse_detector import CurseDetector
+from steward.helpers.message_origin import resolve_message_author
 from steward.metrics.base import ContextMetrics, Labels
 
 
@@ -12,16 +13,6 @@ logger = logging.getLogger(__name__)
 
 CURSE_REACTION = "🤬"
 _DETECTOR = CurseDetector()
-
-
-def _metric_user_name(user: Any, user_id: int) -> str:
-    username = getattr(user, "username", None)
-    if username:
-        return str(username)
-    first_name = getattr(user, "first_name", None)
-    if first_name:
-        return str(first_name)
-    return str(user_id)
 
 
 def _message_chat_id(message: Any) -> int | None:
@@ -90,12 +81,8 @@ async def process_transcribed_curse_text(
 ) -> int:
     if not text or source_message is None:
         return 0
-    if getattr(source_message, "forward_origin", None) is not None:
-        return 0
-
-    user = getattr(source_message, "from_user", None)
-    user_id = getattr(user, "id", None)
-    if not isinstance(user_id, int):
+    author = resolve_message_author(source_message)
+    if not author.can_count_curses:
         return 0
 
     chat_id = _message_chat_id(source_message)
@@ -107,11 +94,11 @@ async def process_transcribed_curse_text(
     return await process_curse_text(
         repo,
         metrics,
-        user_id=user_id,
+        user_id=author.user_id,
         text=text,
         source_message=source_message,
         metric_labels={
-            "user_id": str(user_id),
-            "user_name": _metric_user_name(user, user_id),
+            "user_id": str(author.user_id),
+            "user_name": author.metric_name,
         },
     )

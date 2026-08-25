@@ -1,10 +1,16 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
-from steward.features.transcribe import TranscribeFeature, _parse_output_options
+from steward.features.transcribe import (
+    TranscribeFeature,
+    _AwaitMediaStep,
+    _parse_output_options,
+)
 from steward.framework.types import from_chat_context
+from steward.session.context import ChatStepContext
 from tests.conftest import DEFAULT_USER_ID, make_repository, make_text_context
 
 
@@ -37,6 +43,40 @@ def test_transcribe_output_options_reject_empty_or_unknown_output():
     assert _parse_output_options("full=off summary=off") is None
     assert _parse_output_options("text=off") is None
     assert _parse_output_options("full=maybe") is None
+
+
+async def test_transcribe_session_keeps_forwarded_original_author():
+    repo = make_repository()
+    base = make_text_context("ignored", repo=repo)
+    message = base.message
+    message.voice = SimpleNamespace(file_id="voice-id")
+    message.video_note = None
+    message.forward_origin = SimpleNamespace(
+        sender_user=SimpleNamespace(
+            id=999,
+            username="original",
+            first_name="Original",
+        )
+    )
+    session_context = {}
+    context = ChatStepContext(
+        repository=base.repository,
+        bot=base.bot,
+        client=base.client,
+        update=base.update,
+        tg_context=base.tg_context,
+        metrics=base.metrics,
+        message=message,
+        session_context=session_context,
+    )
+
+    handled = await _AwaitMediaStep().chat(context)
+
+    assert handled
+    assert session_context["speaker_user_id"] == 999
+    assert session_context["speaker_username"] == "original"
+    assert session_context["speaker_first_name"] == "Original"
+    assert session_context["speaker_fallback_name"] is None
 
 
 async def test_transcribe_command_counts_curses_for_source_voice_author(monkeypatch):
@@ -96,12 +136,54 @@ async def test_transcribe_command_ignores_forwarded_voice(monkeypatch):
     assert repo.db.curse_punishment_debts == []
 
 
-async def test_transcribe_command_ignores_external_reply_without_source_author(monkeypatch):
+async def test_transcribe_command_attributes_forward_to_original_author(monkeypatch):
     repo = _prepare_repo()
     feature = _make_feature(repo)
     ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
-    reply_target = ctx.message
-    reply_target.forward_origin = None
+    source_message = ctx.message
+    source_message.forward_origin = SimpleNamespace(
+        sender_user=SimpleNamespace(
+            id=999,
+            username="original",
+            first_name="Original",
+        )
+    )
+    create_reply = AsyncMock(return_value="привет")
+
+    monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=Path("/tmp/audio.ogg")))
+    monkeypatch.setattr(
+        "steward.features.transcribe.create_transcription_reply",
+        create_reply,
+    )
+
+    await feature._transcribe(
+        ctx,
+        file_id="file-id",
+        is_video_note=False,
+        source_message=source_message,
+    )
+
+    assert create_reply.await_args.args[3:7] == (
+        999,
+        "original",
+        None,
+        "Original",
+    )
+    ctx.metrics.inc.assert_not_called()
+
+
+async def test_transcribe_command_counts_curses_for_self_forward(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    source_message = ctx.message
+    source_message.forward_origin = SimpleNamespace(
+        sender_user=SimpleNamespace(
+            id=DEFAULT_USER_ID,
+            username="testuser",
+            first_name="Test",
+        )
+    )
 
     monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=Path("/tmp/audio.ogg")))
     monkeypatch.setattr(
@@ -113,10 +195,55 @@ async def test_transcribe_command_ignores_external_reply_without_source_author(m
         ctx,
         file_id="file-id",
         is_video_note=False,
-        source_message=reply_target,
-        curse_source_message=None,
+        source_message=source_message,
     )
 
+    ctx.metrics.inc.assert_called_once_with(
+        "bot_curse_words_total",
+        {"user_id": str(DEFAULT_USER_ID), "user_name": "testuser"},
+        value=2,
+    )
+    assert repo.db.curse_punishment_debts[0].user_id == DEFAULT_USER_ID
+
+
+async def test_transcribe_command_ignores_external_reply_without_source_author(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    reply_target = ctx.message
+    reply_target.forward_origin = None
+    external_reply = SimpleNamespace(
+        origin=SimpleNamespace(
+            sender_user=SimpleNamespace(
+                id=999,
+                username="external",
+                first_name="External",
+            )
+        )
+    )
+    create_reply = AsyncMock(return_value="мат мат")
+
+    monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=Path("/tmp/audio.ogg")))
+    monkeypatch.setattr(
+        "steward.features.transcribe.create_transcription_reply",
+        create_reply,
+    )
+
+    await feature._transcribe(
+        ctx,
+        file_id="file-id",
+        is_video_note=False,
+        source_message=reply_target,
+        curse_source_message=None,
+        speaker_source=external_reply,
+    )
+
+    assert create_reply.await_args.args[3:7] == (
+        999,
+        "external",
+        None,
+        "External",
+    )
     ctx.metrics.inc.assert_not_called()
     reply_target.set_reaction.assert_not_called()
     assert repo.db.curse_punishment_debts == []

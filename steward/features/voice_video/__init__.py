@@ -24,6 +24,7 @@ from steward.framework import (
     subcommand,
 )
 from steward.helpers.curse_processing import process_transcribed_curse_text
+from steward.helpers.message_origin import resolve_message_author
 
 logger = logging.getLogger(__name__)
 
@@ -185,30 +186,15 @@ class VoiceVideoFeature(Feature):
             return False
 
         request_id = uuid.uuid4().hex
-        speaker_user_id: int | None = from_user.id
-        speaker_username = from_user.username
-        speaker_first_name: str | None = from_user.first_name
-        speaker_fallback_name: str | None = None
-        origin = getattr(message, "forward_origin", None)
-        if origin is not None:
-            if hasattr(origin, "sender_user") and origin.sender_user:
-                speaker_user = origin.sender_user
-                speaker_user_id = speaker_user.id
-                speaker_username = speaker_user.username
-                speaker_first_name = getattr(speaker_user, "first_name", None)
-            elif hasattr(origin, "sender_user_name") and origin.sender_user_name:
-                speaker_user_id = None
-                speaker_username = None
-                speaker_first_name = None
-                speaker_fallback_name = origin.sender_user_name
+        author = resolve_message_author(message)
 
         pending = _PendingVoiceRequest(
             file_id=file_id,
             requester_user_id=from_user.id,
-            speaker_user_id=speaker_user_id,
-            speaker_username=speaker_username,
-            speaker_fallback_name=speaker_fallback_name,
-            speaker_first_name=speaker_first_name,
+            speaker_user_id=author.user_id,
+            speaker_username=author.username,
+            speaker_fallback_name=author.fallback_name,
+            speaker_first_name=author.first_name,
             is_video_note=is_video_note,
             duration=duration,
             transcribe_clicked=True,

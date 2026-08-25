@@ -1,5 +1,7 @@
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from steward.data.models.curse import CurseParticipant, CursePunishment
@@ -37,6 +39,37 @@ def _pending():
         duration=5,
         transcribe_clicked=True,
     )
+
+
+async def test_auto_voice_uses_original_forward_author(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    ctx.message.voice = SimpleNamespace(file_id="voice-id", duration=5)
+    ctx.message.video_note = None
+    ctx.message.forward_origin = SimpleNamespace(
+        sender_user=SimpleNamespace(
+            id=999,
+            username="original",
+            first_name="Original",
+        )
+    )
+    ctx.message.reply_text = AsyncMock(return_value=MagicMock())
+
+    def capture_task(coroutine):
+        coroutine.close()
+        return MagicMock()
+
+    monkeypatch.setattr(asyncio, "create_task", capture_task)
+
+    handled = await feature.on_voice(ctx)
+
+    pending = next(iter(feature._pending.values()))
+    assert handled
+    assert pending.speaker_user_id == 999
+    assert pending.speaker_username == "original"
+    assert pending.speaker_first_name == "Original"
+    assert pending.speaker_fallback_name is None
 
 
 async def test_auto_voice_transcription_counts_curses_for_voice_author(monkeypatch):
@@ -89,6 +122,44 @@ async def test_auto_voice_transcription_ignores_forwarded_voice(monkeypatch):
     ctx.metrics.inc.assert_not_called()
     source_message.set_reaction.assert_not_called()
     assert repo.db.curse_punishment_debts == []
+
+
+async def test_auto_voice_transcription_counts_curses_for_self_forward(monkeypatch):
+    repo = _prepare_repo()
+    feature = _make_feature(repo)
+    ctx = from_chat_context(make_text_context("ignored", repo=repo, metrics=MagicMock()))
+    source_message = ctx.message
+    source_message.forward_origin = SimpleNamespace(
+        sender_user=SimpleNamespace(
+            id=DEFAULT_USER_ID,
+            username="testuser",
+            first_name="Test",
+        )
+    )
+    bot_message = MagicMock()
+    bot_message.edit_text = AsyncMock()
+
+    monkeypatch.setattr(feature, "_resolve_audio_path", AsyncMock(return_value=Path("/tmp/audio.ogg")))
+    monkeypatch.setattr("steward.features.voice_video.transcribe_voice", AsyncMock(return_value="мат мат"))
+    monkeypatch.setattr(
+        "steward.features.voice_video.create_transcription_reply",
+        AsyncMock(return_value="мат мат"),
+    )
+
+    await feature._run_auto_transcription(
+        ctx,
+        "request-id",
+        _pending(),
+        source_message,
+        bot_message,
+    )
+
+    ctx.metrics.inc.assert_called_once_with(
+        "bot_curse_words_total",
+        {"user_id": str(DEFAULT_USER_ID), "user_name": "testuser"},
+        value=2,
+    )
+    assert repo.db.curse_punishment_debts[0].user_id == DEFAULT_USER_ID
 
 
 async def test_auto_voice_transcription_respects_disabled_curse_capability(monkeypatch):

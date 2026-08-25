@@ -1,5 +1,6 @@
 from steward.framework import Feature, FeatureContext, collection, on_message
 from steward.helpers.curse_processing import process_curse_text
+from steward.helpers.message_origin import resolve_message_author
 
 
 def _message_text_or_caption(message) -> str | None:
@@ -20,12 +21,13 @@ class CurseMetricFeature(Feature):
         text = _message_text_or_caption(ctx.message)
         if not text or text.startswith("/"):
             return False
-        if getattr(ctx.message, "forward_origin", None) is not None:
+        author = resolve_message_author(ctx.message)
+        if not author.can_count_curses:
             return False
         await process_curse_text(
             self.repository,
             ctx.metrics,
-            user_id=ctx.user_id,
+            user_id=author.user_id,
             text=text,
             source_message=ctx.message,
         )
