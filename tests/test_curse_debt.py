@@ -577,10 +577,11 @@ async def test_interest_action_applies_interest():
 async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
     repo = make_repository()
     completed_day = today_msk() - date.resolution
+    other_chat = CHAT_ID - 1
     second_user_id = DEFAULT_USER_ID + 1
     repo.db.users = [
-        User(id=DEFAULT_USER_ID, username="cursing", chat_ids=[CHAT_ID]),
-        User(id=second_user_id, username="clean", chat_ids=[CHAT_ID]),
+        User(id=DEFAULT_USER_ID, username="cursing", chat_ids=[CHAT_ID, other_chat]),
+        User(id=second_user_id, username="clean", chat_ids=[CHAT_ID, other_chat]),
     ]
     repo.db.curse_participants = [
         CurseParticipant(
@@ -610,6 +611,7 @@ async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
     await action.execute(context)
 
     bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.args[0] == CHAT_ID
     text = bot.send_message.await_args.args[1]
     assert "cursing" in text
     assert "clean" in text

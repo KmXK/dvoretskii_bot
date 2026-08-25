@@ -12,6 +12,7 @@ from steward.helpers.curse_streak import (
     format_curse_streak_forecast,
     format_curse_streak_outcome,
     hourly_curse_counts,
+    participant_ids_in_chat,
     record_curses,
 )
 from tests.conftest import CHAT_ID, DEFAULT_USER_ID, make_repository
@@ -95,6 +96,13 @@ def test_streak_is_global_but_renders_in_every_subscribed_chat():
 
     assert "сейчас 2 дня" in first
     assert "сейчас 2 дня" in second
+
+
+def test_duplicate_participant_is_rendered_once():
+    repo = _repo()
+    repo.db.curse_participants.append(repo.db.curse_participants[0])
+
+    assert participant_ids_in_chat(repo, CHAT_ID) == [DEFAULT_USER_ID]
 
 
 def test_participant_is_not_visible_without_subscription_in_chat():

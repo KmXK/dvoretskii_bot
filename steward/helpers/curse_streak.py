@@ -115,9 +115,11 @@ def _name(repository, user_id: int) -> str:
 
 def participant_ids_in_chat(repository, chat_id: int) -> list[int]:
     return sorted(
-        participant.user_id
-        for participant in repository.db.curse_participants
-        if chat_id in participant.source_chat_ids
+        {
+            participant.user_id
+            for participant in repository.db.curse_participants
+            if chat_id in participant.source_chat_ids
+        }
     )
 
 
