@@ -36,7 +36,7 @@ def _chat_name(chat, signature: str | None) -> str | None:
 def resolve_message_author(source) -> MessageAuthor:
     forwarder = getattr(source, "from_user", None)
     origin = getattr(source, "forward_origin", None)
-    if origin is None:
+    if origin is None and forwarder is None:
         origin = getattr(source, "origin", None)
 
     if origin is None:
