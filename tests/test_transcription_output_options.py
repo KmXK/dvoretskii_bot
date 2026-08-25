@@ -1,6 +1,9 @@
 from unittest.mock import AsyncMock, MagicMock
 
-from steward.features.voice_video.transcription import create_transcription_reply
+from steward.features.voice_video.transcription import (
+    _summary_stream,
+    create_transcription_reply,
+)
 
 
 def _repository():
@@ -91,3 +94,21 @@ async def test_transcription_requires_at_least_one_output(tmp_path):
         assert "At least one" in str(error)
     else:
         raise AssertionError("ValueError was not raised")
+
+
+async def test_summary_prompt_rewrites_second_person_as_interlocutor(monkeypatch):
+    make_stream = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(
+        "steward.features.voice_video.transcription.make_text_stream",
+        make_stream,
+    )
+
+    await _summary_stream(
+        "подскажи, а почему у тебя профиль такой",
+        "Полковник",
+    )
+
+    system_prompt = make_stream.await_args.args[3]
+    assert "никогда не обращается к читателю" in system_prompt
+    assert "Не переноси из речи формы" in system_prompt
+    assert "Полковник спрашивает собеседника, почему у него такой профиль" in system_prompt
