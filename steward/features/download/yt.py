@@ -59,6 +59,8 @@ TIKTOK_VIDEO_FORMAT = (
 TIKTOK_FALLBACK_FORMAT = "download_addr/download/b"
 
 _CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
+_IMAGE_POST_CAPTION_LIMIT = 600
+_AUDIO_SUFFIXES = frozenset({".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"})
 
 
 def _auto_video_transcription_enabled(
@@ -72,16 +74,21 @@ def _auto_video_transcription_enabled(
     )
 
 
-def _make_caption(info: Any) -> str | None:
+def _make_caption(info: Any, limit: int = _CAPTION_LIMIT) -> str | None:
     """Возвращает HTML-caption с описанием под expandable blockquote'ом.
     Шлите с parse_mode='HTML'."""
     if not isinstance(info, dict):
         return None
-    raw = (info.get("description") or info.get("title") or "").strip()
+    raw = (
+        info.get("description")
+        or info.get("caption")
+        or info.get("title")
+        or ""
+    ).strip()
     if not raw:
         return None
-    if len(raw) > _CAPTION_LIMIT:
-        raw = raw[: _CAPTION_LIMIT - 1].rstrip() + "…"
+    if len(raw) > limit:
+        raw = raw[: limit - 1].rstrip() + "…"
     from steward.helpers.formats import spoiler_block
     return spoiler_block(raw, header="Описание")
 
@@ -242,11 +249,16 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
     caption = None
     try:
         info = await meta_task
-        caption = _make_caption(info)
+        caption = _make_caption(info, _IMAGE_POST_CAPTION_LIMIT)
     except Exception as e:
         logger.warning("instagram description fetch failed: %s", e)
     await download_and_send_medias(
-        repository, message, medias, use_proxy=True, caption=caption,
+        repository,
+        message,
+        medias,
+        use_proxy=True,
+        caption=caption,
+        describe_images=True,
     )
 
 
@@ -363,6 +375,46 @@ def _get_gallery_audio_url(metadata: Any) -> str | None:
     return None
 
 
+def _gallery_audio_filename(metadata: Any, audio_path: str | Path) -> str:
+    suffix = Path(audio_path).suffix.lower()
+    if suffix not in _AUDIO_SUFFIXES:
+        suffix = ".mp3"
+    if not isinstance(metadata, dict):
+        return f"Audio{suffix}"
+
+    music = metadata.get("music")
+    if not isinstance(music, dict):
+        music = {}
+    title = (
+        music.get("title")
+        or music.get("musicName")
+        or music.get("matchedPGCSoundTitle")
+        or metadata.get("audio_title")
+        or metadata.get("track_title")
+    )
+    artist = (
+        music.get("authorName")
+        or music.get("author")
+        or metadata.get("artist")
+        or metadata.get("uploader")
+    )
+    if not title:
+        return f"Audio{suffix}"
+
+    display = str(title).strip()
+    if artist:
+        artist_name = str(artist).strip()
+        if artist_name and artist_name.lower() not in display.lower():
+            display = f"{display} — {artist_name}"
+    display = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", " ", display)
+    display = " ".join(display.split()).strip(" .")
+    if not display:
+        return f"Audio{suffix}"
+    if len(display) > 72:
+        display = display[:72].rstrip()
+    return f"{display}{suffix}"
+
+
 def make_video_loader(
     type_name: str,
     cookie_file: str | None = None,
@@ -470,9 +522,9 @@ async def download_image_files(
     url: str,
     dir: str,
     cookie_file: str | None = None,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], dict[str, Any] | None]:
     """Качает медиа поста через gallery-dl в `dir`.
-    Возвращает (медиа, аудио) — отсортированные пути."""
+    Возвращает (медиа, аудио, metadata)."""
     args: list[str] = []
     if os.environ.get("DOWNLOAD_PROXY"):
         args += ["--proxy", os.environ.get("DOWNLOAD_PROXY") or ""]
@@ -512,6 +564,20 @@ async def download_image_files(
         )
     ]
 
+    metadata = None
+    for media_path in all_files:
+        metadata_path = media_path + ".json"
+        if not os.path.exists(metadata_path):
+            continue
+        try:
+            with open(metadata_path) as file:
+                loaded = json.load(file)
+            if isinstance(loaded, dict):
+                metadata = loaded
+                break
+        except Exception as error:
+            logger.warning("gallery metadata read failed %s: %s", metadata_path, error)
+
     for media_path in all_files:
         metadata_path = media_path + ".json"
         if not is_video_file(media_path) or not os.path.exists(metadata_path):
@@ -521,9 +587,9 @@ async def download_image_files(
             continue
 
         with open(metadata_path) as file:
-            metadata = json.load(file)
+            media_metadata = json.load(file)
 
-        audio_url = _get_gallery_audio_url(metadata)
+        audio_url = _get_gallery_audio_url(media_metadata)
         if not audio_url:
             continue
 
@@ -556,9 +622,9 @@ async def download_image_files(
         os.remove(audio_path)
         logger.info("Добавлена аудиодорожка в %s", media_path)
 
-    images = [x for x in all_files if not x.endswith(".mp3")]
-    audios = [x for x in all_files if x.endswith(".mp3")]
-    return images, audios
+    images = [x for x in all_files if Path(x).suffix.lower() not in _AUDIO_SUFFIXES]
+    audios = [x for x in all_files if Path(x).suffix.lower() in _AUDIO_SUFFIXES]
+    return images, audios, metadata
 
 
 def make_images_loader(
@@ -569,13 +635,25 @@ def make_images_loader(
         logger.info(f"trying get images from {type_name}...")
 
         with tempfile.TemporaryDirectory(prefix=f"{type_name}_") as dir:
-            images, audios = await download_image_files(url, dir, cookie_file)
+            images, audios, metadata = await download_image_files(
+                url,
+                dir,
+                cookie_file,
+            )
 
-            await send_media_files(message, images)
+            await send_media_files(
+                message,
+                images,
+                caption=_make_caption(metadata, _IMAGE_POST_CAPTION_LIMIT),
+                describe_images=True,
+            )
 
             if len(audios) > 0:
-                with open(os.path.join(dir, audios[0]), "rb") as file:
-                    await message.reply_audio(file, filename="Audio")
+                with open(audios[0], "rb") as file:
+                    await message.reply_audio(
+                        file,
+                        filename=_gallery_audio_filename(metadata, audios[0]),
+                    )
 
     return wrapper
 

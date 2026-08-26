@@ -45,11 +45,18 @@ from telegram.ext import ExtBot
 from steward.data.repository import Repository
 from steward.features.download import video_cache
 from steward.features.download.callbacks import download_file
+from steward.features.download.image_description import (
+    append_image_description,
+    describe_image_files,
+)
 from steward.features.download.video_cache import CachedMedia
 from steward.features.download.yt import (
     _TIKTOK_AUTO_LIMIT,
+    _IMAGE_POST_CAPTION_LIMIT,
     TIKTOK_FALLBACK_FORMAT,
     TIKTOK_VIDEO_FORMAT,
+    _extract_info_only,
+    _gallery_audio_filename,
     _make_caption,
     download_image_files,
     download_video_file,
@@ -145,10 +152,17 @@ async def _upload_video(
 
 async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
     with tempfile.TemporaryDirectory(prefix="inline_images_") as dir:
-        images, audios = await download_image_files(url, dir)
+        images, audios, metadata = await download_image_files(url, dir)
         if not images and not audios:
             raise RuntimeError("gallery-dl не нашёл медиа")
         chat_id = _upload_chat_id()
+        description = await describe_image_files(
+            [Path(path) for path in images if not is_video_file(path)]
+        )
+        caption = append_image_description(
+            _make_caption(metadata, _IMAGE_POST_CAPTION_LIMIT),
+            description,
+        )
 
         async def upload_media(path: str) -> CachedMedia:
             is_video = is_video_file(path)
@@ -170,18 +184,31 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
             if is_video:
                 if msg.video is None:
                     raise RuntimeError("служебная загрузка вернула не видео")
-                media = CachedMedia(file_id=msg.video.file_id, kind="video")
+                media = CachedMedia(
+                    file_id=msg.video.file_id,
+                    kind="video",
+                    caption=caption,
+                )
             else:
                 if not msg.photo:
                     raise RuntimeError("служебная загрузка вернула не фото")
-                media = CachedMedia(file_id=msg.photo[-1].file_id, kind="photo")
+                media = CachedMedia(
+                    file_id=msg.photo[-1].file_id,
+                    kind="photo",
+                    caption=caption,
+                )
 
             await _delete_quietly(bot, msg)
             return media
 
         async def upload_audio(path: str) -> CachedMedia:
             with open(path, "rb") as file:
-                msg = await bot.send_audio(chat_id, file, disable_notification=True)
+                msg = await bot.send_audio(
+                    chat_id,
+                    file,
+                    filename=_gallery_audio_filename(metadata, path),
+                    disable_notification=True,
+                )
             if msg.audio is None:
                 raise RuntimeError("служебная загрузка вернула не аудио")
             await _delete_quietly(bot, msg)
@@ -193,14 +220,35 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
 
 
 async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
-    medias = await resolve_instagram_medias(url)
+    meta_task = asyncio.create_task(_extract_info_only(url))
+    try:
+        medias = await resolve_instagram_medias(url)
+    except BaseException:
+        meta_task.cancel()
+        raise
     if not medias:
+        meta_task.cancel()
         raise RuntimeError("инста не отдала ни одного медиа")
     medias = medias[:_MEDIA_LIMIT]
     chat_id = _upload_chat_id()
+    contexts = [download_file(media_url, use_proxy=True) for media_url, _ in medias]
+    files = await asyncio.gather(*[context.__aenter__() for context in contexts])
+    try:
+        info = await meta_task
+        description = await describe_image_files(
+            [
+                Path(file.name)
+                for file, (_, is_video) in zip(files, medias)
+                if not is_video
+            ]
+        )
+        caption = append_image_description(
+            _make_caption(info, _IMAGE_POST_CAPTION_LIMIT),
+            description,
+        )
 
-    async def upload_one(media_url: str, is_video: bool) -> CachedMedia:
-        async with download_file(media_url, use_proxy=True) as file:
+        async def upload_one(file, is_video: bool) -> CachedMedia:
+            file.seek(0)
             if is_video:
                 msg = await bot.send_video(
                     chat_id,
@@ -214,16 +262,25 @@ async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
                 msg = await bot.send_photo(chat_id, file, disable_notification=True)
                 file_id = msg.photo[-1].file_id if msg.photo else None
                 duration = None
-        if file_id is None:
-            raise RuntimeError("служебная загрузка вернула не видео/фото")
-        await _delete_quietly(bot, msg)
-        return CachedMedia(
-            file_id=file_id,
-            kind="video" if is_video else "photo",
-            duration=duration,
-        )
+            if file_id is None:
+                raise RuntimeError("служебная загрузка вернула не видео/фото")
+            await _delete_quietly(bot, msg)
+            return CachedMedia(
+                file_id=file_id,
+                kind="video" if is_video else "photo",
+                caption=caption,
+                duration=duration,
+            )
 
-    return list(await asyncio.gather(*[upload_one(u, v) for u, v in medias]))
+        return list(await asyncio.gather(*[
+            upload_one(file, is_video)
+            for file, (_, is_video) in zip(files, medias)
+        ]))
+    finally:
+        await asyncio.gather(*[
+            context.__aexit__(None, None, None)
+            for context in contexts
+        ])
 
 
 async def _upload_yandex_audio(url: str, bot: ExtBot) -> list[CachedMedia]:

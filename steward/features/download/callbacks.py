@@ -3,6 +3,7 @@ import logging
 import os
 import tempfile
 from contextlib import ExitStack, asynccontextmanager
+from pathlib import Path
 
 import aiohttp
 from aiohttp_socks import ProxyConnector
@@ -15,6 +16,10 @@ from telegram import (
 )
 
 from steward.data.repository import Repository
+from steward.features.download.image_description import (
+    append_image_description,
+    describe_image_files,
+)
 from steward.helpers import morphy
 from steward.helpers.media import is_video_file
 
@@ -67,6 +72,7 @@ async def download_and_send_medias(
     retries_count: int = 5,
     use_proxy: bool = False,
     caption: str | None = None,
+    describe_images: bool = False,
 ):
     import uuid
 
@@ -90,6 +96,16 @@ async def download_and_send_medias(
         if len(exceptions) > 0:
             raise ExceptionGroup("", exceptions)  # noqa: F821
 
+        if describe_images:
+            image_paths = [
+                Path(file.name)
+                for index, file in enumerate(results)
+                if not isinstance(file, BaseException)
+                and not videos_or_images[index][1]
+            ]
+            description = await describe_image_files(image_paths)
+            caption = append_image_description(caption, description)
+
         medias = [
             InputMediaPhoto(file)
             if not videos_or_images[i][1]
@@ -99,24 +115,31 @@ async def download_and_send_medias(
         ]
 
         reply_markup = None
-        if len(videos_or_images) == 1 and videos_or_images[0][1]:
+        if len(videos_or_images) == 1:
             assert not isinstance(results[0], BaseException)
             results[0].seek(0)
-
-            link_id = uuid.uuid4().hex
-            repository.db.saved_links.add(link_id, videos_or_images[0][0])
-            await repository.save()
-            reply_markup = _build_trans_markup(
-                f"download:trans|no_ydl_{link_id}"
-            )
-            await message.reply_video(
-                results[0],
-                supports_streaming=True,
-                disable_notification=True,
-                reply_markup=reply_markup,
-                caption=caption,
-                parse_mode="HTML" if caption else None,
-            )
+            if videos_or_images[0][1]:
+                link_id = uuid.uuid4().hex
+                repository.db.saved_links.add(link_id, videos_or_images[0][0])
+                await repository.save()
+                reply_markup = _build_trans_markup(
+                    f"download:trans|no_ydl_{link_id}"
+                )
+                await message.reply_video(
+                    results[0],
+                    supports_streaming=True,
+                    disable_notification=True,
+                    reply_markup=reply_markup,
+                    caption=caption,
+                    parse_mode="HTML" if caption else None,
+                )
+            else:
+                await message.reply_photo(
+                    results[0],
+                    disable_notification=True,
+                    caption=caption,
+                    parse_mode="HTML" if caption else None,
+                )
         else:
             if caption and medias:
                 first = medias[0]
@@ -152,16 +175,37 @@ async def send_media_files(
     message: Message,
     media_paths: list[str],
     retries_count: int = 5,
+    caption: str | None = None,
+    describe_images: bool = False,
 ):
     logger.info("Отправляется медиа: %s", len(media_paths))
 
-    if len(media_paths) == 1 and is_video_file(media_paths[0]):
+    if describe_images:
+        image_paths = [
+            Path(media_path)
+            for media_path in media_paths
+            if not is_video_file(media_path)
+        ]
+        description = await describe_image_files(image_paths)
+        caption = append_image_description(caption, description)
+
+    if len(media_paths) == 1:
         with open(media_paths[0], "rb") as file:
-            await message.reply_video(
-                file,
-                supports_streaming=True,
-                disable_notification=True,
-            )
+            if is_video_file(media_paths[0]):
+                await message.reply_video(
+                    file,
+                    supports_streaming=True,
+                    disable_notification=True,
+                    caption=caption,
+                    parse_mode="HTML" if caption else None,
+                )
+            else:
+                await message.reply_photo(
+                    file,
+                    disable_notification=True,
+                    caption=caption,
+                    parse_mode="HTML" if caption else None,
+                )
 
         logger.info("Медиа отправлено")
         return
@@ -175,6 +219,10 @@ async def send_media_files(
                 medias.append(InputMediaVideo(file, supports_streaming=True))
             else:
                 medias.append(InputMediaPhoto(file))
+
+        if caption and medias:
+            medias[0].caption = caption
+            medias[0].parse_mode = "HTML"
 
         for i in range(0, len(medias), 10):
             retry = 0
