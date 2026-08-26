@@ -197,6 +197,14 @@ def _user_ids_in_chat(repo: Repository, chat_id: int) -> set[int]:
     return {user.id for user in repo.db.users if chat_id in user.chat_ids}
 
 
+def _participant_ids_in_report_chat(repo: Repository, chat_id: int) -> set[int]:
+    return {
+        participant.user_id
+        for participant in repo.db.curse_participants
+        if chat_id in participant.source_chat_ids
+    }
+
+
 def _curse_streak_days(repo: Repository, user_id: int) -> int:
     streak = next(
         (item for item in repo.db.curse_streaks if item.user_id == user_id),
@@ -425,16 +433,16 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
             )
         )
 
+    report_user_ids = set(items_by_user) | _participant_ids_in_report_chat(repo, chat_id)
     entries = [
         CurseDebtReportEntry(
             user_id=user_id,
             name=_user_name(repo, user_id),
-            items=sorted(items, key=lambda item: item.title),
+            items=sorted(items_by_user.get(user_id, []), key=lambda item: item.title),
             interest_enabled=is_curse_interest_enabled(repo, user_id),
             streak_days=_curse_streak_days(repo, user_id),
         )
-        for user_id, items in items_by_user.items()
-        if items
+        for user_id in report_user_ids
     ]
     entries.sort(key=lambda entry: entry.name.lower())
     return entries

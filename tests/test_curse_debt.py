@@ -83,6 +83,30 @@ def test_debt_report_renders_streak_next_to_user_name():
     assert "Стрик без матов" not in report
 
 
+def test_debt_report_includes_subscribed_user_without_debt_as_empty_streak_block():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="clean", chat_ids={CHAT_ID})]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        )
+    ]
+    repo.db.curse_streaks = [CurseStreak(user_id=DEFAULT_USER_ID, days=7)]
+
+    entries = build_curse_debt_report_entries(repo, CHAT_ID)
+
+    assert len(entries) == 1
+    assert entries[0].items == []
+    assert format_curse_debt_report(entries) == (
+        "Наказания на сегодня:\n\n<code>@\u200bclean</code> 7 🔥"
+    )
+    assert format_curse_day_plan(entries) == (
+        "До полуночи:\n\n<code>@\u200bclean</code> 7 🔥"
+    )
+
+
 def test_accrue_selects_weighted_punishment_day_once_when_missing():
     repo = make_repository()
     repo.db.curse_participants = [

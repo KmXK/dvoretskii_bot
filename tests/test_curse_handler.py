@@ -502,14 +502,21 @@ class TestCursePunishment:
     async def test_subscribe_and_show_today_for_current_chat_only(self):
         repo = make_repository()
         today = today_msk().isoformat()
+        clean_user_id = DEFAULT_USER_ID + 1
         repo.db.users = [
             User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID]),
+            User(id=clean_user_id, username="clean", chat_ids=[CHAT_ID]),
             User(id=999, username="other", chat_ids=[CHAT_ID + 1]),
         ]
         repo.db.curse_punishments = [CursePunishment(id=1, coeff=5, title="Отжимания")]
         repo.db.curse_participants = [
             CurseParticipant(
                 user_id=DEFAULT_USER_ID,
+                subscribed_at=datetime.now(timezone.utc),
+                source_chat_ids=[CHAT_ID],
+            ),
+            CurseParticipant(
+                user_id=clean_user_id,
                 subscribed_at=datetime.now(timezone.utc),
                 source_chat_ids=[CHAT_ID],
             ),
@@ -535,12 +542,16 @@ class TestCursePunishment:
                 last_interest_applied_date=today,
             ),
         ]
-        repo.db.curse_streaks = [CurseStreak(user_id=DEFAULT_USER_ID, days=4)]
+        repo.db.curse_streaks = [
+            CurseStreak(user_id=DEFAULT_USER_ID, days=4),
+            CurseStreak(user_id=clean_user_id, days=9),
+        ]
 
         reply, ok = await invoke(CurseFeature, "/curse", repo)
         assert ok
         assert "@\u200btestuser</code> 4 🔥" in reply
         assert "Отжимания: 10" in reply
+        assert "@\u200bclean</code> 9 🔥" in reply
         assert "@other" not in reply
 
     async def test_done_with_id_updates_metric_and_closes_debt(self):
