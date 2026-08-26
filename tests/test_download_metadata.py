@@ -12,6 +12,7 @@ from steward.features.download.yt import (
     _make_caption,
     make_images_loader,
 )
+from steward.helpers.ai import _yandex_vlm_headers
 from tests.conftest import make_repository
 
 
@@ -31,6 +32,20 @@ def test_gallery_audio_filename_uses_track_and_artist():
     assert _gallery_audio_filename(metadata, "2.mp3") == (
         "Night Drive — DJ Test.mp3"
     )
+
+
+def test_vlm_headers_prefer_vision_secret(monkeypatch):
+    monkeypatch.setenv("AI_KEY_SECRET", "general-key")
+    monkeypatch.setenv("AI_VISION_SECRET", "vision-key")
+
+    assert _yandex_vlm_headers()["Authorization"] == "Api-Key vision-key"
+
+
+def test_vlm_headers_fall_back_to_general_key(monkeypatch):
+    monkeypatch.setenv("AI_KEY_SECRET", "general-key")
+    monkeypatch.delenv("AI_VISION_SECRET", raising=False)
+
+    assert _yandex_vlm_headers()["Authorization"] == "Api-Key general-key"
 
 
 def test_gallery_audio_filename_is_safe_and_keeps_extension():

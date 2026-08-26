@@ -102,6 +102,14 @@ def _yandex_vlm_model_uri() -> str | None:
     return environ.get("AI_MODEL_VLM")
 
 
+def _yandex_vlm_headers() -> dict[str, str]:
+    api_key = environ.get("AI_VISION_SECRET") or environ.get("AI_KEY_SECRET")
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Api-Key {api_key}",
+    }
+
+
 async def make_yandex_vlm_describe(
     user_id,
     prompt: str,
@@ -131,7 +139,11 @@ async def make_yandex_vlm_describe(
         "temperature": 0.2,
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
-        r = await client.post(_YANDEX_OPENAI_URL, json=payload, headers=_yandex_headers())
+        r = await client.post(
+            _YANDEX_OPENAI_URL,
+            json=payload,
+            headers=_yandex_vlm_headers(),
+        )
         if r.status_code >= 400:
             body = r.text[:1000]
             logger.error(
