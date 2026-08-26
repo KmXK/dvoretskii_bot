@@ -7,6 +7,7 @@ from steward.data.models.curse import (
     CursePunishment,
     CursePunishmentDebt,
     CursePunishmentDay,
+    CurseStreak,
 )
 from steward.data.models.role import Role, UserRole
 from steward.data.models.user import User
@@ -534,10 +535,11 @@ class TestCursePunishment:
                 last_interest_applied_date=today,
             ),
         ]
+        repo.db.curse_streaks = [CurseStreak(user_id=DEFAULT_USER_ID, days=4)]
 
-        reply, ok = await invoke(CurseFeature, "/curse punishment today", repo)
+        reply, ok = await invoke(CurseFeature, "/curse", repo)
         assert ok
-        assert "@\u200btestuser" in reply
+        assert "@\u200btestuser</code> 4 🔥" in reply
         assert "Отжимания: 10" in reply
         assert "@other" not in reply
 

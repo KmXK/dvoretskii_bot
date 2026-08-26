@@ -71,6 +71,18 @@ def test_debt_report_does_not_render_users_as_mentions():
     assert "<code>@\u200btest_user</code>" in report
 
 
+def test_debt_report_renders_streak_next_to_user_name():
+    repo = make_repository()
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
+    repo.db.curse_streaks = [CurseStreak(user_id=DEFAULT_USER_ID, days=6)]
+    make_debt(repo, punishment_count=10)
+
+    report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "<code>@\u200btest_user</code> 6 🔥" in report
+    assert "Стрик без матов" not in report
+
+
 def test_accrue_selects_weighted_punishment_day_once_when_missing():
     repo = make_repository()
     repo.db.curse_participants = [
@@ -574,7 +586,7 @@ async def test_interest_action_applies_interest():
     assert repo.db.curse_punishment_debts[0].last_interest_applied_date == today_date.isoformat()
 
 
-async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
+async def test_interest_action_sends_hourly_chart_without_separate_streak_text():
     repo = make_repository()
     completed_day = today_msk() - date.resolution
     other_chat = CHAT_ID - 1
@@ -610,11 +622,7 @@ async def test_interest_action_sends_hourly_chart_for_all_chat_participants():
 
     await action.execute(context)
 
-    bot.send_message.assert_awaited_once()
-    assert bot.send_message.await_args.args[0] == CHAT_ID
-    text = bot.send_message.await_args.args[1]
-    assert "cursing" in text
-    assert "clean" in text
+    bot.send_message.assert_not_awaited()
     bot.send_photo.assert_awaited_once()
     assert bot.send_photo.await_args.args[0] == CHAT_ID
     assert bot.send_photo.await_args.kwargs["photo"].name == (

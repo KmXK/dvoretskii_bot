@@ -175,6 +175,7 @@ class CurseDebtReportEntry:
     name: str
     items: list[CurseDebtReportItem]
     interest_enabled: bool = True
+    streak_days: int = 0
 
 
 def _display_name(username: str | None, user_id: int) -> str:
@@ -194,6 +195,14 @@ def _user_name(repo: Repository, user_id: int) -> str:
 
 def _user_ids_in_chat(repo: Repository, chat_id: int) -> set[int]:
     return {user.id for user in repo.db.users if chat_id in user.chat_ids}
+
+
+def _curse_streak_days(repo: Repository, user_id: int) -> int:
+    streak = next(
+        (item for item in repo.db.curse_streaks if item.user_id == user_id),
+        None,
+    )
+    return streak.days if streak is not None else 0
 
 
 def accrue_curse_debt(
@@ -422,6 +431,7 @@ def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[Curs
             name=_user_name(repo, user_id),
             items=sorted(items, key=lambda item: item.title),
             interest_enabled=is_curse_interest_enabled(repo, user_id),
+            streak_days=_curse_streak_days(repo, user_id),
         )
         for user_id, items in items_by_user.items()
         if items
@@ -436,7 +446,7 @@ def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Наказания на сегодня:", ""]
     for index, entry in enumerate(entries):
-        lines.append(_format_curse_user_tag(entry.name))
+        lines.append(_format_curse_user_header(entry))
         for item in entry.items:
             if entry.interest_enabled:
                 lines.extend(_format_curse_plan_item(item, escape_html=True))
@@ -482,6 +492,10 @@ def _format_curse_plan_item(
     return lines
 
 
+def _format_curse_user_header(entry: CurseDebtReportEntry) -> str:
+    return f"{_format_curse_user_tag(entry.name)} {entry.streak_days} 🔥"
+
+
 def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
     payable = [entry for entry in entries if entry.interest_enabled]
     if not payable:
@@ -489,7 +503,7 @@ def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["До полуночи:", ""]
     for index, entry in enumerate(payable):
-        lines.append(_format_curse_user_tag(entry.name))
+        lines.append(_format_curse_user_header(entry))
         for item in entry.items:
             lines.extend(_format_curse_plan_item(item, escape_html=True))
 
@@ -556,7 +570,7 @@ def format_curse_day_outcome(entries: list[CurseDebtReportEntry]) -> str:
 
     lines = ["Итог за сутки:", ""]
     for index, entry in enumerate(payable):
-        lines.append(_format_curse_user_tag(entry.name))
+        lines.append(_format_curse_user_header(entry))
         for item in entry.items:
             lines.append(_format_curse_outcome_item(item))
 

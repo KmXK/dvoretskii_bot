@@ -18,8 +18,6 @@ from steward.helpers.curse_debt import (
 from steward.helpers.curse_streak import (
     curse_report_chat_ids,
     finalize_curse_streaks,
-    format_curse_streak_forecast,
-    format_curse_streak_outcome,
 )
 
 
@@ -55,24 +53,15 @@ async def _send_curse_chart(
 async def _broadcast_curse_report(
     context: DelayedActionContext,
     debt_formatter=None,
-    streak_formatter=None,
     chart_day: date | None = None,
 ) -> None:
     for chat_id in _curse_chat_ids(context.repository):
-        sections: list[str] = []
         if debt_formatter is not None:
             entries = build_curse_debt_report_entries(context.repository, chat_id)
             if entries:
                 text = debt_formatter(entries)
                 if text:
-                    sections.append(text)
-        if streak_formatter is not None:
-            text = streak_formatter(context.repository, chat_id)
-            if text:
-                sections.append(text)
-        if not sections:
-            continue
-        await context.bot.send_message(chat_id, "\n\n".join(sections), parse_mode="HTML")
+                    await context.bot.send_message(chat_id, text, parse_mode="HTML")
         if chart_day is not None:
             await _send_curse_chart(context, chat_id, chart_day)
 
@@ -92,14 +81,8 @@ class CurseInterestForecastDelayedAction(DelayedAction):
     generator: ConstantGenerator
 
     async def execute(self, context: DelayedActionContext):
-        today = today_msk()
-        await _broadcast_curse_report(
-            context,
-            format_curse_day_plan if context.repository.db.curse_punishments else None,
-            lambda repository, chat_id: format_curse_streak_forecast(
-                repository, chat_id, today
-            ),
-        )
+        if context.repository.db.curse_punishments:
+            await _broadcast_curse_report(context, format_curse_day_plan)
 
 
 @dataclass(kw_only=True)
@@ -110,19 +93,18 @@ class CurseInterestDelayedAction(DelayedAction):
     async def execute(self, context: DelayedActionContext):
         today = today_msk()
         debt_changed = apply_curse_interest_until(context.repository, today)
-        outcomes = finalize_curse_streaks(
-            context.repository,
-            today - timedelta(days=1),
+        streaks_changed = bool(
+            finalize_curse_streaks(
+                context.repository,
+                today - timedelta(days=1),
+            )
         )
-        if not debt_changed and not outcomes:
+        if not debt_changed and not streaks_changed:
             return
 
         await context.repository.save()
         await _broadcast_curse_report(
             context,
             format_curse_day_outcome if debt_changed else None,
-            lambda repository, chat_id: format_curse_streak_outcome(
-                repository, chat_id, outcomes
-            ),
             today - timedelta(days=1),
         )
