@@ -662,6 +662,10 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     () => bill.participants.map((id) => personsById[id]).filter(Boolean),
     [bill.participants, personsById],
   )
+  const splitParticipants = useMemo(
+    () => Array.from(new Map(participants.map((person) => [person.id, person])).values()),
+    [participants],
+  )
   const txById = useMemo(() => Object.fromEntries(bill.transactions.map((t) => [t.id, t])), [bill.transactions])
   const currency = bill.currency
 
@@ -989,6 +993,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
     setFx({ type: 'split', txId: top.txId, den: top.den, n, rows: clean, nodeAnchor, hubAnchor: layout.hub })
   }, [top, fx, getNodeBoardPos, layout.hub])
 
+  const prepareSplitAmongAll = useCallback(() => {
+    setSplitMode('weights')
+    setSplitRows(splitParticipants.map((person) => ({ pid: person.id, w: 1 })))
+  }, [splitParticipants])
+
   const startMerge = useCallback(() => {
     if (!top || !canMerge || fx) return
     const nodeAnchor = getNodeBoardPos('__merge__') || layout.hub
@@ -1265,6 +1274,16 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
                 >{label}</button>
               ))}
             </div>
+
+            <button
+              type="button"
+              disabled={splitParticipants.length < 2}
+              onClick={prepareSplitAmongAll}
+              className="w-full mb-4 rounded-xl border border-gold/50 bg-gold/10 px-3 py-2.5 text-gold text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-gold/20 disabled:opacity-40 transition"
+            >
+              <Users size={15} />
+              Поделить на всех · каждому по 1
+            </button>
 
             {splitMode === 'equal' && (
               <div>
