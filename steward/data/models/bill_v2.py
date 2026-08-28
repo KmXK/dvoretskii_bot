@@ -104,6 +104,7 @@ class BillPaymentV2:
     amount_minor: int                               # in minor currency units
     status: str                                     # pending | confirmed | rejected | auto_confirmed
     created_at: datetime = field(default_factory=datetime.now)
+    settled_at: datetime | None = None
     initiated_chat_id: int | None = None
     confirmation_chat_id: int | None = None
     confirmation_message_id: int | None = None

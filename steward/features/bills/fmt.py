@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from steward.data.models.bill_v2 import BillPerson, BillV2, UNKNOWN_PERSON_ID
 from steward.framework import Button, Keyboard
 from steward.helpers.bills_money import (
-    apply_payments,
+    compute_bill_balance_details,
     compute_bill_balances,
     compute_bill_debts,
     minor_to_display,
@@ -328,15 +328,14 @@ def format_audit(bills: list[BillV2], payments: list) -> str:
 
 def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
     out: list[str] = []
-    balances, _ = compute_bill_balances(bills, payments)
+    balances, _, applied_credits = compute_bill_balance_details(
+        bills,
+        payments,
+    )
     for bill in sorted(bills, key=lambda b: (b.closed, -b.id)):
         gross = sum(tx.unit_price_minor * tx.quantity for tx in bill.transactions)
         bp = [p for p in payments if bill.id in p.bill_ids]
-        if bill.closed:
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            after = apply_payments(net_debts(raw), bp, clamp_zero=True)
-        else:
-            after = balances.get(bill.id, {})
+        after = balances.get(bill.id, {})
         outstanding = sum(
             amt for creds in after.values() for amt in creds.values() if amt > 0
         )
@@ -346,10 +345,13 @@ def _audit_lines(bills: list[BillV2], payments: list) -> list[str]:
             f" · долг {minor_to_display(outstanding, bill.currency)}"
             if outstanding else " · ✓ закрыт по долгам"
         )
+        credit_part = ""
+        if applied_credit := applied_credits.get(bill.id, 0):
+            credit_part = f" · из переплаты {minor_to_display(applied_credit, bill.currency)}"
         out.append(
             f"{flag} `#{bill.id}` *{name}* — {len(bill.transactions)} поз., "
             f"{len(bill.participants)} уч., итог {minor_to_display(gross, bill.currency)}, "
-            f"создан {_created_at(bill.created_at)}, оплат {len(bp)}{debt_part}"
+            f"создан {_created_at(bill.created_at)}, оплат {len(bp)}{debt_part}{credit_part}"
         )
     if not out:
         return ["_(нет счетов)_"]
@@ -378,27 +380,16 @@ def format_bill_detail(
     if len(bill.transactions) > 20:
         lines.append(f"  … и ещё {len(bill.transactions) - 20}")
 
-    raw = compute_bill_debts(bill.transactions, bill.currency)
-    net = net_debts(raw)
-    bp = [p for p in payments if bill.id in p.bill_ids]
-    before_carry = apply_payments(net, bp, clamp_zero=True)
-    if bill.closed:
-        after = before_carry
-        carryover = 0
-    else:
-        balances, _ = compute_bill_balances(all_bills or [bill], payments)
-        after = balances.get(bill.id, {})
-        carryover = sum(
-            amount for creditors in before_carry.values() for amount in creditors.values()
-            if amount > 0
-        ) - sum(
-            amount for creditors in after.values() for amount in creditors.values()
-            if amount > 0
-        )
+    balances, _, applied_credits = compute_bill_balance_details(
+        all_bills or [bill],
+        payments,
+    )
+    after = balances.get(bill.id, {})
+    carryover = applied_credits.get(bill.id, 0)
     any_debt = any(amt > 0 for creds in after.values() for amt in creds.values())
 
     if carryover > 0:
-        lines.append(f"\n💰 Учтена переплата: {minor_to_display(carryover, bill.currency)}")
+        lines.append(f"\n💰 Из переплаты оплачено: {minor_to_display(carryover, bill.currency)}")
 
     if any_debt:
         lines.append("\n⚖️ Кто кому:")
@@ -432,22 +423,18 @@ def format_bill_created(
     if incomplete:
         lines.append(f"⚠️ {incomplete} позиций не назначены")
 
-    raw = compute_bill_debts(bill.transactions, bill.currency)
-    net = net_debts(raw)
     if payments is not None:
-        balances, _ = compute_bill_balances(all_bills or [bill], payments)
+        balances, _, applied_credits = compute_bill_balance_details(
+            all_bills or [bill],
+            payments,
+        )
         after = balances.get(bill.id, {})
+        carried = applied_credits.get(bill.id, 0)
     else:
-        after = net
-    carried = sum(
-        amount for creditors in net.values() for amount in creditors.values()
-        if amount > 0
-    ) - sum(
-        amount for creditors in after.values() for amount in creditors.values()
-        if amount > 0
-    )
+        after = net_debts(compute_bill_debts(bill.transactions, bill.currency))
+        carried = 0
     if carried > 0:
-        lines.append(f"💰 Учтена переплата: {minor_to_display(carried, bill.currency)}")
+        lines.append(f"💰 Из переплаты оплачено: {minor_to_display(carried, bill.currency)}")
 
     any_debt = any(amt > 0 for creds in after.values() for amt in creds.values())
     if any_debt:
@@ -546,25 +533,14 @@ def format_bill_detail_rich(
         if len(bill.transactions) > 30:
             parts.append(f"_…и ещё {len(bill.transactions) - 30}_")
 
-    raw = compute_bill_debts(bill.transactions, bill.currency)
-    net = net_debts(raw)
-    bp = [p for p in payments if bill.id in p.bill_ids]
-    before_carry = apply_payments(net, bp, clamp_zero=True)
-    if bill.closed:
-        after = before_carry
-        carryover = 0
-    else:
-        balances, _ = compute_bill_balances(all_bills or [bill], payments)
-        after = balances.get(bill.id, {})
-        carryover = sum(
-            amount for creditors in before_carry.values() for amount in creditors.values()
-            if amount > 0
-        ) - sum(
-            amount for creditors in after.values() for amount in creditors.values()
-            if amount > 0
-        )
+    balances, _, applied_credits = compute_bill_balance_details(
+        all_bills or [bill],
+        payments,
+    )
+    after = balances.get(bill.id, {})
+    carryover = applied_credits.get(bill.id, 0)
     if carryover > 0:
-        parts.append(f"💰 **Учтена переплата:** {minor_to_display(carryover, bill.currency)}")
+        parts.append(f"💰 **Из переплаты оплачено:** {minor_to_display(carryover, bill.currency)}")
 
     drows = _debt_rows(after, by_id, bill.currency)
     if drows:

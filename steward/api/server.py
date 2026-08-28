@@ -1947,36 +1947,20 @@ def _serialize_payment_v2(p) -> dict:
         "currency": p.currency,
         "status": p.status,
         "created_at": p.created_at.isoformat() if p.created_at else None,
+        "settled_at": p.settled_at.isoformat() if getattr(p, "settled_at", None) else None,
         "bill_ids": list(p.bill_ids),
         "is_refund": getattr(p, "is_refund", False),
     }
 
 
-def _serialize_bill_v2(bill, payments: list, debts: dict | None = None) -> dict:
+def _serialize_bill_v2(
+    bill,
+    payments: list,
+    debts: dict | None = None,
+    applied_credit_minor: int = 0,
+) -> dict:
     bill_payments = [p for p in payments if bill.id in p.bill_ids]
     settled = _settled_pairs(bill_payments)
-    applied_credit_minor = 0
-    if debts is not None and not bill.closed:
-        from steward.helpers.bills_money import apply_payments, compute_bill_debts, net_debts
-
-        regular = apply_payments(
-            net_debts(compute_bill_debts(bill.transactions, bill.currency)),
-            bill_payments,
-            clamp_zero=True,
-        )
-        regular_total = sum(
-            amount
-            for creditors in regular.values()
-            for amount in creditors.values()
-            if amount > 0
-        )
-        computed_total = sum(
-            amount
-            for creditors in debts.values()
-            for amount in creditors.values()
-            if amount > 0
-        )
-        applied_credit_minor = max(0, regular_total - computed_total)
     return {
         "id": bill.id,
         "name": bill.name,
@@ -2076,9 +2060,12 @@ async def handle_bills_list(request: web.Request):
     scope = request.query.get("scope", "")
     bills = _bills_visible_for_user(repository, int(tg_user["id"]), scope == "all")
     payments = repository.db.bill_payments_v2
-    from steward.helpers.bills_money import compute_bill_balances
+    from steward.helpers.bills_money import compute_bill_balance_details
 
-    balances, credits = compute_bill_balances(bills, payments)
+    balances, credits, applied_credits = compute_bill_balance_details(
+        repository.db.bills_v2,
+        payments,
+    )
     person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
     person_id = person.id if person else None
     visible_persons = repository.bill_persons_visible_to_user(int(tg_user["id"]))
@@ -2087,7 +2074,8 @@ async def handle_bills_list(request: web.Request):
             _serialize_bill_v2(
                 bill,
                 payments,
-                None if bill.closed else balances.get(bill.id, {}),
+                balances.get(bill.id, {}),
+                applied_credits.get(bill.id, 0),
             )
             for bill in bills
         ],
@@ -2112,12 +2100,21 @@ async def handle_bills_get(request: web.Request):
     ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "view")
     if not ok:
         return web.json_response({"error": err}, status=403)
-    from steward.helpers.bills_money import compute_bill_balances
+    from steward.helpers.bills_money import compute_bill_balance_details
 
     payments = repository.db.bill_payments_v2
-    balances, _ = compute_bill_balances(repository.db.bills_v2, payments)
-    debts = None if bill.closed else balances.get(bill.id, {})
-    return web.json_response(_serialize_bill_v2(bill, payments, debts))
+    balances, _, applied_credits = compute_bill_balance_details(
+        repository.db.bills_v2,
+        payments,
+    )
+    return web.json_response(
+        _serialize_bill_v2(
+            bill,
+            payments,
+            balances.get(bill.id, {}),
+            applied_credits.get(bill.id, 0),
+        )
+    )
 
 
 def _resolve_bill_participants(
@@ -3245,6 +3242,7 @@ async def handle_bills_payment_received(request: web.Request):
         display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
         username=tg_user.get("username"),
     )
+    settled_at = datetime.datetime.now()
     payment = BillPaymentV2(
         id=str(_uuid.uuid4()),
         debtor=data["debtor"],
@@ -3252,6 +3250,8 @@ async def handle_bills_payment_received(request: web.Request):
         amount_minor=int(data["amount_minor"]),
         currency=data.get("currency", "BYN"),
         status=PaymentStatus.CONFIRMED,
+        created_at=settled_at,
+        settled_at=settled_at,
         bill_ids=list(data.get("bill_ids", [])),
         initiated_chat_id=data.get("initiated_chat_id"),
     )
@@ -3302,6 +3302,7 @@ async def handle_bills_credit_write_off(request: web.Request):
             "available_minor": available,
         }, status=409)
 
+    settled_at = datetime.datetime.now()
     payment = BillPaymentV2(
         id=str(_uuid.uuid4()),
         debtor=debtor.id,
@@ -3309,6 +3310,8 @@ async def handle_bills_credit_write_off(request: web.Request):
         amount_minor=amount_minor,
         currency=currency,
         status=PaymentStatus.CONFIRMED,
+        created_at=settled_at,
+        settled_at=settled_at,
         bill_ids=[],
         is_refund=True,
     )
@@ -3338,6 +3341,7 @@ async def handle_bills_payment_confirm(request: web.Request):
         return web.json_response({"error": "only creditor can confirm"}, status=403)
 
     payment.status = PaymentStatus.CONFIRMED
+    payment.settled_at = datetime.datetime.now()
     await repository.save()
     return web.json_response(_serialize_payment_v2(payment))
 

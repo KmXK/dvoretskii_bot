@@ -420,7 +420,7 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
       </div>
       {bill.applied_credit_minor > 0 && (
         <div className="text-xs text-gold mt-1">
-          Учтена переплата {formatMinor(bill.applied_credit_minor, bill.currency)}
+          Из переплаты оплачено {formatMinor(bill.applied_credit_minor, bill.currency)}
         </div>
       )}
       {myNet !== 0 && (
@@ -859,7 +859,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
 
       {bill.applied_credit_minor > 0 && (
         <div className="bg-gold/10 text-gold rounded-xl p-3 mb-4 text-sm">
-          Учтена переплата: <span className="font-semibold">{formatMinor(bill.applied_credit_minor, bill.currency)}</span>
+          Из переплаты оплачено: <span className="font-semibold">{formatMinor(bill.applied_credit_minor, bill.currency)}</span>
         </div>
       )}
 
@@ -1003,7 +1003,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
                 <span className="font-semibold">{formatMinor(p.amount_minor, p.currency)}</span>
               </div>
               <div className={`text-xs mt-1 ${
-                p.status === 'confirmed' ? 'text-green-400' :
+                p.status === 'confirmed' || p.status === 'auto_confirmed' ? 'text-green-400' :
                 p.status === 'pending' ? 'text-yellow-400' : 'text-red-400'
               }`}>{p.status}</div>
             </div>
@@ -1089,7 +1089,7 @@ export default function BillsPage() {
       const net = computeBillDebts(b)
       const iOwe = net[myPerson.id] ? Object.values(net[myPerson.id]).some(a => a > 0) : false
       const owedToMe = Object.entries(net).some(([d, creds]) => d !== myPerson.id && creds[myPerson.id] > 0)
-      if (!iOwe && !owedToMe) return false
+      if (!iOwe && !owedToMe && !b.applied_credit_minor) return false
     }
     return true
   })

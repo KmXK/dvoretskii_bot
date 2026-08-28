@@ -902,6 +902,8 @@ class Repository:
             p.setdefault("status", "pending")
             p.setdefault("bill_ids", [])
             p.setdefault("is_refund", False)
+            settled_at = p.get("created_at") if p["status"] in ("confirmed", "auto_confirmed") else None
+            p.setdefault("settled_at", settled_at)
 
         return data
 

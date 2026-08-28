@@ -1,4 +1,6 @@
 """Tests for steward/helpers/bills_money.py — int kopeck arithmetic."""
+from datetime import datetime, timedelta, timezone
+
 from steward.data.models.bill_v2 import (
     BillItemAssignment,
     BillPaymentV2,
@@ -8,6 +10,7 @@ from steward.data.models.bill_v2 import (
 )
 from steward.helpers.bills_money import (
     apply_payments,
+    compute_bill_balance_details,
     compute_bill_balances,
     compute_bill_debts,
     minor_from_float,
@@ -396,3 +399,351 @@ class TestComputeBillBalances:
         _, credits = compute_bill_balances([], [overpayment, write_off])
 
         assert credits == {}
+
+    def test_closed_bill_keeps_preclose_credit_consumed(self):
+        credit_created_at = datetime(2026, 8, 14, 14, 10)
+        closed_at = datetime(2026, 8, 28, 11, 28)
+        bill = self._bill(43, 3200)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=2360,
+            status="confirmed",
+            bill_ids=[],
+            created_at=credit_created_at,
+        )
+        transfer = BillPaymentV2(
+            id="transfer",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=840,
+            status="confirmed",
+            bill_ids=[43],
+            created_at=closed_at - timedelta(microseconds=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment, transfer],
+        )
+
+        assert balances[43] == {}
+        assert credits == {}
+        assert applied_credits == {43: 2360}
+
+        visible_balances, visible_credits = compute_bill_balances(
+            [bill],
+            [overpayment, transfer],
+        )
+        assert visible_balances[43] == {}
+        assert visible_credits == {}
+
+    def test_credit_created_after_close_remains_visible(self):
+        closed_at = datetime(2026, 8, 1, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at + timedelta(seconds=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 1000
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_mixed_timezone_timestamps_are_compared(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=datetime(2026, 8, 2, 11, tzinfo=timezone.utc),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 400
+        assert credits == {}
+        assert applied_credits == {1: 600}
+
+    def test_mixed_timezone_bill_creation_times_are_sorted(self):
+        first = self._bill(1, 500)
+        first.created_at = datetime(2026, 8, 1, 9, tzinfo=timezone.utc)
+        second = self._bill(2, 500)
+        second.created_at = datetime(2026, 8, 1, 10)
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [second, first],
+            [overpayment],
+        )
+
+        assert balances[1] == {}
+        assert balances[2]["dmitrux"]["kirill"] == 400
+        assert credits == {}
+        assert applied_credits == {1: 500, 2: 100}
+
+    def test_credit_settled_after_close_remains_visible(self):
+        closed_at = datetime(2026, 8, 10, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at - timedelta(days=9),
+            settled_at=closed_at + timedelta(days=10),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 1000
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_closed_bill_consumes_only_credit_available_before_close(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        old_credit = BillPaymentV2(
+            id="old-credit",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at - timedelta(days=1),
+        )
+        new_credit = BillPaymentV2(
+            id="new-credit",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at + timedelta(days=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [old_credit, new_credit],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 400
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {1: 600}
+
+    def test_partial_credit_leaves_visible_remainder_after_close(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1500,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at - timedelta(days=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1] == {}
+        assert credits == {("dmitrux", "kirill", "BYN"): 500}
+        assert applied_credits == {1: 1000}
+
+    def test_credit_is_applied_fifo_across_closed_and_open_bills(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        first = self._bill(1, 1000)
+        first.created_at = closed_at - timedelta(days=2)
+        first.closed = True
+        first.closed_at = closed_at
+        second = self._bill(2, 1000)
+        second.created_at = closed_at - timedelta(days=1)
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1500,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at - timedelta(hours=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [second, first],
+            [overpayment],
+        )
+
+        assert balances[1] == {}
+        assert balances[2]["dmitrux"]["kirill"] == 500
+        assert credits == {}
+        assert applied_credits == {1: 1000, 2: 500}
+
+    def test_closed_bill_without_close_time_does_not_consume_credit(self):
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 1000
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_credit_without_timestamp_does_not_rewrite_closed_history(self):
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = datetime(2026, 8, 2, 12)
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            created_at=None,
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 1000
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_nonfinal_bill_does_not_consume_credit(self):
+        bill = self._bill(1, 1000)
+        bill.distribution_status = "distributing"
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1] == {}
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_credit_currency_isolated_for_closed_bill(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        bill = self._bill(1, 1000)
+        bill.currency = "USD"
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=600,
+            status="confirmed",
+            bill_ids=[],
+            currency="BYN",
+            created_at=closed_at - timedelta(days=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 1000
+        assert credits == {("dmitrux", "kirill", "BYN"): 600}
+        assert applied_credits == {}
+
+    def test_write_off_reduces_credit_before_closed_bill_application(self):
+        closed_at = datetime(2026, 8, 2, 12)
+        bill = self._bill(1, 1000)
+        bill.closed = True
+        bill.closed_at = closed_at
+        overpayment = BillPaymentV2(
+            id="overpayment",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=1000,
+            status="confirmed",
+            bill_ids=[],
+            created_at=closed_at - timedelta(days=2),
+        )
+        write_off = BillPaymentV2(
+            id="write-off",
+            debtor="dmitrux",
+            creditor="kirill",
+            amount_minor=400,
+            status="confirmed",
+            bill_ids=[],
+            is_refund=True,
+            created_at=closed_at - timedelta(days=1),
+        )
+
+        balances, credits, applied_credits = compute_bill_balance_details(
+            [bill],
+            [overpayment, write_off],
+        )
+
+        assert balances[1]["dmitrux"]["kirill"] == 400
+        assert credits == {}
+        assert applied_credits == {1: 600}

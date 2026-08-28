@@ -168,19 +168,95 @@ def apply_payments(
     return debts
 
 
-def compute_bill_balances(
+def _add_credit_lot(
+    credit_lots: dict[tuple[str, str, str], list[list]],
+    key: tuple[str, str, str],
+    amount_minor: int,
+    created_at,
+) -> None:
+    if amount_minor <= 0:
+        return
+
+    credit_lots.setdefault(key, []).append([amount_minor, created_at])
+
+
+def _consume_credit_lots(
+    credit_lots: dict[tuple[str, str, str], list[list]],
+    key: tuple[str, str, str],
+    amount_minor: int,
+    available_at=None,
+) -> int:
+    remaining = amount_minor
+    for lot in credit_lots.get(key, []):
+        if remaining <= 0:
+            break
+
+        created_at = lot[1]
+        if available_at is not None and not _credit_existed_at(created_at, available_at):
+            continue
+
+        used = min(lot[0], remaining)
+        lot[0] -= used
+        remaining -= used
+
+    return amount_minor - remaining
+
+
+def _credit_existed_at(created_at, available_at) -> bool:
+    created_key = _time_key(created_at)
+    available_key = _time_key(available_at)
+    return (
+        created_key is not None
+        and available_key is not None
+        and created_key <= available_key
+    )
+
+
+def _time_key(value) -> float | None:
+    if value is None:
+        return None
+
+    from datetime import timezone
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
+
+
+def _bill_order_key(bill) -> tuple[float, int]:
+    created_at = _time_key(getattr(bill, "created_at", None))
+    return created_at if created_at is not None else float("-inf"), bill.id
+
+
+def _credit_totals(
+    credit_lots: dict[tuple[str, str, str], list[list]],
+) -> dict[tuple[str, str, str], int]:
+    return {
+        key: amount
+        for key, lots in credit_lots.items()
+        if (amount := sum(lot[0] for lot in lots)) > 0
+    }
+
+
+def compute_bill_balance_details(
     bills,
     payments,
-) -> tuple[dict[int, dict[str, dict[str, int]]], dict[tuple[str, str, str], int]]:
+) -> tuple[
+    dict[int, dict[str, dict[str, int]]],
+    dict[tuple[str, str, str], int],
+    dict[int, int],
+]:
+    from collections import defaultdict
     from steward.data.models.bill_v2 import PaymentStatus
 
-    ordered_bills = sorted(bills, key=lambda bill: (bill.created_at, bill.id))
+    ordered_bills = sorted(bills, key=_bill_order_key)
     bills_by_id = {bill.id: bill for bill in ordered_bills}
     balances: dict[int, dict[str, dict[str, int]]] = {
         bill.id: net_debts(compute_bill_debts(bill.transactions, bill.currency))
         for bill in ordered_bills
     }
-    credits: dict[tuple[str, str, str], int] = {}
+    credit_lots: dict[tuple[str, str, str], list[list]] = {}
+    applied_credits: dict[int, int] = defaultdict(int)
 
     for payment in payments:
         if payment.status not in PaymentStatus.SETTLED:
@@ -198,11 +274,11 @@ def compute_bill_balances(
 
         if getattr(payment, "is_refund", False):
             remaining = payment.amount_minor
-            available = credits.get(credit_key, 0)
-            used = min(available, remaining)
-            if used:
-                credits[credit_key] = available - used
-                remaining -= used
+            remaining -= _consume_credit_lots(
+                credit_lots,
+                credit_key,
+                remaining,
+            )
 
             if remaining:
                 target_ids = matching_bill_ids
@@ -231,25 +307,52 @@ def compute_bill_balances(
             if remaining == 0:
                 break
 
-        if remaining:
-            credits[credit_key] = credits.get(credit_key, 0) + remaining
+        settled_at = getattr(payment, "settled_at", None) or getattr(payment, "created_at", None)
+        _add_credit_lot(
+            credit_lots,
+            credit_key,
+            remaining,
+            settled_at,
+        )
 
     for bill in ordered_bills:
-        if bill.closed or getattr(bill, "distribution_status", "final") != "final":
+        if getattr(bill, "distribution_status", "final") != "final":
             balances[bill.id] = {}
             continue
 
         balance = balances[bill.id]
-        for (debtor, creditor, currency), amount in list(credits.items()):
-            if amount <= 0 or bill.currency != currency:
-                continue
+        if not bill.closed or bill.closed_at is not None:
+            for debtor, creditor, currency in credit_lots:
+                if bill.currency != currency:
+                    continue
 
-            debt = balance.get(debtor, {}).get(creditor, 0)
-            applied = min(max(debt, 0), amount)
-            if applied:
-                balance[debtor][creditor] -= applied
-                credits[(debtor, creditor, currency)] -= applied
+                debt = balance.get(debtor, {}).get(creditor, 0)
+                applied = _consume_credit_lots(
+                    credit_lots,
+                    (debtor, creditor, currency),
+                    max(debt, 0),
+                    bill.closed_at if bill.closed else None,
+                )
+                if applied:
+                    balance[debtor][creditor] -= applied
+                    applied_credits[bill.id] += applied
 
         balances[bill.id] = net_debts(balance)
 
-    return balances, {key: amount for key, amount in credits.items() if amount > 0}
+    return balances, _credit_totals(credit_lots), dict(applied_credits)
+
+
+def compute_bill_balances(
+    bills,
+    payments,
+) -> tuple[dict[int, dict[str, dict[str, int]]], dict[tuple[str, str, str], int]]:
+    bill_list = list(bills)
+    balances, credits, _ = compute_bill_balance_details(
+        bill_list,
+        payments,
+    )
+    for bill in bill_list:
+        if bill.closed or getattr(bill, "distribution_status", "final") != "final":
+            balances[bill.id] = {}
+
+    return balances, credits

@@ -41,6 +41,7 @@ class BillPaymentReminderAction(DelayedAction):
         creditor = repository.get_bill_person(payment.creditor)
         if creditor is None or creditor.telegram_id is None:
             payment.status = PaymentStatus.AUTO_CONFIRMED
+            payment.settled_at = datetime.datetime.now()
             await repository.save()
             repository.db.delayed_actions = [a for a in repository.db.delayed_actions if a is not self]
             return

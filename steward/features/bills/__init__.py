@@ -792,24 +792,40 @@ class BillsFeature(Feature):
             "/bills list: tid=%s person=%s is_admin=%s bills=%d edit=%s",
             tid, person.id if person else None, is_admin, len(bills), edit,
         )
-        if not bills:
+        payments = self.repository.db.bill_payments_v2
+        balance_bills = bills
+        if person and not all_mode:
+            balance_bills = self.repository.get_bills_v2_for_person(person.id)
+
+        has_credit = False
+        if person:
+            from steward.helpers.bills_money import compute_bill_balances
+
+            _, credits = compute_bill_balances(
+                balance_bills,
+                payments,
+            )
+            has_credit = any(person.id in key[:2] for key in credits)
+
+        if not bills and not has_credit:
             empty_text = "У тебя пока нет счетов. Создай первый: /bills add <название>"
             await (ctx.edit(empty_text) if edit else ctx.reply(empty_text))
             return
 
         by_id = self._persons()
         text = fmt.format_overview(
-            bills,
+            balance_bills,
             person.id if person else None,
             by_id,
-            self.repository.db.bill_payments_v2,
+            payments,
             all_mode=all_mode,
         )
 
         rows: list[list[Button]] = []
 
         has_owe, has_owed = self._person_balance_directions(
-            bills, person.id if person else None
+            balance_bills,
+            person.id if person else None,
         )
         action_row: list[Button] = []
         if has_owe:
@@ -837,10 +853,19 @@ class BillsFeature(Feature):
         ])
         keyboard = Keyboard.grid(rows)
         rich = fmt.format_overview_rich(
-            bills, person.id if person else None, by_id,
-            self.repository.db.bill_payments_v2, all_mode=all_mode,
+            balance_bills,
+            person.id if person else None,
+            by_id,
+            payments,
+            all_mode=all_mode,
         )
-        await self._send_view(ctx, rich, text, keyboard=keyboard, edit=edit)
+        await self._send_view(
+            ctx,
+            rich,
+            text,
+            keyboard=keyboard,
+            edit=edit,
+        )
 
     def _page_nav_factory(self, view: str):
         def make(p: int, label: str, *, noop: bool = False):
@@ -1280,13 +1305,18 @@ class BillsFeature(Feature):
         await self.repository.save()
 
         if close:
-            from steward.helpers.bills_money import compute_bill_debts, net_debts, apply_payments
-            raw = compute_bill_debts(bill.transactions, bill.currency)
-            net = net_debts(raw)
-            bp = [p for p in self.repository.db.bill_payments_v2 if bill.id in p.bill_ids]
-            after = apply_payments(net, bp, clamp_zero=True)
+            from steward.helpers.bills_money import compute_bill_balance_details
+
+            balances, _, applied_credits = compute_bill_balance_details(
+                self.repository.db.bills_v2,
+                self.repository.db.bill_payments_v2,
+            )
+            after = balances.get(bill.id, {})
             has_debts = any(a > 0 for creds in after.values() for a in creds.values())
             msg = f"🔒 Счёт «{bill.name}» закрыт."
+            if applied_credit := applied_credits.get(bill.id, 0):
+                msg += f"\n💰 Из переплаты оплачено: {minor_to_display(applied_credit, bill.currency)}"
+
             if has_debts:
                 msg += "\n⚠️ Остались неоплаченные долги!"
             await ctx.edit(msg)
@@ -1728,6 +1758,7 @@ class BillsFeature(Feature):
             self.repository.db.bill_payments_v2.remove(payment)
 
         def _spawn(amount: int, bill_ids: list[int]) -> BillPaymentV2:
+            settled_at = datetime.now()
             return BillPaymentV2(
                 id=str(uuid.uuid4()),
                 debtor=payment.debtor,
@@ -1735,7 +1766,8 @@ class BillsFeature(Feature):
                 amount_minor=amount,
                 currency=payment.currency,
                 status=PaymentStatus.CONFIRMED,
-                created_at=datetime.now(),
+                created_at=settled_at,
+                settled_at=settled_at,
                 initiated_chat_id=payment.initiated_chat_id,
                 confirmation_chat_id=payment.confirmation_chat_id,
                 confirmation_message_id=payment.confirmation_message_id,
@@ -2005,6 +2037,7 @@ class BillsFeature(Feature):
 
         if creditor.telegram_id is None:
             payment.status = PaymentStatus.AUTO_CONFIRMED
+            payment.settled_at = datetime.now()
             allocations, residual, auto_closed = self._confirm_and_split_payment(payment)
             await self.repository.save()
             logger.info(
@@ -2095,6 +2128,7 @@ class BillsFeature(Feature):
         chat_id: int,
     ):
         currency = "BYN"
+        settled_at = datetime.now()
         payment = BillPaymentV2(
             id=str(uuid.uuid4()),
             debtor=debtor.id,
@@ -2102,6 +2136,8 @@ class BillsFeature(Feature):
             amount_minor=amount_minor,
             currency=currency,
             status=PaymentStatus.CONFIRMED,
+            created_at=settled_at,
+            settled_at=settled_at,
             initiated_chat_id=chat_id,
             bill_ids=[],
         )
