@@ -19,6 +19,43 @@ def test_finds_instagram_link():
     ]
 
 
+def test_finds_threads_post_on_both_domains():
+    text = (
+        "https://www.threads.com/@user/post/AbC_123-x?xmt=token "
+        "https://threads.net/@user/video/Video456"
+    )
+
+    assert find_download_urls(text) == [
+        ("https://www.threads.com/@user/post/AbC_123-x?xmt=token", "threads.com"),
+        ("https://threads.net/@user/video/Video456", "threads.net"),
+    ]
+
+
+def test_finds_threads_short_and_share_links():
+    text = (
+        "https://threads.net/t/Legacy123 "
+        "https://www.threads.com/share/Share456"
+    )
+
+    assert find_download_urls(text) == [
+        ("https://threads.net/t/Legacy123", "threads.net"),
+        ("https://www.threads.com/share/Share456", "threads.com"),
+    ]
+
+
+def test_trims_punctuation_after_threads_link():
+    assert find_download_urls(
+        "(https://www.threads.com/@user/post/AbC123/)."
+    ) == [
+        ("https://www.threads.com/@user/post/AbC123/", "threads.com"),
+    ]
+
+
+def test_ignores_threads_profile_and_unrelated_paths():
+    assert find_download_urls("https://www.threads.com/@user") == []
+    assert find_download_urls("https://www.threads.net/settings") == []
+
+
 def test_finds_all_supported_hosts():
     text = (
         "https://youtu.be/abc https://youtube.com/watch?v=1 "
@@ -36,8 +73,12 @@ def test_finds_all_supported_hosts():
 
 def test_ignores_lookalike_host():
     assert find_download_urls("https://nottiktok.example.com/x") == []
+    assert find_download_urls("https://tiktok.com.evil.io/@user/video/1") == []
     assert find_download_urls("https://example.com/tiktok") == []
     assert find_download_urls("https://myinstagram.com.evil.io/x") == []
+    assert find_download_urls("https://instagram.com.evil.io/p/AbC") == []
+    assert find_download_urls("https://mythreads.com/@user/post/AbC") == []
+    assert find_download_urls("https://threads.com.evil.io/@user/post/AbC") == []
 
 
 def test_ignores_plain_text():

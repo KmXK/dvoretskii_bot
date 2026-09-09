@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from functools import partial
 from os import environ
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from pyrate_limiter import BucketFullException
@@ -44,7 +45,12 @@ from telegram.ext import ExtBot
 
 from steward.data.repository import Repository
 from steward.features.download import video_cache
-from steward.features.download.callbacks import download_file
+from steward.features.download.callbacks import (
+    REMOTE_MEDIA_TOTAL_LIMIT,
+    DownloadBudget,
+    download_file,
+    enter_download_contexts,
+)
 from steward.features.download.image_description import (
     append_image_description,
     describe_image_files,
@@ -53,6 +59,7 @@ from steward.features.download.video_cache import CachedMedia
 from steward.features.download.yt import (
     _TIKTOK_AUTO_LIMIT,
     _IMAGE_POST_CAPTION_LIMIT,
+    THREADS_MEDIA_HEADERS,
     TIKTOK_FALLBACK_FORMAT,
     TIKTOK_VIDEO_FORMAT,
     _extract_info_only,
@@ -63,6 +70,7 @@ from steward.features.download.yt import (
     download_yandex_audio,
     find_download_urls,
     resolve_instagram_medias,
+    resolve_threads_medias,
 )
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
@@ -219,22 +227,33 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
         return list(await asyncio.gather(*tasks))
 
 
-async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
-    meta_task = asyncio.create_task(_extract_info_only(url))
-    try:
-        medias = await resolve_instagram_medias(url)
-    except BaseException:
-        meta_task.cancel()
-        raise
-    if not medias:
-        meta_task.cancel()
-        raise RuntimeError("инста не отдала ни одного медиа")
+async def _upload_resolved_medias(
+    medias: list[tuple[str, bool]],
+    metadata: Any,
+    bot: ExtBot,
+    request_headers: dict[str, str] | None = None,
+) -> list[CachedMedia]:
     medias = medias[:_MEDIA_LIMIT]
     chat_id = _upload_chat_id()
-    contexts = [download_file(media_url, use_proxy=True) for media_url, _ in medias]
-    files = await asyncio.gather(*[context.__aenter__() for context in contexts])
+    budget = DownloadBudget(REMOTE_MEDIA_TOTAL_LIMIT)
+    contexts = [
+        download_file(
+            media_url,
+            use_proxy=True,
+            request_headers=request_headers,
+            budget=budget,
+        )
+        for media_url, _ in medias
+    ]
     try:
-        info = await meta_task
+        results = await enter_download_contexts(
+            contexts,
+        )
+        exceptions = [result for result in results if isinstance(result, BaseException)]
+        if exceptions:
+            raise ExceptionGroup("", exceptions)
+
+        files = [result for result in results if not isinstance(result, BaseException)]
         description = await describe_image_files(
             [
                 Path(file.name)
@@ -243,7 +262,7 @@ async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
             ]
         )
         caption = append_image_description(
-            _make_caption(info, _IMAGE_POST_CAPTION_LIMIT),
+            _make_caption(metadata, _IMAGE_POST_CAPTION_LIMIT),
             description,
         )
 
@@ -277,10 +296,42 @@ async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
             for file, (_, is_video) in zip(files, medias)
         ]))
     finally:
-        await asyncio.gather(*[
-            context.__aexit__(None, None, None)
-            for context in contexts
-        ])
+        await asyncio.gather(
+            *[
+                context.__aexit__(None, None, None)
+                for context in contexts
+            ],
+            return_exceptions=True,
+        )
+
+
+async def _upload_instagram(url: str, bot: ExtBot) -> list[CachedMedia]:
+    meta_task = asyncio.create_task(_extract_info_only(url))
+    try:
+        medias = await resolve_instagram_medias(url)
+    except BaseException:
+        meta_task.cancel()
+        raise
+
+    if not medias:
+        meta_task.cancel()
+        raise RuntimeError("инста не отдала ни одного медиа")
+
+    return await _upload_resolved_medias(
+        medias,
+        await meta_task,
+        bot,
+    )
+
+
+async def _upload_threads(url: str, bot: ExtBot) -> list[CachedMedia]:
+    medias, metadata = await resolve_threads_medias(url)
+    return await _upload_resolved_medias(
+        medias,
+        metadata,
+        bot,
+        THREADS_MEDIA_HEADERS,
+    )
 
 
 async def _upload_yandex_audio(url: str, bot: ExtBot) -> list[CachedMedia]:
@@ -313,6 +364,8 @@ _PLANS = {
         _upload_images,
     ],
     "instagram.com": [_upload_instagram],
+    "threads.com": [_upload_threads],
+    "threads.net": [_upload_threads],
     "youtube.com": [_upload_video],
     "youtu.be": [_upload_video],
     "pinterest.com": [_upload_video, _upload_images],

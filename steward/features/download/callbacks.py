@@ -25,9 +25,31 @@ from steward.helpers.media import is_video_file
 
 logger = logging.getLogger("download_controller")
 
+REMOTE_MEDIA_FILE_LIMIT = 250 * 1024 * 1024
+REMOTE_MEDIA_TOTAL_LIMIT = 500 * 1024 * 1024
+REMOTE_MEDIA_CONCURRENCY = 3
+
+
+class DownloadBudget:
+    def __init__(self, max_bytes: int):
+        self._remaining = max_bytes
+        self._lock = asyncio.Lock()
+
+    async def consume(self, size: int) -> None:
+        async with self._lock:
+            if size > self._remaining:
+                raise ValueError("общий размер медиа превышает допустимый лимит")
+            self._remaining -= size
+
 
 @asynccontextmanager
-async def download_file(url: str, use_proxy: bool = False):
+async def download_file(
+    url: str,
+    use_proxy: bool = False,
+    request_headers: dict[str, str] | None = None,
+    max_bytes: int = REMOTE_MEDIA_FILE_LIMIT,
+    budget: DownloadBudget | None = None,
+):
     logger.info(f"Скачиваем файл: {url}")
     with tempfile.NamedTemporaryFile("r+b") as file:
         logger.info(f"Создан файл {file.name}")
@@ -40,13 +62,30 @@ async def download_file(url: str, use_proxy: bool = False):
 
         async with aiohttp.ClientSession(
             connector=connector,
-            timeout=aiohttp.ClientTimeout(connect=2),
+            timeout=aiohttp.ClientTimeout(
+                total=180,
+                connect=10,
+                sock_read=30,
+            ),
         ) as session:
-            async with session.get(url) as response:
+            async with session.get(url, headers=request_headers) as response:
+                response.raise_for_status()
+                content_length = response.content_length
+                if content_length is not None and content_length > max_bytes:
+                    raise ValueError("размер файла превышает допустимый лимит")
+
+                downloaded = 0
                 while True:
                     chunk = await response.content.readany()
                     if not chunk:
                         break
+
+                    downloaded += len(chunk)
+                    if downloaded > max_bytes:
+                        raise ValueError("размер файла превышает допустимый лимит")
+                    if budget is not None:
+                        await budget.consume(len(chunk))
+
                     file.write(chunk)
 
         logger.info("Файл был скачен")
@@ -65,6 +104,32 @@ def _build_trans_markup(callback_data: str) -> InlineKeyboardMarkup:
     )
 
 
+def _media_group_chunks(medias: list) -> list[list]:
+    chunks = [medias[index : index + 10] for index in range(0, len(medias), 10)]
+    if len(chunks) > 1 and len(chunks[-1]) == 1:
+        chunks[-1].insert(0, chunks[-2].pop())
+    return chunks
+
+
+async def enter_download_contexts(
+    contexts: list,
+    max_concurrency: int = REMOTE_MEDIA_CONCURRENCY,
+) -> list:
+    if not contexts:
+        return []
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def enter(context):
+        async with semaphore:
+            return await context.__aenter__()
+
+    return await asyncio.gather(
+        *[enter(context) for context in contexts],
+        return_exceptions=True,
+    )
+
+
 async def download_and_send_medias(
     repository: Repository,
     message: Message,
@@ -73,6 +138,8 @@ async def download_and_send_medias(
     use_proxy: bool = False,
     caption: str | None = None,
     describe_images: bool = False,
+    request_headers: dict[str, str] | None = None,
+    transcription_enabled: bool = True,
 ):
     import uuid
 
@@ -80,14 +147,20 @@ async def download_and_send_medias(
         f"Отправляется {morphy.make_agree_with_number('картинка', len(videos_or_images))}"
     )
 
+    budget = DownloadBudget(REMOTE_MEDIA_TOTAL_LIMIT)
     files_tasks = [
-        download_file(url, use_proxy=use_proxy) for url, _ in videos_or_images
+        download_file(
+            url,
+            use_proxy=use_proxy,
+            request_headers=request_headers,
+            budget=budget,
+        )
+        for url, _ in videos_or_images
     ]
 
     try:
-        results = await asyncio.gather(
-            *[task.__aenter__() for task in files_tasks],
-            return_exceptions=True,
+        results = await enter_download_contexts(
+            files_tasks,
         )
 
         logger.info(results)
@@ -107,9 +180,18 @@ async def download_and_send_medias(
             caption = append_image_description(caption, description)
 
         medias = [
-            InputMediaPhoto(file)
+            InputMediaPhoto(
+                file,
+                caption=caption if i == 0 else None,
+                parse_mode="HTML" if i == 0 and caption else None,
+            )
             if not videos_or_images[i][1]
-            else InputMediaVideo(file, supports_streaming=True)
+            else InputMediaVideo(
+                file,
+                supports_streaming=True,
+                caption=caption if i == 0 else None,
+                parse_mode="HTML" if i == 0 and caption else None,
+            )
             for i, file in enumerate(results)
             if not isinstance(file, BaseException)
         ]
@@ -119,12 +201,14 @@ async def download_and_send_medias(
             assert not isinstance(results[0], BaseException)
             results[0].seek(0)
             if videos_or_images[0][1]:
-                link_id = uuid.uuid4().hex
-                repository.db.saved_links.add(link_id, videos_or_images[0][0])
-                await repository.save()
-                reply_markup = _build_trans_markup(
-                    f"download:trans|no_ydl_{link_id}"
-                )
+                if transcription_enabled:
+                    link_id = uuid.uuid4().hex
+                    repository.db.saved_links.add(link_id, videos_or_images[0][0])
+                    await repository.save()
+                    reply_markup = _build_trans_markup(
+                        f"download:trans|no_ydl_{link_id}"
+                    )
+
                 await message.reply_video(
                     results[0],
                     supports_streaming=True,
@@ -141,17 +225,13 @@ async def download_and_send_medias(
                     parse_mode="HTML" if caption else None,
                 )
         else:
-            if caption and medias:
-                first = medias[0]
-                if isinstance(first, (InputMediaPhoto, InputMediaVideo)):
-                    first.caption = caption
-                    first.parse_mode = "HTML"
-            for i in range(0, len(medias), 10):
+            media_groups = _media_group_chunks(medias)
+            for index, media_group in enumerate(media_groups):
                 retry = 0
                 while retry < retries_count:
                     try:
                         await message.reply_media_group(
-                            medias[i : i + 10],
+                            media_group,
                             disable_notification=True,
                         )
                         break
@@ -160,15 +240,19 @@ async def download_and_send_medias(
                         await asyncio.sleep(5)
                         retry += 1
 
-                if i + 10 < len(medias):
+                if index + 1 < len(media_groups):
                     await asyncio.sleep(2)
 
         logger.info("Картинки отправлены")
 
-    except Exception:
-        for task in files_tasks:
-            await task.__aexit__(None, None, None)
-        raise
+    finally:
+        await asyncio.gather(
+            *[
+                task.__aexit__(None, None, None)
+                for task in files_tasks
+            ],
+            return_exceptions=True,
+        )
 
 
 async def send_media_files(
@@ -213,23 +297,31 @@ async def send_media_files(
     medias: list[InputMediaPhoto | InputMediaVideo] = []
 
     with ExitStack() as stack:
-        for media_path in media_paths:
+        for index, media_path in enumerate(media_paths):
             file = stack.enter_context(open(media_path, "rb"))
             if is_video_file(media_path):
-                medias.append(InputMediaVideo(file, supports_streaming=True))
+                media = InputMediaVideo(
+                    file,
+                    supports_streaming=True,
+                    caption=caption if index == 0 else None,
+                    parse_mode="HTML" if index == 0 and caption else None,
+                )
             else:
-                medias.append(InputMediaPhoto(file))
+                media = InputMediaPhoto(
+                    file,
+                    caption=caption if index == 0 else None,
+                    parse_mode="HTML" if index == 0 and caption else None,
+                )
 
-        if caption and medias:
-            medias[0].caption = caption
-            medias[0].parse_mode = "HTML"
+            medias.append(media)
 
-        for i in range(0, len(medias), 10):
+        media_groups = _media_group_chunks(medias)
+        for index, media_group in enumerate(media_groups):
             retry = 0
             while retry < retries_count:
                 try:
                     await message.reply_media_group(
-                        medias[i : i + 10],
+                        media_group,
                         disable_notification=True,
                     )
                     break
@@ -238,7 +330,7 @@ async def send_media_files(
                     await asyncio.sleep(5)
                     retry += 1
 
-            if i + 10 < len(media_paths):
+            if index + 1 < len(media_groups):
                 await asyncio.sleep(2)
 
     logger.info("Медиа отправлены")

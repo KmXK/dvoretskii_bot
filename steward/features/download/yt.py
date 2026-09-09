@@ -7,13 +7,15 @@ import os
 import re
 import tempfile
 import uuid
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import aiohttp
 import youtube_dl
 import yt_dlp
+from aiohttp_socks import ProxyConnector
 from pyrate_limiter import BucketFullException
 from telegram import (
     InlineKeyboardButton,
@@ -61,6 +63,22 @@ TIKTOK_FALLBACK_FORMAT = "download_addr/download/b"
 _CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
 _IMAGE_POST_CAPTION_LIMIT = 600
 _AUDIO_SUFFIXES = frozenset({".aac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"})
+_THREADS_HOSTS = frozenset({"threads.com", "threads.net"})
+_THREADS_MEDIA_DOMAINS = ("cdninstagram.com", "fbcdn.net")
+_THREADS_MEDIA_LIMIT = 20
+_THREADS_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_THREADS_POST_PATH = re.compile(
+    r"/(?:@[^/]+/)?(?:post|video|t)/(?P<shortcode>[^/?#&]+)",
+    re.IGNORECASE,
+)
+_THREADS_SHARE_PATH = re.compile(r"/share/[^/?#&]+", re.IGNORECASE)
+_THREADS_PAGE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+}
+THREADS_MEDIA_HEADERS = {
+    **_THREADS_PAGE_HEADERS,
+    "Referer": "https://www.threads.com/",
+}
 
 
 def _auto_video_transcription_enabled(
@@ -183,11 +201,25 @@ async def _extract_info_only(url: str) -> Any:
 DOWNLOAD_TYPE_MAP = {
     "tiktok": "tiktok",
     "instagram.com": "reels",
+    "threads.com": "threads",
+    "threads.net": "threads",
     "youtube.com": "youtube",
     "youtu.be": "youtube",
     "pinterest.com": "pinterest",
     "pin.it": "pinterest",
     "music.yandex": "music",
+}
+
+_DOWNLOAD_DOMAINS = {
+    "tiktok": ("tiktok.com",),
+    "instagram.com": ("instagram.com",),
+    "threads.com": ("threads.com",),
+    "threads.net": ("threads.net",),
+    "youtube.com": ("youtube.com",),
+    "youtu.be": ("youtu.be",),
+    "pinterest.com": ("pinterest.com",),
+    "pin.it": ("pin.it",),
+    "music.yandex": ("music.yandex.ru",),
 }
 
 
@@ -198,13 +230,268 @@ def find_download_urls(text: str) -> list[tuple[str, str]]:
     по границам доменных меток: vm.tiktok.com и music.yandex.ru подходят,
     nottiktok.example.com — нет."""
     found: list[tuple[str, str]] = []
-    for url in re.findall(URL_REGEX, text):
-        dotted_host = f".{urlparse(url).hostname or ''}."
-        for key in DOWNLOAD_TYPE_MAP:
-            if f".{key}." in dotted_host:
+    for matched_url in re.findall(URL_REGEX, text):
+        url = matched_url.rstrip(".,;:!?)]}>")
+        host = urlparse(url).hostname
+        for key, domains in _DOWNLOAD_DOMAINS.items():
+            if _host_matches(host, domains):
+                if key in _THREADS_HOSTS and not _is_threads_post_url(url):
+                    break
+
                 found.append((url, key))
                 break
     return found
+
+
+def _threads_shortcode(url: str) -> str | None:
+    match = _THREADS_POST_PATH.search(urlparse(url).path)
+    return match.group("shortcode") if match else None
+
+
+def _host_matches(host: str | None, domains) -> bool:
+    normalized = (host or "").lower().rstrip(".")
+    return any(normalized == domain or normalized.endswith(f".{domain}") for domain in domains)
+
+
+def _is_threads_post_url(url: str) -> bool:
+    path = urlparse(url).path
+    return _threads_shortcode(url) is not None or _THREADS_SHARE_PATH.search(path) is not None
+
+
+class _ThreadsPageParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.json_scripts: list[str] = []
+        self.meta: dict[str, str] = {}
+        self._json_parts: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "meta":
+            key = values.get("property") or values.get("name")
+            content = values.get("content")
+            if key and content:
+                self.meta[key] = content
+
+        if tag == "script" and (values.get("type") or "").lower() == "application/json":
+            self._json_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._json_parts is not None:
+            self._json_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._json_parts is not None:
+            self.json_scripts.append("".join(self._json_parts))
+            self._json_parts = None
+
+
+def _find_threads_post(value: Any, shortcode: str) -> dict[str, Any] | None:
+    stack = [value]
+    fallback = None
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if item.get("code") == shortcode:
+                fallback = item
+                if item.get("carousel_media") or item.get("video_versions") or item.get("image_versions2"):
+                    return item
+
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+    return fallback
+
+
+def _threads_media_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not _host_matches(parsed.hostname, _THREADS_MEDIA_DOMAINS):
+        return None
+    return value
+
+
+def _best_threads_image(candidates: Any) -> str | None:
+    if not isinstance(candidates, list):
+        return None
+
+    valid = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and _threads_media_url(candidate.get("url"))
+    ]
+    if not valid:
+        return None
+
+    best = max(
+        valid,
+        key=lambda candidate: (
+            int(candidate.get("width") or 0) * int(candidate.get("height") or 0),
+            int(candidate.get("width") or 0),
+        ),
+    )
+    return best["url"]
+
+
+def _best_threads_video(versions: Any) -> str | None:
+    if not isinstance(versions, list):
+        return None
+
+    valid = [
+        version
+        for version in versions
+        if isinstance(version, dict) and _threads_media_url(version.get("url"))
+    ]
+    if not valid:
+        return None
+
+    best = max(
+        valid,
+        key=lambda version: (
+            int(version.get("width") or 0) * int(version.get("height") or 0),
+            int(version.get("bitrate") or 0),
+        ),
+    )
+    return best["url"]
+
+
+def _threads_post_medias(post: dict[str, Any]) -> list[tuple[str, bool]]:
+    media_items = post.get("carousel_media") or [post]
+    medias: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for media in media_items:
+        if not isinstance(media, dict):
+            continue
+
+        video_url = _best_threads_video(media.get("video_versions"))
+        media_url = video_url or _best_threads_image(
+            (media.get("image_versions2") or {}).get("candidates")
+        )
+        if not media_url or media_url in seen:
+            continue
+
+        seen.add(media_url)
+        medias.append((media_url, video_url is not None))
+        if len(medias) == _THREADS_MEDIA_LIMIT:
+            break
+
+    return medias
+
+
+def parse_threads_page(
+    page: str,
+    final_url: str,
+    source_url: str,
+) -> tuple[list[tuple[str, bool]], dict[str, Any]]:
+    parser = _ThreadsPageParser()
+    parser.feed(page)
+
+    canonical_url = parser.meta.get("og:url") or ""
+    shortcode = (
+        _threads_shortcode(final_url)
+        or _threads_shortcode(canonical_url)
+        or _threads_shortcode(source_url)
+    )
+    if not shortcode:
+        raise ValueError("не удалось определить пост Threads")
+
+    post = None
+    medias = []
+    matched_post = False
+    for script in parser.json_scripts:
+        try:
+            data = json.loads(script)
+        except json.JSONDecodeError:
+            continue
+
+        candidate = _find_threads_post(data, shortcode)
+        if not candidate:
+            continue
+
+        matched_post = True
+        candidate_medias = _threads_post_medias(candidate)
+        if candidate_medias:
+            post = candidate
+            medias = candidate_medias
+            break
+
+    if not post:
+        if matched_post:
+            raise ValueError("в посте Threads нет доступных фото или видео")
+
+        raise ValueError("Threads не отдал данные поста")
+
+    user = post.get("user") or {}
+    caption = post.get("caption") or {}
+    description = caption.get("text") if isinstance(caption, dict) else None
+    description = description or parser.meta.get("og:description") or ""
+    username = user.get("username") if isinstance(user, dict) else None
+    return medias, {
+        "description": description,
+        "title": description or (f"Threads @{username}" if username else "Threads"),
+        "uploader": username,
+    }
+
+
+async def _fetch_threads_page(url: str) -> tuple[str, str]:
+    if not _host_matches(urlparse(url).hostname, _THREADS_HOSTS):
+        raise ValueError("неподдерживаемый адрес Threads")
+
+    connector = None
+    if proxy := os.environ.get("DOWNLOAD_PROXY"):
+        connector = ProxyConnector.from_url(proxy)
+
+    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+    async with aiohttp.ClientSession(
+        connector=connector,
+        timeout=timeout,
+        headers=_THREADS_PAGE_HEADERS,
+    ) as session:
+        current_url = url
+        for _ in range(6):
+            if not _host_matches(urlparse(current_url).hostname, _THREADS_HOSTS):
+                raise ValueError("Threads перенаправил на неподдерживаемый адрес")
+
+            async with session.get(current_url, allow_redirects=False) as response:
+                if response.status in _THREADS_REDIRECT_STATUSES:
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise ValueError("Threads вернул перенаправление без адреса")
+                    current_url = urljoin(current_url, location)
+                    continue
+
+                response.raise_for_status()
+                return await response.text(), current_url
+
+        raise ValueError("слишком много перенаправлений Threads")
+
+
+async def resolve_threads_medias(
+    url: str,
+) -> tuple[list[tuple[str, bool]], dict[str, Any]]:
+    page, final_url = await _fetch_threads_page(url)
+    return parse_threads_page(
+        page,
+        final_url,
+        url,
+    )
+
+
+async def load_threads(repository: Repository, url: str, message: Message) -> None:
+    medias, metadata = await resolve_threads_medias(url)
+    await download_and_send_medias(
+        repository,
+        message,
+        medias,
+        use_proxy=True,
+        caption=_make_caption(metadata, _IMAGE_POST_CAPTION_LIMIT),
+        describe_images=True,
+        request_headers=THREADS_MEDIA_HEADERS,
+        transcription_enabled=False,
+    )
 
 
 async def resolve_instagram_medias(url: str) -> list[tuple[str, bool]]:
@@ -678,6 +965,12 @@ def build_dispatch(repository: Repository) -> dict[str, list]:
         ],
         "instagram.com": [
             lambda url, message: load_instagram(repository, url, message),
+        ],
+        "threads.com": [
+            lambda url, message: load_threads(repository, url, message),
+        ],
+        "threads.net": [
+            lambda url, message: load_threads(repository, url, message),
         ],
         "youtube.com": [_bind(make_video_loader("youtube", pre_call=yt_pre))],
         "youtu.be": [_bind(make_video_loader("youtube", pre_call=yt_pre))],
