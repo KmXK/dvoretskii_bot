@@ -398,6 +398,15 @@ class Bot:
             logger.warning(f"invalid callback call: {update}")
             return False
 
+        from steward.bot.inline_download import handle_pending_inline_callback
+
+        try:
+            if await handle_pending_inline_callback(update.callback_query, self.bot):
+                return
+        except BaseException as e:
+            logger.exception(e)
+            return
+
         ctx = CallbackBotContext(
             self.repository,
             self.bot,

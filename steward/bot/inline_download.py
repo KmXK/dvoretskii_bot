@@ -4,9 +4,9 @@
 общий (find_download_urls). Telegram требует на answerInlineQuery либо
 публичный URL, либо file_id уже загруженного файла, поэтому качаем медиа
 обычным путём, заливаем их в служебный чат, чтобы получить file_id, удаляем
-служебные сообщения и отдаём cached-результаты. Если юзер не дождался и query
-протух — результат остаётся в кэше, повторный ввод той же ссылки отвечает
-мгновенно.
+служебные сообщения и отдаём cached-результаты. Долгая загрузка возвращает
+отправляемый placeholder: после выбора он сам заменяется готовым медиа, а
+повторный ввод прогретой ссылки отвечает мгновенно.
 
 Транскрибация: короткие (< 2 мин) тиктоки после отправки получают
 саммари+расшифровку стримингом в caption. Работает через chosen_inline_result
@@ -23,10 +23,12 @@ from functools import partial
 from os import environ
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from pyrate_limiter import BucketFullException
 from telegram import (
+    CallbackQuery,
     ChosenInlineResult,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -37,6 +39,9 @@ from telegram import (
     InlineQueryResultCachedPhoto,
     InlineQueryResultCachedVideo,
     InputFile,
+    InputMediaAudio,
+    InputMediaPhoto,
+    InputMediaVideo,
     InputTextMessageContent,
     Message,
 )
@@ -83,6 +88,10 @@ _MEDIA_LIMIT = 10
 _TRANSCRIBE_MAX_DURATION_SEC = 2 * 60
 _CHOSEN_CTX_MAX = 500
 _EXISTING_CAPTION_KEEP_LIMIT = 250
+_INLINE_QUERY_WAIT_SECONDS = 3
+_PENDING_CTX_MAX = 500
+_PENDING_CALLBACK_PREFIX = "inline:pending|"
+_QUERYLESS_CACHE_KEYS = frozenset({"instagram.com", "threads.com", "threads.net"})
 
 _inflight: dict[str, asyncio.Task] = {}
 
@@ -385,21 +394,30 @@ async def _load_medias(url: str, key: str, bot: ExtBot) -> list[CachedMedia]:
     raise last_error or RuntimeError("нет загрузчика")
 
 
+def _media_cache_key(url: str, key: str) -> str:
+    if key not in _QUERYLESS_CACHE_KEYS:
+        return url
+
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc.lower(), parsed.path, "", ""))
+
+
 async def _get_medias(url: str, key: str, bot: ExtBot) -> list[CachedMedia]:
-    cached = video_cache.get(url)
+    cache_key = _media_cache_key(url, key)
+    cached = video_cache.get(cache_key) or video_cache.get(url)
     if cached is not None:
         return cached
 
     # Telegram шлёт inline query на каждое изменение текста — дедупим,
     # чтобы одна ссылка не качалась параллельно несколько раз.
-    task = _inflight.get(url)
+    task = _inflight.get(cache_key)
     if task is None:
         task = asyncio.create_task(_load_medias(url, key, bot))
-        _inflight[url] = task
-        task.add_done_callback(lambda _: _inflight.pop(url, None))
+        _inflight[cache_key] = task
+        task.add_done_callback(lambda _: _inflight.pop(cache_key, None))
 
     medias = await task
-    video_cache.put(url, medias)
+    video_cache.put(cache_key, medias)
     return medias
 
 
@@ -413,11 +431,107 @@ class _ChosenCtx:
     caption: str | None
 
 
+@dataclass
+class _PendingCtx:
+    url: str
+    task: asyncio.Task[list[CachedMedia]]
+    chat_type: str | None = None
+    delivery_task: asyncio.Task[None] | None = None
+
+
 _chosen_ctx: dict[str, _ChosenCtx] = {}
+_pending_ctx: dict[str, _PendingCtx] = {}
 
 
 def _source_markup(url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("Источник", url=url)]])
+
+
+def _pending_markup(url: str, result_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "⏳ Дождаться",
+            callback_data=f"{_PENDING_CALLBACK_PREFIX}{result_id}",
+        )],
+        [InlineKeyboardButton("Источник", url=url)],
+    ])
+
+
+def _ready_markup(
+    url: str,
+    media_count: int,
+    chat_type: str | None,
+) -> InlineKeyboardMarkup:
+    buttons = [InlineKeyboardButton("Источник", url=url)]
+    if media_count > 1 and chat_type != "channel":
+        found = find_supported_url(url)
+        query_url = _media_cache_key(url, found[1]) if found else url
+        remaining_button = InlineKeyboardButton(
+            f"Остальные ({media_count - 1})",
+            switch_inline_query_current_chat=query_url,
+        )
+        buttons.append(remaining_button)
+
+    return InlineKeyboardMarkup([buttons])
+
+
+def _pending_result(
+    url: str,
+    task: asyncio.Task[list[CachedMedia]],
+    chat_type: str | None,
+) -> InlineQueryResultArticle:
+    result_id = uuid4().hex
+    if len(_pending_ctx) >= _PENDING_CTX_MAX:
+        _pending_ctx.pop(next(iter(_pending_ctx)))
+
+    _pending_ctx[result_id] = _PendingCtx(
+        url=url,
+        task=task,
+        chat_type=chat_type,
+    )
+    return InlineQueryResultArticle(
+        id=result_id,
+        title="⏳ Догружаю — можно отправлять",
+        description="Сообщение само заменится готовым медиа",
+        input_message_content=InputTextMessageContent(
+            "⏳ Загружаю медиа…"
+        ),
+        reply_markup=_pending_markup(url, result_id),
+    )
+
+
+def _record_background_result(
+    task: asyncio.Task[list[CachedMedia]],
+    *,
+    url: str,
+    key: str,
+    metrics: ContextMetrics,
+) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as error:
+        logger.warning("фоновая inline-загрузка %s не удалась: %s", url, error)
+        return
+
+    metrics.inc("bot_downloads_total", {"download_type": f"{key}_inline"})
+
+
+def _watch_background_result(
+    task: asyncio.Task[list[CachedMedia]],
+    url: str,
+    key: str,
+    metrics: ContextMetrics,
+) -> None:
+    task.add_done_callback(
+        partial(
+            _record_background_result,
+            url=url,
+            key=key,
+            metrics=metrics,
+        )
+    )
 
 
 def _to_results(
@@ -469,14 +583,20 @@ async def _safe_answer(
     results: list[InlineQueryResult],
     *,
     cache_time: int,
-) -> None:
+    is_personal: bool = True,
+) -> bool:
     try:
-        await query.answer(results, cache_time=cache_time)
+        await query.answer(
+            results,
+            cache_time=cache_time,
+            is_personal=is_personal,
+        )
+        return True
     except BadRequest as e:
         msg = str(e).lower()
         if "query is too old" in msg or "query id is invalid" in msg:
             logger.info("inline query протух до ответа: %s", e)
-            return
+            return False
         raise
 
 
@@ -489,10 +609,58 @@ async def handle_inline_download(
     found = find_supported_url(query.query)
     if found is None:
         return False
+
     url, key = found
 
+    media_task = asyncio.create_task(_get_medias(url, key, bot))
     try:
-        medias = await _get_medias(url, key, bot)
+        done, _ = await asyncio.wait(
+            {media_task},
+            timeout=_INLINE_QUERY_WAIT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        _watch_background_result(
+            media_task,
+            url,
+            key,
+            metrics,
+        )
+        raise
+
+    if media_task not in done:
+        logger.info(
+            "inline-загрузка %s продолжается в фоне после %s секунд",
+            url,
+            _INLINE_QUERY_WAIT_SECONDS,
+        )
+        _watch_background_result(
+            media_task,
+            url,
+            key,
+            metrics,
+        )
+        pending_result = _pending_result(
+            url,
+            media_task,
+            query.chat_type,
+        )
+        try:
+            answered = await _safe_answer(
+                query,
+                [pending_result],
+                cache_time=0,
+            )
+        except BaseException:
+            _pending_ctx.pop(pending_result.id, None)
+            raise
+
+        if not answered:
+            _pending_ctx.pop(pending_result.id, None)
+
+        return True
+
+    try:
+        medias = media_task.result()
     except Exception as e:
         logger.warning("inline-загрузка %s не удалась: %s", url, e)
         error_text = f"{type(e).__name__}: {e}".replace("\n", " ")
@@ -542,12 +710,175 @@ class _InlineCaptionMessage:
         )
 
 
+async def _finish_pending_result(
+    pending: _PendingCtx,
+    inline_message_id: str,
+    bot: ExtBot,
+) -> None:
+    try:
+        medias = await asyncio.shield(pending.task)
+    except Exception as error:
+        error_text = f"{type(error).__name__}: {error}".replace("\n", " ")
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=f"❌ Не получилось скачать\n{error_text[:300]}",
+            reply_markup=_source_markup(pending.url),
+        )
+        return
+
+    if not medias:
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text="❌ Загрузчик не вернул медиа",
+            reply_markup=_source_markup(pending.url),
+        )
+        return
+
+    media = medias[0]
+    parse_mode = "HTML" if media.caption else None
+    if media.kind == "photo":
+        input_media = InputMediaPhoto(
+            media.file_id,
+            caption=media.caption,
+            parse_mode=parse_mode,
+        )
+    elif media.kind == "audio":
+        input_media = InputMediaAudio(
+            media.file_id,
+            caption=media.caption,
+            parse_mode=parse_mode,
+        )
+    else:
+        input_media = InputMediaVideo(
+            media.file_id,
+            caption=media.caption,
+            parse_mode=parse_mode,
+            supports_streaming=True,
+        )
+
+    await bot.edit_message_media(
+        inline_message_id=inline_message_id,
+        media=input_media,
+        reply_markup=_ready_markup(
+            pending.url,
+            len(medias),
+            pending.chat_type,
+        ),
+    )
+
+
+def _record_pending_delivery(
+    task: asyncio.Task[None],
+    *,
+    result_id: str,
+    pending: _PendingCtx,
+) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        if pending.delivery_task is task:
+            pending.delivery_task = None
+        return
+    except Exception as error:
+        if pending.delivery_task is task:
+            pending.delivery_task = None
+        logger.warning("не удалось доставить inline-медиа: %s", error)
+        return
+
+    if _pending_ctx.get(result_id) is pending:
+        _pending_ctx.pop(result_id, None)
+
+
+async def _deliver_pending_result(
+    result_id: str,
+    pending: _PendingCtx,
+    inline_message_id: str,
+    bot: ExtBot,
+) -> None:
+    delivery_task = pending.delivery_task
+    if delivery_task is None:
+        delivery_task = asyncio.create_task(
+            _finish_pending_result(
+                pending,
+                inline_message_id,
+                bot,
+            )
+        )
+        pending.delivery_task = delivery_task
+        delivery_task.add_done_callback(
+            partial(
+                _record_pending_delivery,
+                result_id=result_id,
+                pending=pending,
+            )
+        )
+
+    try:
+        await asyncio.shield(delivery_task)
+    except Exception:
+        if pending.delivery_task is delivery_task:
+            pending.delivery_task = None
+        raise
+
+    if _pending_ctx.get(result_id) is pending:
+        _pending_ctx.pop(result_id, None)
+
+
+async def handle_pending_inline_callback(
+    callback: CallbackQuery,
+    bot: ExtBot,
+) -> bool:
+    data = callback.data
+    if not isinstance(data, str) or not data.startswith(_PENDING_CALLBACK_PREFIX):
+        return False
+
+    result_id = data.removeprefix(_PENDING_CALLBACK_PREFIX)
+    pending = _pending_ctx.get(result_id)
+    if pending is None:
+        await callback.answer("Уже обработано")
+        return True
+
+    if not callback.inline_message_id:
+        await callback.answer(
+            "Не могу обновить это сообщение",
+            show_alert=True,
+        )
+        return True
+
+    try:
+        await callback.answer("Догружаю…")
+    except Exception as error:
+        logger.warning("не удалось ответить на inline callback: %s", error)
+
+    await _deliver_pending_result(
+        result_id,
+        pending,
+        callback.inline_message_id,
+        bot,
+    )
+    return True
+
+
 async def handle_chosen_inline_result(
     chosen: ChosenInlineResult,
     bot: ExtBot,
     repository: Repository,
 ) -> bool:
-    """Авто-расшифровка выбранного короткого тиктока стримингом в caption."""
+    """Обработка выбранного отложенного результата или транскрибации."""
+    pending = _pending_ctx.get(chosen.result_id)
+    if pending is not None:
+        if not chosen.inline_message_id:
+            return False
+
+        logger.info("выбран отложенный inline-результат для %s", pending.url)
+        await _deliver_pending_result(
+            chosen.result_id,
+            pending,
+            chosen.inline_message_id,
+            bot,
+        )
+        return True
+
     ctx = _chosen_ctx.pop(chosen.result_id, None)
     if ctx is None or not chosen.inline_message_id:
         return False
