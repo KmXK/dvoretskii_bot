@@ -11,6 +11,12 @@ from steward.data.models.curse import (
 )
 from steward.data.models.role import Role, UserRole
 from steward.data.models.user import User
+from steward.delayed_action.curse_punishment_digest import (
+    CurseInterestDelayedAction,
+    CurseInterestForecastDelayedAction,
+    CursePunishmentDigestDelayedAction,
+)
+from steward.delayed_action.generators.constant_generator import ConstantGenerator
 from steward.features.curse import CurseFeature
 from steward.framework.types import from_chat_context
 from steward.helpers.curse_debt import today_msk
@@ -63,6 +69,40 @@ def make_callback_context(data: str, repo, user_id: int = DEFAULT_USER_ID):
         metrics=MagicMock(),
         callback_query=callback_query,
     )
+
+
+def make_daily_action(action_type):
+    return action_type(
+        generator=ConstantGenerator(
+            start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            period=timedelta(days=1),
+        )
+    )
+
+
+class TestCurseSchedule:
+    async def test_setup_adds_interest_without_evening_forecast(self):
+        repo = make_repository()
+        feature = CurseFeature()
+        feature.repository = repo
+
+        await feature._setup_digest()
+
+        assert len(repo.db.delayed_actions) == 1
+        assert isinstance(repo.db.delayed_actions[0], CurseInterestDelayedAction)
+
+    async def test_setup_removes_existing_report_actions(self):
+        repo = make_repository()
+        interest = make_daily_action(CurseInterestDelayedAction)
+        forecast = make_daily_action(CurseInterestForecastDelayedAction)
+        legacy_digest = make_daily_action(CursePunishmentDigestDelayedAction)
+        repo.db.delayed_actions = [interest, forecast, legacy_digest]
+        feature = CurseFeature()
+        feature.repository = repo
+
+        await feature._setup_digest()
+
+        assert repo.db.delayed_actions == [interest]
 
 
 class TestCurseWordList:

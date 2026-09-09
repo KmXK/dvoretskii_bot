@@ -120,14 +120,17 @@ class CurseFeature(Feature):
             isinstance(a, CurseInterestDelayedAction)
             for a in self.delayed_actions
         )
-        has_forecast = any(
-            isinstance(a, CurseInterestForecastDelayedAction)
-            for a in self.delayed_actions
+        stale_types = (
+            CursePunishmentDigestDelayedAction,
+            CurseInterestForecastDelayedAction,
         )
+        stale_actions = [
+            action
+            for action in self.delayed_actions
+            if isinstance(action, stale_types)
+        ]
         changed = False
-        for stale in [
-            a for a in self.delayed_actions if isinstance(a, CursePunishmentDigestDelayedAction)
-        ]:
+        for stale in stale_actions:
             self.delayed_actions.remove(stale)
             changed = True
 
@@ -141,16 +144,7 @@ class CurseFeature(Feature):
                 )
             )
             changed = True
-        if not has_forecast:
-            self.delayed_actions.add(
-                CurseInterestForecastDelayedAction(
-                    generator=ConstantGenerator(
-                        start=datetime(2025, 1, 1, 20, 0, tzinfo=_MSK),
-                        period=timedelta(days=1),
-                    )
-                )
-            )
-            changed = True
+
         if changed:
             await self.delayed_actions.save()
 

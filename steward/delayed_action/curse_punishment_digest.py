@@ -12,7 +12,6 @@ from steward.helpers.curse_debt import (
     apply_curse_interest_until,
     build_curse_debt_report_entries,
     format_curse_day_outcome,
-    format_curse_day_plan,
     today_msk,
 )
 from steward.helpers.curse_streak import (
@@ -81,8 +80,7 @@ class CurseInterestForecastDelayedAction(DelayedAction):
     generator: ConstantGenerator
 
     async def execute(self, context: DelayedActionContext):
-        if context.repository.db.curse_punishments:
-            await _broadcast_curse_report(context, format_curse_day_plan)
+        return
 
 
 @dataclass(kw_only=True)

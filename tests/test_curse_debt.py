@@ -12,6 +12,7 @@ from steward.data.models.curse import (
 from steward.delayed_action.context import DelayedActionContext
 from steward.delayed_action.curse_punishment_digest import (
     CurseInterestDelayedAction,
+    CurseInterestForecastDelayedAction,
     CursePunishmentDigestDelayedAction,
 )
 from steward.delayed_action.generators.constant_generator import ConstantGenerator
@@ -591,6 +592,28 @@ async def test_digest_action_does_not_apply_interest_before_reporting():
 
     assert repo.db.curse_punishment_debts[0].punishment_count == 100
     assert repo.db.curse_punishment_debts[0].last_interest_applied_date == yesterday
+
+
+async def test_evening_forecast_action_does_not_send_report():
+    repo = make_repository()
+    repo.db.curse_punishments = [
+        CursePunishment(id=1, coeff=4, title="приседаний")
+    ]
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.send_photo = AsyncMock()
+    action = CurseInterestForecastDelayedAction(
+        generator=ConstantGenerator(
+            start=datetime.now(timezone.utc),
+            period=date.resolution,
+        )
+    )
+    context = DelayedActionContext(repo, bot, MagicMock(), MagicMock())
+
+    await action.execute(context)
+
+    bot.send_message.assert_not_awaited()
+    bot.send_photo.assert_not_awaited()
 
 
 async def test_interest_action_applies_interest():
