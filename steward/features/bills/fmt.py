@@ -866,8 +866,14 @@ def kb_bill(
             rows.append([feature.cb("bills:people").button("👥 По людям", bill_id=bill.id)])
 
     if not bill.closed:
+        pay_button = feature._webapp_button(
+            "💸 Оплатить",
+            "pay",
+            "bills:pay_start",
+            bill_id=bill.id,
+        )
         rows.append([
-            feature.cb("bills:pay_start").button("💸 Оплатить", bill_id=bill.id),
+            pay_button,
             feature.cb("bills:got_start").button("✅ Получил", bill_id=bill.id),
         ])
         if is_participant:

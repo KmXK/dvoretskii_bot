@@ -12,7 +12,12 @@ async function parse(res) {
   if (!res.ok) {
     let body = ''
     try { body = await res.text() } catch { /* noop */ }
-    throw new ApiError(res.status, body || res.statusText || `HTTP ${res.status}`)
+    let message = body
+    try {
+      const parsed = JSON.parse(body)
+      message = parsed.error || parsed.message || body
+    } catch { /* noop */ }
+    throw new ApiError(res.status, message || res.statusText || `HTTP ${res.status}`)
   }
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) return res.json()

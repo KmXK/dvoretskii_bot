@@ -1110,6 +1110,13 @@ class _PayingStep(Step):
             await context.bot.send_message(chat_id=msg.chat_id, text="Неверная сумма.")
             return False
 
+        if amount_minor <= 0:
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text="Сумма должна быть больше нуля.",
+            )
+            return False
+
         await feature._create_payment_for_user(
             context.bot,
             from_user=msg.from_user,
@@ -1184,6 +1191,13 @@ class _GotStep(Step):
             amount_minor = minor_from_float(float(m.group(1).replace(",", ".")))
         except ValueError:
             await context.bot.send_message(chat_id=msg.chat_id, text="Неверная сумма.")
+            return False
+
+        if amount_minor <= 0:
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text="Сумма должна быть больше нуля.",
+            )
             return False
 
         await feature._creditor_initiated_payment(

@@ -87,7 +87,7 @@ async def test_migration_marks_bots_and_removes_bot_chat_admins():
 
     migrated = repo._migrate(data)
 
-    assert migrated["version"] == 44
+    assert migrated["version"] == 45
     assert migrated["users"][0]["is_bot"] is False
     assert migrated["users"][1]["is_bot"] is True
     assert migrated["chat_settings"][0]["chat_admins"] == [1]

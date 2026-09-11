@@ -1,14 +1,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import WebApp from '@twa-dev/sdk'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, Loader2 } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, CreditCard } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
+import PaymentDetailsDialog from '../components/bills/PaymentDetailsDialog'
+import PaymentDialog from '../components/bills/PaymentDialog'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
 import BillCreate, { PositionsStep, PeopleManage } from './BillCreate'
+import { getBillsStartParam } from '../bills/startParam'
 
 // ── Money formatting ─────────────────────────────────────────────────────────
 
@@ -145,93 +147,139 @@ function useApi() {
 
 // ── Components ────────────────────────────────────────────────────────────────
 
-function DebtSummary({ bills, myPersonId, personsById = {}, currency = 'BYN' }) {
-  const { owe, owed } = useMemo(() => {
-    const owe = {}
-    const owed = {}
-    for (const bill of bills) {
-      if (bill.closed) continue
-      if (bill.distribution_status && bill.distribution_status !== 'final') continue
-      const net = computeBillDebts(bill)
-      if (myPersonId && net[myPersonId]) {
-        for (const [c, amt] of Object.entries(net[myPersonId])) {
-          owe[c] = (owe[c] || 0) + amt
-        }
-      }
-      for (const [d, creds] of Object.entries(net)) {
-        if (d !== myPersonId && creds[myPersonId]) {
-          owed[d] = (owed[d] || 0) + creds[myPersonId]
-        }
-      }
-    }
-    return { owe, owed }
-  }, [bills, myPersonId])
+function buildDebtSummary(bills, myPersonId) {
+  const owe = new Map()
+  const owed = new Map()
 
-  const iOwe = Object.values(owe).reduce((s, a) => s + a, 0)
-  const owedToMe = Object.values(owed).reduce((s, a) => s + a, 0)
-  if (!iOwe && !owedToMe) return null
+  const add = (target, personId, amountMinor, currency, billId) => {
+    const key = `${personId}:${currency}`
+    const current = target.get(key) || {
+      personId,
+      amountMinor: 0,
+      currency,
+      billIds: [],
+    }
+    current.amountMinor += amountMinor
+    current.billIds.push(billId)
+    target.set(key, current)
+  }
+
+  for (const bill of bills) {
+    if (bill.closed) continue
+    if (bill.distribution_status && bill.distribution_status !== 'final') continue
+
+    const net = computeBillDebts(bill)
+    for (const [creditorId, amountMinor] of Object.entries(net[myPersonId] || {})) {
+      if (amountMinor > 0) add(owe, creditorId, amountMinor, bill.currency, bill.id)
+    }
+    for (const [debtorId, creditors] of Object.entries(net)) {
+      const amountMinor = debtorId === myPersonId ? 0 : creditors[myPersonId] || 0
+      if (amountMinor > 0) add(owed, debtorId, amountMinor, bill.currency, bill.id)
+    }
+  }
+
+  const byAmount = (left, right) => right.amountMinor - left.amountMinor
+  return {
+    owe: [...owe.values()].sort(byAmount),
+    owed: [...owed.values()].sort(byAmount),
+  }
+}
+
+
+function DebtSummary({ bills, myPersonId, personsById, onPayment, initialDirection }) {
+  const summary = useMemo(
+    () => buildDebtSummary(bills, myPersonId),
+    [bills, myPersonId]
+  )
+  if (summary.owe.length === 0 && summary.owed.length === 0) return null
 
   return (
-    <div className="grid grid-cols-2 gap-3 mb-4">
+    <div className="grid grid-cols-1 gap-3 mb-4 sm:grid-cols-2">
       <DebtColumn
         tone="green"
         title="Тебе должны"
-        total={owedToMe}
-        breakdown={owed}
+        entries={summary.owed}
         personsById={personsById}
-        currency={currency}
+        direction="owed"
+        onPayment={onPayment}
+        initiallyOpen={initialDirection === 'owed'}
       />
       <DebtColumn
         tone="red"
         title="Ты должен"
-        total={iOwe}
-        breakdown={owe}
+        entries={summary.owe}
         personsById={personsById}
-        currency={currency}
+        direction="owe"
+        onPayment={onPayment}
+        initiallyOpen={initialDirection === 'owe'}
       />
     </div>
   )
 }
 
-function DebtColumn({ tone, title, total, breakdown, personsById, currency }) {
-  const [open, setOpen] = useState(false)
-  const entries = useMemo(
-    () => Object.entries(breakdown).sort((a, b) => b[1] - a[1]),
-    [breakdown]
-  )
-  const empty = total === 0
+
+function DebtColumn({ tone, title, entries, personsById, direction, onPayment, initiallyOpen }) {
+  const [open, setOpen] = useState(initiallyOpen)
+
+  const totals = useMemo(() => {
+    const result = {}
+    for (const entry of entries) {
+      result[entry.currency] = (result[entry.currency] || 0) + entry.amountMinor
+    }
+    return result
+  }, [entries])
+  const totalText = Object.entries(totals)
+    .map(([currency, amountMinor]) => formatMinor(amountMinor, currency))
+    .join(' · ')
+  const empty = entries.length === 0
   const color = tone === 'green'
     ? { bg: 'bg-green-500/10', hover: 'hover:bg-green-500/15', label: 'text-green-300', value: 'text-green-400', row: 'text-green-300/90' }
     : { bg: 'bg-red-500/10',   hover: 'hover:bg-red-500/15',   label: 'text-red-300',   value: 'text-red-400',   row: 'text-red-300/90' }
+
   return (
-    <motion.button
-      type="button"
-      layout
-      onClick={() => !empty && setOpen((o) => !o)}
-      whileTap={{ scale: empty ? 1 : 0.98 }}
-      className={`${color.bg} ${empty ? '' : color.hover} rounded-xl p-3 text-left w-full ${empty ? 'cursor-default' : 'cursor-pointer'} transition-colors`}
-    >
-      <div className={`text-xs ${color.label}`}>{title}</div>
-      <div className={`text-xl font-bold ${color.value} tabular-nums`}>{formatMinor(total, currency)}</div>
+    <motion.div layout className={`${color.bg} rounded-2xl border border-white/5 p-3`}>
+      <motion.button
+        type="button"
+        aria-expanded={open}
+        onClick={() => !empty && setOpen((current) => !current)}
+        whileTap={{ scale: empty ? 1 : 0.98 }}
+        className={`${empty ? '' : color.hover} w-full rounded-xl text-left transition-colors`}
+      >
+        <div className={`text-xs ${color.label}`}>{title}</div>
+        <div className={`text-xl font-bold ${color.value} tabular-nums`}>{totalText || '—'}</div>
+      </motion.button>
       <AnimatePresence initial={false}>
         {open && entries.length > 0 && (
-          <motion.ul
+          <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18 }}
-            className="mt-2 space-y-1 overflow-hidden"
+            className="mt-2 space-y-2 overflow-hidden"
           >
-            {entries.map(([pid, amt]) => (
-              <li key={pid} className={`flex items-center justify-between gap-2 text-xs ${color.row}`}>
-                <span className="truncate">{personsById[pid]?.display_name || '?'}</span>
-                <span className="tabular-nums shrink-0">{formatMinor(amt, currency)}</span>
-              </li>
+            {entries.map((entry) => (
+              <div
+                key={`${entry.personId}:${entry.currency}`}
+                className="flex items-center gap-2 rounded-xl bg-black/10 p-2"
+              >
+                <div className={`min-w-0 flex-1 text-xs ${color.row}`}>
+                  <div className="truncate">{personsById[entry.personId]?.display_name || '?'}</div>
+                  <div className="tabular-nums font-semibold">{formatMinor(entry.amountMinor, entry.currency)}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onPayment({ ...entry, direction })}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-white/5 px-2.5 py-2 text-xs font-medium text-white transition-colors hover:bg-white/10"
+                >
+                  {direction === 'owe' ? <Send size={13} /> : <Wallet size={13} />}
+                  {direction === 'owe' ? 'Оплатить' : 'Получил'}
+                </button>
+              </div>
             ))}
-          </motion.ul>
+          </motion.div>
         )}
       </AnimatePresence>
-    </motion.button>
+    </motion.div>
   )
 }
 
@@ -680,79 +728,31 @@ function AddItemModal({ open, onClose, billId, persons, onAdded }) {
   )
 }
 
-// Строка долга с действием: «Переслал» (я должник) или «Получил» (я кредитор).
-// По клику раскрывается инлайн-поле суммы (предзаполнено остатком).
-function DebtRow({ direction, name, amount, currency, onSubmit }) {
+function DebtRow({ direction, name, amount, currency, onStart }) {
   const owe = direction === 'owe'
-  const [open, setOpen] = useState(false)
-  const [val, setVal] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState(null)
-
-  const start = () => {
-    setVal(((amount / 100).toFixed(amount % 100 === 0 ? 0 : 2)))
-    setErr(null)
-    setOpen(true)
-  }
-  const submit = async () => {
-    const minor = Math.round(parseFloat(String(val).replace(',', '.')) * 100)
-    if (!minor || minor <= 0) { setErr('Неверная сумма'); return }
-    setBusy(true); setErr(null)
-    try { await onSubmit(minor); setOpen(false) }
-    catch (e) { setErr(e.message || 'Не вышло') }
-    finally { setBusy(false) }
-  }
 
   return (
-    <motion.div layout className={`rounded-lg overflow-hidden ${owe ? 'bg-red-500/10' : 'bg-green-500/10'}`}>
+    <motion.div layout className={`overflow-hidden rounded-xl ${owe ? 'bg-red-500/10' : 'bg-green-500/10'}`}>
       <div className="p-3 flex items-center justify-between gap-2">
         <span className="text-white text-sm truncate">{owe ? '→' : '←'} {name}</span>
         <div className="flex items-center gap-2 shrink-0">
           <span className={`font-semibold ${owe ? 'text-red-400' : 'text-green-400'}`}>{formatMinor(amount, currency)}</span>
           <button
-            onClick={open ? () => setOpen(false) : start}
+            type="button"
+            onClick={onStart}
             className={`rounded-md px-2 py-1 text-xs inline-flex items-center gap-1 transition ${
               owe ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30' : 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
             }`}
           >
-            {owe ? <><Send size={12} /> Переслал</> : <><Wallet size={12} /> Получил</>}
+            {owe ? <><Send size={12} /> Оплатить</> : <><Wallet size={12} /> Получил</>}
           </button>
         </div>
       </div>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-            className="px-3 pb-3"
-          >
-            <div className="flex items-center gap-2">
-              <input
-                value={val} onChange={(e) => setVal(e.target.value)} inputMode="decimal" autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && submit()}
-                className="flex-1 min-w-0 rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none focus:bg-white/10"
-              />
-              <button
-                onClick={submit} disabled={busy}
-                className={`rounded-lg px-3 py-2 text-xs font-medium inline-flex items-center gap-1 disabled:opacity-50 ${
-                  owe ? 'bg-red-500/25 text-red-200' : 'bg-green-500/25 text-green-200'
-                }`}
-              >
-                {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                {owe ? 'Перевёл' : 'Зачесть'}
-              </button>
-            </div>
-            {err && <div className="text-xs text-red-400 mt-1">{err}</div>}
-            <div className="text-[11px] text-spotify-text/60 mt-1">
-              {owe ? 'Пометится как перевод, ждёт подтверждения получателя' : 'Засчитается сразу как полученный перевод'}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   )
 }
 
-function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
+function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onPayment }) {
   const api = useApi()
   const [tab, setTab] = useState('items')
   const [itemsView, setItemsView] = useState('positions')
@@ -798,20 +798,6 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
     } catch (e) {
       alert(e.message)
     }
-  }
-
-  const payForward = async (creditorId, amountMinor) => {
-    await api('/api/bills/payments', { method: 'POST', body: {
-      creditor: creditorId, amount_minor: amountMinor, currency: bill.currency, bill_ids: [bill.id],
-    } })
-    onChange()
-  }
-
-  const markReceived = async (debtorId, amountMinor) => {
-    await api('/api/bills/payments/received', { method: 'POST', body: {
-      debtor: debtorId, amount_minor: amountMinor, currency: bill.currency, bill_ids: [bill.id],
-    } })
-    onChange()
   }
 
   const net = useMemo(() => computeBillDebts(bill), [bill])
@@ -976,14 +962,26 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange }) {
             <DebtRow
               key={cred} direction="owe" amount={amt} currency={bill.currency}
               name={personsById[cred]?.display_name || '?'}
-              onSubmit={(minor) => payForward(cred, minor)}
+              onStart={() => onPayment({
+                direction: 'owe',
+                personId: cred,
+                amountMinor: amt,
+                currency: bill.currency,
+                billIds: [bill.id],
+              })}
             />
           ))}
           {Object.entries(owedToMe).map(([deb, amt]) => (
             <DebtRow
               key={deb} direction="owed" amount={amt} currency={bill.currency}
               name={personsById[deb]?.display_name || '?'}
-              onSubmit={(minor) => markReceived(deb, minor)}
+              onStart={() => onPayment({
+                direction: 'owed',
+                personId: deb,
+                amountMinor: amt,
+                currency: bill.currency,
+                billIds: [bill.id],
+              })}
             />
           ))}
         </div>
@@ -1038,6 +1036,11 @@ export default function BillsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [editPositionsId, setEditPositionsId] = useState(null)
   const [managePeopleId, setManagePeopleId] = useState(null)
+  const [paymentEntry, setPaymentEntry] = useState(null)
+  const [showPaymentDetails, setShowPaymentDetails] = useState(false)
+  const [initialDebtDirection] = useState(
+    () => getBillsStartParam() === 'bills_pay' ? 'owe' : null
+  )
 
   const reload = useCallback(async () => {
     try {
@@ -1060,17 +1063,26 @@ export default function BillsPage() {
     return () => clearInterval(t)
   }, [reload])
 
-  // Deep link `startapp=bill_<id>` → jump into that bill once. Guard with a ref so
-  // it fires a single time: start_param persists, and every reload mutates `bills`,
-  // which would otherwise keep yanking the user back into the bill forever.
   const deepLinkConsumed = useRef(false)
   useEffect(() => {
     if (deepLinkConsumed.current) return
-    const raw = WebApp?.initDataUnsafe?.start_param || ''
-    const m = /^bill_(\d+)$/.exec(raw)
-    if (m && bills.some((b) => b.id === Number(m[1]))) {
+
+    const raw = getBillsStartParam()
+    if (raw === 'bills_details') {
       deepLinkConsumed.current = true
-      setOpenBillId(Number(m[1]))
+      setShowPaymentDetails(true)
+      return
+    }
+
+    if (raw === 'bills_pay') {
+      deepLinkConsumed.current = true
+      return
+    }
+
+    const billMatch = /^bill_(\d+)$/.exec(raw)
+    if (billMatch && bills.some((bill) => bill.id === Number(billMatch[1]))) {
+      deepLinkConsumed.current = true
+      setOpenBillId(Number(billMatch[1]))
     }
   }, [bills])
 
@@ -1100,6 +1112,16 @@ export default function BillsPage() {
     && openBill.distribution_status && openBill.distribution_status !== 'final'
     && openBill.transactions.length > 0
     && !openBill.closed
+
+  const paymentDialog = (
+    <PaymentDialog
+      entry={paymentEntry}
+      person={personsById[paymentEntry?.personId]}
+      formatMinor={formatMinor}
+      onClose={() => setPaymentEntry(null)}
+      onChanged={reload}
+    />
+  )
 
   if (showCreate) {
     return (
@@ -1159,26 +1181,47 @@ export default function BillsPage() {
 
   if (openBill) {
     return (
-      <div className="max-w-3xl mx-auto">
-        <BillDetail
-          bill={openBill}
-          persons={persons}
-          myPersonId={myPerson?.id}
-          isAuthor={isAuthor}
-          onBack={() => { setOpenBillId(null); reload() }}
-          onChange={reload}
-        />
-      </div>
+      <>
+        <div className="max-w-3xl mx-auto">
+          <BillDetail
+            bill={openBill}
+            persons={persons}
+            myPersonId={myPerson?.id}
+            isAuthor={isAuthor}
+            onBack={() => { setOpenBillId(null); reload() }}
+            onChange={reload}
+            onPayment={setPaymentEntry}
+          />
+        </div>
+        {paymentDialog}
+      </>
     )
   }
 
   return (
     <div className="max-w-3xl mx-auto">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
-        <h1 className="text-2xl font-bold text-white mb-1">Счета</h1>
-        <p className="text-spotify-text text-sm mb-4">Совместные расходы</p>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-white mb-1">Счета</h1>
+            <p className="text-spotify-text text-sm">Совместные расходы</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPaymentDetails(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/10"
+          >
+            <CreditCard size={15} className="text-gold" /> Реквизиты
+          </button>
+        </div>
 
-        <DebtSummary bills={bills} myPersonId={myPerson?.id} personsById={personsById} />
+        <DebtSummary
+          bills={bills}
+          myPersonId={myPerson?.id}
+          personsById={personsById}
+          onPayment={setPaymentEntry}
+          initialDirection={initialDebtDirection}
+        />
         <CreditSummary
           credits={credits}
           myPersonId={myPerson?.id}
@@ -1225,6 +1268,12 @@ export default function BillsPage() {
           </div>
         )}
       </motion.div>
+      {paymentDialog}
+      <PaymentDetailsDialog
+        open={showPaymentDetails}
+        onClose={() => setShowPaymentDetails(false)}
+        onSaved={reload}
+      />
     </div>
   )
 }

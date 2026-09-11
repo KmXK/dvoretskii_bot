@@ -118,7 +118,7 @@ class Database:
     tunnel_messages: list[TunnelMessage] = field(default_factory=list)
     paired_devices: list[PairedDevice] = field(default_factory=list)
 
-    version: int = 44
+    version: int = 45
 
 
 PARSE_CONFIG = Config(

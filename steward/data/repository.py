@@ -779,6 +779,51 @@ class Repository:
 
             data["version"] = 44
 
+        if data.get("version") == 44:
+            def detail_key(value) -> str:
+                return str(value or "").strip().lstrip("@").casefold()
+
+            legacy_details = {}
+            for item in data.get("details_infos", []):
+                if not isinstance(item, dict):
+                    continue
+
+                name = detail_key(item.get("name"))
+                description = str(item.get("description") or "").strip()
+                if name and description:
+                    legacy_details.setdefault(name, description)
+
+            users_by_id = {
+                user.get("id"): user
+                for user in data.get("users", [])
+                if isinstance(user, dict)
+            }
+            for person in data.get("bill_persons", []):
+                if not isinstance(person, dict) or person.get("description"):
+                    continue
+
+                user = users_by_id.get(person.get("telegram_id")) or {}
+                names = [
+                    person.get("display_name"),
+                    person.get("telegram_username"),
+                    *(person.get("aliases") or []),
+                    user.get("stand_name"),
+                    user.get("username"),
+                    *(user.get("stand_aliases") or []),
+                ]
+                description = next(
+                    (
+                        legacy_details[key]
+                        for name in names
+                        if (key := detail_key(name)) in legacy_details
+                    ),
+                    None,
+                )
+                if description is not None:
+                    person["description"] = description
+
+            data["version"] = 45
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
@@ -1075,6 +1120,8 @@ class Repository:
             prev = dst.chat_last_seen.get(cid)
             if prev is None or prev < last:
                 dst.chat_last_seen[cid] = last
+        if not dst.description and src.description:
+            dst.description = src.description
 
         self.db.bill_persons = [p for p in self.db.bill_persons if p.id != src_id]
         return True
@@ -1125,6 +1172,8 @@ class Repository:
                     pay.debtor = match.id
                 if pay.creditor == anon.id:
                     pay.creditor = match.id
+            if not match.description and anon.description:
+                match.description = anon.description
             merged_ids.append(anon.id)
 
         self.db.bill_persons = [

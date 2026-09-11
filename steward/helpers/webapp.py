@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ExtBot
@@ -26,23 +27,26 @@ def _get_direct_url() -> str | None:
 
 def get_webapp_deep_link(bot: ExtBot, chat_id: int | str | None = None) -> str | None:
     bot_username = bot.username
-    if bot_username:
+    if isinstance(bot_username, str) and bot_username:
         app_name = os.environ.get("WEB_APP_SHORT_NAME", "dvoretskiy_webapp")
         link = f"https://t.me/{bot_username}/{app_name}"
         if chat_id is not None:
             link += f"?startapp={chat_id}"
         return link
-    return _get_direct_url()
+    direct_url = _get_direct_url()
+    if direct_url and chat_id is not None:
+        separator = "&" if "?" in direct_url else "?"
+        return f"{direct_url}{separator}{urlencode({'startapp': str(chat_id)})}"
+
+    return direct_url
 
 
 def get_bill_deep_link(bot: ExtBot, bill_id: int) -> str | None:
-    """Deep link that opens the mini-app straight on a bill's distribution board.
-
-    Encoded as `startapp=bill_<id>` (read in the web app via
-    `WebApp.initDataUnsafe.start_param`). Falls back to the bare direct URL if the
-    bot username is unavailable (dev/tunnel) — without the bill anchor.
-    """
     return get_webapp_deep_link(bot, chat_id=f"bill_{bill_id}")
+
+
+def get_bills_deep_link(bot: ExtBot, action: str) -> str | None:
+    return get_webapp_deep_link(bot, chat_id=f"bills_{action}")
 
 
 def get_webapp_keyboard(

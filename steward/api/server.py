@@ -1874,7 +1874,7 @@ def _serialize_bill_person(p) -> dict:
         "telegram_id": p.telegram_id,
         "telegram_username": p.telegram_username,
         "aliases": list(p.aliases),
-        "description": p.description,
+        "has_payment_details": bool(p.description),
     }
 
 
@@ -1950,6 +1950,90 @@ def _serialize_payment_v2(p) -> dict:
         "settled_at": p.settled_at.isoformat() if getattr(p, "settled_at", None) else None,
         "bill_ids": list(p.bill_ids),
         "is_refund": getattr(p, "is_refund", False),
+    }
+
+
+def _serialize_payment_result(payment, settlement) -> dict:
+    payload = _serialize_payment_v2(payment)
+    auto_confirmed = payment.status == "auto_confirmed"
+    if settlement is None:
+        return {
+            **payload,
+            "auto_confirmed": auto_confirmed,
+            "allocations": [],
+            "residual_minor": 0,
+            "auto_closed_bill_ids": [],
+        }
+
+    payload["auto_confirmed"] = auto_confirmed
+    payload["allocations"] = [
+        {
+            "bill_id": bill_id,
+            "amount_minor": amount,
+        }
+        for bill_id, amount in settlement.allocations
+    ]
+    payload["residual_minor"] = settlement.residual_minor
+    payload["auto_closed_bill_ids"] = [
+        bill.id
+        for bill in settlement.auto_closed
+    ]
+    return payload
+
+
+def _request_bill_person(repository: Repository, tg_user: dict):
+    return repository.get_or_create_bill_person(
+        telegram_id=int(tg_user["id"]),
+        display_name=(
+            tg_user.get("first_name")
+            or tg_user.get("username")
+            or str(tg_user["id"])
+        ),
+        username=tg_user.get("username"),
+    )[0]
+
+
+def _positive_payment_amount(data: dict) -> int | None:
+    try:
+        amount = int(data.get("amount_minor", 0))
+    except (TypeError, ValueError):
+        return None
+
+    return amount if amount > 0 else None
+
+
+def _payment_currency(data: dict) -> str | None:
+    currency = str(data.get("currency") or "BYN").strip().upper()
+    return currency if len(currency) == 3 and currency.isalpha() else None
+
+
+def _payment_bill_ids(data: dict, available_bill_ids: list[int]) -> list[int] | None:
+    raw_bill_ids = data.get("bill_ids")
+    if raw_bill_ids is None or raw_bill_ids == []:
+        return available_bill_ids
+
+    if not isinstance(raw_bill_ids, list):
+        return None
+
+    try:
+        requested_bill_ids = {int(bill_id) for bill_id in raw_bill_ids}
+    except (TypeError, ValueError):
+        return None
+
+    if not requested_bill_ids.issubset(set(available_bill_ids)):
+        return None
+
+    return [
+        bill_id
+        for bill_id in available_bill_ids
+        if bill_id in requested_bill_ids
+    ]
+
+
+def _payment_details_payload(person) -> dict:
+    return {
+        "person_id": person.id,
+        "payment_details": person.description,
     }
 
 
@@ -3191,73 +3275,161 @@ async def handle_bills_suggestion_reject(request: web.Request):
     return web.json_response(_serialize_suggestion(suggestion))
 
 
-async def handle_bills_payment_create(request: web.Request):
-    import uuid as _uuid
-    from steward.data.models.bill_v2 import BillPaymentV2, PaymentStatus
+async def handle_bills_payment_details_get(request: web.Request):
+    from steward.features.bills.payments import find_debt_bill_ids
+
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
+
+    caller = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
+    target_id = request.match_info.get("person_id")
+    if target_id is None:
+        if caller is None:
+            return web.json_response({"person_id": None, "payment_details": ""})
+
+        return web.json_response(_payment_details_payload(caller))
+
+    target = repository.get_bill_person(target_id)
+    if target is None:
+        return web.json_response({"error": "person not found"}, status=404)
+
+    if caller is None:
+        return web.json_response({"error": "no access"}, status=403)
+
+    if caller.id != target.id:
+        currencies = {bill.currency for bill in repository.db.bills_v2}
+        can_pay = any(
+            find_debt_bill_ids(
+                repository,
+                caller.id,
+                target.id,
+                currency,
+            )
+            for currency in currencies
+        )
+        if not can_pay:
+            return web.json_response({"error": "no access"}, status=403)
+
+    return web.json_response(_payment_details_payload(target))
+
+
+async def handle_bills_payment_details_update(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+
     data = await request.json()
+    payment_details = data.get("payment_details")
+    if not isinstance(payment_details, str):
+        return web.json_response({"error": "invalid payment details"}, status=400)
 
-    debtor_person, _ = repository.get_or_create_bill_person(
-        telegram_id=int(tg_user["id"]),
-        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
-        username=tg_user.get("username"),
-    )
-    payment = BillPaymentV2(
-        id=str(_uuid.uuid4()),
-        debtor=debtor_person.id,
-        creditor=data["creditor"],
-        amount_minor=int(data["amount_minor"]),
-        currency=data.get("currency", "BYN"),
-        status=PaymentStatus.PENDING,
-        bill_ids=list(data.get("bill_ids", [])),
-        initiated_chat_id=data.get("initiated_chat_id"),
-    )
-    repository.db.bill_payments_v2.append(payment)
+    payment_details = payment_details.strip()
+    if len(payment_details) > 2000:
+        return web.json_response({"error": "payment details are too long"}, status=400)
 
-    from steward.delayed_action.bill_payment_reminder import schedule_payment_reminder
-    schedule_payment_reminder(repository, payment.id)
+    person = _request_bill_person(repository, tg_user)
+    person.description = payment_details
     await repository.save()
-    return web.json_response(_serialize_payment_v2(payment))
+    return web.json_response(_payment_details_payload(person))
+
+
+async def handle_bills_payment_create(request: web.Request):
+    from steward.features.bills.payments import (
+        find_debt_bill_ids,
+        register_outgoing_payment,
+    )
+
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+
+    data = await request.json()
+    amount_minor = _positive_payment_amount(data)
+    currency = _payment_currency(data)
+    if amount_minor is None or currency is None:
+        return web.json_response({"error": "invalid payment"}, status=400)
+
+    debtor = _request_bill_person(repository, tg_user)
+    creditor = repository.get_bill_person(str(data.get("creditor") or ""))
+    if creditor is None or creditor.id == debtor.id:
+        return web.json_response({"error": "invalid creditor"}, status=400)
+
+    bill_ids = find_debt_bill_ids(
+        repository,
+        debtor.id,
+        creditor.id,
+        currency,
+    )
+    if not bill_ids:
+        return web.json_response({"error": "no current debt"}, status=409)
+
+    scoped_bill_ids = _payment_bill_ids(data, bill_ids)
+    if not scoped_bill_ids:
+        return web.json_response({"error": "invalid bill scope"}, status=400)
+
+    payment, settlement = await register_outgoing_payment(
+        request.app.get("bot"),
+        repository,
+        debtor,
+        creditor,
+        amount_minor,
+        currency,
+        None,
+        scoped_bill_ids,
+    )
+    return web.json_response(_serialize_payment_result(payment, settlement))
 
 
 async def handle_bills_payment_received(request: web.Request):
-    """POST /api/bills/payments/received — кредитор фиксирует получение перевода.
+    from steward.features.bills.payments import (
+        find_debt_bill_ids,
+        register_received_payment,
+    )
 
-    Caller = кредитор (получатель). Платёж сразу confirmed (auto-confirm), как
-    /bills got в чате. body: {debtor, amount_minor, currency?, bill_ids?}.
-    """
-    import uuid as _uuid
-    from steward.data.models.bill_v2 import BillPaymentV2, PaymentStatus
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
-    data = await request.json()
 
-    creditor_person, _ = repository.get_or_create_bill_person(
-        telegram_id=int(tg_user["id"]),
-        display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
-        username=tg_user.get("username"),
+    data = await request.json()
+    amount_minor = _positive_payment_amount(data)
+    currency = _payment_currency(data)
+    if amount_minor is None or currency is None:
+        return web.json_response({"error": "invalid payment"}, status=400)
+
+    creditor = _request_bill_person(repository, tg_user)
+    debtor = repository.get_bill_person(str(data.get("debtor") or ""))
+    if debtor is None or debtor.id == creditor.id:
+        return web.json_response({"error": "invalid debtor"}, status=400)
+
+    bill_ids = find_debt_bill_ids(
+        repository,
+        debtor.id,
+        creditor.id,
+        currency,
     )
-    settled_at = datetime.datetime.now()
-    payment = BillPaymentV2(
-        id=str(_uuid.uuid4()),
-        debtor=data["debtor"],
-        creditor=creditor_person.id,
-        amount_minor=int(data["amount_minor"]),
-        currency=data.get("currency", "BYN"),
-        status=PaymentStatus.CONFIRMED,
-        created_at=settled_at,
-        settled_at=settled_at,
-        bill_ids=list(data.get("bill_ids", [])),
-        initiated_chat_id=data.get("initiated_chat_id"),
+    if not bill_ids:
+        return web.json_response({"error": "no current debt"}, status=409)
+
+    scoped_bill_ids = _payment_bill_ids(data, bill_ids)
+    if not scoped_bill_ids:
+        return web.json_response({"error": "invalid bill scope"}, status=400)
+
+    payment, settlement = await register_received_payment(
+        request.app.get("bot"),
+        repository,
+        creditor,
+        debtor,
+        amount_minor,
+        currency,
+        None,
+        scoped_bill_ids,
     )
-    repository.db.bill_payments_v2.append(payment)
-    await repository.save()
-    return web.json_response(_serialize_payment_v2(payment))
+    return web.json_response(_serialize_payment_result(payment, settlement))
 
 
 async def handle_bills_credit_write_off(request: web.Request):
@@ -3325,13 +3497,19 @@ async def handle_bills_credit_write_off(request: web.Request):
 
 
 async def handle_bills_payment_confirm(request: web.Request):
+    from steward.data.models.bill_v2 import PaymentStatus
+    from steward.features.bills.payments import (
+        notify_payment_confirmed,
+        settle_payment,
+    )
+
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
+
     pid = request.match_info["pid"]
     payment = repository.get_bill_payment_v2(pid)
-    from steward.data.models.bill_v2 import PaymentStatus
     if not payment or payment.status != PaymentStatus.PENDING:
         return web.json_response({"error": "not found or already decided"}, status=404)
 
@@ -3342,8 +3520,18 @@ async def handle_bills_payment_confirm(request: web.Request):
 
     payment.status = PaymentStatus.CONFIRMED
     payment.settled_at = datetime.datetime.now()
+    settlement = settle_payment(repository, payment)
+    if creditor is not None:
+        await notify_payment_confirmed(
+            request.app.get("bot"),
+            repository,
+            payment,
+            creditor,
+            settlement,
+        )
+
     await repository.save()
-    return web.json_response(_serialize_payment_v2(payment))
+    return web.json_response(_serialize_payment_result(payment, settlement))
 
 
 async def handle_bills_payment_reject(request: web.Request):
@@ -3459,6 +3647,12 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills/persons", handle_bills_persons)
     app.router.add_get("/api/bills/circle", handle_bills_circle)
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
+    app.router.add_get("/api/bills/payment-details", handle_bills_payment_details_get)
+    app.router.add_put("/api/bills/payment-details", handle_bills_payment_details_update)
+    app.router.add_get(
+        "/api/bills/payment-details/{person_id}",
+        handle_bills_payment_details_get,
+    )
     app.router.add_post("/api/bills/payments", handle_bills_payment_create)
     app.router.add_post("/api/bills/payments/received", handle_bills_payment_received)
     app.router.add_post("/api/bills/credits/write-off", handle_bills_credit_write_off)
