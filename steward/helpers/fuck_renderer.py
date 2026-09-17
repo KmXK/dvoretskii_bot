@@ -16,7 +16,8 @@ MAX_PIXELS = 4_194_304
 MAX_EDGE = 4096
 MAX_FRAMES = 900
 MAX_DURATION_MS = 30_000
-ADDRESS_SPACE_LIMIT_BYTES = 512 * 1024**2
+DATA_MEMORY_LIMIT_BYTES = 512 * 1024**2
+ADDRESS_SPACE_LIMIT_BYTES = 2 * 1024**3
 
 _PIL_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 
@@ -120,14 +121,18 @@ def _shrink_avatar(img: Any) -> Any:
     )
 
 
-def _set_address_space_limit() -> None:
+def _set_memory_limits() -> None:
     try:
+        resource.setrlimit(
+            resource.RLIMIT_DATA,
+            (DATA_MEMORY_LIMIT_BYTES, DATA_MEMORY_LIMIT_BYTES),
+        )
         resource.setrlimit(
             resource.RLIMIT_AS,
             (ADDRESS_SPACE_LIMIT_BYTES, ADDRESS_SPACE_LIMIT_BYTES),
         )
     except (OSError, ValueError) as error:
-        raise RenderError("unable to set worker address-space limit") from error
+        raise RenderError("unable to set worker memory limits") from error
 
 
 def _path_from_job(job: dict[str, Any], key: str) -> Path:
@@ -629,7 +634,7 @@ def _stop_worker(_signum: int, _frame: Any) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        _set_address_space_limit()
+        _set_memory_limits()
         signal.signal(signal.SIGTERM, _stop_worker)
         if len(args) != 1:
             raise RenderError("usage: python -m steward.helpers.fuck_renderer <job.json>")

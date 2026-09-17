@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 
 import pytest
 from PIL import Image
@@ -90,3 +91,21 @@ async def test_actual_source_dimensions_override_annotation(tmp_path):
         await run_render_job(source, {"width": 10, "height": 10}, avatar, avatar, output)
 
     assert not output.exists()
+
+
+def test_worker_rejects_allocation_above_memory_limit():
+    script = """
+from steward.helpers.fuck_renderer import DATA_MEMORY_LIMIT_BYTES, _set_memory_limits
+_set_memory_limits()
+try:
+    buffer = bytearray(DATA_MEMORY_LIMIT_BYTES)
+except MemoryError:
+    raise SystemExit(0)
+raise SystemExit(1)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
