@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import random
 import shutil
-import subprocess
 import tempfile
 import time
 import uuid
@@ -15,7 +13,7 @@ from typing import Any
 
 from io import BytesIO
 
-from PIL import Image, ImageDraw
+from PIL import Image
 from pyrate_limiter import BucketFullException
 from telegram import InputFile, Message, MessageEntity
 
@@ -24,15 +22,18 @@ from steward.data.models.user import User
 from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
 from steward.helpers.avatars import get_avatar_image
+from steward.helpers.fuck_render_job import (
+    MIN_AVAILABLE_MEMORY_BYTES,
+    available_memory_bytes,
+    run_render_job,
+)
 from steward.helpers.limiter import Duration, check_limit
 from steward.helpers.media import fetch_tg_file_bytes
 
 logger = logging.getLogger(__name__)
 
 ASSETS_DIR = Path("data/fuck")
-MAX_OUTPUT_DIM = 480
-
-_COMPOSE_SEMAPHORE = asyncio.Semaphore(2)
+_COMPOSE_LOCK = asyncio.Lock()
 _USER_RATE_LIMIT = 2
 _USER_RATE_WINDOW = Duration.MINUTE
 
@@ -60,7 +61,7 @@ def _visible_assets(repo: Repository, chat_id: int) -> list[FuckAsset]:
     return out
 
 
-def _pick_random_asset(repo: Repository, chat_id: int) -> tuple[Path, dict[str, Any]] | None:
+def _pick_random_asset(repo: Repository, chat_id: int) -> tuple[FuckAsset, Path, dict[str, Any]] | None:
     candidates = _visible_assets(repo, chat_id)
     random.shuffle(candidates)
     for asset in candidates:
@@ -73,7 +74,7 @@ def _pick_random_asset(repo: Repository, chat_id: int) -> tuple[Path, dict[str, 
         except Exception as e:
             logger.warning("Asset %s: bad JSON (%s)", asset.id, e)
             continue
-        return media, data
+        return asset, media, data
     return None
 
 
@@ -129,182 +130,6 @@ def migrate_legacy_fuck_assets(repo: Repository) -> int:
     return migrated
 
 
-def _lerp(a: float, b: float, r: float) -> float:
-    return a + (b - a) * r
-
-
-def _is_visible(k: dict[str, Any]) -> bool:
-    return k.get("visible", True) is not False
-
-
-def _interpolate(keyframes: list[dict[str, Any]], t: float) -> dict[str, float] | None:
-    if not keyframes:
-        return None
-    if t <= keyframes[0]["t"]:
-        return dict(keyframes[0]) if _is_visible(keyframes[0]) else None
-    if t >= keyframes[-1]["t"]:
-        return dict(keyframes[-1]) if _is_visible(keyframes[-1]) else None
-    for k0, k1 in zip(keyframes, keyframes[1:]):
-        if k0["t"] <= t <= k1["t"]:
-            if not _is_visible(k0):
-                return None
-            span = k1["t"] - k0["t"]
-            r = (t - k0["t"]) / span if span > 0 else 0.0
-            return {
-                "t": t,
-                "x": _lerp(k0["x"], k1["x"], r),
-                "y": _lerp(k0["y"], k1["y"], r),
-                "w": _lerp(k0["w"], k1["w"], r),
-                "h": _lerp(k0["h"], k1["h"], r),
-                "angle": _lerp(float(k0.get("angle", 0)), float(k1.get("angle", 0)), r),
-            }
-    return None
-
-
-def _load_source_frames(path: Path) -> tuple[list[Image.Image], list[int]]:
-    ext = path.suffix.lower()
-    if ext in (".gif", ".webp"):
-        return _load_pil_animation(path)
-    return _load_via_imageio(path)
-
-
-def _load_pil_animation(path: Path) -> tuple[list[Image.Image], list[int]]:
-    frames: list[Image.Image] = []
-    durations: list[int] = []
-    with Image.open(path) as img:
-        n = getattr(img, "n_frames", 1)
-        for i in range(n):
-            img.seek(i)
-            frames.append(img.convert("RGBA").copy())
-            durations.append(int(img.info.get("duration", 100) or 100))
-    return frames, durations
-
-
-def _load_via_imageio(path: Path) -> tuple[list[Image.Image], list[int]]:
-    import imageio.v3 as iio
-
-    frames = [Image.fromarray(arr).convert("RGBA") for arr in iio.imiter(str(path))]
-    try:
-        meta = iio.immeta(str(path))
-        fps = float(meta.get("fps") or 30)
-    except Exception:
-        fps = 30.0
-    duration_ms = max(1, int(round(1000 / fps)))
-    return frames, [duration_ms] * len(frames)
-
-
-def _draw_avatar_circumscribed(
-    frame: Image.Image,
-    avatar: Image.Image,
-    box: dict[str, float],
-) -> None:
-    """Draw a circular avatar that circumscribes the bbox (bbox inscribed in circle)."""
-    w = max(2.0, float(box["w"]))
-    h = max(2.0, float(box["h"]))
-    diam = int(math.ceil(math.sqrt(w * w + h * h)))
-    cx = float(box["x"]) + w / 2
-    cy = float(box["y"]) + h / 2
-
-    a = avatar.resize((diam, diam), Image.LANCZOS).convert("RGBA")
-    mask = Image.new("L", (diam, diam), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, diam, diam), fill=255)
-    a.putalpha(mask)
-
-    angle = float(box.get("angle", 0) or 0)
-    if angle:
-        # Annotator/canvas convention: positive angle = clockwise.
-        # PIL.rotate is CCW, so negate.
-        a = a.rotate(-angle, resample=Image.BICUBIC, expand=True)
-
-    aw, ah = a.size
-    tx = int(round(cx - aw / 2))
-    ty = int(round(cy - ah / 2))
-    frame.alpha_composite(a, (tx, ty))
-
-
-def _compose_mp4(
-    source_path: Path,
-    annotation: dict[str, Any],
-    avatar_a: Image.Image,
-    avatar_b: Image.Image,
-    output_path: Path,
-) -> None:
-    frames, durations = _load_source_frames(source_path)
-    if not frames:
-        raise RuntimeError(f"No frames in {source_path}")
-    keyframes_a = annotation.get("keyframes", {}).get("a", [])
-    keyframes_b = annotation.get("keyframes", {}).get("b", [])
-
-    # Avatar art rarely needs to be larger than the output. Resize once upfront.
-    avatar_a = _shrink_avatar(avatar_a)
-    avatar_b = _shrink_avatar(avatar_b)
-
-    composited: list[Image.Image] = []
-    cum_ms = 0
-    for i, frame in enumerate(frames):
-        t = cum_ms / 1000.0
-        composite = frame.copy()
-        for keyframes, avatar in ((keyframes_a, avatar_a), (keyframes_b, avatar_b)):
-            box = _interpolate(keyframes, t)
-            if box is None:
-                continue
-            _draw_avatar_circumscribed(composite, avatar, box)
-        cum_ms += durations[i]
-
-        if max(composite.size) > MAX_OUTPUT_DIM:
-            scale = MAX_OUTPUT_DIM / max(composite.size)
-            new_size = (int(composite.width * scale), int(composite.height * scale))
-            composite = composite.resize(new_size, Image.LANCZOS)
-
-        bg = Image.new("RGB", composite.size, (255, 255, 255))
-        bg.paste(composite, mask=composite.split()[3])
-        composited.append(bg)
-
-    # libx264 needs even dimensions
-    w0, h0 = composited[0].size
-    even = (w0 - (w0 % 2), h0 - (h0 % 2))
-    if even != (w0, h0):
-        composited = [img.resize(even, Image.LANCZOS) for img in composited]
-    w, h = even
-
-    total_ms = sum(durations) or 1
-    # Exact fraction preserves the original timing without rounding drift.
-    fps_str = f"{len(durations) * 1000}/{total_ms}"
-
-    raw = b"".join(img.tobytes() for img in composited)
-    proc = subprocess.run(
-        [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-f", "rawvideo",
-            "-pixel_format", "rgb24",
-            "-video_size", f"{w}x{h}",
-            "-framerate", fps_str,
-            "-i", "-",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-crf", "26",
-            "-preset", "veryfast",
-            "-movflags", "+faststart",
-            str(output_path),
-        ],
-        input=raw,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode(errors='replace')[:500]}")
-
-
-def _shrink_avatar(img: Image.Image) -> Image.Image:
-    """Downscale avatar to at most MAX_OUTPUT_DIM on a side — bigger is wasted work."""
-    if max(img.size) <= MAX_OUTPUT_DIM:
-        return img
-    scale = MAX_OUTPUT_DIM / max(img.size)
-    return img.resize(
-        (int(img.width * scale), int(img.height * scale)),
-        Image.LANCZOS,
-    )
-
-
 class FuckFeature(Feature):
     command = "fuck"
     description = "Сгенерить гифку насилия в адрес упомянутого"
@@ -314,10 +139,10 @@ class FuckFeature(Feature):
 
     @subcommand("", description="Ответом — на сообщение цели или с прикреплённым фото")
     async def do_reply(self, ctx: FeatureContext):
-        photo_avatar = await self._photo_from_attachment(ctx.message)
-        if photo_avatar is not None:
-            await self._run_with_target_avatar(ctx, photo_avatar)
+        if ctx.message is not None and ctx.message.photo:
+            await self._run_with_target_photo(ctx, ctx.message)
             return
+
         target = await self._resolve_target(ctx, identifier=None)
         if target is None:
             await ctx.reply(
@@ -338,8 +163,8 @@ class FuckFeature(Feature):
         target_id, target_name = resolved
         await self._run(ctx, target_id, target_name)
 
-    async def _run_with_target_avatar(
-        self, ctx: FeatureContext, target_avatar: Image.Image
+    async def _run_with_target_photo(
+        self, ctx: FeatureContext, target_photo: Message
     ) -> None:
         msg = ctx.message
         if msg is not None and msg.from_user is not None:
@@ -351,10 +176,10 @@ class FuckFeature(Feature):
             ctx,
             ctx.user_id,
             author_name,
-            target_id=0,
+            b_id=0,
             b_name=None,
             tag="/fuck",
-            b_avatar_override=target_avatar,
+            b_photo=target_photo,
         )
 
     async def _photo_from_attachment(self, message: Message | None) -> Image.Image | None:
@@ -387,6 +212,21 @@ class FuckFeature(Feature):
             tag="/fuck",
         )
 
+    async def _load_avatar(
+        self,
+        user_id: int,
+        name: str | None,
+        photo: Message | None,
+    ) -> Image.Image:
+        if photo is None:
+            return await get_avatar_image(self.bot, user_id, name_hint=name)
+
+        avatar = await self._photo_from_attachment(photo)
+        if avatar is None:
+            raise RuntimeError("Failed to load attached avatar")
+
+        return avatar
+
     async def _compose_and_send(
         self,
         ctx: FeatureContext,
@@ -396,56 +236,102 @@ class FuckFeature(Feature):
         b_name: str | None,
         *,
         tag: str,
-        a_avatar_override: Image.Image | None = None,
-        b_avatar_override: Image.Image | None = None,
+        a_photo: Message | None = None,
+        b_photo: Message | None = None,
     ) -> None:
-        try:
-            check_limit(
-                f"fuck_compose_{ctx.user_id}", _USER_RATE_LIMIT, _USER_RATE_WINDOW
-            )
-        except BucketFullException:
-            await ctx.reply("Слишком часто. Не больше 2 в минуту, остынь.")
+        request_context = (
+            f"request_id={uuid.uuid4().hex} chat_id={ctx.chat_id} "
+            f"user_id={ctx.user_id} message_id={getattr(ctx.message, 'message_id', None)}"
+        )
+        if _COMPOSE_LOCK.locked():
+            logger.info("%s rejected: busy %s", tag, request_context)
+            await ctx.reply("Генератор занят, попробуй чуть позже")
             return
 
-        asset = await asyncio.to_thread(_pick_random_asset, self.repository, ctx.chat_id)
-        if asset is None:
-            total = len(self.repository.db.fuck_assets)
-            logger.warning(
-                "%s: no visible asset for chat=%s; total in DB=%s",
-                tag, ctx.chat_id, total,
-            )
-            await ctx.reply(
-                f"Нет доступных ассетов для этого чата (всего в базе: {total})."
-            )
-            return
-        source_path, annotation = asset
+        async with _COMPOSE_LOCK:
+            try:
+                available = available_memory_bytes()
+            except (OSError, ValueError, RuntimeError):
+                logger.exception("%s rejected: memory unavailable %s", tag, request_context)
+                await ctx.reply("Генератор временно недоступен, попробуй позже")
+                return
 
-        async with _COMPOSE_SEMAPHORE:
-            a_avatar = a_avatar_override or await get_avatar_image(
-                self.bot, a_id, name_hint=a_name
-            )
-            b_avatar = b_avatar_override or await get_avatar_image(
-                self.bot, b_id, name_hint=b_name
-            )
+            if available < MIN_AVAILABLE_MEMORY_BYTES:
+                logger.warning(
+                    "%s rejected: low memory %s available_mib=%s",
+                    tag,
+                    request_context,
+                    available // (1024 * 1024),
+                )
+                await ctx.reply("Сейчас не хватает ресурсов для генерации, попробуй позже")
+                return
 
             try:
+                check_limit(f"fuck_compose_{ctx.user_id}", _USER_RATE_LIMIT, _USER_RATE_WINDOW)
+            except BucketFullException:
+                logger.info("%s rejected: rate limit %s", tag, request_context)
+                await ctx.reply("Слишком часто. Не больше 2 в минуту, остынь.")
+                return
+
+            selected = _pick_random_asset(self.repository, ctx.chat_id)
+            if selected is None:
+                total = len(self.repository.db.fuck_assets)
+                logger.warning("%s: no visible asset %s total=%s", tag, request_context, total)
+                await ctx.reply(f"Нет доступных ассетов для этого чата (всего в базе: {total}).")
+                return
+
+            asset, source_path, annotation = selected
+            render_context = (
+                f"{request_context} asset_id={asset.id} asset_name={asset.name!r} "
+                f"source={source_path}"
+            )
+            started = time.monotonic()
+            logger.info(
+                "%s render started: %s available_mib=%s",
+                tag,
+                render_context,
+                available // (1024 * 1024),
+            )
+            try:
+                a_avatar = await self._load_avatar(a_id, a_name, a_photo)
+                b_avatar = await self._load_avatar(b_id, b_name, b_photo)
                 with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
                     output_path = Path(tmp_dir) / "fuck.mp4"
-                    await asyncio.to_thread(
-                        _compose_mp4,
+                    result = await run_render_job(
                         source_path,
                         annotation,
                         a_avatar,
                         b_avatar,
                         output_path,
                     )
-                    with output_path.open("rb") as f:
+                    logger.info(
+                        "%s render completed: %s frames=%s dimensions=%sx%s "
+                        "duration_ms=%s worker_peak_rss_kib=%s child_peak_rss_kib=%s elapsed_ms=%s",
+                        tag,
+                        render_context,
+                        result["frames"],
+                        result["width"],
+                        result["height"],
+                        result["duration_ms"],
+                        result["peak_rss_kib"],
+                        result.get("child_peak_rss_kib"),
+                        round((time.monotonic() - started) * 1000),
+                    )
+                    with output_path.open("rb") as file:
                         await self.bot.send_animation(
                             chat_id=ctx.chat_id,
-                            animation=InputFile(f, filename="fuck.mp4"),
+                            animation=InputFile(file, filename="fuck.mp4"),
                         )
-            except Exception as e:
-                logger.exception("Failed to compose %s gif: %s", tag, e)
+
+                logger.info("%s animation sent: %s", tag, render_context)
+            except asyncio.CancelledError:
+                logger.info("%s render cancelled: %s", tag, render_context)
+                raise
+            except TimeoutError:
+                logger.warning("%s render timed out: %s", tag, render_context)
+                await ctx.reply("Генерация заняла слишком долго, попробуй другой раз")
+            except Exception:
+                logger.exception("%s render failed: %s", tag, render_context)
                 await ctx.reply("Не получилось сгенерить, попробуй позже")
 
     def _user(self, user_id: int) -> User | None:
@@ -577,11 +463,11 @@ class SexFeature(FuckFeature):
         msg = ctx.message
         if msg is None:
             return False
-        own = await self._photo_from_attachment(msg)
+
         reply_msg = getattr(msg, "reply_to_message", None)
-        replied = await self._photo_from_attachment(reply_msg)
-        if own is None or replied is None:
+        if not msg.photo or reply_msg is None or not reply_msg.photo:
             return False
+
         await self._compose_and_send(
             ctx,
             a_id=0,
@@ -589,8 +475,8 @@ class SexFeature(FuckFeature):
             b_id=0,
             b_name=None,
             tag="/sex",
-            a_avatar_override=own,
-            b_avatar_override=replied,
+            a_photo=msg,
+            b_photo=reply_msg,
         )
         return True
 
