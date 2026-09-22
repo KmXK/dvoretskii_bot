@@ -16,6 +16,8 @@ class FakeDownloadInfo:
 
 
 class FakeTrack:
+    title = "Название песни"
+
     def get_download_info(self) -> list[FakeDownloadInfo]:
         return [
             FakeDownloadInfo(128, preview=True),
@@ -45,7 +47,12 @@ async def test_download_yandex_audio_uses_best_full_mp3(monkeypatch, tmp_path):
         str(tmp_path),
     )
 
+    assert Path(filepath).name == "Название песни.mp3"
     assert Path(filepath).read_bytes() == b"320"
+
+
+def test_yandex_music_filename_is_cross_platform_safe():
+    assert yt._yandex_music_filename('  Песня: live / remix?  ') == "Песня live remix.mp3"
 
 
 async def test_download_yandex_audio_requires_token(monkeypatch, tmp_path):

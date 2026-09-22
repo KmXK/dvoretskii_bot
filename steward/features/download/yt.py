@@ -86,6 +86,13 @@ class YandexMusicDownloadError(RuntimeError):
     pass
 
 
+def _yandex_music_filename(title: str | None) -> str:
+    safe_title = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', " ", title or "")
+    safe_title = " ".join(safe_title.split()).strip(" .") or "track"
+    safe_title = safe_title.encode("utf-8")[:240].decode("utf-8", errors="ignore")
+    return f"{safe_title.rstrip(' .')}.mp3"
+
+
 def _auto_video_transcription_enabled(
     repository: Repository,
     message: Message,
@@ -565,18 +572,18 @@ async def download_yandex_audio(url: str, dir: str) -> str:
         raise YandexMusicDownloadError("Не удалось определить трек в ссылке")
 
     track_id = match.group(1)
-    filepath = os.path.join(dir, "track.mp3")
 
-    def _run() -> None:
+    def _run() -> str:
         try:
             client = YandexMusicClient(token).init()
             tracks = client.tracks([track_id])
             if not tracks:
                 raise YandexMusicDownloadError("Яндекс Музыка не нашла трек")
 
+            track = tracks[0]
             download_infos = [
                 info
-                for info in tracks[0].get_download_info()
+                for info in track.get_download_info()
                 if info.codec == "mp3" and not info.preview
             ]
             if not download_infos:
@@ -584,14 +591,16 @@ async def download_yandex_audio(url: str, dir: str) -> str:
                     "Аккаунт Яндекс Музыки не даёт скачать полный трек"
                 )
 
+            filepath = os.path.join(dir, _yandex_music_filename(track.title))
             max(download_infos, key=lambda info: info.bitrate_in_kbps).download(filepath)
+            return filepath
         except YandexMusicError as error:
             raise YandexMusicDownloadError(
                 "Яндекс Музыка не отдала трек: проверь токен и подписку"
             ) from error
 
     logger.info("Downloading Yandex Music track %s", track_id)
-    await asyncio.to_thread(_run)
+    filepath = await asyncio.to_thread(_run)
     if not os.path.isfile(filepath) or os.path.getsize(filepath) == 0:
         raise YandexMusicDownloadError("Яндекс Музыка вернула пустой файл")
 
@@ -604,7 +613,7 @@ async def load_yandex_music(_repository: Repository, url: str, message: Message)
 
         with open(filepath, "rb") as file:
             logger.info(file)
-            await message.reply_audio(file, filename=file.name)
+            await message.reply_audio(file, filename=Path(filepath).name)
 
 
 async def download_video_file(
