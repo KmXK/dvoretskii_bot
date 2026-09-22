@@ -4,6 +4,7 @@ from steward.features.download.transcribe import make_transcribation
 from steward.features.download.yt import (
     DOWNLOAD_TYPE_MAP,
     YT_LIMIT,
+    YandexMusicDownloadError,
     build_dispatch,
     find_download_urls,
 )
@@ -47,6 +48,10 @@ class DownloadFeature(Feature):
                 try:
                     await handler(url, ctx.message)
                     success = True
+                    break
+                except YandexMusicDownloadError as error:
+                    logger.warning("Yandex Music download failed: %s", error)
+                    await ctx.reply(str(error), markdown=False)
                     break
                 except Exception as e:
                     logger.exception(e)

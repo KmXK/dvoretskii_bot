@@ -600,12 +600,7 @@ async def download_yandex_audio(url: str, dir: str) -> str:
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
-        try:
-            filepath = await download_yandex_audio(url, dir)
-        except YandexMusicDownloadError as error:
-            logger.warning("Yandex Music download failed: %s", error)
-            await message.reply_text(str(error))
-            return
+        filepath = await download_yandex_audio(url, dir)
 
         with open(filepath, "rb") as file:
             logger.info(file)
