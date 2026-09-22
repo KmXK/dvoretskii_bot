@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telegram import (
     InlineQueryResultArticle,
+    InlineQueryResultCachedAudio,
     InlineQueryResultCachedPhoto,
     InputMediaAudio,
     InputMediaPhoto,
@@ -116,6 +117,19 @@ async def test_fast_inline_download_returns_media(monkeypatch):
         "bot_downloads_total",
         {"download_type": "threads.com_inline"},
     )
+
+
+def test_cached_audio_result_has_title():
+    results = inline_download._to_results(
+        [CachedMedia(file_id="audio-file", kind="audio", title="Название песни")],
+        "https://music.yandex.ru/track/1",
+        "music.yandex",
+    )
+
+    assert len(results) == 1
+    assert isinstance(results[0], InlineQueryResultCachedAudio)
+    assert results[0].audio_file_id == "audio-file"
+    assert results[0].title == "Название песни"
 
 
 async def test_fast_inline_failure_returns_personal_error(monkeypatch):

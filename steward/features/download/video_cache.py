@@ -16,6 +16,7 @@ class CachedMedia:
     caption: str | None = None
     kind: MediaKind = "video"
     duration: float | None = None
+    title: str | None = None
 
 
 _cache: dict[str, list[CachedMedia]] = {}
