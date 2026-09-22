@@ -13,7 +13,6 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import aiohttp
-import youtube_dl
 import yt_dlp
 from aiohttp_socks import ProxyConnector
 from pyrate_limiter import BucketFullException
@@ -23,6 +22,8 @@ from telegram import (
     InputFile,
     Message,
 )
+from yandex_music import Client as YandexMusicClient
+from yandex_music.exceptions import YandexMusicError
 
 from steward.data.repository import Repository
 from steward.features.download import video_cache
@@ -79,6 +80,10 @@ THREADS_MEDIA_HEADERS = {
     **_THREADS_PAGE_HEADERS,
     "Referer": "https://www.threads.com/",
 }
+
+
+class YandexMusicDownloadError(RuntimeError):
+    pass
 
 
 def _auto_video_transcription_enabled(
@@ -551,29 +556,55 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
 
 async def download_yandex_audio(url: str, dir: str) -> str:
     """Качает трек Яндекс.Музыки в `dir`, возвращает путь к файлу."""
-    logger.info("Yandex Music пошла")
-    logger.info(url.split("?")[0])
+    token = os.environ.get("YANDEX_MUSIC_TOKEN")
+    if not token:
+        raise YandexMusicDownloadError("Яндекс Музыка не настроена: нужен OAuth-токен")
 
-    def _run():
-        youtube_dl.YoutubeDL(
-            {
-                "verbose": True,
-                "outtmpl": dir + "/%(title)s",
-                "logger": yt_logger,
-                "retries": 0,
-            }
-        ).download([url.split("?")[0]])
+    match = re.search(r"/track/(\d+)", urlparse(url).path)
+    if match is None:
+        raise YandexMusicDownloadError("Не удалось определить трек в ссылке")
 
+    track_id = match.group(1)
+    filepath = os.path.join(dir, "track.mp3")
+
+    def _run() -> None:
+        try:
+            client = YandexMusicClient(token).init()
+            tracks = client.tracks([track_id])
+            if not tracks:
+                raise YandexMusicDownloadError("Яндекс Музыка не нашла трек")
+
+            download_infos = [
+                info
+                for info in tracks[0].get_download_info()
+                if info.codec == "mp3" and not info.preview
+            ]
+            if not download_infos:
+                raise YandexMusicDownloadError(
+                    "Аккаунт Яндекс Музыки не даёт скачать полный трек"
+                )
+
+            max(download_infos, key=lambda info: info.bitrate_in_kbps).download(filepath)
+        except YandexMusicError as error:
+            raise YandexMusicDownloadError(
+                "Яндекс Музыка не отдала трек: проверь токен и подписку"
+            ) from error
+
+    logger.info("Downloading Yandex Music track %s", track_id)
     await asyncio.to_thread(_run)
-    return os.path.join(dir, os.listdir(dir)[0])
+    if not os.path.isfile(filepath) or os.path.getsize(filepath) == 0:
+        raise YandexMusicDownloadError("Яндекс Музыка вернула пустой файл")
+
+    return filepath
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
         try:
             filepath = await download_yandex_audio(url, dir)
-        except youtube_dl.DownloadError:
-            logger.error("Ошибка авторизации, попробуй позже =(")
+        except YandexMusicDownloadError as error:
+            logger.warning("Yandex Music download failed: %s", error)
+            await message.reply_text(str(error))
             return
 
         with open(filepath, "rb") as file:

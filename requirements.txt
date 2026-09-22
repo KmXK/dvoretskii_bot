@@ -5,6 +5,7 @@ dacite
 humanize
 python-dateutil
 youtube-dl-nightly
+yandex-music==3.0.0
 coloredlogs
 aiofiles
 pymorphy3
