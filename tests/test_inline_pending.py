@@ -1,10 +1,10 @@
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telegram import (
     InlineQueryResultArticle,
-    InlineQueryResultCachedAudio,
     InlineQueryResultCachedPhoto,
     InputMediaAudio,
     InputMediaPhoto,
@@ -119,17 +119,31 @@ async def test_fast_inline_download_returns_media(monkeypatch):
     )
 
 
-def test_cached_audio_result_has_title():
-    results = inline_download._to_results(
-        [CachedMedia(file_id="audio-file", kind="audio", title="Название песни")],
-        "https://music.yandex.ru/track/1",
-        "music.yandex",
+async def test_yandex_audio_upload_sets_telegram_title(monkeypatch):
+    async def download_yandex_audio(_url, directory):
+        filepath = Path(directory) / "Название песни.mp3"
+        filepath.write_bytes(b"audio")
+        return str(filepath)
+
+    message = MagicMock()
+    message.audio.file_id = "audio-file"
+    bot = MagicMock()
+    bot.send_audio = AsyncMock(return_value=message)
+    bot.delete_message = AsyncMock()
+    monkeypatch.setattr(
+        inline_download,
+        "download_yandex_audio",
+        download_yandex_audio,
     )
 
-    assert len(results) == 1
-    assert isinstance(results[0], InlineQueryResultCachedAudio)
-    assert results[0].audio_file_id == "audio-file"
-    assert results[0].title == "Название песни"
+    medias = await inline_download._upload_yandex_audio(
+        "https://music.yandex.ru/track/1",
+        bot,
+    )
+
+    assert medias == [CachedMedia(file_id="audio-file", kind="audio")]
+    assert bot.send_audio.await_args.kwargs["filename"] == "Название песни.mp3"
+    assert bot.send_audio.await_args.kwargs["title"] == "Название песни"
 
 
 async def test_fast_inline_failure_returns_personal_error(monkeypatch):

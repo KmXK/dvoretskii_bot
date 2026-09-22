@@ -225,16 +225,13 @@ async def _upload_images(url: str, bot: ExtBot) -> list[CachedMedia]:
                     chat_id,
                     file,
                     filename=filename,
+                    title=Path(filename).stem,
                     disable_notification=True,
                 )
             if msg.audio is None:
                 raise RuntimeError("служебная загрузка вернула не аудио")
             await _delete_quietly(bot, msg)
-            return CachedMedia(
-                file_id=msg.audio.file_id,
-                kind="audio",
-                title=Path(filename).stem,
-            )
+            return CachedMedia(file_id=msg.audio.file_id, kind="audio")
 
         tasks = [upload_media(p) for p in images[:_MEDIA_LIMIT]]
         tasks += [upload_audio(p) for p in audios[:1]]
@@ -356,6 +353,7 @@ async def _upload_yandex_audio(url: str, bot: ExtBot) -> list[CachedMedia]:
                 _upload_chat_id(),
                 file,
                 filename=Path(filepath).name,
+                title=Path(filepath).stem,
                 disable_notification=True,
             )
 
@@ -363,11 +361,7 @@ async def _upload_yandex_audio(url: str, bot: ExtBot) -> list[CachedMedia]:
         raise RuntimeError("служебная загрузка вернула не аудио")
 
     await _delete_quietly(bot, msg)
-    return [CachedMedia(
-        file_id=msg.audio.file_id,
-        kind="audio",
-        title=Path(filepath).stem,
-    )]
+    return [CachedMedia(file_id=msg.audio.file_id, kind="audio")]
 
 
 # Зеркало build_dispatch из yt.py: на ключ — цепочка загрузчиков,
@@ -581,7 +575,6 @@ def _to_results(
             results.append(InlineQueryResultCachedAudio(
                 id=rid,
                 audio_file_id=m.file_id,
-                title=m.title or "Отправить аудио",
                 caption=m.caption,
                 parse_mode="HTML" if m.caption else None,
             ))
