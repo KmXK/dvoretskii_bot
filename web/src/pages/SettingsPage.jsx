@@ -172,25 +172,6 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
 
   return (
     <div className="space-y-2">
-      <button
-        onClick={toggleCurseDailyChart}
-        disabled={!canEdit || busy}
-        className="w-full bg-spotify-dark rounded-xl px-4 py-3 text-left flex items-center gap-3 disabled:opacity-60 hover:bg-white/5"
-      >
-        {data.curse_daily_chart_enabled
-          ? <CircleCheck size={18} className="text-spotify-green" />
-          : <Circle size={18} className="text-spotify-text/50" />}
-        <BarChart3 size={18} className="text-gold" />
-        <span className="flex-1">
-          <span className="block text-white text-sm font-medium">Ежедневный график матов</span>
-          <span className="block text-spotify-text/70 text-xs mt-0.5">
-            Отправлять в этот чат общий график подписанных участников после полуночи.
-          </span>
-        </span>
-        <span className="text-xs text-spotify-text">
-          {data.curse_daily_chart_enabled ? 'Вкл' : 'Выкл'}
-        </span>
-      </button>
       {Object.entries(caps).map(([cap, info]) => {
         const state = capState(cap)
         const stateIcon = state === 'on'
@@ -230,29 +211,55 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
                       const active = enabled.has(cap) && !disabled.has(f.slug)
                       const label = f.command ? `/${f.command}` : `${f.slug} (passive)`
                       return (
-                        <button
-                          key={f.slug}
-                          onClick={() => toggleFeat(cap, f.slug)}
-                          disabled={!canEdit || busy}
-                          className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/5 disabled:opacity-60"
-                        >
-                          <div className="flex items-center gap-2">
-                            {active
-                              ? <CircleCheck size={16} className="text-spotify-green" />
-                              : <Circle size={16} className="text-spotify-text/50" />}
-                            <span className="text-white font-medium">{label}</span>
-                            {f.bundled_with && f.bundled_with.length > 0 && (
-                              <span className="text-spotify-text/60 text-xs">
-                                + {f.bundled_with.join(', ')}
-                              </span>
+                        <div key={f.slug}>
+                          <button
+                            onClick={() => toggleFeat(cap, f.slug)}
+                            disabled={!canEdit || busy}
+                            className="w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-white/5 disabled:opacity-60"
+                          >
+                            <div className="flex items-center gap-2">
+                              {active
+                                ? <CircleCheck size={16} className="text-spotify-green" />
+                                : <Circle size={16} className="text-spotify-text/50" />}
+                              <span className="text-white font-medium">{label}</span>
+                              {f.bundled_with && f.bundled_with.length > 0 && (
+                                <span className="text-spotify-text/60 text-xs">
+                                  + {f.bundled_with.join(', ')}
+                                </span>
+                              )}
+                            </div>
+                            {f.description && (
+                              <p className="text-spotify-text/70 text-xs mt-0.5 pl-7">
+                                {f.description}
+                              </p>
                             )}
-                          </div>
-                          {f.description && (
-                            <p className="text-spotify-text/70 text-xs mt-0.5 pl-7">
-                              {f.description}
-                            </p>
+                          </button>
+                          {cap === 'stats' && f.slug === 'curse' && (
+                            <div className="ml-7 mr-2">
+                              <button
+                                onClick={toggleCurseDailyChart}
+                                disabled={!canEdit || busy}
+                                className="w-full px-3 py-2 text-left flex items-center gap-2 rounded-lg bg-spotify-bg/60 hover:bg-white/5 disabled:opacity-60"
+                              >
+                                {data.curse_daily_chart_enabled
+                                  ? <CircleCheck size={16} className="text-spotify-green" />
+                                  : <Circle size={16} className="text-spotify-text/50" />}
+                                <BarChart3 size={16} className="text-gold" />
+                                <span className="flex-1">
+                                  <span className="block text-white text-xs font-medium">
+                                    Ежедневный график матов
+                                  </span>
+                                  <span className="block text-spotify-text/70 text-xs mt-0.5">
+                                    Отправлять после полуночи
+                                  </span>
+                                </span>
+                                <span className="text-xs text-spotify-text">
+                                  {data.curse_daily_chart_enabled ? 'Вкл' : 'Выкл'}
+                                </span>
+                              </button>
+                            </div>
                           )}
-                        </button>
+                        </div>
                       )
                     })}
                   </div>

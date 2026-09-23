@@ -105,25 +105,12 @@ class SettingsFeature(Feature):
             "",
             f"Включено: {on_caps}/{total_caps} функций",
             f"Вы: {role_label}",
-            "Ежедневный график матов: "
-            + ("включён" if settings.curse_daily_chart_enabled else "выключен"),
         ]
         text = "\n".join(text_lines)
 
         kb_rows: list[list[Button]] = [
             [Button("📦 Функции", callback_data=self._cb("caps_tab", chat_id=chat.id))],
         ]
-        if is_chat_admin or is_global:
-            kb_rows.append([
-                Button(
-                    (
-                        "✅ Ежедневный график"
-                        if settings.curse_daily_chart_enabled
-                        else "❌ Ежедневный график"
-                    ),
-                    callback_data=self._cb("chart_toggle", chat_id=chat.id),
-                )
-            ])
         if not is_private and (is_chat_admin or is_global):
             kb_rows.append([
                 Button("👥 Чат-админы", callback_data=self._cb("admins_tab", chat_id=chat.id))
@@ -150,7 +137,41 @@ class SettingsFeature(Feature):
         settings = ctx.repository.chat_settings_for(chat_id)
         settings.curse_daily_chart_enabled = not settings.curse_daily_chart_enabled
         await self.chat_settings_col.save()
-        await self._render_root(ctx, edit=True)
+        await self._render_curse_options(ctx, chat_id)
+
+    @on_callback("settings:curse_options", schema="<chat_id:int>")
+    async def cb_curse_options(self, ctx: FeatureContext, chat_id: int):
+        await self._render_curse_options(ctx, chat_id)
+
+    async def _render_curse_options(self, ctx: FeatureContext, chat_id: int):
+        if not self._can_view_chat(ctx, chat_id):
+            await ctx.toast("Нет доступа к настройкам этого чата")
+            return
+
+        chat = ctx.repository.get_chat(chat_id)
+        chat_name = chat.name if chat else str(chat_id)
+        settings = ctx.repository.chat_settings_for(chat_id)
+        enabled = settings.curse_daily_chart_enabled
+        text = (
+            f"🤬 */curse* — {escape_markdown(chat_name)}\n\n"
+            "Ежедневный график матов: "
+            + ("включён" if enabled else "выключен")
+        )
+        rows: list[list[Button]] = []
+        if self._can_manage_chat(ctx, chat_id):
+            rows.append([
+                Button(
+                    "✅ Ежедневный график" if enabled else "❌ Ежедневный график",
+                    callback_data=self._cb("chart_toggle", chat_id=chat_id),
+                )
+            ])
+        rows.append([
+            Button(
+                "⏎ Назад",
+                callback_data=self._cb("cap_drill", chat_id=chat_id, cap="stats"),
+            )
+        ])
+        await ctx.edit(text, keyboard=Keyboard(rows))
 
     _NOTIFY_FIELDS = {
         "fr": "fr_notifications_enabled",
@@ -423,6 +444,9 @@ class SettingsFeature(Feature):
                 if desc:
                     line += f" — {desc}"
                 lines.append(line)
+                if cap == "stats" and slug == "curse":
+                    chart_icon = "✅" if settings.curse_daily_chart_enabled else "❌"
+                    lines.append(f"   {chart_icon} _Ежедневный график матов_")
             if not cap_enabled:
                 lines.append("")
                 lines.append("_Группа выключена. Тогл фичи включит её._")
@@ -439,7 +463,15 @@ class SettingsFeature(Feature):
                 self._cb("feat_toggle", chat_id=chat_id, cap=cap, feat=slug)
                 if can_manage else "settings:noop"
             )
-            rows.append([Button(f"{icon} {label}", callback_data=cb)])
+            row = [Button(f"{icon} {label}", callback_data=cb)]
+            if cap == "stats" and slug == "curse":
+                row.append(
+                    Button(
+                        "⚙",
+                        callback_data=self._cb("curse_options", chat_id=chat_id),
+                    )
+                )
+            rows.append(row)
         if can_manage:
             rows.append([
                 Button("Включить все", callback_data=self._cb("cap_all_on", chat_id=chat_id, cap=cap)),

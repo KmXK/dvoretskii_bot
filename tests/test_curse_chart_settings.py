@@ -53,7 +53,7 @@ async def test_telegram_daily_chart_toggle_is_limited_to_chat_admins():
     repository.db.chat_settings = [ChatSettings(chat_id=CHAT_ID)]
     feature = SettingsFeature()
     feature.repository = repository
-    feature._render_root = AsyncMock()
+    feature._render_curse_options = AsyncMock()
 
     regular_user = MagicMock(repository=repository, user_id=DEFAULT_USER_ID)
     regular_user.toast = AsyncMock()
@@ -66,7 +66,31 @@ async def test_telegram_daily_chart_toggle_is_limited_to_chat_admins():
     await feature.cb_chart_toggle(regular_user, CHAT_ID)
 
     assert repository.chat_settings_for(CHAT_ID).curse_daily_chart_enabled is True
-    feature._render_root.assert_awaited_once()
+    feature._render_curse_options.assert_awaited_once_with(regular_user, CHAT_ID)
+
+
+async def test_telegram_daily_chart_is_nested_in_curse_options():
+    repository = make_repository()
+    repository.db.chat_settings = [
+        ChatSettings(
+            chat_id=CHAT_ID,
+            chat_admins={DEFAULT_USER_ID},
+            curse_daily_chart_enabled=True,
+        )
+    ]
+    feature = SettingsFeature()
+    feature.repository = repository
+    context = MagicMock(repository=repository, user_id=DEFAULT_USER_ID)
+    context.edit = AsyncMock()
+
+    await feature._render_curse_options(context, CHAT_ID)
+
+    text = context.edit.await_args.args[0]
+    keyboard = context.edit.await_args.kwargs["keyboard"]
+    assert "*/curse*" in text
+    assert "Ежедневный график матов: включён" in text
+    assert keyboard.rows[0][0].text == "✅ Ежедневный график"
+    assert keyboard.rows[-1][0].text == "⏎ Назад"
 
 
 async def test_daily_chart_uses_enabled_chat_without_participant_source_chat():
