@@ -80,6 +80,15 @@ def make_daily_action(action_type):
     )
 
 
+def subscribe_user(repo, user_id: int = DEFAULT_USER_ID) -> None:
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=user_id,
+            subscribed_at=datetime.now(timezone.utc),
+        )
+    ]
+
+
 class TestCurseSchedule:
     async def test_setup_adds_interest_without_evening_forecast(self):
         repo = make_repository()
@@ -222,6 +231,7 @@ class TestCurseIncrement:
         repo = make_repository()
         today = today_msk().isoformat()
         repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID])]
+        subscribe_user(repo)
         repo.db.curse_punishments = [
             CursePunishment(id=1, coeff=5, title="Отжимания", selection_weight=1.0)
         ]
@@ -252,6 +262,7 @@ class TestCurseIncrement:
         today_date = today_msk()
         yesterday = (today_date - timedelta(days=1)).isoformat()
         repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID])]
+        subscribe_user(repo)
         repo.db.curse_punishments = [
             CursePunishment(
                 id=1,
@@ -284,6 +295,7 @@ class TestCurseIncrement:
         repo.db.users = [
             User(id=DEFAULT_USER_ID, username="test_user", chat_ids=[CHAT_ID])
         ]
+        subscribe_user(repo)
         repo.db.curse_punishments = [
             CursePunishment(id=1, coeff=5, title="Отжимания", selection_weight=1.0)
         ]
