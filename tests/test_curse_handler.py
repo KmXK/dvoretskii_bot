@@ -589,9 +589,10 @@ class TestCursePunishment:
 
         reply, ok = await invoke(CurseFeature, "/curse", repo)
         assert ok
-        assert "@\u200btestuser</code> 4 🔥" in reply
+        assert "@\u200btestuser</code> Стрик: 4 дня 🔥" in reply
         assert "Отжимания: 10" in reply
-        assert "@\u200bclean</code> 9 🔥" in reply
+        assert "@\u200bclean</code> Стрик: 9 дней 🔥" in reply
+        assert "Отжимания: 0" in reply
         assert "@other" not in reply
 
     async def test_done_with_id_updates_metric_and_closes_debt(self):

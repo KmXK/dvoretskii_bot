@@ -20,7 +20,7 @@ from tests.conftest import CHAT_ID, DEFAULT_USER_ID, make_repository
 
 def _repo():
     repo = make_repository()
-    repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser")]
+    repo.db.users = [User(id=DEFAULT_USER_ID, username="testuser", chat_ids=[CHAT_ID])]
     repo.db.curse_participants = [
         CurseParticipant(
             user_id=DEFAULT_USER_ID,
@@ -81,21 +81,21 @@ def test_forecast_shows_value_at_midnight():
 
     text = format_curse_streak_forecast(repo, CHAT_ID, date(2026, 8, 22))
 
-    assert "сейчас 6 дней" in text
+    assert "Стрик: 6 дней 🔥" in text
     assert "будет 7 дней" in text
 
 
-def test_streak_is_global_but_renders_in_every_subscribed_chat():
+def test_streak_is_global_but_renders_in_every_current_chat():
     other_chat = -100999
     repo = _repo()
-    repo.db.curse_participants[0].source_chat_ids.append(other_chat)
+    repo.db.users[0].chat_ids.append(other_chat)
     repo.db.curse_streaks = [CurseStreak(user_id=DEFAULT_USER_ID, days=2)]
 
     first = format_curse_streak_forecast(repo, CHAT_ID, date(2026, 8, 22))
     second = format_curse_streak_forecast(repo, other_chat, date(2026, 8, 22))
 
-    assert "сейчас 2 дня" in first
-    assert "сейчас 2 дня" in second
+    assert "Стрик: 2 дня 🔥" in first
+    assert "Стрик: 2 дня 🔥" in second
 
 
 def test_duplicate_participant_is_rendered_once():
@@ -105,7 +105,31 @@ def test_duplicate_participant_is_rendered_once():
     assert participant_ids_in_chat(repo, CHAT_ID) == [DEFAULT_USER_ID]
 
 
-def test_participant_is_not_visible_without_subscription_in_chat():
+def test_participant_roster_ignores_source_chat_and_bots():
+    other_chat = -100999
+    bot_user_id = DEFAULT_USER_ID + 1
+    repo = _repo()
+    repo.db.users.extend([
+        User(id=bot_user_id, username="helperbot", chat_ids=[CHAT_ID], is_bot=True),
+        User(id=DEFAULT_USER_ID + 2, username="elsewhere", chat_ids=[other_chat]),
+    ])
+    repo.db.curse_participants.extend([
+        CurseParticipant(
+            user_id=bot_user_id,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        ),
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID + 2,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        ),
+    ])
+
+    assert participant_ids_in_chat(repo, CHAT_ID) == [DEFAULT_USER_ID]
+
+
+def test_participant_is_visible_in_every_current_chat_membership():
     other_chat = -100999
     repo = _repo()
     repo.db.users[0].chat_ids = [CHAT_ID, other_chat]
@@ -113,7 +137,7 @@ def test_participant_is_not_visible_without_subscription_in_chat():
 
     text = format_curse_streak_forecast(repo, other_chat, date(2026, 8, 22))
 
-    assert text == ""
+    assert "Стрик: 2 дня 🔥" in text
     assert curse_report_chat_ids(repo) == [CHAT_ID]
 
 

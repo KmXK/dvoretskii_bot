@@ -824,6 +824,12 @@ class Repository:
 
             data["version"] = 45
 
+        if data.get("version") == 45:
+            for settings in data.get("chat_settings", []):
+                if isinstance(settings, dict):
+                    settings["curse_daily_chart_enabled"] = False
+            data["version"] = 46
+
         # Idempotent fix-ups for DBs that ever touched the bills_v2 prototype.
         # Safe to run every startup.
         if "curse_ignore_words" not in data or not isinstance(data["curse_ignore_words"], list):
@@ -848,6 +854,9 @@ class Repository:
         data.setdefault("roles", [])
         data.setdefault("user_roles", [])
         data.setdefault("chat_settings", [])
+        for settings in data["chat_settings"]:
+            if isinstance(settings, dict):
+                settings.setdefault("curse_daily_chart_enabled", False)
         data.setdefault("command_aliases", [])
         data.setdefault("chat_tunnels", [])
         data.setdefault("tunnel_open_chats", [])

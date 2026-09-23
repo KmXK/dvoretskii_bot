@@ -114,11 +114,16 @@ def _name(repository, user_id: int) -> str:
 
 
 def participant_ids_in_chat(repository, chat_id: int) -> list[int]:
+    user_ids = {
+        user.id
+        for user in repository.db.users
+        if not user.is_bot and chat_id in (user.chat_ids or [])
+    }
     return sorted(
         {
             participant.user_id
             for participant in repository.db.curse_participants
-            if chat_id in participant.source_chat_ids
+            if participant.user_id in user_ids
         }
     )
 
@@ -165,7 +170,7 @@ def _curses(value: int) -> str:
 
 
 def format_curse_streak_forecast(repository, chat_id: int, today: date) -> str:
-    lines = ["🔥 Стрик без матов — прогноз:", ""]
+    lines = ["🔥 Стрик — прогноз:", ""]
     for user_id in participant_ids_in_chat(repository, chat_id):
         item = _record(repository, user_id)
         current = item.days if item else 0
@@ -176,12 +181,12 @@ def format_curse_streak_forecast(repository, chat_id: int, today: date) -> str:
         )
         if curses:
             lines.append(
-                f"{_name(repository, user_id)}: сегодня {_curses(curses)}, "
-                "стрик сброшен"
+                f"{_name(repository, user_id)}: Стрик: {_days(0)} 🔥, "
+                f"сегодня {_curses(curses)}, стрик сброшен"
             )
         else:
             lines.append(
-                f"{_name(repository, user_id)}: сейчас {_days(current)}, "
+                f"{_name(repository, user_id)}: Стрик: {_days(current)} 🔥, "
                 f"в полночь будет {_days(current + 1)}"
             )
     return "\n".join(lines) if len(lines) > 2 else ""
@@ -193,19 +198,20 @@ def format_curse_streak_outcome(
     outcomes: list[CurseStreakOutcome],
 ) -> str:
     by_user = {item.user_id: item for item in outcomes}
-    lines = ["🔥 Стрик без матов — итог:", ""]
+    lines = ["🔥 Стрик — итог:", ""]
     for user_id in participant_ids_in_chat(repository, chat_id):
         item = by_user.get(user_id)
         if item is None:
             continue
         if item.reset:
             lines.append(
-                f"{_name(repository, user_id)}: стрик сброшен — "
+                f"{_name(repository, user_id)}: Стрик: {_days(item.days)} 🔥, "
+                "стрик сброшен — "
                 f"{_curses(item.curses)} за сутки"
             )
         else:
             lines.append(
-                f"{_name(repository, user_id)}: {_days(item.days)} без матов "
-                f"(+1), за сутки 0"
+                f"{_name(repository, user_id)}: Стрик: {_days(item.days)} 🔥 "
+                "(+1), за сутки 0"
             )
     return "\n".join(lines) if len(lines) > 2 else ""

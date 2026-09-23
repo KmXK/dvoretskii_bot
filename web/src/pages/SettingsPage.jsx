@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Bell, BellOff, CircleCheck, Circle, CircleMinus, ChevronUp, ChevronDown,
-  Drama, Trash2, Plus, Package, Users, Settings,
+  BarChart3, Drama, Trash2, Plus, Package, Users, Settings,
 } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
@@ -157,6 +157,13 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
     })
   }
 
+  const toggleCurseDailyChart = () => {
+    if (!canEdit) return
+    persist({
+      curse_daily_chart_enabled: !data.curse_daily_chart_enabled,
+    })
+  }
+
   const capState = (cap) => {
     if (!enabled.has(cap)) return 'off'
     if (caps[cap].features.some(f => disabled.has(f.slug))) return 'partial'
@@ -165,6 +172,25 @@ function FeaturesTab({ chatId, data, canEdit, refresh }) {
 
   return (
     <div className="space-y-2">
+      <button
+        onClick={toggleCurseDailyChart}
+        disabled={!canEdit || busy}
+        className="w-full bg-spotify-dark rounded-xl px-4 py-3 text-left flex items-center gap-3 disabled:opacity-60 hover:bg-white/5"
+      >
+        {data.curse_daily_chart_enabled
+          ? <CircleCheck size={18} className="text-spotify-green" />
+          : <Circle size={18} className="text-spotify-text/50" />}
+        <BarChart3 size={18} className="text-gold" />
+        <span className="flex-1">
+          <span className="block text-white text-sm font-medium">Ежедневный график матов</span>
+          <span className="block text-spotify-text/70 text-xs mt-0.5">
+            Отправлять в этот чат общий график подписанных участников после полуночи.
+          </span>
+        </span>
+        <span className="text-xs text-spotify-text">
+          {data.curse_daily_chart_enabled ? 'Вкл' : 'Выкл'}
+        </span>
+      </button>
       {Object.entries(caps).map(([cap, info]) => {
         const state = capState(cap)
         const stateIcon = state === 'on'

@@ -80,13 +80,14 @@ def test_debt_report_renders_streak_next_to_user_name():
 
     report = format_curse_debt_report(build_curse_debt_report_entries(repo, CHAT_ID))
 
-    assert "<code>@\u200btest_user</code> 6 🔥" in report
+    assert "<code>@\u200btest_user</code> Стрик: 6 дней 🔥" in report
     assert "Стрик без матов" not in report
 
 
-def test_debt_report_includes_subscribed_user_without_debt_as_empty_streak_block():
+def test_debt_report_includes_subscribed_user_without_debt_with_zero_items():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="clean", chat_ids={CHAT_ID})]
+    repo.db.curse_punishments = [CursePunishment(id=1, coeff=5, title="Отжимания")]
     repo.db.curse_participants = [
         CurseParticipant(
             user_id=DEFAULT_USER_ID,
@@ -99,13 +100,55 @@ def test_debt_report_includes_subscribed_user_without_debt_as_empty_streak_block
     entries = build_curse_debt_report_entries(repo, CHAT_ID)
 
     assert len(entries) == 1
-    assert entries[0].items == []
+    assert [(item.title, item.count) for item in entries[0].items] == [("Отжимания", 0)]
     assert format_curse_debt_report(entries) == (
-        "Наказания на сегодня:\n\n<code>@\u200bclean</code> 7 🔥"
+        "Наказания на сегодня:\n\n<code>@\u200bclean</code> Стрик: 7 дней 🔥\nОтжимания: 0"
     )
     assert format_curse_day_plan(entries) == (
-        "До полуночи:\n\n<code>@\u200bclean</code> 7 🔥"
+        "До полуночи:\n\n<code>@\u200bclean</code> Стрик: 7 дней 🔥\nОтжимания: 0"
     )
+
+
+def test_debt_report_uses_current_chat_membership_not_source_chat():
+    other_chat = CHAT_ID - 1
+    repo = make_repository()
+    repo.db.users = [
+        User(id=DEFAULT_USER_ID, username="current", chat_ids=[CHAT_ID]),
+        User(id=DEFAULT_USER_ID + 1, username="other", chat_ids=[other_chat]),
+        User(id=DEFAULT_USER_ID + 2, username="helperbot", chat_ids=[CHAT_ID], is_bot=True),
+    ]
+    repo.db.curse_punishments = [CursePunishment(id=1, coeff=5, title="Отжимания")]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[other_chat],
+        ),
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID + 1,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        ),
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID + 2,
+            subscribed_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            source_chat_ids=[CHAT_ID],
+        ),
+    ]
+    repo.db.curse_punishment_debts = [
+        CursePunishmentDebt(
+            id=1,
+            user_id=DEFAULT_USER_ID + 1,
+            rule_id=1,
+            punishment_count=99,
+            last_interest_applied_date="2026-08-01",
+        )
+    ]
+
+    entries = build_curse_debt_report_entries(repo, CHAT_ID)
+
+    assert [entry.user_id for entry in entries] == [DEFAULT_USER_ID]
+    assert [(item.title, item.count) for item in entries[0].items] == [("Отжимания", 0)]
 
 
 def test_accrue_selects_weighted_punishment_day_once_when_missing():
@@ -168,6 +211,14 @@ def test_does_not_accrue_for_unsubscribed_user():
 
 
 def make_debt(repo, **overrides) -> CursePunishmentDebt:
+    if not repo.db.curse_participants:
+        repo.db.curse_participants = [
+            CurseParticipant(
+                user_id=DEFAULT_USER_ID,
+                subscribed_at=datetime(2026, 5, 29, tzinfo=timezone.utc),
+                source_chat_ids=[CHAT_ID],
+            )
+        ]
     repo.db.curse_punishments = [CursePunishment(id=1, coeff=4, title="Приседания")]
     debt = CursePunishmentDebt(
         id=1,
@@ -391,7 +442,7 @@ def test_plan_at_minimum_rate_says_rate_cannot_drop():
     assert "ставка уже минимальная" in text
 
 
-def test_plan_skips_users_with_interest_disabled():
+def test_plan_includes_users_with_interest_disabled():
     repo = make_repository()
     repo.db.users = [User(id=DEFAULT_USER_ID, username="test_user", chat_ids={CHAT_ID})]
     repo.db.curse_participants = [
@@ -403,7 +454,10 @@ def test_plan_skips_users_with_interest_disabled():
     ]
     make_debt(repo, punishment_count=1000, interest_percent=5.0)
 
-    assert format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID)) == ""
+    text = format_curse_day_plan(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "Стрик: 0 дней 🔥" in text
+    assert "Приседания: 1000 (проценты отключены)" in text
 
 
 def test_plan_matches_what_the_tick_actually_does():
@@ -495,6 +549,33 @@ def test_outcome_reports_unchanged_rate():
     text = format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID))
 
     assert "Приседания: 1000 → 1050 (+50), ставка 5% без изменений" in text
+
+
+def test_outcome_includes_current_subscriber_with_zero_debt():
+    second_user_id = DEFAULT_USER_ID + 1
+    repo = make_repository()
+    repo.db.users = [
+        User(id=DEFAULT_USER_ID, username="debtor", chat_ids=[CHAT_ID]),
+        User(id=second_user_id, username="clean", chat_ids=[CHAT_ID]),
+    ]
+    repo.db.curse_participants = [
+        CurseParticipant(
+            user_id=DEFAULT_USER_ID,
+            subscribed_at=datetime(2026, 5, 29, tzinfo=timezone.utc),
+        ),
+        CurseParticipant(
+            user_id=second_user_id,
+            subscribed_at=datetime(2026, 5, 29, tzinfo=timezone.utc),
+        ),
+    ]
+    make_debt(repo, punishment_count=1000, interest_percent=5.0)
+    apply_curse_interest_until(repo, date(2026, 5, 30))
+
+    text = format_curse_day_outcome(build_curse_debt_report_entries(repo, CHAT_ID))
+
+    assert "@\u200bdebtor" in text
+    assert "@\u200bclean" in text
+    assert "Приседания: 0" in text
 
 
 def test_outcome_empty_before_first_tick():
@@ -655,6 +736,9 @@ async def test_interest_action_sends_hourly_chart_without_separate_streak_text()
         ),
     ]
     repo.db.curse_streaks = [CurseStreak(user_id=second_user_id, days=4)]
+    settings = repo.chat_settings_for(CHAT_ID)
+    settings.enabled_capabilities.add("stats")
+    settings.curse_daily_chart_enabled = True
     record_curses(repo, DEFAULT_USER_ID, 2, completed_day, hour=18)
     bot = MagicMock()
     bot.send_message = AsyncMock()

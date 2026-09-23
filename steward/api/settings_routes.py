@@ -25,6 +25,7 @@ def _serialize_settings(settings: ChatSettings) -> dict:
         "disabled_features": sorted(settings.disabled_features),
         "chat_admins": sorted(settings.chat_admins),
         "onboarded": settings.onboarded,
+        "curse_daily_chart_enabled": settings.curse_daily_chart_enabled,
     }
 
 
@@ -128,6 +129,14 @@ async def handle_chat_settings_patch(request: web.Request):
         if not isinstance(feats, list):
             return web.json_response({"error": "disabled_features must be list"}, status=400)
         settings.disabled_features = {f for f in feats if f in valid_slugs}
+    if "curse_daily_chart_enabled" in body:
+        chart_enabled = body["curse_daily_chart_enabled"]
+        if not isinstance(chart_enabled, bool):
+            return web.json_response(
+                {"error": "curse_daily_chart_enabled must be boolean"},
+                status=400,
+            )
+        settings.curse_daily_chart_enabled = chart_enabled
     await repo.save()
     return web.json_response(_serialize_settings(settings))
 

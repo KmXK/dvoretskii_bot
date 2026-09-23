@@ -595,6 +595,6 @@ def test_migration_restores_legacy_payment_details():
         ],
     })
 
-    assert migrated["version"] == 45
+    assert migrated["version"] == 46
     assert migrated["bill_persons"][0]["description"] == "Старая карта"
     assert migrated["bill_persons"][1]["description"] == "Новые реквизиты"

@@ -87,10 +87,11 @@ async def test_migration_marks_bots_and_removes_bot_chat_admins():
 
     migrated = repo._migrate(data)
 
-    assert migrated["version"] == 45
+    assert migrated["version"] == 46
     assert migrated["users"][0]["is_bot"] is False
     assert migrated["users"][1]["is_bot"] is True
     assert migrated["chat_settings"][0]["chat_admins"] == [1]
+    assert migrated["chat_settings"][0]["curse_daily_chart_enabled"] is False
 
 
 def test_bill_people_visibility_uses_shared_chats_and_accessible_bills():

@@ -105,12 +105,25 @@ class SettingsFeature(Feature):
             "",
             f"Включено: {on_caps}/{total_caps} функций",
             f"Вы: {role_label}",
+            "Ежедневный график матов: "
+            + ("включён" if settings.curse_daily_chart_enabled else "выключен"),
         ]
         text = "\n".join(text_lines)
 
         kb_rows: list[list[Button]] = [
             [Button("📦 Функции", callback_data=self._cb("caps_tab", chat_id=chat.id))],
         ]
+        if is_chat_admin or is_global:
+            kb_rows.append([
+                Button(
+                    (
+                        "✅ Ежедневный график"
+                        if settings.curse_daily_chart_enabled
+                        else "❌ Ежедневный график"
+                    ),
+                    callback_data=self._cb("chart_toggle", chat_id=chat.id),
+                )
+            ])
         if not is_private and (is_chat_admin or is_global):
             kb_rows.append([
                 Button("👥 Чат-админы", callback_data=self._cb("admins_tab", chat_id=chat.id))
@@ -127,6 +140,16 @@ class SettingsFeature(Feature):
 
     @on_callback("settings:root", schema="<chat_id:int>")
     async def cb_root(self, ctx: FeatureContext, chat_id: int):
+        await self._render_root(ctx, edit=True)
+
+    @on_callback("settings:chart_toggle", schema="<chat_id:int>")
+    async def cb_chart_toggle(self, ctx: FeatureContext, chat_id: int):
+        if not self._can_manage_chat(ctx, chat_id):
+            await ctx.toast("Только chat-admin или global-admin")
+            return
+        settings = ctx.repository.chat_settings_for(chat_id)
+        settings.curse_daily_chart_enabled = not settings.curse_daily_chart_enabled
+        await self.chat_settings_col.save()
         await self._render_root(ctx, edit=True)
 
     _NOTIFY_FIELDS = {

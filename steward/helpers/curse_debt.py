@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from steward.data.models.curse import CursePunishment, CursePunishmentDay, CursePunishmentDebt
 from steward.data.repository import Repository
 from steward.helpers.curse_punishment import get_current_curse_count
+from steward.helpers.curse_streak import participant_ids_in_chat
 
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,15 @@ def _display_name(username: str | None, user_id: int) -> str:
     return f"@\u200b{username}" if username else f"@\u200b{user_id}"
 
 
+def _days(value: int) -> str:
+    mod100 = value % 100
+    mod10 = value % 10
+    word = "день" if mod10 == 1 and mod100 != 11 else (
+        "дня" if 2 <= mod10 <= 4 and not 12 <= mod100 <= 14 else "дней"
+    )
+    return f"{value} {word}"
+
+
 def _format_curse_user_tag(name: str) -> str:
     return f"<code>{html_escape(name)}</code>"
 
@@ -194,15 +204,7 @@ def _user_name(repo: Repository, user_id: int) -> str:
 
 
 def _user_ids_in_chat(repo: Repository, chat_id: int) -> set[int]:
-    return {user.id for user in repo.db.users if chat_id in user.chat_ids}
-
-
-def _participant_ids_in_report_chat(repo: Repository, chat_id: int) -> set[int]:
-    return {
-        participant.user_id
-        for participant in repo.db.curse_participants
-        if chat_id in participant.source_chat_ids
-    }
+    return set(participant_ids_in_chat(repo, chat_id))
 
 
 def _curse_streak_days(repo: Repository, user_id: int) -> int:
@@ -404,48 +406,41 @@ async def initialize_curse_debts(repo: Repository, metrics, today: date) -> bool
 
 
 def build_curse_debt_report_entries(repo: Repository, chat_id: int) -> list[CurseDebtReportEntry]:
-    user_ids_in_chat = _user_ids_in_chat(repo, chat_id)
-    items_by_user: dict[int, list[CurseDebtReportItem]] = {}
-
-    for debt in repo.db.curse_punishment_debts:
-        if debt.punishment_count <= 0:
-            continue
-        if debt.user_id not in user_ids_in_chat:
-            continue
-        rule = _rule_by_id(repo, debt.rule_id)
-        if rule is None:
-            logger.warning(
-                "curse debt report skipped missing rule_id=%s debt_id=%s user_id=%s",
-                debt.rule_id,
-                debt.id,
-                debt.user_id,
-            )
-            continue
-
-        items_by_user.setdefault(debt.user_id, []).append(
-            CurseDebtReportItem(
-                title=rule.title,
-                count=debt.punishment_count,
-                interest_percent=debt.interest_percent,
-                interest_delta=debt.last_interest_delta,
-                interest_percent_added=debt.last_interest_percent_added,
-                paid_since_interest=debt.paid_since_interest,
-            )
-        )
-
-    report_user_ids = set(items_by_user) | _participant_ids_in_report_chat(repo, chat_id)
+    rules = sorted(repo.db.curse_punishments, key=lambda item: item.title)
     entries = [
         CurseDebtReportEntry(
             user_id=user_id,
             name=_user_name(repo, user_id),
-            items=sorted(items_by_user.get(user_id, []), key=lambda item: item.title),
+            items=[
+                _build_curse_debt_report_item(repo, user_id, rule)
+                for rule in rules
+            ],
             interest_enabled=is_curse_interest_enabled(repo, user_id),
             streak_days=_curse_streak_days(repo, user_id),
         )
-        for user_id in report_user_ids
+        for user_id in _user_ids_in_chat(repo, chat_id)
     ]
     entries.sort(key=lambda entry: entry.name.lower())
     return entries
+
+
+def _build_curse_debt_report_item(
+    repo: Repository,
+    user_id: int,
+    rule: CursePunishment,
+) -> CurseDebtReportItem:
+    debt = _find_debt(repo, user_id, rule.id)
+    if debt is None:
+        return CurseDebtReportItem(title=rule.title, count=0)
+
+    return CurseDebtReportItem(
+        title=rule.title,
+        count=max(debt.punishment_count, 0),
+        interest_percent=debt.interest_percent,
+        interest_delta=debt.last_interest_delta,
+        interest_percent_added=debt.last_interest_percent_added,
+        paid_since_interest=debt.paid_since_interest,
+    )
 
 
 def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
@@ -456,7 +451,11 @@ def format_curse_debt_report(entries: list[CurseDebtReportEntry]) -> str:
     for index, entry in enumerate(entries):
         lines.append(_format_curse_user_header(entry))
         for item in entry.items:
-            if entry.interest_enabled:
+            if item.count <= 0:
+                title = html_escape(item.title)
+                suffix = " (проценты отключены)" if not entry.interest_enabled else ""
+                lines.append(f"{title}: 0{suffix}")
+            elif entry.interest_enabled:
                 lines.extend(_format_curse_plan_item(item, escape_html=True))
             else:
                 lines.append(
@@ -501,21 +500,27 @@ def _format_curse_plan_item(
 
 
 def _format_curse_user_header(entry: CurseDebtReportEntry) -> str:
-    return f"{_format_curse_user_tag(entry.name)} {entry.streak_days} 🔥"
+    return f"{_format_curse_user_tag(entry.name)} Стрик: {_days(entry.streak_days)} 🔥"
 
 
 def format_curse_day_plan(entries: list[CurseDebtReportEntry]) -> str:
-    payable = [entry for entry in entries if entry.interest_enabled]
-    if not payable:
+    if not entries:
         return ""
 
     lines = ["До полуночи:", ""]
-    for index, entry in enumerate(payable):
+    for index, entry in enumerate(entries):
         lines.append(_format_curse_user_header(entry))
         for item in entry.items:
-            lines.extend(_format_curse_plan_item(item, escape_html=True))
+            title = html_escape(item.title)
+            if item.count <= 0:
+                suffix = " (проценты отключены)" if not entry.interest_enabled else ""
+                lines.append(f"{title}: 0{suffix}")
+            elif entry.interest_enabled:
+                lines.extend(_format_curse_plan_item(item, escape_html=True))
+            else:
+                lines.append(f"{title}: {item.count} (проценты отключены)")
 
-        if index != len(payable) - 1:
+        if index != len(entries) - 1:
             lines.append("")
     return "\n".join(lines)
 
@@ -568,29 +573,42 @@ def _format_curse_outcome_item(item: CurseDebtReportItem) -> str:
 
 
 def format_curse_day_outcome(entries: list[CurseDebtReportEntry]) -> str:
-    payable = [
-        entry
+    if not any(
+        item.interest_delta or item.interest_percent_added
         for entry in entries
-        if entry.interest_enabled and any(item.interest_delta or item.interest_percent_added for item in entry.items)
-    ]
-    if not payable:
+        for item in entry.items
+    ):
         return ""
 
     lines = ["Итог за сутки:", ""]
-    for index, entry in enumerate(payable):
+    for index, entry in enumerate(entries):
         lines.append(_format_curse_user_header(entry))
         for item in entry.items:
-            lines.append(_format_curse_outcome_item(item))
+            if item.count <= 0:
+                suffix = " (проценты отключены)" if not entry.interest_enabled else ""
+                lines.append(f"{html_escape(item.title)}: 0{suffix}")
+            elif entry.interest_enabled:
+                lines.append(_format_curse_outcome_item(item))
+            else:
+                lines.append(
+                    f"{html_escape(item.title)}: {item.count} (проценты отключены)"
+                )
 
-        if index != len(payable) - 1:
+        if index != len(entries) - 1:
             lines.append("")
     return "\n".join(lines)
 
 
 def build_curse_interest_status(repo: Repository, chat_id: int) -> str:
-    user_ids_in_chat = _user_ids_in_chat(repo, chat_id)
+    participants_by_user = {
+        participant.user_id: participant
+        for participant in repo.db.curse_participants
+    }
     participants = sorted(
-        (p for p in repo.db.curse_participants if p.user_id in user_ids_in_chat),
+        (
+            participants_by_user[user_id]
+            for user_id in participant_ids_in_chat(repo, chat_id)
+        ),
         key=lambda p: _user_name(repo, p.user_id).lower(),
     )
     if not participants:

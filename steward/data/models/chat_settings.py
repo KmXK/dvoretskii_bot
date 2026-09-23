@@ -8,3 +8,4 @@ class ChatSettings:
     disabled_features: set[str] = field(default_factory=set)
     chat_admins: set[int] = field(default_factory=set)
     onboarded: bool = False
+    curse_daily_chart_enabled: bool = False
