@@ -967,10 +967,7 @@ def render_job(job: dict[str, Any]) -> dict[str, int]:
     )
     compose_mp4(source_path, annotation, avatar_a_path, avatar_b_path, output_path)
     width, height = _output_size(source_info.width, source_info.height)
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    peak_rss_kib = int(usage.ru_maxrss)
-    if sys.platform == "darwin":
-        peak_rss_kib //= 1024
+    peak_rss_kib = _peak_rss_kib()
     return {
         "width": width,
         "height": height,
@@ -978,6 +975,16 @@ def render_job(job: dict[str, Any]) -> dict[str, int]:
         "duration_ms": int(round(source_info.duration_seconds * 1000)),
         "peak_rss_kib": peak_rss_kib,
     }
+
+
+def _peak_rss_kib() -> int:
+    if sys.platform == "linux":
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1])
+
+    peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return peak // 1024 if sys.platform == "darwin" else peak
 
 
 def _stop_worker(_signum: int, _frame: Any) -> None:
