@@ -49,6 +49,7 @@ class _MediaInfo:
     height: int
     duration_seconds: float
     durations_ms: tuple[int, ...] = ()
+    trimmed: bool = False
 
 
 class _Deadline:
@@ -184,36 +185,53 @@ def _duration_ms(image: Any, label: str) -> int:
     return max(1, int(round(duration)))
 
 
-def _scan_pil(path: Path, label: str, max_duration_seconds: float) -> _MediaInfo:
+def _scan_pil(
+    path: Path,
+    label: str,
+    max_duration_seconds: float,
+    *,
+    trim: bool = False,
+) -> _MediaInfo:
     from PIL import Image
 
     try:
         with Image.open(path) as image:
-            frame_count = int(getattr(image, "n_frames", 1))
-            if frame_count <= 0:
-                raise RenderError(f"{label}: нет кадров")
-            if frame_count > MAX_IMAGE_FRAMES:
-                raise RenderError(f"{label}: слишком много кадров")
             source_size = _validate_dimensions(image.size, label)
             image_format = image.format
             durations: list[int] = []
             total_ms = 0
-            for index in range(frame_count):
-                image.seek(index)
+            for index in range(MAX_IMAGE_FRAMES + 1):
+                try:
+                    image.seek(index)
+                except EOFError:
+                    break
+
+                if index == MAX_IMAGE_FRAMES:
+                    raise RenderError(f"{label}: слишком много кадров")
+
                 image.load()
                 frame_size = _validate_dimensions(image.size, label)
                 if frame_size != source_size:
                     raise RenderError(f"{label}: размеры кадров различаются")
                 frame_duration = _duration_ms(image, label)
+                if trim:
+                    frame_duration = min(frame_duration, int(max_duration_seconds * 1000) - total_ms)
+
                 durations.append(frame_duration)
                 total_ms += frame_duration
                 if total_ms > max_duration_seconds * 1000:
                     raise RenderError(f"{label}: длительность больше {int(max_duration_seconds)} секунд")
+
+                if trim and total_ms >= max_duration_seconds * 1000:
+                    break
     except RenderError:
         raise
     except Exception as error:
         raise RenderError(f"{label}: изображение не удалось прочитать") from error
-    if frame_count == 1 and image_format not in {"GIF", "WEBP"}:
+    if not durations:
+        raise RenderError(f"{label}: нет кадров")
+
+    if len(durations) == 1 and image_format not in {"GIF", "WEBP"}:
         durations = [1000]
         total_ms = 1000
     return _MediaInfo(
@@ -258,6 +276,8 @@ def _probe_video(
     label: str,
     deadline: _Deadline,
     max_duration_seconds: float,
+    *,
+    trim: bool = False,
 ) -> _MediaInfo:
     command = [
         "ffprobe",
@@ -300,13 +320,15 @@ def _probe_video(
             duration = frames / fps
     if duration is None or not math.isfinite(duration) or duration <= 0:
         raise RenderError(f"{label}: длительность видео неизвестна")
-    if duration > max_duration_seconds + 1e-6:
+    trimmed = trim and duration > max_duration_seconds
+    if duration > max_duration_seconds + 1e-6 and not trim:
         raise RenderError(f"{label}: длительность больше {int(max_duration_seconds)} секунд")
     return _MediaInfo(
         kind="video",
         width=width,
         height=height,
-        duration_seconds=duration,
+        duration_seconds=min(duration, max_duration_seconds) if trim else duration,
+        trimmed=trimmed,
     )
 
 
@@ -327,14 +349,16 @@ def _scan_media(
     limit: int,
     deadline: _Deadline,
     max_duration_seconds: float,
+    *,
+    trim: bool = False,
 ) -> _MediaInfo:
     _file_size(path, limit, label)
     try:
-        return _scan_pil(path, label, max_duration_seconds)
+        return _scan_pil(path, label, max_duration_seconds, trim=trim)
     except RenderError:
         if _looks_like_image(path):
             raise
-    return _probe_video(path, label, deadline, max_duration_seconds)
+    return _probe_video(path, label, deadline, max_duration_seconds, trim=trim)
 
 
 def _output_size(width: int, height: int) -> tuple[int, int]:
@@ -536,6 +560,7 @@ class _VideoReader:
         self._start()
 
     def _start(self) -> None:
+        self.frames_read = 0
         command = [
             "ffmpeg",
             "-hide_banner",
@@ -549,7 +574,7 @@ class _VideoReader:
             "-filter_complex_threads",
             "1",
         ]
-        if self.loop:
+        if self.loop and not self.info.trimmed:
             command.extend(["-stream_loop", "-1"])
         command.extend([
             "-i",
@@ -568,7 +593,7 @@ class _VideoReader:
             "-threads",
             "1",
         ])
-        if not self.loop:
+        if not self.loop or self.info.trimmed:
             command.extend([
                 "-frames:v",
                 str(_target_frames(self.info.duration_seconds, MAX_TEMPLATE_DURATION_SECONDS)),
@@ -590,12 +615,18 @@ class _VideoReader:
     def next_frame(self) -> Any:
         from PIL import Image
 
+        if self.loop and self.info.trimmed and self.frames_read >= _target_frames(self.info.duration_seconds):
+            self.close()
+            self._start()
+
         frame_size = self.info.width * self.info.height * 3
         data = _read_exact(self.process.stdout, frame_size, self.deadline)
         if len(data) != frame_size:
             message = bytes(self.stderr.data if self.stderr is not None else b"").decode(errors="replace")
             suffix = f": {message[-300:]}" if message else ""
             raise RenderError(f"видео закончилось раньше ожидаемого кадра{suffix}")
+
+        self.frames_read += 1
         return Image.frombytes("RGB", (self.info.width, self.info.height), data).convert("RGBA")
 
     def close(self) -> None:
@@ -888,6 +919,7 @@ def compose_mp4(
         MAX_INSERT_BYTES,
         deadline,
         MAX_DURATION_SECONDS,
+        trim=True,
     )
     source_reader = None
     avatar_b_reader = None

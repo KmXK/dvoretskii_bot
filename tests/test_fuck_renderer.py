@@ -75,6 +75,91 @@ def _save_gif(path, colors, durations, size=(96, 64)):
     )
 
 
+def _save_color_video(path):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=48x48:r=1:d=5",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=48x48:r=1:d=5",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=48x48:r=1:d=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=green:s=48x48:r=1:d=3",
+            "-filter_complex",
+            "[0:v][1:v][2:v][3:v]concat=n=4:v=1:a=0,format=yuv420p",
+            "-r",
+            "1",
+            "-c:v",
+            "libx264",
+            "-threads",
+            "1",
+            "-y",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=20,
+    )
+
+
+@pytest.mark.parametrize("extension", ["gif", "mp4"])
+def test_compose_truncates_long_animated_avatar(tmp_path, extension):
+    source = tmp_path / "source.gif"
+    _save_gif(
+        source,
+        ["white", "#fefefe", "#fdfdfd", "#fcfcfc"],
+        [5000, 5000, 5000, 7000],
+        size=(64, 64),
+    )
+    avatar_b = tmp_path / f"avatar-b.{extension}"
+    if extension == "gif":
+        _save_gif(
+            avatar_b,
+            ["red", "blue", "red", "green"],
+            [5000, 5000, 10000, 3000],
+            size=(48, 48),
+        )
+    else:
+        _save_color_video(avatar_b)
+    avatar_a = tmp_path / "avatar-a.png"
+    Image.new("RGBA", (8, 8), "white").save(avatar_a)
+    output = tmp_path / "output.mp4"
+
+    compose_mp4(
+        source,
+        {"keyframes": {"b": [{"t": 0, "x": 16, "y": 16, "w": 32, "h": 32}]}},
+        avatar_a,
+        avatar_b,
+        output,
+    )
+
+    info = _probe(output)
+    assert float(info["duration"]) == pytest.approx(22, abs=0.08)
+    frames = _raw_frames(output, (64, 64))
+    assert len(frames) == 550
+    sampled = [frames[index].getpixel((32, 32)) for index in (105, 130, 255, 505)]
+    assert sampled[0][0] > sampled[0][2] + 80
+    assert sampled[1][2] > sampled[1][0] + 80
+    assert sampled[2][0] > sampled[2][2] + 80
+    assert sampled[3][0] > sampled[3][2] + 80
+    assert all(
+        pixel[1] < pixel[0] + 40 and pixel[1] < pixel[2] + 40
+        for pixel in (frame.getpixel((32, 32)) for frame in frames)
+    )
+
+
 def test_compose_keeps_delays_and_loops_animated_avatar(tmp_path):
     source = tmp_path / "source.gif"
     _save_gif(source, ["white", "#fefefe", "#fdfdfd"], [100, 200, 300])

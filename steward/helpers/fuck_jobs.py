@@ -21,7 +21,6 @@ ASSETS_DIR = Path("data/fuck")
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 4_000_000
-MAX_DURATION = 20
 
 _RENDER_SEMAPHORE = asyncio.Semaphore(1)
 _ADMITTED_JOBS = 0
@@ -57,9 +56,6 @@ def _validate_attachment(media: Any) -> None:
     height = getattr(media, "height", None) or 0
     if width * height > MAX_PIXELS:
         raise ValueError("Разрешение слишком большое: максимум 4 мегапикселя.")
-
-    if (getattr(media, "duration", None) or 0) > MAX_DURATION:
-        raise ValueError("Гифка слишком длинная: максимум 20 секунд.")
 
 
 async def _save_avatar(bot, user_id: int, name: str | None, destination: Path) -> None:
