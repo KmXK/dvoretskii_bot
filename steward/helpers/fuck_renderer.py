@@ -561,6 +561,7 @@ class _VideoReader:
 
     def _start(self) -> None:
         self.frames_read = 0
+        self.last_frame: bytes | None = None
         command = [
             "ffmpeg",
             "-hide_banner",
@@ -621,12 +622,19 @@ class _VideoReader:
 
         frame_size = self.info.width * self.info.height * 3
         data = _read_exact(self.process.stdout, frame_size, self.deadline)
+        if not data:
+            returncode = _wait_process(self.process, self.deadline, self.stderr)
+            errors = self.stderr.data if self.stderr is not None else b""
+            if returncode == 0 and not errors and self.last_frame is not None:
+                data = self.last_frame
+
         if len(data) != frame_size:
             message = bytes(self.stderr.data if self.stderr is not None else b"").decode(errors="replace")
             suffix = f": {message[-300:]}" if message else ""
             raise RenderError(f"видео закончилось раньше ожидаемого кадра{suffix}")
 
         self.frames_read += 1
+        self.last_frame = data
         return Image.frombytes("RGB", (self.info.width, self.info.height), data).convert("RGBA")
 
     def close(self) -> None:
@@ -645,6 +653,7 @@ class _VideoReader:
         if self.stderr is not None:
             self.stderr.join()
         self.process = None
+        self.last_frame = None
 
 
 class _MediaReader:

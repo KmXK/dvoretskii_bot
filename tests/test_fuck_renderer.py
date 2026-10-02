@@ -114,6 +114,79 @@ def _save_color_video(path):
     )
 
 
+def test_compose_repeats_last_video_frame_after_fractional_cfr_eof(tmp_path):
+    source = tmp_path / "fractional.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=48x48:r=30:d=0.12",
+            "-t",
+            "0.12",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-threads",
+            "1",
+            "-y",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    avatar = tmp_path / "avatar.png"
+    Image.new("RGBA", (8, 8), "white").save(avatar)
+    output = tmp_path / "output.mp4"
+
+    source_info = _probe(source)
+    expected_frames = math.ceil(float(source_info["duration"]) * 25 - 1e-9)
+    assert expected_frames == 4
+    compose_mp4(source, {}, avatar, avatar, output)
+
+    output_info = _probe(output)
+    assert int(output_info["nb_frames"]) == expected_frames
+    assert float(output_info["duration"]) == pytest.approx(expected_frames / 25, abs=0.02)
+
+
+def test_compose_rejects_truncated_video_container(tmp_path):
+    source = tmp_path / "valid.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=48x48:rate=30:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-threads",
+            "1",
+            "-y",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    truncated = tmp_path / "truncated.mp4"
+    truncated.write_bytes(source.read_bytes()[:-128])
+    avatar = tmp_path / "avatar.png"
+    Image.new("RGBA", (8, 8), "white").save(avatar)
+
+    with pytest.raises(RenderError):
+        compose_mp4(truncated, {}, avatar, avatar, tmp_path / "output.mp4")
+
+
 @pytest.mark.parametrize("extension", ["gif", "mp4"])
 def test_compose_truncates_long_animated_avatar(tmp_path, extension):
     source = tmp_path / "source.gif"
