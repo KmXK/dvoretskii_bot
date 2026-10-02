@@ -1,41 +1,30 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import random
 import shutil
-import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from io import BytesIO
-
-from PIL import Image
 from pyrate_limiter import BucketFullException
-from telegram import InputFile, Message, MessageEntity
+from telegram import Message, MessageEntity
 
 from steward.data.models.fuck_asset import FuckAsset
 from steward.data.models.user import User
 from steward.data.repository import Repository
 from steward.framework import Feature, FeatureContext, collection, subcommand
-from steward.helpers.avatars import get_avatar_image
-from steward.helpers.fuck_render_job import (
-    MIN_AVAILABLE_MEMORY_BYTES,
-    available_memory_bytes,
-    run_render_job,
-)
+from steward.helpers.fuck_jobs import render_and_send
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.media import fetch_tg_file_bytes
 
 logger = logging.getLogger(__name__)
 
 ASSETS_DIR = Path("data/fuck")
-_COMPOSE_LOCK = asyncio.Lock()
 _USER_RATE_LIMIT = 2
 _USER_RATE_WINDOW = Duration.MINUTE
+_MAX_ANNOTATION_BYTES = 64 * 1024
 
 
 _MEDIA_EXTS = ("webp", "gif", "mp4", "webm", "mov")
@@ -69,11 +58,16 @@ def _pick_random_asset(repo: Repository, chat_id: int) -> tuple[FuckAsset, Path,
         if not media.exists() or not ann.exists():
             logger.warning("Asset %s: missing files (%s, %s)", asset.id, media, ann)
             continue
+
         try:
+            if ann.stat().st_size > _MAX_ANNOTATION_BYTES:
+                logger.warning("Asset %s: annotation is too large", asset.id)
+                continue
             data = json.loads(ann.read_text())
         except Exception as e:
             logger.warning("Asset %s: bad JSON (%s)", asset.id, e)
             continue
+
         return asset, media, data
     return None
 
@@ -130,6 +124,49 @@ def migrate_legacy_fuck_assets(repo: Repository) -> int:
     return migrated
 
 
+def _has_file_id(media: Any) -> bool:
+    file_id = getattr(media, "file_id", None)
+    return isinstance(file_id, str) and bool(file_id)
+
+
+def _supported_document(document: Any) -> bool:
+    if not _has_file_id(document):
+        return False
+
+    mime_type = getattr(document, "mime_type", None)
+    file_name = getattr(document, "file_name", None)
+    mime_type = mime_type.lower() if isinstance(mime_type, str) else ""
+    suffix = Path(file_name).suffix.lower() if isinstance(file_name, str) else ""
+    if mime_type == "image/gif":
+        return not suffix or suffix == ".gif"
+    if mime_type == "video/mp4":
+        return not suffix or suffix == ".mp4"
+    if mime_type in {"", "application/octet-stream"}:
+        return suffix in {".gif", ".mp4"}
+    return False
+
+
+def _media_from_message(message: Message | None) -> Any | None:
+    if message is None:
+        return None
+
+    photos = getattr(message, "photo", None) or ()
+    if photos:
+        photo = photos[-1]
+        if _has_file_id(photo):
+            return photo
+
+    animation = getattr(message, "animation", None)
+    if animation is not None and _has_file_id(animation):
+        return animation
+
+    document = getattr(message, "document", None)
+    if document is not None and _supported_document(document):
+        return document
+
+    return None
+
+
 class FuckFeature(Feature):
     command = "fuck"
     description = "Сгенерить гифку насилия в адрес упомянутого"
@@ -137,17 +174,21 @@ class FuckFeature(Feature):
 
     users = collection("users")
 
-    @subcommand("", description="Ответом — на сообщение цели или с прикреплённым фото")
+    @subcommand("", description="Ответом — на сообщение цели или с прикреплённым медиа")
     async def do_reply(self, ctx: FeatureContext):
-        if ctx.message is not None and ctx.message.photo:
-            await self._run_with_target_photo(ctx, ctx.message)
+        target_media = _media_from_message(ctx.message)
+        if target_media is None and ctx.message is not None:
+            target_media = _media_from_message(getattr(ctx.message, "reply_to_message", None))
+
+        if target_media is not None:
+            await self._run_with_target_avatar(ctx, target_media)
             return
 
         target = await self._resolve_target(ctx, identifier=None)
         if target is None:
             await ctx.reply(
                 "Укажи жертву: /fuck @username, ответом на сообщение "
-                "или прикрепи фото"
+                "или прикрепи фото или гифку"
             )
             return
         target_id, target_name = target
@@ -163,14 +204,13 @@ class FuckFeature(Feature):
         target_id, target_name = resolved
         await self._run(ctx, target_id, target_name)
 
-    async def _run_with_target_photo(
-        self, ctx: FeatureContext, target_photo: Message
-    ) -> None:
+    async def _run_with_target_avatar(self, ctx: FeatureContext, target_media: Any) -> None:
         msg = ctx.message
         if msg is not None and msg.from_user is not None:
             self._remember_user(
                 msg.from_user.id, msg.from_user.username, msg.from_user.first_name
             )
+
         author_name = self._display_name(ctx.user_id)
         await self._compose_and_send(
             ctx,
@@ -179,22 +219,8 @@ class FuckFeature(Feature):
             b_id=0,
             b_name=None,
             tag="/fuck",
-            b_photo=target_photo,
+            b_media=target_media,
         )
-
-    async def _photo_from_attachment(self, message: Message | None) -> Image.Image | None:
-        if message is None:
-            return None
-        photo_sizes = getattr(message, "photo", None) or ()
-        if not photo_sizes:
-            return None
-        try:
-            file_id = photo_sizes[-1].file_id
-            data = await fetch_tg_file_bytes(self.bot, file_id)
-            return Image.open(BytesIO(data)).convert("RGBA")
-        except Exception as e:
-            logger.warning("/fuck: failed to load attached photo: %s", e)
-            return None
 
     async def _run(self, ctx: FeatureContext, target_id: int, target_name: str | None):
         msg = ctx.message
@@ -202,6 +228,7 @@ class FuckFeature(Feature):
             self._remember_user(
                 msg.from_user.id, msg.from_user.username, msg.from_user.first_name
             )
+
         author_name = self._display_name(ctx.user_id)
         await self._compose_and_send(
             ctx,
@@ -212,21 +239,6 @@ class FuckFeature(Feature):
             tag="/fuck",
         )
 
-    async def _load_avatar(
-        self,
-        user_id: int,
-        name: str | None,
-        photo: Message | None,
-    ) -> Image.Image:
-        if photo is None:
-            return await get_avatar_image(self.bot, user_id, name_hint=name)
-
-        avatar = await self._photo_from_attachment(photo)
-        if avatar is None:
-            raise RuntimeError("Failed to load attached avatar")
-
-        return avatar
-
     async def _compose_and_send(
         self,
         ctx: FeatureContext,
@@ -236,103 +248,61 @@ class FuckFeature(Feature):
         b_name: str | None,
         *,
         tag: str,
-        a_photo: Message | None = None,
-        b_photo: Message | None = None,
+        a_media: Any | None = None,
+        b_media: Any | None = None,
     ) -> None:
         request_context = (
             f"request_id={uuid.uuid4().hex} chat_id={ctx.chat_id} "
             f"user_id={ctx.user_id} message_id={getattr(ctx.message, 'message_id', None)}"
         )
-        if _COMPOSE_LOCK.locked():
-            logger.info("%s rejected: busy %s", tag, request_context)
-            await ctx.reply("Генератор занят, попробуй чуть позже")
+        try:
+            check_limit(f"fuck_compose_{ctx.user_id}", _USER_RATE_LIMIT, _USER_RATE_WINDOW)
+        except BucketFullException:
+            logger.info("%s rejected: rate limit %s", tag, request_context)
+            await ctx.reply("Слишком часто. Не больше 2 в минуту, остынь.")
             return
 
-        async with _COMPOSE_LOCK:
-            try:
-                available = available_memory_bytes()
-            except (OSError, ValueError, RuntimeError):
-                logger.exception("%s rejected: memory unavailable %s", tag, request_context)
-                await ctx.reply("Генератор временно недоступен, попробуй позже")
-                return
+        selected = _pick_random_asset(self.repository, ctx.chat_id)
+        if selected is None:
+            total = len(self.repository.db.fuck_assets)
+            logger.warning("%s: no visible asset %s total=%s", tag, request_context, total)
+            await ctx.reply(f"Нет доступных ассетов для этого чата (всего в базе: {total}).")
+            return
 
-            if available < MIN_AVAILABLE_MEMORY_BYTES:
-                logger.warning(
-                    "%s rejected: low memory %s available_mib=%s",
-                    tag,
-                    request_context,
-                    available // (1024 * 1024),
-                )
-                await ctx.reply("Сейчас не хватает ресурсов для генерации, попробуй позже")
-                return
-
-            try:
-                check_limit(f"fuck_compose_{ctx.user_id}", _USER_RATE_LIMIT, _USER_RATE_WINDOW)
-            except BucketFullException:
-                logger.info("%s rejected: rate limit %s", tag, request_context)
-                await ctx.reply("Слишком часто. Не больше 2 в минуту, остынь.")
-                return
-
-            selected = _pick_random_asset(self.repository, ctx.chat_id)
-            if selected is None:
-                total = len(self.repository.db.fuck_assets)
-                logger.warning("%s: no visible asset %s total=%s", tag, request_context, total)
-                await ctx.reply(f"Нет доступных ассетов для этого чата (всего в базе: {total}).")
-                return
-
-            asset, source_path, annotation = selected
-            render_context = (
-                f"{request_context} asset_id={asset.id} asset_name={asset.name!r} "
-                f"source={source_path}"
+        asset, source_path, annotation = selected
+        render_context = (
+            f"{request_context} asset_id={asset.id} asset_name={asset.name!r} "
+            f"source={source_path}"
+        )
+        logger.info("%s render started: %s", tag, render_context)
+        try:
+            await render_and_send(
+                ctx,
+                source_path,
+                annotation,
+                a_id,
+                a_name,
+                b_id,
+                b_name,
+                a_media=a_media,
+                b_media=b_media,
             )
-            started = time.monotonic()
-            logger.info(
-                "%s render started: %s available_mib=%s",
-                tag,
-                render_context,
-                available // (1024 * 1024),
-            )
-            try:
-                a_avatar = await self._load_avatar(a_id, a_name, a_photo)
-                b_avatar = await self._load_avatar(b_id, b_name, b_photo)
-                with tempfile.TemporaryDirectory(prefix="fuck_") as tmp_dir:
-                    output_path = Path(tmp_dir) / "fuck.mp4"
-                    result = await run_render_job(
-                        source_path,
-                        annotation,
-                        a_avatar,
-                        b_avatar,
-                        output_path,
-                    )
-                    logger.info(
-                        "%s render completed: %s frames=%s dimensions=%sx%s "
-                        "duration_ms=%s worker_peak_rss_kib=%s child_peak_rss_kib=%s elapsed_ms=%s",
-                        tag,
-                        render_context,
-                        result["frames"],
-                        result["width"],
-                        result["height"],
-                        result["duration_ms"],
-                        result["peak_rss_kib"],
-                        result.get("child_peak_rss_kib"),
-                        round((time.monotonic() - started) * 1000),
-                    )
-                    with output_path.open("rb") as file:
-                        await self.bot.send_animation(
-                            chat_id=ctx.chat_id,
-                            animation=InputFile(file, filename="fuck.mp4"),
-                        )
+        except Exception as error:
+            if isinstance(error, ValueError):
+                logger.warning("%s render rejected: %s %s", tag, render_context, error)
+                await ctx.reply(str(error))
+                return
 
-                logger.info("%s animation sent: %s", tag, render_context)
-            except asyncio.CancelledError:
-                logger.info("%s render cancelled: %s", tag, render_context)
-                raise
-            except TimeoutError:
+            if isinstance(error, TimeoutError):
                 logger.warning("%s render timed out: %s", tag, render_context)
                 await ctx.reply("Генерация заняла слишком долго, попробуй другой раз")
-            except Exception:
-                logger.exception("%s render failed: %s", tag, render_context)
-                await ctx.reply("Не получилось сгенерить, попробуй позже")
+                return
+
+            logger.exception("%s render failed: %s", tag, render_context)
+            await ctx.reply("Не получилось сгенерить, попробуй позже")
+            return
+
+        logger.info("%s animation sent: %s", tag, render_context)
 
     def _user(self, user_id: int) -> User | None:
         return next((u for u in self.repository.db.users if u.id == user_id), None)
@@ -367,18 +337,20 @@ class FuckFeature(Feature):
     ) -> tuple[int, str | None] | None:
         msg = ctx.message
         if msg is not None:
-            reply = msg.reply_to_message
+            reply = getattr(msg, "reply_to_message", None)
             if reply is not None and reply.from_user is not None:
                 u = reply.from_user
                 if self._remember_user(u.id, u.username, u.first_name):
                     await self.users.save()
                 return u.id, self._display_name(u.id)
-            for ent in (msg.entities or ()):
+
+            for ent in (getattr(msg, "entities", None) or ()):
                 if ent.type == MessageEntity.TEXT_MENTION and ent.user is not None:
                     u = ent.user
                     if self._remember_user(u.id, u.username, u.first_name):
                         await self.users.save()
                     return u.id, self._display_name(u.id)
+
         if not identifier:
             return None
         ident = identifier.lstrip("@")
@@ -386,6 +358,7 @@ class FuckFeature(Feature):
             target_id = int(ident)
         except ValueError:
             target_id = None
+
         if target_id is not None:
             return target_id, self._display_name(target_id)
 
@@ -408,14 +381,7 @@ class FuckFeature(Feature):
         target_id = int(chat.id)
         if self._remember_user(target_id, chat.username, chat.first_name):
             await self.users.save()
-        try:
-            from steward.helpers.avatars import save_photo_from_file_id
-            photo = getattr(chat, "photo", None)
-            file_id = getattr(photo, "big_file_id", None) if photo else None
-            if file_id:
-                await save_photo_from_file_id(self.bot, target_id, file_id)
-        except Exception as e:
-            logger.info("/fuck: caching avatar for @%s failed: %s", username, e)
+
         return target_id, self._display_name(target_id)
 
 
@@ -468,6 +434,11 @@ class SexFeature(FuckFeature):
         if not msg.photo or reply_msg is None or not reply_msg.photo:
             return False
 
+        author_media = _media_from_message(msg)
+        target_media = _media_from_message(reply_msg)
+        if author_media is None or target_media is None:
+            return False
+
         await self._compose_and_send(
             ctx,
             a_id=0,
@@ -475,8 +446,8 @@ class SexFeature(FuckFeature):
             b_id=0,
             b_name=None,
             tag="/sex",
-            a_photo=msg,
-            b_photo=reply_msg,
+            a_media=author_media,
+            b_media=target_media,
         )
         return True
 

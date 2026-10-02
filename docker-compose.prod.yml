@@ -11,8 +11,12 @@ services:
     expose:
       - "${METRICS_PORT:-9090}"
     depends_on: !override
-      - flaresolverr
-      - fluentbit
+      flaresolverr:
+        condition: service_started
+      fluentbit:
+        condition: service_started
+      fuck-renderer:
+        condition: service_healthy
     logging:
       driver: fluentd
       options:

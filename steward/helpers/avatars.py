@@ -52,7 +52,8 @@ def cached_avatar_path(user_id: int) -> Optional[Path]:
         if not p.exists():
             continue
         try:
-            head = p.read_bytes()[:16]
+            with p.open("rb") as image:
+                head = image.read(16)
         except Exception:
             continue
         if _detect_ext(head) is None:

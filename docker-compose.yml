@@ -45,16 +45,41 @@ services:
       - METRICS_PORT=${METRICS_PORT:-9090}
       - PROMETHEUS_DISABLE_CREATED_SERIES=true
       - API_PORT=${API_PORT:-8080}
+      - FUCK_RENDERER_URL=http://fuck-renderer:8091
       - FLARESOLVERR_URL=http://flaresolverr:8191/v1
       - VICTORIAMETRICS_URL=http://victoriametrics:8428
     expose:
       - "${API_PORT:-8080}"
     depends_on:
-      - telegram-api
-      - flaresolverr
+      telegram-api:
+        condition: service_started
+      flaresolverr:
+        condition: service_started
+      fuck-renderer:
+        condition: service_healthy
     networks:
       - bot
     restart: always
+
+  fuck-renderer:
+    build: .
+    command: ["python", "-m", "steward.fuck_worker"]
+    volumes:
+      - ./data/fuck:/app/data/fuck:ro
+      - ./data/fuck_jobs:/app/data/fuck_jobs
+    networks:
+      - bot
+    mem_limit: 384m
+    memswap_limit: 384m
+    cpus: 1.0
+    pids_limit: 32
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8091/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest

@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+import aiohttp
+from aiohttp_socks import ProxyConnector
 from telegram.ext import ExtBot
 
 logger = logging.getLogger(__name__)
 
 _VIDEO_SUFFIXES = frozenset({".mkv", ".mov", ".mp4", ".webm"})
+_FILE_DOWNLOAD_CHUNK_SIZE = 64 * 1024
+_FILE_DOWNLOAD_TIMEOUT = 30
 
 
 def is_video_file(path: str | Path) -> bool:
@@ -50,21 +55,108 @@ async def fetch_tg_file_bytes(bot: ExtBot, file_id: str) -> bytes:
     return bytes(await tg_file.download_as_bytearray())
 
 
-async def fetch_tg_file_to(bot: ExtBot, file_id: str, dest: Path) -> Path:
+async def fetch_tg_file_to(
+    bot: ExtBot,
+    file_id: str,
+    dest: Path,
+    *,
+    max_bytes: int | None = None,
+) -> Path:
     """Download a Telegram file to `dest` on disk. Returns `dest`.
 
     Uses the local-mode path when available to avoid a round trip.
     """
     tg_file = await bot.get_file(file_id)
-    if tg_file.file_path:
-        rel = _strip_file_url(tg_file.file_path)
+    file_path = getattr(tg_file, "file_path", None)
+    if not file_path:
+        raise RuntimeError("Telegram не вернул путь к файлу")
+
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes не может быть отрицательным")
+
+    file_size = getattr(tg_file, "file_size", None)
+    if max_bytes is not None and file_size is not None and file_size > max_bytes:
+        raise ValueError(
+            f"Размер файла Telegram превышает лимит {max_bytes} байт"
+        )
+
+    started = False
+    try:
+        rel = _strip_file_url(file_path)
         local_path = Path(f"/data/{bot.token}/{rel}")
         if local_path.exists():
-            dest.write_bytes(local_path.read_bytes())
+            with local_path.open("rb") as source, dest.open("wb") as output:
+                started = True
+                copied = 0
+                while True:
+                    chunk = source.read(_FILE_DOWNLOAD_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    copied += len(chunk)
+                    if max_bytes is not None and copied > max_bytes:
+                        raise ValueError(
+                            f"Размер файла Telegram превышает лимит {max_bytes} байт"
+                        )
+                    output.write(chunk)
+                    await asyncio.sleep(0)
             return dest
-    data = await tg_file.download_as_bytearray()
-    dest.write_bytes(bytes(data))
-    return dest
+
+        if not file_path.startswith(("http://", "https://")):
+            raise RuntimeError("Telegram вернул относительный путь к файлу")
+
+        try:
+            proxy_url = os.environ.get("DOWNLOAD_PROXY")
+            if proxy_url:
+                try:
+                    connector = ProxyConnector.from_url(proxy_url)
+                except ValueError:
+                    raise RuntimeError(
+                        "Не удалось настроить прокси для скачивания файла"
+                    ) from None
+            else:
+                connector = None
+            timeout = aiohttp.ClientTimeout(total=_FILE_DOWNLOAD_TIMEOUT)
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+            ) as session:
+                async with session.get(file_path) as response:
+                    if response.status < 200 or response.status >= 300:
+                        raise RuntimeError(
+                            f"Telegram вернул HTTP {response.status} при скачивании файла"
+                        )
+                    if (
+                        max_bytes is not None
+                        and response.content_length is not None
+                        and response.content_length > max_bytes
+                    ):
+                        raise ValueError(
+                            f"Размер файла Telegram превышает лимит {max_bytes} байт"
+                        )
+
+                    downloaded = 0
+                    with dest.open("wb") as output:
+                        started = True
+                        async for chunk in response.content.iter_chunked(
+                            _FILE_DOWNLOAD_CHUNK_SIZE
+                        ):
+                            downloaded += len(chunk)
+                            if max_bytes is not None and downloaded > max_bytes:
+                                raise ValueError(
+                                    f"Размер файла Telegram превышает лимит {max_bytes} байт"
+                                )
+                            output.write(chunk)
+                            await asyncio.sleep(0)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            raise RuntimeError("Не удалось скачать файл Telegram") from None
+        return dest
+    except BaseException:
+        if started:
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 
 async def ffprobe_duration(path: Path) -> float:
