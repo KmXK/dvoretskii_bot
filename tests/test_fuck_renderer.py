@@ -222,8 +222,8 @@ def test_compose_preserves_video_display_rotation(tmp_path):
     )
     subprocess.run(
         [
-            "ffmpeg", "-v", "error", "-i", str(original),
-            "-c", "copy", "-metadata:s:v:0", "rotate=90", str(source),
+            "ffmpeg", "-v", "error", "-display_rotation", "90", "-i", str(original),
+            "-c", "copy", str(source),
         ],
         check=True,
         capture_output=True,

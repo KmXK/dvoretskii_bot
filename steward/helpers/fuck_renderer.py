@@ -565,6 +565,8 @@ class _VideoReader:
             "rawvideo",
             "-pix_fmt",
             "rgb24",
+            "-threads",
+            "1",
         ])
         if not self.loop:
             command.extend([
