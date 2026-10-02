@@ -1,5 +1,7 @@
 import logging
 
+from pyrate_limiter import BucketFullException
+
 from steward.features.download.transcribe import make_transcribation
 from steward.features.download.yt import (
     DOWNLOAD_TYPE_MAP,
@@ -15,6 +17,7 @@ from steward.framework import (
     on_message,
 )
 from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.video_trim import create_trimmed_video_reply, parse_trim_range
 
 logger = logging.getLogger("download_controller")
 
@@ -23,6 +26,47 @@ _AI_TRIGGERS = ("дворецкий", "уважаемый")
 
 class DownloadFeature(Feature):
     excluded_from_ai_router = True
+
+    @on_message
+    async def on_trim(self, ctx: FeatureContext) -> bool:
+        message = ctx.message
+        if message is None or not message.text:
+            return False
+
+        reply = message.reply_to_message
+        if reply is None or reply.video is None:
+            return False
+
+        sender = reply.from_user
+        via_bot = reply.via_bot
+        if not (
+            (sender is not None and sender.id == ctx.bot.id)
+            or (via_bot is not None and via_bot.id == ctx.bot.id)
+        ):
+            return False
+
+        time_range = parse_trim_range(message.text)
+        if time_range is None:
+            return False
+
+        try:
+            check_limit(YT_LIMIT, 15, Duration.MINUTE)
+            await create_trimmed_video_reply(
+                ctx.bot,
+                ctx.client,
+                message,
+                reply,
+                *time_range,
+            )
+        except BucketFullException:
+            await ctx.reply("Слишком много запросов на видео. Попробуй через минуту.", markdown=False)
+        except ValueError as error:
+            await ctx.reply(str(error), markdown=False)
+        except Exception:
+            logger.exception("Video trim failed")
+            await ctx.reply("Не удалось обрезать видео. Попробуй ещё раз.", markdown=False)
+
+        return True
 
     @on_message
     async def on_url(self, ctx: FeatureContext) -> bool:
