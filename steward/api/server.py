@@ -2172,6 +2172,41 @@ async def handle_bills_list(request: web.Request):
     })
 
 
+async def handle_bills_history(request: web.Request):
+    from asyncio import to_thread
+    from copy import deepcopy
+    from steward.helpers.bills_history import build_debt_history
+
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+
+    person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
+    if person is None:
+        return web.json_response({"events": [], "balances": [], "persons": [], "person_id": None})
+
+    bills = repository.get_bills_v2_for_person(person.id)
+    payments = [
+        payment
+        for payment in repository.db.bill_payments_v2
+        if person.id in (payment.debtor, payment.creditor)
+    ]
+    bills, payments = deepcopy((bills, payments))
+    history = await to_thread(build_debt_history, bills, payments, person.id)
+    person_ids = {person.id}
+    for event in history["events"]:
+        person_ids.update((event["debtor"], event["creditor"]))
+
+    history["person_id"] = person.id
+    history["persons"] = [
+        {"id": item.id, "display_name": item.display_name}
+        for item in repository.db.bill_persons
+        if item.id in person_ids
+    ]
+    return web.json_response(history)
+
+
 async def handle_bills_get(request: web.Request):
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
@@ -3623,6 +3658,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills", handle_bills_list)
     app.router.add_post("/api/bills", handle_bills_create)
     app.router.add_get("/api/bills/persons", handle_bills_persons)
+    app.router.add_get("/api/bills/history", handle_bills_history)
     app.router.add_get("/api/bills/circle", handle_bills_circle)
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)
     app.router.add_get("/api/bills/payment-details", handle_bills_payment_details_get)

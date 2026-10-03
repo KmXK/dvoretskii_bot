@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, CreditCard } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, CreditCard, History } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import PaymentDetailsDialog from '../components/bills/PaymentDetailsDialog'
 import PaymentDialog from '../components/bills/PaymentDialog'
 import ShareBillButton from '../components/bills/ShareBillButton'
+import DebtHistory from '../components/bills/DebtHistory'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
@@ -1040,6 +1041,8 @@ export default function BillsPage() {
   const [managePeopleId, setManagePeopleId] = useState(null)
   const [paymentEntry, setPaymentEntry] = useState(null)
   const [showPaymentDetails, setShowPaymentDetails] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyFilters, setHistoryFilters] = useState({ direction: 'all', debtor: '', creditor: '', currency: '' })
   const [initialDebtDirection] = useState(
     () => getBillsStartParam() === 'bills_pay' ? 'owe' : null
   )
@@ -1200,6 +1203,19 @@ export default function BillsPage() {
     )
   }
 
+  if (showHistory) {
+    return (
+      <DebtHistory
+        filters={historyFilters}
+        onFiltersChange={setHistoryFilters}
+        onBack={() => setShowHistory(false)}
+        onOpenBill={setOpenBillId}
+        formatMinor={formatMinor}
+        formatDateTime={formatDateTime}
+      />
+    )
+  }
+
   return (
     <div className="max-w-3xl mx-auto">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4">
@@ -1216,6 +1232,12 @@ export default function BillsPage() {
             <CreditCard size={15} className="text-gold" /> Реквизиты
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowHistory(true)}
+          className="mb-4 inline-flex items-center gap-1.5 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/10"
+        ><History size={15} className="text-gold" /> История долгов</button>
 
         <DebtSummary
           bills={bills}
