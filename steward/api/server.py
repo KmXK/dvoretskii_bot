@@ -2622,7 +2622,8 @@ async def handle_bills_share_image(request: web.Request):
     png = render_bill_people_png(bill.name, share["groups"], summary=share["summary"])
     with Image.open(BytesIO(png)) as image:
         as_document = (
-            image.width + image.height > 10000
+            max(image.size) > 2560
+            or image.width + image.height > 10000
             or max(image.size) > 20 * min(image.size)
             or len(png) > 10 * 1024 * 1024
         )
@@ -2640,14 +2641,12 @@ async def handle_bills_share_image(request: web.Request):
                 id=_uuid.uuid4().hex,
                 document_file_id=msg.document.file_id,
                 title=bill.name or "Счёт",
-                caption=share["caption"],
             )
         else:
             msg = await bot.send_photo(chat_id=uid, photo=png, disable_notification=True)
             result = InlineQueryResultCachedPhoto(
                 id=_uuid.uuid4().hex,
                 photo_file_id=msg.photo[-1].file_id,
-                caption=share["caption"],
             )
     except Exception as e:
         logger.warning("share-image: upload to %s failed: %s", uid, e)

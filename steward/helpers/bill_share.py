@@ -12,16 +12,10 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
     }
     total_minor = sum(tx.unit_price_minor * tx.quantity for tx in bill.transactions)
 
-    def add_item(pid, tx, portion, amount):
-        per_person.setdefault(pid, []).append({
-            "label": tx.item_name or "—",
-            "detail": f"{portion} × {minor_to_display(tx.unit_price_minor, bill.currency)}",
-            "amount_minor": amount,
-        })
-
     for tx in bill.transactions:
         assigned_portion = Fraction(0)
         assigned_minor = 0
+        allocations = {}
         for asg in tx.assignments:
             portion = Fraction(asg.unit_count, asg.denominator or 1)
             amount = (
@@ -31,20 +25,23 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
             assigned_minor += amount
             debtors = sorted(asg.debtors, key=lambda pid: pid == tx.creditor)
             if not debtors:
-                add_item(UNKNOWN_PERSON_ID, tx, portion, amount)
+                _add_portion(allocations, UNKNOWN_PERSON_ID, portion, amount)
                 continue
 
             for pid, share in zip(debtors, split_minor(amount, len(debtors))):
-                add_item(pid or UNKNOWN_PERSON_ID, tx, portion / len(debtors), share)
+                _add_portion(allocations, pid or UNKNOWN_PERSON_ID, portion / len(debtors), share)
 
         remaining = tx.quantity - assigned_portion
         if remaining > 0:
-            add_item(
+            _add_portion(
+                allocations,
                 UNKNOWN_PERSON_ID,
-                tx,
                 remaining,
                 max(0, tx.unit_price_minor * tx.quantity - assigned_minor),
             )
+
+        for pid, (portion, amount) in allocations.items():
+            per_person.setdefault(pid, []).append(_format_item(tx, portion, amount, bill.currency))
 
     groups = []
     for pid in sorted(per_person, key=lambda pid: names.get(pid, "").lower()):
@@ -71,30 +68,28 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
 
     total = minor_to_display(total_minor, bill.currency)
     summary = f"{people_count} {_people_word(people_count)} · итого {total}"
-    header = f"🧾 {bill.name or 'Счёт'} — кто что взял\n{summary}"
-    sections = [header]
-    for group in groups:
-        lines = [f"{group['name']} — {group['total']}"]
-        lines.extend(
-            f"• {item['label']} · {item['detail']} = {item['amount']}"
-            for item in group["items"]
-        )
-        sections.append("\n".join(lines))
+    return {"groups": groups, "summary": summary}
 
-    caption = "\n\n".join(sections)
-    if len(caption.encode("utf-16-le")) // 2 > 1024:
-        title = bill.name or "Счёт"
-        suffix = f" — кто что взял\n{summary}\n\nТовары и суммы каждого участника — на картинке."
-        available = 1024 - len(f"🧾 {suffix}".encode("utf-16-le")) // 2
-        while len(title.encode("utf-16-le")) // 2 > available:
-            title = title[:-1]
 
-        if title != (bill.name or "Счёт"):
-            title = f"{title[:-1]}…"
+def _add_portion(allocations, pid, portion, amount):
+    old_portion, old_amount = allocations.get(pid, (Fraction(0), 0))
+    allocations[pid] = (old_portion + portion, old_amount + amount)
 
-        caption = f"🧾 {title}{suffix}"
 
-    return {"groups": groups, "summary": summary, "caption": caption}
+def _format_item(transaction, portion, amount, currency):
+    share = portion / max(transaction.quantity, 1)
+    fraction = f"{share.numerator}/{share.denominator}"
+    total = minor_to_display(transaction.unit_price_minor * transaction.quantity, currency)
+    result = {
+        "label": transaction.item_name or "—",
+        "detail": f"{fraction} × {total} = {minor_to_display(amount, currency)}",
+        "amount_minor": amount,
+    }
+    if transaction.quantity > 1:
+        price = minor_to_display(transaction.unit_price_minor, currency)
+        result["quantity_detail"] = f"Вся позиция: {transaction.quantity} × {price} = {total}"
+
+    return result
 
 
 def _format_group(name, items, currency):
@@ -106,6 +101,7 @@ def _format_group(name, items, currency):
                 "label": item["label"],
                 "detail": item["detail"],
                 "amount": minor_to_display(item["amount_minor"], currency),
+                **({"quantity_detail": item["quantity_detail"]} if "quantity_detail" in item else {}),
             }
             for item in items
         ],

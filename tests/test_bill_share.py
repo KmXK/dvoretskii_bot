@@ -59,15 +59,15 @@ def test_share_lists_person_totals_items_portions_and_unit_prices():
         {
             "name": "Дима",
             "total": "5.01 р",
-            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р", "amount": "5.01 р"}],
+            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р = 5.01 р", "amount": "5.01 р"}],
         },
         {
             "name": "Кирилл",
             "total": "5 р",
-            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р", "amount": "5 р"}],
+            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р = 5 р", "amount": "5 р"}],
         },
     ]
-    assert "Дима — 5.01 р\n• Пицца · 1/2 × 10.01 р = 5.01 р" in share["caption"]
+    assert "caption" not in share
 
 
 def test_fractional_share_matches_debt_rounding_and_keeps_zero_participants():
@@ -78,7 +78,7 @@ def test_fractional_share_matches_debt_rounding_and_keeps_zero_participants():
 
     assert debts["dima"]["kirill"] == 751
     assert share["groups"][0]["total"] == "7.51 р"
-    assert share["groups"][0]["items"][0]["detail"] == "3/4 × 10.01 р"
+    assert share["groups"][0]["items"][0]["detail"] == "3/4 × 10.01 р = 7.51 р"
     assert share["groups"][1]["total"] == "0 р"
     assert share["groups"][2]["name"] == "Не распределено"
     assert share["groups"][2]["total"] == "2.50 р"
@@ -113,17 +113,52 @@ def test_rounding_difference_reconciles_groups_without_changing_debts():
     assert share["summary"] == "2 участника · итого 1 р"
 
 
-def test_long_caption_keeps_summary_and_all_items_in_image_groups():
+def test_large_bill_keeps_summary_and_all_items_without_caption():
     bill = make_bill(*(make_transaction() for _ in range(30)))
-    bill.name = "🧾" * 1000
 
     share = build_bill_share(bill, NAMES)
 
-    assert len(share["caption"].encode("utf-16-le")) // 2 <= 1024
-    assert share["summary"] in share["caption"]
-    assert "на картинке" in share["caption"]
+    assert "caption" not in share
+    assert share["summary"] == "2 участника · итого 300.30 р"
     assert len(share["groups"][0]["items"]) == 30
     assert len(share["groups"][1]["items"]) == 30
+
+
+def test_quantity_calculation_uses_fraction_of_whole_position():
+    tx = make_transaction(price=1000, quantity=3)
+    tx.assignments = [
+        BillItemAssignment(unit_count=1, debtors=["dima"]),
+        BillItemAssignment(unit_count=2, debtors=["kirill"]),
+    ]
+
+    share = build_bill_share(make_bill(tx), NAMES)
+
+    assert share["summary"] == "2 участника · итого 30 р"
+    dima, kirill = share["groups"]
+    assert dima["total"] == "10 р"
+    assert dima["items"][0]["detail"] == "1/3 × 30 р = 10 р"
+    assert dima["items"][0]["quantity_detail"] == "Вся позиция: 3 × 10 р = 30 р"
+    assert kirill["total"] == "20 р"
+    assert kirill["items"][0]["detail"] == "2/3 × 30 р = 20 р"
+
+
+def test_shared_fractional_rows_for_one_person_are_combined_per_position():
+    tx = make_transaction(price=1000, quantity=2)
+    tx.assignments = [
+        BillItemAssignment(unit_count=1, denominator=2, debtors=["kirill", "dima"]),
+        BillItemAssignment(unit_count=1, denominator=4, debtors=["dima"]),
+        BillItemAssignment(unit_count=5, denominator=4, debtors=["kirill"]),
+    ]
+
+    share = build_bill_share(make_bill(tx), NAMES)
+
+    dima, kirill = share["groups"]
+    assert dima["total"] == "5 р"
+    assert len(dima["items"]) == 1
+    assert dima["items"][0]["detail"] == "1/4 × 20 р = 5 р"
+    assert kirill["total"] == "15 р"
+    assert len(kirill["items"]) == 1
+    assert kirill["items"][0]["detail"] == "3/4 × 20 р = 15 р"
 
 
 def test_share_supports_empty_bills_and_currency():
@@ -136,15 +171,26 @@ def test_share_supports_empty_bills_and_currency():
     assert all(group["total"] == "$0" for group in share["groups"])
 
 
-def test_image_contains_totals_prices_and_wraps_full_item_names(monkeypatch):
-    texts = []
+def capture_drawn_text(monkeypatch):
+    records = []
     original = ImageDraw.ImageDraw.text
 
     def record_text(draw, xy, text, *args, **kwargs):
-        texts.append(text)
+        records.append((text, draw.textbbox(xy, text, font=kwargs.get("font"))))
         return original(draw, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    return records
+
+
+def assert_text_fits_image(records, image):
+    for _, (left, top, right, bottom) in records:
+        assert 0 <= left <= right <= image.width
+        assert 0 <= top <= bottom <= image.height
+
+
+def test_image_contains_totals_prices_and_wraps_full_item_names(monkeypatch):
+    records = capture_drawn_text(monkeypatch)
     tx = make_transaction()
     tx.item_name = "Очень длинное название вкусной пиццы " * 5
     share = build_bill_share(make_bill(tx), NAMES)
@@ -152,13 +198,38 @@ def test_image_contains_totals_prices_and_wraps_full_item_names(monkeypatch):
     raw = render_bill_people_png("Ужин", share["groups"], summary=share["summary"])
 
     image = Image.open(BytesIO(raw))
+    texts = [text for text, _ in records]
     assert image.format == "PNG"
     assert image.width == 880
     assert image.height > 700
     assert share["summary"] in texts
     assert "5.01 р" in texts
-    assert "1/2 × 10.01 р" in texts
+    assert "1/2 × 10.01 р = 5.01 р" in texts
     assert " ".join(texts).count("пиццы") == 10
+    assert_text_fits_image(records, image)
+
+
+def test_tall_image_keeps_all_position_calculations_and_totals(monkeypatch):
+    records = capture_drawn_text(monkeypatch)
+    transactions = []
+    for index in range(80):
+        tx = make_transaction(price=1000, quantity=3, unit_count=3)
+        tx.item_name = f"Позиция {index}"
+        transactions.append(tx)
+
+    share = build_bill_share(make_bill(*transactions), NAMES)
+    raw = render_bill_people_png("Большой счёт", share["groups"], summary=share["summary"])
+
+    image = Image.open(BytesIO(raw))
+    texts = [text for text, _ in records]
+    assert image.width == 880
+    assert image.height > 10000
+    assert "2 участника · итого 2400 р" in texts
+    assert texts.count("1200 р") == 2
+    assert texts.count("1/2 × 30 р = 15 р") == 160
+    assert texts.count("Вся позиция: 3 × 10 р = 30 р") == 160
+    assert texts.count("Позиция 79") == 2
+    assert_text_fits_image(records, image)
 
 
 def make_share_request(monkeypatch, user_id=2, closed=False):
@@ -195,8 +266,8 @@ async def test_participant_can_share_open_or_closed_bill(monkeypatch, closed):
     bot.delete_message.assert_awaited_once_with(chat_id=2, message_id=99)
     result = bot.save_prepared_inline_message.call_args.args[1]
     assert result.photo_file_id == "bill-photo"
-    assert "Дима — 5.01 р" in result.caption
-    assert "Пицца · 1/2 × 10.01 р = 5.01 р" in result.caption
+    assert result.caption is None
+    assert "caption" not in result.to_dict()
     assert bot.save_prepared_inline_message.call_args.kwargs["allow_user_chats"] is True
 
 
@@ -211,10 +282,11 @@ async def test_share_rejects_unauthenticated_or_unrelated_user(monkeypatch, user
     bot.save_prepared_inline_message.assert_not_awaited()
 
 
-async def test_large_bill_shares_as_file_without_losing_items(monkeypatch):
+@pytest.mark.parametrize("item_count", [20, 80])
+async def test_large_bill_shares_as_file_without_losing_items(monkeypatch, item_count):
     request, bot = make_share_request(monkeypatch)
     bill = request.app["repository"].db.bills_v2[0]
-    bill.transactions = [make_transaction() for _ in range(80)]
+    bill.transactions = [make_transaction() for _ in range(item_count)]
     sent = MagicMock(message_id=99, document=MagicMock(file_id="bill-document"))
     bot.send_document = AsyncMock(return_value=sent)
 
@@ -225,5 +297,11 @@ async def test_large_bill_shares_as_file_without_losing_items(monkeypatch):
     bot.send_document.assert_awaited_once()
     result = bot.save_prepared_inline_message.call_args.args[1]
     assert result.document_file_id == "bill-document"
-    assert "итого 800.80 р" in result.caption
-    assert "на картинке" in result.caption
+    assert result.caption is None
+    assert "caption" not in result.to_dict()
+    raw = bot.send_document.call_args.kwargs["document"]
+    image = Image.open(BytesIO(raw))
+    assert image.width == 880
+    assert image.height > 2560
+    if item_count == 80:
+        assert image.height > 10000

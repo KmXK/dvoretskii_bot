@@ -91,7 +91,8 @@ def render_bill_people_png(
     group_gap = 18
     measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     title_lines = _wrap_text(measure, name or "Счёт", title_font, width - 2 * pad)
-    header_h = pad + 24 + len(title_lines) * 56 + 48 + (40 if summary else 0)
+    summary_lines = _wrap_text(measure, summary, sub_font, width - 2 * pad) if summary else []
+    header_h = pad + 24 + len(title_lines) * 56 + 48 + len(summary_lines) * 40
     layouts = []
     body_h = 0
     for group in groups:
@@ -103,6 +104,9 @@ def render_bill_people_png(
             amount_w = _text_w(measure, item["amount"], amount_font)
             label_lines = _wrap_text(measure, item["label"], item_font, width - 2 * pad - 24 - amount_w - 20)
             detail_lines = _wrap_text(measure, item["detail"], sub_font, width - 2 * pad - 24) if item.get("detail") else []
+            if item.get("quantity_detail"):
+                detail_lines.extend(_wrap_text(measure, item["quantity_detail"], sub_font, width - 2 * pad - 24))
+
             item_h = len(label_lines) * 34 + len(detail_lines) * 34 + 12
             items.append((item, amount_w, label_lines, detail_lines, item_h))
 
@@ -129,8 +133,8 @@ def render_bill_people_png(
         title_y += 56
 
     draw.text((x0, title_y + 4), "Кто что взял", font=sub_font, fill=_MUTED)
-    if summary:
-        draw.text((x0, title_y + 44), summary, font=sub_font, fill=_GOLD)
+    for index, line in enumerate(summary_lines):
+        draw.text((x0, title_y + 44 + index * 40), line, font=sub_font, fill=_GOLD)
 
     y = header_h + pad // 2
     if not groups:
