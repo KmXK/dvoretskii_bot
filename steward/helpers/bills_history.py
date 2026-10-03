@@ -110,6 +110,81 @@ def _operation_items(operation, debtor, creditor):
     return items
 
 
+def _merge_items(items):
+    amounts = {}
+    order = []
+    for item in items:
+        name = item.get("name") or "—"
+        if name not in amounts:
+            amounts[name] = 0
+            order.append(name)
+        amounts[name] += item.get("amount_minor", 0)
+    return [
+        {"name": name, "amount_minor": amounts[name]}
+        for name in order
+        if amounts[name]
+    ]
+
+
+def _charge_event_key(event):
+    bills = event.get("bills") or []
+    if not bills:
+        return None
+    return (
+        bills[0]["id"],
+        event["debtor"],
+        event["creditor"],
+        event["currency"],
+    )
+
+
+def _merge_charge_events(events):
+    merged = []
+    pending = {}
+    for source in events:
+        event = dict(source)
+        if event["type"] == "charge":
+            key = _charge_event_key(event)
+            event["items"] = _merge_items(event.get("items", []))
+            pair = key[1:] if key else None
+            pending = {
+                pending_key: value
+                for pending_key, value in pending.items()
+                if pending_key == key or pending_key[1:] != pair
+            }
+            previous = pending.get(key)
+            if previous is None:
+                pending[key] = event
+                merged.append(event)
+                continue
+
+            previous["amount_minor"] += event["amount_minor"]
+            previous["delta_minor"] = event["after_minor"] - previous["before_minor"]
+            previous["after_minor"] = event["after_minor"]
+            previous["items"] = _merge_items(previous["items"] + event["items"])
+            previous["balance_known"] = previous["balance_known"] and event["balance_known"]
+            if event["date"] != previous["date"]:
+                previous["date_to"] = event["date"]
+            continue
+
+        pair = (event["debtor"], event["creditor"], event["currency"])
+        if event["type"] in ("payment", "adjustment"):
+            pending = {
+                key: value
+                for key, value in pending.items()
+                if key[1:] != pair
+            }
+        elif event["type"] == "close":
+            bill_ids = {bill["id"] for bill in event.get("bills", [])}
+            pending = {
+                key: value
+                for key, value in pending.items()
+                if not (key[0] in bill_ids and key[1:] == pair)
+            }
+        merged.append(event)
+    return merged
+
+
 def _history_operations(bills, payments):
     operations = []
     for bill in bills:
@@ -232,4 +307,4 @@ def build_debt_history(bills, payments, person_id):
         for (debtor, creditor, currency), amount in sorted(before.items())
         if amount and person_id in (debtor, creditor)
     ]
-    return {"events": list(reversed(events)), "balances": balances}
+    return {"events": list(reversed(_merge_charge_events(events))), "balances": balances}

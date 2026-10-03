@@ -93,6 +93,7 @@ class Repository:
         self._storage = storage
         self._save_lock = asyncio.Lock()
         self._save_callbacks: set[Callable[[], None | Awaitable[Any]]] = set()
+        self._bill_activity_snapshot = {}
 
         # Add abstraction on database to prevent cyclic dependencies and remove this kostil
         from steward.data.models.db import Database
@@ -106,13 +107,31 @@ class Repository:
         from steward.data.models.db import parse_from_dict
 
         self.db = parse_from_dict(migrated_data)
+        from steward.helpers.bill_activity import snapshot_bills
+
+        self._bill_activity_snapshot = snapshot_bills(self.db.bills_v2)
         await self.save()
 
     async def save(self):
         async with self._save_lock:
             from steward.data.models.db import serialize_to_dict
+            from steward.helpers.bill_activity import bill_activity_actor, make_activity_events, snapshot_bills
 
-            await self._storage.write_dict(serialize_to_dict(self.db))
+            snapshot = snapshot_bills(self.db.bills_v2)
+            old_event_count = len(self.db.bill_activity)
+            self.db.bill_activity.extend(make_activity_events(
+                self._bill_activity_snapshot,
+                snapshot,
+                bill_activity_actor.get(),
+            ))
+            try:
+                await self._storage.write_dict(serialize_to_dict(self.db))
+            except Exception:
+                del self.db.bill_activity[old_event_count:]
+                raise
+
+            self._bill_activity_snapshot = snapshot
+
         for callback in self._save_callbacks:
             try:
                 result = callback()
@@ -1193,9 +1212,10 @@ class Repository:
     # ── BillV2 ────────────────────────────────────────────────────────────────
 
     def get_next_bill_v2_id(self) -> int:
-        if not self.db.bills_v2:
-            return 1
-        return max(b.id for b in self.db.bills_v2) + 1
+        ids = [bill.id for bill in self.db.bills_v2]
+        ids.extend(event.bill_id for event in self.db.bill_activity)
+        ids.extend(bill_id for payment in self.db.bill_payments_v2 for bill_id in payment.bill_ids)
+        return max(ids, default=0) + 1
 
     def get_bill_v2(self, bill_id: int):
         for b in self.db.bills_v2:

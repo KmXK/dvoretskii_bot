@@ -16,8 +16,8 @@ from steward.helpers.bills_money import compute_bill_balances
 from tests.conftest import make_repository
 
 
-def ts(day, hour=0, minute=0):
-    return datetime(2026, 1, day, hour, minute, tzinfo=timezone.utc)
+def ts(day, hour=0, minute=0, microsecond=0):
+    return datetime(2026, 1, day, hour, minute, tzinfo=timezone.utc, microsecond=microsecond)
 
 
 def make_bill(
@@ -158,6 +158,84 @@ def test_history_orders_mixed_timezone_instants_and_uses_settled_date():
 
     assert [item["type"] for item in history["events"]] == ["payment", "charge"]
     assert find_event(history, "payment")["date"] == "2026-01-01T13:00:00+00:00"
+
+
+def test_initial_bill_items_share_one_charge_with_subtotals_and_period():
+    transactions = [
+        BillTransaction(
+            id="tx-1",
+            item_name="Ужин",
+            creditor="c",
+            unit_price_minor=1000,
+            assignments=[BillItemAssignment(1, ["d"])],
+            created_at=ts(1),
+        ),
+        BillTransaction(
+            id="tx-2",
+            item_name="Ужин",
+            creditor="c",
+            unit_price_minor=500,
+            assignments=[BillItemAssignment(1, ["d"])],
+            created_at=ts(1, microsecond=123),
+        ),
+        BillTransaction(
+            id="tx-3",
+            item_name="Такси",
+            creditor="c",
+            unit_price_minor=200,
+            assignments=[BillItemAssignment(1, ["d"])],
+            created_at=ts(2),
+        ),
+    ]
+    bill = make_bill(1, "d", "c", 0, ts(1), transactions=transactions)
+
+    history = build_debt_history([bill], [], "d")
+
+    charges = [item for item in history["events"] if item["type"] == "charge"]
+    assert len(charges) == 1
+    charge = charges[0]
+    assert charge["date"] == ts(1).isoformat()
+    assert charge["date_to"] == ts(2).isoformat()
+    assert charge["items"] == [
+        {"name": "Ужин", "amount_minor": 1500},
+        {"name": "Такси", "amount_minor": 200},
+    ]
+    transition(charge, 0, 1700, 1700)
+
+
+def test_other_bill_same_pair_breaks_charge_group():
+    first_transactions = [
+        BillTransaction(
+            id="a-1",
+            item_name="A первый",
+            creditor="c",
+            unit_price_minor=100,
+            assignments=[BillItemAssignment(1, ["d"])],
+            created_at=ts(1),
+        ),
+        BillTransaction(
+            id="a-2",
+            item_name="A второй",
+            creditor="c",
+            unit_price_minor=300,
+            assignments=[BillItemAssignment(1, ["d"])],
+            created_at=ts(3),
+        ),
+    ]
+    first = make_bill(1, "d", "c", 0, ts(1), transactions=first_transactions)
+    second = make_bill(2, "d", "c", 200, ts(2))
+
+    history = build_debt_history([first, second], [], "d")
+
+    charges = [item for item in history["events"] if item["type"] == "charge"]
+    assert len(charges) == 3
+    first_charge = next(item for item in charges if item["date"] == ts(1).isoformat())
+    second_charge = next(item for item in charges if item["date"] == ts(2).isoformat())
+    last_charge = next(item for item in charges if item["date"] == ts(3).isoformat())
+    transition(first_charge, 0, 100, 100)
+    transition(second_charge, 100, 200, 300)
+    transition(last_charge, 300, 300, 600)
+    assert history_balances(history) == {("d", "c", "BYN", 600)}
 
 
 def test_new_expense_in_same_bill_is_added_after_an_intermediate_payment():

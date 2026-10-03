@@ -114,6 +114,23 @@ def test_rounding_difference_reconciles_groups_without_changing_debts():
     assert share["summary"] == "2 участника · итого 1 р"
 
 
+def test_extra_icecream_is_not_misclassified_as_rounding():
+    tx = make_transaction(price=850)
+    tx.assignments = [
+        BillItemAssignment(unit_count=1, debtors=["kirill"]),
+        BillItemAssignment(unit_count=1, debtors=["dima"]),
+    ]
+
+    share = build_bill_share(make_bill(tx), NAMES)
+
+    assert all(group["name"] != "Разница округления" for group in share["groups"])
+    mismatch = share["groups"][-1]
+    assert mismatch["name"] == "Ошибка распределения"
+    assert mismatch["total"] == "-8.50 р"
+    assert mismatch["warning"] is True
+    assert mismatch["items"][0]["detail"] == "Распределено 2 шт., в позиции 1 шт."
+
+
 def test_large_bill_keeps_summary_and_all_items_without_caption():
     bill = make_bill(*(make_transaction() for _ in range(30)))
 

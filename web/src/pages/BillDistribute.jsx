@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { ChevronLeft, Pencil, X, Check, Undo2, PartyPopper, Scissors, RotateCcw, Merge, Trash2, ListChecks, Users, Lock, Minus, Plus, ChevronDown } from 'lucide-react'
 import ShareBillButton from '../components/bills/ShareBillButton'
 import { api } from '../api/client'
+import { buildDistributionCards, getBillDistributionSizeError, getCardDistributionKey } from '../bills/itemEditor'
 
 // ── Money ─────────────────────────────────────────────────────────────────────
 
@@ -61,30 +62,7 @@ let _seq = 0
 const nextId = () => `pc${++_seq}`
 
 function billToCards(bill) {
-  const cards = []
-  for (const tx of bill.transactions) {
-    let covered = 0
-    for (const asg of tx.assignments || []) {
-      const den = asg.denominator || 1
-      const debtors = asg.debtors || []
-      if (debtors.length === 0) {
-        for (let k = 0; k < asg.unit_count; k++) cards.push({ id: nextId(), txId: tx.id, den, owner: null })
-        covered += asg.unit_count / den
-      } else if (debtors.length === 1) {
-        for (let k = 0; k < asg.unit_count; k++) cards.push({ id: nextId(), txId: tx.id, den, owner: debtors[0] })
-        covered += asg.unit_count / den
-      } else {
-        const subDen = den * debtors.length
-        for (const d of debtors) {
-          for (let k = 0; k < asg.unit_count; k++) cards.push({ id: nextId(), txId: tx.id, den: subDen, owner: d })
-        }
-        covered += asg.unit_count / den
-      }
-    }
-    const remainder = Math.round(tx.quantity - covered)
-    for (let k = 0; k < Math.max(0, remainder); k++) cards.push({ id: nextId(), txId: tx.id, den: 1, owner: null })
-  }
-  return cards
+  return buildDistributionCards(bill.transactions, nextId)
 }
 
 function groupAssignments(cards) {
@@ -656,7 +634,23 @@ function PersonPicker({ value, options, onChange, placeholder = 'кому' }) {
 
 // ── Main board ──────────────────────────────────────────────────────────────────
 
-export default function BillDistribute({ bill, persons, onBack, onChange, onEditPositions, onManagePeople }) {
+export default function BillDistribute(props) {
+  const error = getBillDistributionSizeError(props.bill.transactions)
+  if (error) {
+    return (
+      <div className="px-4 pb-8 pt-6">
+        <button type="button" onClick={props.onBack} className="mb-3 inline-flex min-h-11 items-center gap-1 text-sm text-spotify-text hover:text-white"><ChevronLeft size={16} /> Назад</button>
+        <h2 className="mb-4 text-xl font-bold text-white">{props.bill.name}</h2>
+        <p role="alert" className="rounded-xl bg-red-500/10 p-4 text-base text-red-300">{error}</p>
+        {props.onEditPositions && <button type="button" onClick={props.onEditPositions} className="mt-4 min-h-12 w-full rounded-xl bg-gold px-4 py-3 text-base font-semibold text-black hover:bg-gold-2">Изменить позиции</button>}
+      </div>
+    )
+  }
+
+  return <DistributionBoard {...props} />
+}
+
+function DistributionBoard({ bill, persons, onBack, onChange, onEditPositions, onManagePeople }) {
   const personsById = useMemo(() => Object.fromEntries(persons.map((p) => [p.id, p])), [persons])
   const participants = useMemo(
     () => bill.participants.map((id) => personsById[id]).filter(Boolean),
@@ -674,6 +668,8 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const [renaming, setRenaming] = useState(null)
   const [finishing, setFinishing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [finalizing, setFinalizing] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [fx, setFx] = useState(null)
   const [activeNode, setActiveNode] = useState(null)
@@ -763,19 +759,64 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   const saveTimer = useRef(null)
   const buildBody = useCallback((src) => {
     const byTx = {}
-    for (const c of src) (byTx[c.txId] = byTx[c.txId] || []).push(c)
-    return { transactions: bill.transactions.map((tx) => ({ id: tx.id, assignments: groupAssignments(byTx[tx.id] || []) })) }
+    for (const card of src) {
+      (byTx[card.txId] = byTx[card.txId] || []).push(card)
+    }
+
+    const transactions = []
+    for (const transaction of bill.transactions) {
+      const original = buildDistributionCards([transaction], () => null)
+      const current = byTx[transaction.id] || []
+      if (getCardDistributionKey(original) === getCardDistributionKey(current)) {
+        transactions.push({ id: transaction.id, assignments: transaction.assignments || [] })
+        continue
+      }
+
+      transactions.push({ id: transaction.id, assignments: groupAssignments(current) })
+    }
+
+    return { transactions }
   }, [bill.transactions])
 
-  const queueSave = useCallback((next) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
-      setSaving(true)
-      try { await api.put(`/api/bills/${bill.id}/distribution`, buildBody(next)) }
-      catch { /* keep local; retry on next change */ }
-      finally { setSaving(false) }
-    }, 600)
+  const saveChain = useRef(Promise.resolve())
+  const changeVersion = useRef(0)
+  const savedVersion = useRef(0)
+  const persistDistribution = useCallback(async (source, version = changeVersion.current) => {
+    const body = buildBody(source)
+    const request = saveChain.current.catch(() => {}).then(() => api.put(`/api/bills/${bill.id}/distribution`, body))
+    saveChain.current = request
+    setSaving(true)
+    try {
+      await request
+      savedVersion.current = Math.max(savedVersion.current, version)
+      if (saveChain.current === request) {
+        setSaveError(null)
+      }
+    } catch (requestError) {
+      if (saveChain.current === request) {
+        setSaveError(requestError.message || 'Не удалось сохранить распределение. Изменения пока только на этом экране.')
+      }
+
+      throw requestError
+    } finally {
+      if (saveChain.current === request) {
+        setSaving(false)
+      }
+    }
   }, [bill.id, buildBody])
+
+  const queueSave = useCallback((next) => {
+    changeVersion.current += 1
+    const version = changeVersion.current
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+    }
+
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null
+      persistDistribution(next, version).catch(() => {})
+    }, 600)
+  }, [persistDistribution])
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
@@ -1052,24 +1093,50 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
 
   // ── Finalize ──
   const finalize = useCallback(async () => {
-    setSaving(true)
+    setFinalizing(true)
     try {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      await api.put(`/api/bills/${bill.id}/distribution`, buildBody(cards))
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+
+      await persistDistribution(cards)
       await api.put(`/api/bills/${bill.id}/finalize`)
       onChange?.()
       onBack()
-    } catch { /* noop */ } finally { setSaving(false) }
-  }, [bill.id, buildBody, cards, onBack, onChange])
+    } catch (requestError) {
+      setSaveError(requestError.message || 'Не удалось завершить счёт. Проверь распределение и попробуй ещё раз.')
+    } finally {
+      setFinalizing(false)
+    }
+  }, [bill.id, persistDistribution, cards, onBack, onChange])
 
   // ── Поделиться «кто что взял» картинкой (нативный шеринг) ──
   const saveBeforeShare = useCallback(async () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current)
+      saveTimer.current = null
     }
 
-    await api.put(`/api/bills/${bill.id}/distribution`, buildBody(cards))
-  }, [bill.id, buildBody, cards])
+    await persistDistribution(cards)
+  }, [persistDistribution, cards])
+
+  const leaveBoard = async (action) => {
+    try {
+      if (changeVersion.current !== savedVersion.current) {
+        await saveBeforeShare()
+      }
+
+      await onChange?.()
+      action()
+    } catch (requestError) {
+      setSaveError(requestError.message || 'Не удалось сохранить распределение. Попробуй ещё раз перед выходом.')
+    }
+  }
+
+  const retrySave = () => {
+    saveBeforeShare().catch(() => {})
+  }
 
   // ── Finish summary ──
   if (finishing) {
@@ -1101,10 +1168,11 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
         </div>
         <ShareBillButton billId={bill.id} beforeShare={saveBeforeShare} className="mb-2" />
         <p className="text-spotify-text/60 text-xs text-center mb-3">скинь в чат, чтобы подсказали, всё ли верно</p>
+        {saveError && <p role="alert" className="mb-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{saveError}</p>}
         <div className="flex gap-2">
-          <button onClick={() => setFinishing(false)} className="flex-1 bg-spotify-gray text-white rounded-xl py-3">Переделать</button>
-          <button onClick={finalize} disabled={saving} className="flex-1 bg-gold text-black font-semibold rounded-xl py-3 disabled:opacity-50 hover:bg-gold-2 transition-colors">
-            {saving ? '...' : 'Сохранить итог'}
+          <button onClick={() => setFinishing(false)} disabled={finalizing} className="flex-1 bg-spotify-gray text-white rounded-xl py-3 disabled:opacity-50">Переделать</button>
+          <button onClick={finalize} disabled={saving || finalizing} className="flex-1 bg-gold text-black font-semibold rounded-xl py-3 disabled:opacity-50 hover:bg-gold-2 transition-colors">
+            {saving || finalizing ? 'Сохраняю…' : 'Сохранить итог'}
           </button>
         </div>
       </motion.div>
@@ -1115,17 +1183,17 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="px-4 pt-6 pb-4 overflow-hidden">
       <div className="flex items-center justify-between mb-2">
-        <button onClick={onBack} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white">
+        <button onClick={() => leaveBoard(onBack)} disabled={saving} className="min-h-11 text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white disabled:opacity-40">
           <ChevronLeft size={16} /> Назад
         </button>
         <div className="flex items-center gap-3">
           {onManagePeople && (
-            <button onClick={onManagePeople} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Изменить состав">
+            <button onClick={() => leaveBoard(onManagePeople)} disabled={saving} className="min-h-11 text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white disabled:opacity-40" title="Изменить состав">
               <Users size={15} /> Люди
             </button>
           )}
           {onEditPositions && (
-            <button onClick={onEditPositions} className="text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white" title="Назад к позициям">
+            <button onClick={() => leaveBoard(onEditPositions)} disabled={saving} className="min-h-11 text-spotify-text text-sm inline-flex items-center gap-1 hover:text-white disabled:opacity-40" title="Назад к позициям">
               <ListChecks size={15} /> Позиции
             </button>
           )}
@@ -1137,6 +1205,12 @@ export default function BillDistribute({ bill, persons, onBack, onChange, onEdit
       <p className="text-spotify-text text-sm mb-3">
         Тащи карту на человека · на ноду снизу — делить, отложить, собрать
       </p>
+      {saveError && (
+        <div role="alert" className="mb-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">
+          <p>{saveError}</p>
+          <button type="button" onClick={retrySave} disabled={saving} className="mt-2 min-h-11 rounded-lg bg-white/5 px-3 font-medium text-white hover:bg-white/10 disabled:opacity-40">{saving ? 'Сохраняю…' : 'Повторить сохранение'}</button>
+        </div>
+      )}
 
       {/* Игровое поле во весь экран: частицы + граф + колода (без рамки) */}
       <div ref={boardRef} className="relative w-full" style={{ height: boardH }}>

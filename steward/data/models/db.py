@@ -23,6 +23,7 @@ from .army import Army
 from .banned_user import BannedUser
 from .bill import Bill, DetailsInfo, Payment
 from .bill_v2 import (
+    BillActivityEvent,
     BillDiffSnapshot,
     BillDraftEdit,
     BillItemSuggestion,
@@ -89,6 +90,7 @@ class Database:
     bill_payments_v2: list[BillPaymentV2] = field(default_factory=list)
     bill_notification_prefs: list[BillNotificationPrefs] = field(default_factory=list)
     bill_diff_snapshots: list[BillDiffSnapshot] = field(default_factory=list)
+    bill_activity: list[BillActivityEvent] = field(default_factory=list)
     bill_item_suggestions: list[BillItemSuggestion] = field(default_factory=list)
     bill_draft_edits: list[BillDraftEdit] = field(default_factory=list)
     chat_nicknames: list[ChatNickname] = field(default_factory=list)

@@ -34,7 +34,23 @@ function eventTitle(event, personId) {
     return 'Корректировка переплаты'
   }
 
-  return 'Начисление по счёту'
+  const billName = event.bills?.[0]?.name
+  return billName ? `Начисление: ${billName}` : 'Начисление по счёту'
+}
+
+
+function eventDateLabel(event, formatDateTime) {
+  if (!event.date) {
+    return 'Дата не сохранена'
+  }
+
+  const start = formatDateTime(event.date)
+  if (!event.date_to || event.date_to === event.date) {
+    return start
+  }
+
+  const end = formatDateTime(event.date_to)
+  return start === end ? start : `Период: ${start} — ${end}`
 }
 
 
@@ -170,6 +186,11 @@ export default function DebtHistory({ filters, onFiltersChange, onBack, onOpenBi
           </div>
         </div>
       )}
+      {data && balances.length === 0 && events.length > 0 && (
+        <div className="mb-4 rounded-xl border border-green-400/20 bg-green-400/5 p-3 text-sm text-green-300">
+          Сейчас по выбранным людям долга и переплаты нет.
+        </div>
+      )}
 
       {error && <div className="mb-3 text-sm text-red-400">{error}</div>}
       {loading && !data ? (
@@ -183,11 +204,14 @@ export default function DebtHistory({ filters, onFiltersChange, onBack, onOpenBi
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-white">{eventTitle(event, data.person_id)}</div>
-                  <div className="mt-0.5 text-xs text-spotify-text">
-                    {event.date ? formatDateTime(event.date) : 'Дата не сохранена'}
-                  </div>
+                  <div className="mt-0.5 text-xs text-spotify-text">{eventDateLabel(event, formatDateTime)}</div>
                 </div>
-                {event.type !== 'close' && event.amount_minor > 0 && (
+                {event.type === 'charge' ? (
+                  <div className="shrink-0 text-right">
+                    <div className="text-xs text-spotify-text">По этому счёту</div>
+                    <div className="text-sm font-semibold text-gold tabular-nums">{formatMinor(event.amount_minor, event.currency)}</div>
+                  </div>
+                ) : event.type !== 'close' && event.amount_minor > 0 && (
                   <span className="shrink-0 text-sm font-semibold text-gold tabular-nums">{formatMinor(event.amount_minor, event.currency)}</span>
                 )}
               </div>
@@ -214,9 +238,10 @@ export default function DebtHistory({ filters, onFiltersChange, onBack, onOpenBi
                   </div>
                 </div>
               )}
-              {event.items.length > 0 && (
+              {(event.items || []).length > 0 && (
                 <div className="mt-3 space-y-1 text-xs text-spotify-text">
-                  {event.items.map((item, index) => (
+                  <div className="text-[10px] uppercase tracking-wide text-spotify-text/70">Позиции</div>
+                  {(event.items || []).map((item, index) => (
                     <div key={index} className="flex justify-between gap-3">
                       <span>{item.name}</span>
                       <span className="shrink-0 tabular-nums">{formatMinor(item.amount_minor, event.currency)}</span>

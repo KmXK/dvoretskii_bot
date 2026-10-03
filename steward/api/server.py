@@ -2236,6 +2236,35 @@ async def handle_bills_get(request: web.Request):
     )
 
 
+async def handle_bill_activity(request: web.Request):
+    from steward.api.bill_activity import serialize_bill_activity
+
+    repository: Repository = request.app["repository"]
+    user = _get_tg_user_from_request(request)
+    if not user:
+        return web.json_response({"error": "auth required"}, status=401)
+
+    bill = repository.get_bill_v2(int(request.match_info["id"]))
+    if bill is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    allowed, error = _check_bill_access(bill, int(user["id"]), repository, "view")
+    if not allowed:
+        return web.json_response({"error": error}, status=403)
+
+    try:
+        limit = min(200, max(1, int(request.query.get("limit", 50))))
+        offset = max(0, int(request.query.get("offset", 0)))
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid pagination"}, status=400)
+
+    events = [event for event in reversed(repository.db.bill_activity) if event.bill_id == bill.id]
+    return web.json_response({
+        "events": [serialize_bill_activity(event, repository) for event in events[offset:offset + limit]],
+        "has_more": offset + limit < len(events),
+    })
+
+
 def _resolve_bill_participants(
     repository: "Repository",
     caller,
@@ -2931,7 +2960,12 @@ async def handle_bills_delete(request: web.Request):
 
 async def handle_bills_tx_add(request: web.Request):
     import uuid as _uuid
-    from steward.data.models.bill_v2 import BillTransaction, BillItemAssignment, UNKNOWN_PERSON_ID
+    from steward.data.models.bill_v2 import BillTransaction, UNKNOWN_PERSON_ID
+    from steward.helpers.bills_validation import (
+        is_distribution_incomplete,
+        parse_assignment_list,
+        validate_transaction_values,
+    )
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -2947,22 +2981,31 @@ async def handle_bills_tx_add(request: web.Request):
         return web.json_response({"error": "bill closed"}, status=400)
 
     data = await request.json()
-    assignments_raw = data.get("assignments", [])
-    assignments = [
-        BillItemAssignment(
-            unit_count=int(a.get("unit_count", 1)),
-            debtors=list(a.get("debtors", [])),
-            denominator=int(a.get("denominator", 1) or 1),
-        )
-        for a in assignments_raw
-    ]
-    quantity = int(data.get("quantity", sum(a.unit_count for a in assignments) or 1))
-    incomplete = any(not a.debtors for a in assignments)
+    if not isinstance(data, dict):
+        return web.json_response({"error": "тело запроса должно быть объектом"}, status=400)
+    label = f"позиция «{data.get('item_name') or 'без названия'}»"
+    assignments, error = parse_assignment_list(data.get("assignments", []), label=label)
+    if error:
+        return web.json_response({"error": error}, status=400)
+    quantity = data.get("quantity", sum(a.unit_count for a in assignments) or 1)
+    unit_price_minor = data.get("unit_price_minor", 0)
+    error = validate_transaction_values(
+        unit_price_minor,
+        quantity,
+        assignments,
+        label=label,
+    )
+    if error:
+        return web.json_response({"error": error}, status=400)
+
+    quantity = int(quantity)
+    unit_price_minor = int(unit_price_minor)
+    incomplete = is_distribution_incomplete(assignments, quantity)
     tx = BillTransaction(
         id=str(_uuid.uuid4()),
         item_name=data.get("item_name", ""),
         creditor=data.get("creditor") or UNKNOWN_PERSON_ID,
-        unit_price_minor=int(data.get("unit_price_minor", 0)),
+        unit_price_minor=unit_price_minor,
         quantity=quantity,
         assignments=assignments,
         source=data.get("source", "manual"),
@@ -2983,7 +3026,11 @@ async def handle_bills_tx_add(request: web.Request):
 
 
 async def handle_bills_tx_update(request: web.Request):
-    from steward.data.models.bill_v2 import BillItemAssignment
+    from steward.helpers.bills_validation import (
+        is_distribution_incomplete,
+        parse_assignment_list,
+        validate_transaction_values,
+    )
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -3008,24 +3055,33 @@ async def handle_bills_tx_update(request: web.Request):
         )
 
     data = await request.json()
-    if "item_name" in data:
-        tx.item_name = data["item_name"]
-    if "unit_price_minor" in data:
-        tx.unit_price_minor = int(data["unit_price_minor"])
-    if "quantity" in data:
-        tx.quantity = int(data["quantity"])
+    if not isinstance(data, dict):
+        return web.json_response({"error": "тело запроса должно быть объектом"}, status=400)
+    label = f"позиция «{tx.item_name or tx.id}»"
+    item_name = data.get("item_name", tx.item_name)
+    unit_price_minor = data.get("unit_price_minor", tx.unit_price_minor)
+    quantity = data.get("quantity", tx.quantity)
+    assignments = tx.assignments
+    if "assignments" in data:
+        assignments, error = parse_assignment_list(data["assignments"], label=label)
+        if error:
+            return web.json_response({"error": error}, status=400)
+    error = validate_transaction_values(
+        unit_price_minor,
+        quantity,
+        assignments,
+        label=label,
+    )
+    if error:
+        return web.json_response({"error": error}, status=400)
+
+    tx.item_name = item_name
+    tx.unit_price_minor = int(unit_price_minor)
+    tx.quantity = int(quantity)
+    tx.assignments = assignments
+    tx.incomplete = is_distribution_incomplete(assignments, int(quantity))
     if "creditor" in data:
         tx.creditor = data["creditor"]
-    if "assignments" in data:
-        tx.assignments = [
-            BillItemAssignment(
-                unit_count=int(a.get("unit_count", 1)),
-                debtors=list(a.get("debtors", [])),
-                denominator=int(a.get("denominator", 1) or 1),
-            )
-            for a in data["assignments"]
-        ]
-        tx.incomplete = any(not a.debtors for a in tx.assignments)
     bill.updated_at = datetime.datetime.now()
     await repository.save()
     settled = _bill_settled_pairs(repository, bill)
@@ -3064,7 +3120,12 @@ async def handle_bills_distribute(request: web.Request):
     adds any new debtors to participants, and moves the bill into `distributing`
     (unless already `final`). Atomic single round-trip for auto-save on drag.
     """
-    from steward.data.models.bill_v2 import BillItemAssignment, UNKNOWN_PERSON_ID
+    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+    from steward.helpers.bills_validation import (
+        is_distribution_incomplete,
+        parse_assignment_list,
+        validate_transaction_values,
+    )
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -3080,24 +3141,50 @@ async def handle_bills_distribute(request: web.Request):
         return web.json_response({"error": "bill closed"}, status=400)
 
     data = await request.json()
+    if not isinstance(data, dict):
+        return web.json_response({"error": "тело запроса должно быть объектом"}, status=400)
+    entries = data.get("transactions", [])
+    if not isinstance(entries, list):
+        return web.json_response({"error": "распределение: transactions должны быть списком"}, status=400)
     by_id = {t.id: t for t in bill.transactions}
     settled = _bill_settled_pairs(repository, bill)
-    for entry in data.get("transactions", []):
+    prepared = []
+    seen_ids = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return web.json_response({"error": "распределение: элемент transactions должен быть объектом"}, status=400)
         tx = by_id.get(entry.get("id"))
         if not tx:
             continue
+        if tx.id in seen_ids:
+            return web.json_response(
+                {"error": f"позиция «{tx.item_name or tx.id}»: передана несколько раз"},
+                status=400,
+            )
+        seen_ids.add(tx.id)
         # Позиции с уже прошедшей оплатой не перераспределяем.
         if _tx_payment_locked(tx, settled):
             continue
-        tx.assignments = [
-            BillItemAssignment(
-                unit_count=int(a.get("unit_count", 1)),
-                debtors=list(a.get("debtors", [])),
-                denominator=int(a.get("denominator", 1) or 1),
-            )
-            for a in entry.get("assignments", [])
-        ]
-        tx.incomplete = any(not a.debtors for a in tx.assignments) or not tx.assignments
+        label = f"позиция «{tx.item_name or tx.id}»"
+        assignments, error = parse_assignment_list(
+            entry.get("assignments", []),
+            label=label,
+        )
+        if error:
+            return web.json_response({"error": error}, status=400)
+        error = validate_transaction_values(
+            tx.unit_price_minor,
+            tx.quantity,
+            assignments,
+            label=label,
+        )
+        if error:
+            return web.json_response({"error": error}, status=400)
+        prepared.append((tx, assignments))
+
+    for tx, assignments in prepared:
+        tx.assignments = assignments
+        tx.incomplete = is_distribution_incomplete(assignments, tx.quantity)
         for asg in tx.assignments:
             for d in asg.debtors:
                 if d and d != UNKNOWN_PERSON_ID and d not in bill.participants:
@@ -3112,6 +3199,11 @@ async def handle_bills_distribute(request: web.Request):
 
 async def handle_bills_finalize(request: web.Request):
     """Confirm distribution: mark the bill `final` so its debts count in summaries."""
+    from steward.helpers.bills_validation import (
+        is_distribution_incomplete,
+        validate_transaction,
+    )
+
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -3123,6 +3215,12 @@ async def handle_bills_finalize(request: web.Request):
     ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "edit")
     if not ok:
         return web.json_response({"error": err}, status=403)
+    for index, tx in enumerate(bill.transactions, 1):
+        label = f"позиция «{tx.item_name or index}»"
+        error = validate_transaction(tx, label=label)
+        if error:
+            return web.json_response({"error": error}, status=400)
+        tx.incomplete = is_distribution_incomplete(tx.assignments, tx.quantity)
     bill.distribution_status = "final"
     bill.updated_at = datetime.datetime.now()
     await repository.save()
@@ -3593,7 +3691,9 @@ async def handle_bills_diff_get(request: web.Request):
 
 async def start_api_server(repository: Repository, metrics: MetricsEngine, port: int = 8080, bot=None, handlers=None):
     from steward.api.auth import auth_middleware
-    app = web.Application(middlewares=[auth_middleware])
+    from steward.api.bill_activity import activity_actor_middleware
+
+    app = web.Application(middlewares=[auth_middleware, activity_actor_middleware])
     app["repository"] = repository
     app["metrics"] = metrics
     app["bot"] = bot
@@ -3675,6 +3775,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_post("/api/bills/suggestions/{sid}/reject", handle_bills_suggestion_reject)
     app.router.add_post("/api/bills/resolve-people", handle_bills_resolve_people)
     app.router.add_get("/api/bills/{id}", handle_bills_get)
+    app.router.add_get("/api/bills/{id}/activity", handle_bill_activity)
     app.router.add_delete("/api/bills/{id}", handle_bills_delete)
     app.router.add_put("/api/bills/{id}/close", handle_bills_close)
     app.router.add_put("/api/bills/{id}/reopen", handle_bills_reopen)

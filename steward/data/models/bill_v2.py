@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 
 UNKNOWN_PERSON_ID = "__unknown__"
@@ -164,6 +165,24 @@ class BillDiffSnapshot:
     before: dict                                    # serialized BillV2 state
     after: dict                                     # serialized BillV2 state
     created_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class BillActivityChange:
+    kind: str
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    fields: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BillActivityEvent:
+    id: str
+    bill_id: int
+    created_at: datetime
+    changes: list[BillActivityChange]
+    actor_telegram_id: int | None = None
+    currency: str = "BYN"
 
 
 @dataclass

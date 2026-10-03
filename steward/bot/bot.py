@@ -429,6 +429,21 @@ class Bot:
         action: str,
         func: Callable[[], Awaitable[Any]] | None,
     ):
+        from steward.helpers.bill_activity import bill_activity_actor
+
+        user = context.update.effective_user
+        token = bill_activity_actor.set(user.id if user else None)
+        try:
+            return await self._dispatch_action(context, action, func)
+        finally:
+            bill_activity_actor.reset(token)
+
+    async def _dispatch_action(
+        self,
+        context: BotActionContext,
+        action: str,
+        func: Callable[[], Awaitable[Any]] | None,
+    ):
         update = context.update
         user_id: int | None = None
 

@@ -18,6 +18,7 @@ _GOLD = (214, 178, 112)
 _WHITE = (240, 240, 240)
 _MUTED = (150, 150, 150)
 _GREEN = (29, 185, 84)
+_RED = (248, 113, 113)
 
 _FONT_BOLD_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -141,10 +142,11 @@ def render_bill_people_png(
         draw.text((x0, y + 16), "Позиции ещё не распределены", font=person_font, fill=_MUTED)
     else:
         for group, total_w, person_lines, person_h, items in layouts:
+            color = _RED if group.get("warning") else _GOLD
             for index, line in enumerate(person_lines):
-                draw.text((x0, y + 6 + index * 40), line, font=person_font, fill=_WHITE)
+                draw.text((x0, y + 6 + index * 40), line, font=person_font, fill=_RED if group.get("warning") else _WHITE)
 
-            draw.text((width - pad - total_w, y + 8), group["total"], font=total_font, fill=_GOLD)
+            draw.text((width - pad - total_w, y + 8), group["total"], font=total_font, fill=color)
             y += person_h
             for item, amount_w, label_lines, detail_lines, item_h in items:
                 for index, line in enumerate(label_lines):

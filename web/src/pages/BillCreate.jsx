@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, ChevronDown, Plus, X, Users, Mic, Square, Image as ImageIcon,
-  Type, Sparkles, Loader2, Check, Trash2, Crown, Pencil, Lock,
+  Type, Sparkles, Loader2, Check, Trash2, Pencil, Lock,
 } from 'lucide-react'
 import { api } from '../api/client'
+import ItemEditorDialog from '../components/bills/ItemEditorDialog'
+import { formatItemMoney, formatPortion, getUnassignedPortion } from '../bills/itemEditor'
 
 // Создание счёта с нуля прямо в мини-аппе: шаг «люди» (собрать → подтвердить
 // состав + кто платил) → шаг «позиции» (голос/фото/текст → AI-разбор, ручная
@@ -17,70 +19,6 @@ function pickAudioMime() {
     try { if (MediaRecorder.isTypeSupported(m)) return m } catch { /* noop */ }
   }
   return ''
-}
-
-const UNKNOWN_PID = '__unknown__'
-const curSymbol = (c) => (c === 'BYN' ? 'р' : c)
-
-// ── Кастомный дропдаун «кто платил» ───────────────────────────────────────────
-
-function PayerSelect({ value, options, onChange, placeholder = 'кто платил', className = '', compact = false }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-  useEffect(() => {
-    if (!open) return
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [open])
-  const current = options.find((o) => o.id === value)
-  return (
-    <div className={`relative ${className}`} ref={ref}>
-      {compact ? (
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-spotify-text hover:text-white hover:bg-white/5 transition max-w-full"
-          title="кто платил"
-        >
-          <Crown size={12} className="shrink-0 text-gold/80" />
-          <span className="truncate">{current?.name || placeholder}</span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="w-full inline-flex items-center justify-between gap-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 px-2.5 py-1.5 text-xs text-white transition"
-        >
-          <span className={`truncate ${current ? '' : 'text-spotify-text/70'}`}>{current?.name || placeholder}</span>
-          <ChevronDown size={13} className="shrink-0 opacity-70" />
-        </button>
-      )}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -4, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.97 }}
-            transition={{ duration: 0.12 }}
-            className="absolute right-0 mt-1 z-30 min-w-[150px] max-h-52 overflow-y-auto rounded-xl bg-spotify-gray border border-white/10 shadow-xl shadow-black/50 py-1"
-          >
-            {options.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => { onChange(o.id); setOpen(false) }}
-                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10 transition"
-              >
-                <span className="truncate">{o.name}</span>
-                {o.id === value && <Check size={14} className="text-spotify-green shrink-0" />}
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
 }
 
 // ── Step 1: люди (собрать → подтвердить) ───────────────────────────────────────
@@ -407,26 +345,6 @@ function ContextChunk({ chunk, index, onDelete, onEdit }) {
   )
 }
 
-// Инлайн-редактируемое значение (название/кол-во/цена) с сохранением на blur/enter.
-function EditableCell({ value, onSave, className = '', type = 'text', placeholder = '' }) {
-  const [v, setV] = useState(String(value ?? ''))
-  const [prev, setPrev] = useState(value)
-  if (value !== prev) { setPrev(value); setV(String(value ?? '')) } // sync при внешнем изменении
-  const commit = () => { if (v !== String(value ?? '')) onSave(v) }
-  return (
-    <input
-      value={v}
-      type={type}
-      inputMode={type === 'number' ? 'decimal' : undefined}
-      placeholder={placeholder}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-      className={`bg-transparent outline-none focus:bg-white/5 rounded px-1.5 py-1 transition ${className}`}
-    />
-  )
-}
-
 export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, onPeople }) {
   const [chunks, setChunks] = useState(() => bill.collection_context || [])
   const [positions, setPositions] = useState(() => bill.transactions || [])
@@ -442,18 +360,14 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
   const [questions, setQuestions] = useState([])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [newItem, setNewItem] = useState({ name: '', price: '', qty: '1' })
+  const [editingItem, setEditingItem] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+  const [savingPayer, setSavingPayer] = useState(false)
 
   const recRef = useRef(null)
   const streamRef = useRef(null)
   const fileRef = useRef(null)
   const timerRef = useRef(null)
-
-  const cur = curSymbol(bill.currency)
-
-  const payerOptions = participantIds
-    .map((pid) => ({ id: pid, name: namesById[pid] || '…' }))
-    .concat([{ id: UNKNOWN_PID, name: '— не указан' }])
 
   const loadNames = useCallback(async () => {
     try {
@@ -466,50 +380,38 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
 
   // Назначить одного плательщика на весь счёт (дефолт для всех позиций).
   const applyPayer = useCallback(async (pid) => {
-    setPayerId(pid)
+    setSavingPayer(true)
+    setError(null)
     try {
       const updated = await api.put(`/api/bills/${bill.id}/creditor`, { person_id: pid })
+      setPayerId(pid)
       setPositions(updated.transactions || [])
       setParticipantIds(updated.participants || [])
     } catch (e) {
       setError(e.message || 'Не удалось назначить плательщика')
-    }
-  }, [bill.id])
-
-  const patchTx = useCallback(async (txId, patch) => {
-    setPositions((prev) => prev.map((t) => (t.id === txId ? { ...t, ...patch } : t)))
-    try {
-      const updated = await api.patch(`/api/bills/${bill.id}/transactions/${txId}`, patch)
-      setPositions((prev) => prev.map((t) => (t.id === txId ? updated : t)))
-    } catch (e) {
-      setError(e.message || 'Не удалось сохранить')
+    } finally {
+      setSavingPayer(false)
     }
   }, [bill.id])
 
   const deleteTx = useCallback(async (txId) => {
-    setPositions((prev) => prev.filter((t) => t.id !== txId))
-    try { await api.delete(`/api/bills/${bill.id}/transactions/${txId}`) }
-    catch (e) { setError(e.message || 'Не удалось удалить') }
-  }, [bill.id])
-
-  const addItem = useCallback(async () => {
-    const name = newItem.name.trim()
-    const price = Math.round(parseFloat((newItem.price || '').replace(',', '.')) * 100)
-    const qty = Math.max(1, parseInt(newItem.qty, 10) || 1)
-    if (!name || !price || price <= 0) { setError('Название и цена обязательны'); return }
+    setDeletingId(txId)
     setError(null)
     try {
-      const tx = await api.post(`/api/bills/${bill.id}/transactions`, {
-        item_name: name, unit_price_minor: price, quantity: qty,
-        creditor: payerId || UNKNOWN_PID, assignments: [],
-      })
-      setPositions((prev) => [...prev, tx])
-      setNewItem({ name: '', price: '', qty: '1' })
-      setAdding(false)
-    } catch (e) {
-      setError(e.message || 'Не удалось добавить позицию')
+      await api.delete(`/api/bills/${bill.id}/transactions/${txId}`)
+      setPositions((current) => current.filter((transaction) => transaction.id !== txId))
+    } catch (requestError) {
+      setError(requestError.message || 'Не удалось удалить позицию')
+    } finally {
+      setDeletingId(null)
     }
-  }, [bill.id, newItem, payerId])
+  }, [bill.id])
+
+  const saveItem = (transaction) => {
+    setPositions((current) => current.some((item) => item.id === transaction.id)
+      ? current.map((item) => item.id === transaction.id ? transaction : item)
+      : [...current, transaction])
+  }
 
   const removeBill = useCallback(async () => {
     try {
@@ -761,7 +663,8 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
                   key={pid}
                   whileTap={{ scale: 0.94 }}
                   onClick={() => applyPayer(pid)}
-                  className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  disabled={savingPayer}
+                  className={`min-h-11 px-3 py-2 rounded-full text-sm border transition-colors disabled:opacity-40 ${
                     active
                       ? 'bg-spotify-green/25 border-spotify-green/60 text-spotify-green font-medium'
                       : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
@@ -778,122 +681,67 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
 
       {/* редактируемые позиции */}
       {positions.length > 0 && (
-        <div className="space-y-2 mb-3">
-          <div className="text-xs uppercase tracking-wider text-spotify-text">Позиции ({positions.length})</div>
-          {positions.map((tx) => {
-            const locked = !!tx.locked
+        <div className="mb-4 space-y-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-base font-medium text-white">Позиции · {positions.length}</h2>
+            <span className="text-lg font-semibold text-gold tabular-nums">{formatItemMoney(positions.reduce((total, item) => total + item.unit_price_minor * item.quantity, 0), bill.currency)}</span>
+          </div>
+          {positions.map((transaction) => {
+            const remaining = getUnassignedPortion(transaction.quantity, (transaction.assignments || []).filter((assignment) => assignment.debtors?.length))
             return (
-            <motion.div
-              key={tx.id}
-              layout
-              initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-              className={`bg-spotify-dark rounded-lg p-2.5 ${locked ? 'opacity-70' : ''}`}
-            >
-              <div className="flex items-center gap-2">
-                {locked ? (
-                  <span className="flex-1 text-white text-sm min-w-0 px-1.5 py-1 truncate">{tx.item_name}</span>
-                ) : (
-                  <EditableCell
-                    value={tx.item_name}
-                    placeholder="Название"
-                    onSave={(v) => patchTx(tx.id, { item_name: v })}
-                    className="flex-1 text-white text-sm min-w-0"
-                  />
-                )}
-                {locked ? (
-                  <span className="shrink-0 text-spotify-green/70 p-1" title="По позиции прошла оплата — правка заблокирована">
-                    <Lock size={14} />
-                  </span>
-                ) : (
-                  <button onClick={() => deleteTx(tx.id)} className="shrink-0 text-spotify-text/60 hover:text-red-400 p-1">
-                    <X size={15} />
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-2 mt-1.5">
-                <div className="inline-flex items-baseline text-spotify-text">
-                  {locked ? (
-                    <span className="w-9 text-center text-white text-base font-semibold tabular-nums">{tx.quantity}</span>
-                  ) : (
-                    <EditableCell
-                      value={tx.quantity}
-                      type="number"
-                      onSave={(v) => patchTx(tx.id, { quantity: Math.max(1, parseInt(v, 10) || 1) })}
-                      className="w-9 text-center text-white text-base font-semibold tabular-nums"
-                    />
-                  )}
-                  <span className="opacity-50 text-xs">×</span>
+              <motion.div
+                key={transaction.id}
+                layout
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-2xl border border-white/5 bg-spotify-dark p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="break-words text-base font-medium text-white">{transaction.item_name}</div>
+                    <div className="mt-1 text-sm text-spotify-text tabular-nums">{transaction.quantity} шт. × {formatItemMoney(transaction.unit_price_minor, bill.currency)}</div>
+                  </div>
+                  <span className="shrink-0 text-base font-semibold text-gold tabular-nums">{formatItemMoney(transaction.unit_price_minor * transaction.quantity, bill.currency)}</span>
                 </div>
-                <div className="inline-flex items-baseline">
-                  {locked ? (
-                    <span className="w-16 text-right text-gold text-base font-bold tabular-nums inline-block">{(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}</span>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="min-w-0 text-sm text-spotify-text">Оплатил {namesById[transaction.creditor] || '— не указан'}</div>
+                  {transaction.locked ? (
+                    <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-spotify-text"><Lock size={15} /> Оплачено</span>
                   ) : (
-                    <EditableCell
-                      value={(tx.unit_price_minor / 100).toFixed(2).replace(/\.00$/, '')}
-                      type="number"
-                      onSave={(v) => patchTx(tx.id, { unit_price_minor: Math.max(0, Math.round(parseFloat((v || '').replace(',', '.')) * 100) || 0) })}
-                      className="w-16 text-right text-gold text-base font-bold tabular-nums"
-                    />
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button type="button" onClick={() => setEditingItem(transaction)} disabled={deletingId === transaction.id} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-sm text-gold hover:bg-white/5 disabled:opacity-40"><Pencil size={16} /> Изменить</button>
+                      <button type="button" onClick={() => deleteTx(transaction.id)} disabled={deletingId !== null} aria-label={`Удалить ${transaction.item_name}`} className="flex h-11 w-11 items-center justify-center rounded-xl text-spotify-text hover:bg-white/5 hover:text-red-400 disabled:opacity-40">{deletingId === transaction.id ? <Loader2 size={17} className="animate-spin" /> : <Trash2 size={17} />}</button>
+                    </div>
                   )}
-                  <span className="text-gold/70 text-xs ml-1">{cur}</span>
                 </div>
-                {locked ? (
-                  <span className="ml-auto text-xs text-spotify-text/70 truncate max-w-[40%]">{namesById[tx.creditor] || '…'}</span>
-                ) : (
-                  <PayerSelect
-                    value={tx.creditor}
-                    options={payerOptions}
-                    onChange={(pid) => patchTx(tx.id, { creditor: pid })}
-                    className="ml-auto"
-                    placeholder="кто платил"
-                    compact
-                  />
-                )}
-              </div>
-            </motion.div>
-          )})}
+                {remaining.numerator > 0n && <div className="mt-2 text-sm text-amber-300">Не распределено: {formatPortion(remaining)} шт.</div>}
+                {remaining.numerator < 0n && <div className="mt-2 text-sm text-red-400">Распределено больше количества — измени позицию</div>}
+              </motion.div>
+            )
+          })}
         </div>
       )}
 
       {/* добавить позицию вручную */}
-      {(positions.length > 0 || chunks.length === 0) && (
-        adding ? (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="bg-spotify-dark rounded-lg p-2.5 mb-5 space-y-2">
-            <input
-              autoFocus
-              placeholder="Название позиции"
-              value={newItem.name}
-              onChange={(e) => setNewItem((n) => ({ ...n, name: e.target.value }))}
-              className="w-full bg-white/5 rounded px-2.5 py-1.5 text-white text-sm outline-none focus:bg-white/10"
-            />
-            <div className="flex items-center gap-2">
-              <input
-                placeholder="кол-во" inputMode="numeric"
-                value={newItem.qty}
-                onChange={(e) => setNewItem((n) => ({ ...n, qty: e.target.value }))}
-                className="w-16 bg-white/5 rounded px-2.5 py-1.5 text-white text-sm text-center tabular-nums outline-none focus:bg-white/10"
-              />
-              <span className="text-spotify-text text-xs">×</span>
-              <input
-                placeholder="цена" inputMode="decimal"
-                value={newItem.price}
-                onChange={(e) => setNewItem((n) => ({ ...n, price: e.target.value }))}
-                className="w-20 bg-white/5 rounded px-2.5 py-1.5 text-white text-sm text-right tabular-nums outline-none focus:bg-white/10"
-              />
-              <span className="text-spotify-text text-xs">{cur}</span>
-              <button onClick={addItem} className="ml-auto px-3 py-1.5 rounded-lg bg-gold text-black text-sm font-medium inline-flex items-center gap-1"><Check size={15} /></button>
-              <button onClick={() => { setAdding(false); setNewItem({ name: '', price: '', qty: '1' }) }} className="px-2.5 py-1.5 rounded-lg bg-white/5 text-spotify-text"><X size={15} /></button>
-            </div>
-          </motion.div>
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="w-full rounded-lg border border-dashed border-white/15 text-spotify-text hover:text-white hover:border-white/30 py-2.5 text-sm inline-flex items-center justify-center gap-1.5 mb-5 transition"
-          >
-            <Plus size={16} /> Добавить позицию вручную
-          </button>
-        )
-      )}
+      <button
+        type="button"
+        onClick={() => setAdding(true)}
+        className="mb-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gold/40 py-3 text-base font-medium text-gold transition hover:border-gold hover:bg-gold/5"
+      ><Plus size={18} /> Добавить позицию</button>
+
+      <ItemEditorDialog
+        open={adding || !!editingItem}
+        onClose={() => {
+          setAdding(false)
+          setEditingItem(null)
+        }}
+        onSaved={saveItem}
+        billId={bill.id}
+        currency={bill.currency}
+        persons={participantIds.map((personId) => ({ id: personId, display_name: namesById[personId] || 'Участник' }))}
+        defaultCreditor={payerId}
+        transaction={editingItem}
+      />
 
       {positions.length > 0 && (
         <motion.button

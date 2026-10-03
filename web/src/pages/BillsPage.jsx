@@ -1,13 +1,15 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, CreditCard, History } from 'lucide-react'
+import { Lock, LockOpen, Trash2, TriangleAlert, Receipt, Check, X, ChevronLeft, Plus, LayoutGrid, Send, Wallet, CreditCard, History, Pencil } from 'lucide-react'
 import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import PaymentDetailsDialog from '../components/bills/PaymentDetailsDialog'
 import PaymentDialog from '../components/bills/PaymentDialog'
 import ShareBillButton from '../components/bills/ShareBillButton'
 import DebtHistory from '../components/bills/DebtHistory'
+import ItemEditorDialog from '../components/bills/ItemEditorDialog'
+import BillActivity from '../components/bills/BillActivity'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
@@ -508,25 +510,35 @@ function PersonGroup({ name, group, personsById, currency, isMine }) {
   )
 }
 
-function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete }) {
+function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete, onEdit }) {
   const cred = personsById[tx.creditor]?.display_name || '?'
   const total = tx.unit_price_minor * tx.quantity
   return (
     <div className={`bg-spotify-gray/50 rounded-lg p-3 ${isMine ? 'border-l-2 border-green-400' : ''}`}>
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
-          <div className="text-white text-sm font-medium">{tx.item_name}</div>
-          <div className="text-xs text-spotify-text">
+          <div className="text-white text-base font-medium">{tx.item_name}</div>
+          <div className="mt-1 text-sm text-spotify-text">
             {tx.quantity} × {formatMinor(tx.unit_price_minor, currency)} = {formatMinor(total, currency)}
           </div>
         </div>
         {tx.locked ? (
           <span className="text-spotify-green/70 ml-2" title="По позиции прошла оплата — правка заблокирована"><Lock size={14} /></span>
         ) : isAuthor && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete(tx.id) }}
-            className="text-red-400 ml-2"
-          ><Trash2 size={14} /></button>
+          <div className="ml-2 flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onEdit(tx)}
+              aria-label={`Изменить ${tx.item_name}`}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-spotify-text hover:bg-white/5 hover:text-gold"
+            ><Pencil size={18} /></button>
+            <button
+              type="button"
+              onClick={() => onDelete(tx.id)}
+              aria-label={`Удалить ${tx.item_name}`}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-spotify-text hover:bg-white/5 hover:text-red-400"
+            ><Trash2 size={18} /></button>
+          </div>
         )}
       </div>
       <div className="mt-2 space-y-1">
@@ -535,198 +547,18 @@ function TransactionRow({ tx, personsById, currency, isMine, isAuthor, onDelete 
           const den = asg.denominator || 1
           const portion = den > 1 ? `${asg.unit_count}/${den}` : `${asg.unit_count} ед.`
           return (
-            <div key={i} className="text-xs text-spotify-text inline-flex items-center gap-1">
+            <div key={i} className="text-sm text-spotify-text flex items-center gap-1">
               {!names && <TriangleAlert size={11} className="text-yellow-400" />}
               · {portion} → {names || 'не назначено'}
             </div>
           )
         })}
       </div>
-      <div className="text-xs text-spotify-text/60 mt-1">оплатил {cred}</div>
+      <div className="text-sm text-spotify-text mt-2">Оплатил {cred}</div>
       {tx.incomplete && (
         <div className="text-xs text-yellow-400 mt-1 inline-flex items-center gap-1"><TriangleAlert size={11} /> позиция не завершена</div>
       )}
     </div>
-  )
-}
-
-function AddItemModal({ open, onClose, billId, persons, onAdded }) {
-  const api = useApi()
-  const [name, setName] = useState('')
-  const [price, setPrice] = useState('')
-  const [quantity, setQuantity] = useState(1)
-  const [creditor, setCreditor] = useState('')
-  const [assignments, setAssignments] = useState([{ unit_count: 1, debtors: [] }])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    if (!open) {
-      setName(''); setPrice(''); setQuantity(1); setCreditor('')
-      setAssignments([{ unit_count: 1, debtors: [] }])
-      setError(null)
-    }
-  }, [open])
-
-  const totalAssigned = assignments.reduce((s, a) => s + a.unit_count, 0)
-
-  const splitEqually = () => {
-    setAssignments([{ unit_count: quantity, debtors: persons.map(p => p.id) }])
-  }
-
-  const addAssignment = () => {
-    setAssignments([...assignments, { unit_count: 1, debtors: [] }])
-  }
-
-  const updateAsg = (idx, patch) => {
-    setAssignments(assignments.map((a, i) => i === idx ? { ...a, ...patch } : a))
-  }
-
-  const removeAsg = (idx) => {
-    setAssignments(assignments.filter((_, i) => i !== idx))
-  }
-
-  const handleSubmit = async () => {
-    setError(null)
-    if (!name.trim() || !price || !creditor) {
-      setError('Заполни все поля')
-      return
-    }
-    setLoading(true)
-    try {
-      const unit_price_minor = Math.round(parseFloat(price.replace(',', '.')) * 100)
-      const data = await api(`/api/bills/${billId}/transactions`, {
-        method: 'POST',
-        body: JSON.stringify({
-          item_name: name.trim(),
-          unit_price_minor,
-          quantity,
-          creditor,
-          assignments,
-          source: 'manual',
-        }),
-      })
-      onAdded(data)
-      onClose()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={onClose}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50
-          bg-spotify-black rounded-2xl p-5 w-[calc(100%-2rem)] max-w-md max-h-[85vh] overflow-y-auto">
-          <Dialog.Title className="text-white text-lg font-bold mb-4">Новая позиция</Dialog.Title>
-          <div className="space-y-3">
-            <input
-              placeholder="Название"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                placeholder="Цена за ед."
-                inputMode="decimal"
-                value={price}
-                onChange={e => setPrice(e.target.value)}
-                className="bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
-              />
-              <input
-                placeholder="Кол-во"
-                type="number"
-                min="1"
-                value={quantity}
-                onChange={e => setQuantity(parseInt(e.target.value) || 1)}
-                className="bg-spotify-gray rounded-lg px-3 py-2 text-white text-sm outline-none"
-              />
-            </div>
-            <Dropdown
-              value={creditor}
-              onChange={v => setCreditor(v)}
-              options={persons.map(p => ({ value: p.id, label: p.display_name }))}
-              placeholder="Кто оплатил..."
-            />
-
-            <div className="border border-spotify-gray rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-white text-sm font-medium">Назначения</span>
-                <button
-                  onClick={splitEqually}
-                  className="text-xs text-gold"
-                >Поровну на всех</button>
-              </div>
-              <div className="space-y-2">
-                {assignments.map((asg, i) => (
-                  <div key={i} className="bg-spotify-gray/50 rounded p-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <input
-                        type="number"
-                        min="1"
-                        value={asg.unit_count}
-                        onChange={e => updateAsg(i, { unit_count: parseInt(e.target.value) || 1 })}
-                        className="w-16 bg-spotify-gray rounded px-2 py-1 text-white text-xs"
-                      />
-                      <span className="text-xs text-spotify-text">ед. →</span>
-                      <button
-                        onClick={() => removeAsg(i)}
-                        className="ml-auto text-red-400"
-                      ><X size={14} /></button>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {persons.map(p => (
-                        <button
-                          key={p.id}
-                          onClick={() => {
-                            const has = asg.debtors.includes(p.id)
-                            updateAsg(i, {
-                              debtors: has
-                                ? asg.debtors.filter(d => d !== p.id)
-                                : [...asg.debtors, p.id]
-                            })
-                          }}
-                          className={`text-xs px-2 py-1 rounded ${
-                            asg.debtors.includes(p.id)
-                              ? 'bg-gold text-black'
-                              : 'bg-spotify-gray text-spotify-text'
-                          }`}
-                        >{p.display_name}</button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <button
-                  onClick={addAssignment}
-                  className="w-full text-xs text-gold border border-dashed border-gold/50 rounded py-1"
-                >+ Назначение</button>
-              </div>
-              <div className="text-xs text-spotify-text mt-2">
-                Распределено: {totalAssigned}/{quantity}
-              </div>
-            </div>
-
-            {error && <div className="text-red-400 text-xs">{error}</div>}
-
-            <div className="flex gap-2">
-              <button
-                onClick={onClose}
-                className="flex-1 bg-spotify-gray text-white rounded-lg py-2"
-              >Отмена</button>
-              <button
-                onClick={handleSubmit}
-                disabled={loading}
-                className="flex-1 bg-gold text-black rounded-lg py-2 font-medium disabled:opacity-50 hover:bg-gold-2 transition-colors"
-              >{loading ? '...' : 'Добавить'}</button>
-            </div>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
   )
 }
 
@@ -759,6 +591,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
   const [tab, setTab] = useState('items')
   const [itemsView, setItemsView] = useState('positions')
   const [showAdd, setShowAdd] = useState(false)
+  const [editingItem, setEditingItem] = useState(null)
   const [suggestions, setSuggestions] = useState([])
   const peopleGroups = useMemo(() => buildPeopleGroups(bill), [bill])
   const personsById = useMemo(
@@ -886,8 +719,8 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
         </div>
       )}
 
-      <div className="flex gap-2 mb-4">
-        {['items', 'debts', 'payments'].map(t => (
+      <div className="flex flex-wrap gap-2 mb-4">
+        {['items', 'debts', 'payments', 'activity'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -895,7 +728,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
               tab === t ? 'bg-gold text-black' : 'bg-spotify-gray text-spotify-text'
             }`}
           >
-            {t === 'items' ? 'Позиции' : t === 'debts' ? 'Долги' : 'Платежи'}
+            {t === 'items' ? 'Позиции' : t === 'debts' ? 'Долги' : t === 'payments' ? 'Платежи' : 'История'}
           </button>
         ))}
         {isAuthor && !bill.closed && (
@@ -931,8 +764,9 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
               personsById={personsById}
               currency={bill.currency}
               isMine={tx.assignments.some(a => a.debtors.includes(myPersonId))}
-              isAuthor={isAuthor}
+              isAuthor={isAuthor && !bill.closed}
               onDelete={handleDelete}
+              onEdit={setEditingItem}
             />
           ))}
           {itemsView === 'people' && (
@@ -1012,12 +846,22 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
         </div>
       )}
 
-      <AddItemModal
-        open={showAdd}
-        onClose={() => setShowAdd(false)}
+      {tab === 'activity' && (
+        <BillActivity billId={bill.id} personsById={personsById} formatMinor={formatMinor} formatDateTime={formatDateTime} />
+      )}
+
+      <ItemEditorDialog
+        open={showAdd || !!editingItem}
+        onClose={() => {
+          setShowAdd(false)
+          setEditingItem(null)
+        }}
         billId={bill.id}
+        currency={bill.currency}
+        defaultCreditor={bill.author_person_id}
+        transaction={editingItem}
         persons={persons.filter(p => bill.participants.includes(p.id))}
-        onAdded={() => onChange()}
+        onSaved={onChange}
       />
     </motion.div>
   )

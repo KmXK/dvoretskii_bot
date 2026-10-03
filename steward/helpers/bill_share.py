@@ -11,6 +11,8 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
         if pid and pid != UNKNOWN_PERSON_ID
     }
     total_minor = sum(tx.unit_price_minor * tx.quantity for tx in bill.transactions)
+    mismatch_items = []
+    mismatch_minor = 0
 
     for tx in bill.transactions:
         assigned_portion = Fraction(0)
@@ -43,6 +45,15 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
         for pid, (portion, amount) in allocations.items():
             per_person.setdefault(pid, []).append(_format_item(tx, portion, amount, bill.currency))
 
+        if assigned_portion > tx.quantity:
+            difference = tx.unit_price_minor * tx.quantity - sum(amount for _, amount in allocations.values())
+            mismatch_minor += difference
+            mismatch_items.append({
+                "label": tx.item_name or "—",
+                "detail": f"Распределено {assigned_portion} шт., в позиции {tx.quantity} шт.",
+                "amount_minor": difference,
+            })
+
     groups = []
     for pid in sorted(per_person, key=lambda pid: names.get(pid, "").lower()):
         if pid == UNKNOWN_PERSON_ID:
@@ -58,13 +69,18 @@ def build_bill_share(bill, names: dict[str, str]) -> dict:
         item["amount_minor"]
         for items in per_person.values()
         for item in items
-    )
+    ) - mismatch_minor
     if rounding_minor:
         groups.append({
             "name": "Разница округления",
             "total": minor_to_display(rounding_minor, bill.currency),
             "items": [],
         })
+
+    if mismatch_items:
+        mismatch = _format_group("Ошибка распределения", mismatch_items, bill.currency)
+        mismatch["warning"] = True
+        groups.append(mismatch)
 
     total = minor_to_display(total_minor, bill.currency)
     summary = f"{people_count} {_people_word(people_count)} · итого {total}"
