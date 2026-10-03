@@ -59,12 +59,12 @@ def test_share_lists_person_totals_items_portions_and_unit_prices():
         {
             "name": "Дима",
             "total": "5.01 р",
-            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р = 5.01 р", "amount": "5.01 р"}],
+            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р ≈ 5.01 р", "amount": "5.01 р"}],
         },
         {
             "name": "Кирилл",
             "total": "5 р",
-            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р = 5 р", "amount": "5 р"}],
+            "items": [{"label": "Пицца", "detail": "1/2 × 10.01 р ≈ 5 р", "amount": "5 р"}],
         },
     ]
     assert "caption" not in share
@@ -78,7 +78,7 @@ def test_fractional_share_matches_debt_rounding_and_keeps_zero_participants():
 
     assert debts["dima"]["kirill"] == 751
     assert share["groups"][0]["total"] == "7.51 р"
-    assert share["groups"][0]["items"][0]["detail"] == "3/4 × 10.01 р = 7.51 р"
+    assert share["groups"][0]["items"][0]["detail"] == "3/4 × 10.01 р ≈ 7.51 р"
     assert share["groups"][1]["total"] == "0 р"
     assert share["groups"][2]["name"] == "Не распределено"
     assert share["groups"][2]["total"] == "2.50 р"
@@ -105,6 +105,7 @@ def test_rounding_difference_reconciles_groups_without_changing_debts():
     share = build_bill_share(bill, NAMES)
 
     assert share["groups"][0]["total"] == "0.99 р"
+    assert share["groups"][0]["items"][0]["detail"] == "1/1 × 1 р ≈ 0.99 р"
     assert share["groups"][-1] == {
         "name": "Разница округления",
         "total": "0.01 р",
@@ -204,7 +205,7 @@ def test_image_contains_totals_prices_and_wraps_full_item_names(monkeypatch):
     assert image.height > 700
     assert share["summary"] in texts
     assert "5.01 р" in texts
-    assert "1/2 × 10.01 р = 5.01 р" in texts
+    assert "1/2 × 10.01 р ≈ 5.01 р" in texts
     assert " ".join(texts).count("пиццы") == 10
     assert_text_fits_image(records, image)
 

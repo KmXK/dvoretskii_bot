@@ -79,10 +79,12 @@ def _add_portion(allocations, pid, portion, amount):
 def _format_item(transaction, portion, amount, currency):
     share = portion / max(transaction.quantity, 1)
     fraction = f"{share.numerator}/{share.denominator}"
-    total = minor_to_display(transaction.unit_price_minor * transaction.quantity, currency)
+    total_minor = transaction.unit_price_minor * transaction.quantity
+    total = minor_to_display(total_minor, currency)
+    sign = "=" if share * total_minor == amount else "≈"
     result = {
         "label": transaction.item_name or "—",
-        "detail": f"{fraction} × {total} = {minor_to_display(amount, currency)}",
+        "detail": f"{fraction} × {total} {sign} {minor_to_display(amount, currency)}",
         "amount_minor": amount,
     }
     if transaction.quantity > 1:
