@@ -44,18 +44,34 @@ def _text_w(draw: ImageDraw.ImageDraw, text: str, font) -> int:
     return int(draw.textlength(text, font=font))
 
 
-def _ellipsize(draw, text, font, max_w):
-    if _text_w(draw, text, font) <= max_w:
-        return text
-    while text and _text_w(draw, text + "…", font) > max_w:
-        text = text[:-1]
-    return text + "…"
+def _wrap_text(draw, text, font, max_w):
+    lines = []
+    line = ""
+    for word in str(text).split():
+        candidate = f"{line} {word}" if line else word
+        if _text_w(draw, candidate, font) <= max_w:
+            line = candidate
+            continue
+
+        if line:
+            lines.append(line)
+            line = ""
+
+        for char in word:
+            if line and _text_w(draw, line + char, font) > max_w:
+                lines.append(line)
+                line = ""
+
+            line += char
+
+    return lines + [line or "—"]
 
 
 def render_bill_people_png(
     name: str,
     groups: list[dict],
     *,
+    summary: str = "",
     width: int = 880,
 ) -> bytes:
     """groups: list of {name, total, items:[{label, amount}]}.
@@ -71,17 +87,29 @@ def render_bill_people_png(
     amount_font = _font(26, bold=True)
     brand_font = _font(24, bold=True)
 
-    header_h = 168
     footer_h = 70
-    person_h = 50
-    item_h = 40
     group_gap = 18
-
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    title_lines = _wrap_text(measure, name or "Счёт", title_font, width - 2 * pad)
+    header_h = pad + 24 + len(title_lines) * 56 + 48 + (40 if summary else 0)
+    layouts = []
     body_h = 0
-    if groups:
-        for g in groups:
-            body_h += person_h + len(g["items"]) * item_h + group_gap
-    else:
+    for group in groups:
+        total_w = _text_w(measure, group["total"], total_font)
+        person_lines = _wrap_text(measure, group["name"], person_font, width - 2 * pad - total_w - 24)
+        person_h = max(50, len(person_lines) * 40 + 10)
+        items = []
+        for item in group["items"]:
+            amount_w = _text_w(measure, item["amount"], amount_font)
+            label_lines = _wrap_text(measure, item["label"], item_font, width - 2 * pad - 24 - amount_w - 20)
+            detail_lines = _wrap_text(measure, item["detail"], sub_font, width - 2 * pad - 24) if item.get("detail") else []
+            item_h = len(label_lines) * 34 + len(detail_lines) * 34 + 12
+            items.append((item, amount_w, label_lines, detail_lines, item_h))
+
+        layouts.append((group, total_w, person_lines, person_h, items))
+        body_h += person_h + sum(item[-1] for item in items) + group_gap
+
+    if not groups:
         body_h = 96
     height = header_h + body_h + footer_h + pad
 
@@ -95,29 +123,38 @@ def render_bill_people_png(
     x0 = pad
     draw.rounded_rectangle([x0, pad, x0 + 56, pad + 8], radius=4, fill=_GOLD)
 
-    title = _ellipsize(draw, (name or "Счёт").strip(), title_font, width - 2 * pad)
-    draw.text((x0, pad + 24), title, font=title_font, fill=_WHITE)
-    draw.text((x0, pad + 84), "Кто что взял", font=sub_font, fill=_MUTED)
+    title_y = pad + 24
+    for line in title_lines:
+        draw.text((x0, title_y), line, font=title_font, fill=_WHITE)
+        title_y += 56
+
+    draw.text((x0, title_y + 4), "Кто что взял", font=sub_font, fill=_MUTED)
+    if summary:
+        draw.text((x0, title_y + 44), summary, font=sub_font, fill=_GOLD)
 
     y = header_h + pad // 2
     if not groups:
         draw.text((x0, y + 16), "Позиции ещё не распределены", font=person_font, fill=_MUTED)
     else:
-        for g in groups:
-            total_str = g["total"]
-            tw = _text_w(draw, total_str, total_font)
-            person = _ellipsize(draw, g["name"], person_font, width - pad - x0 - tw - 24)
-            draw.text((x0, y + 6), person, font=person_font, fill=_WHITE)
-            draw.text((width - pad - tw, y + 8), total_str, font=total_font, fill=_GOLD)
+        for group, total_w, person_lines, person_h, items in layouts:
+            for index, line in enumerate(person_lines):
+                draw.text((x0, y + 6 + index * 40), line, font=person_font, fill=_WHITE)
+
+            draw.text((width - pad - total_w, y + 8), group["total"], font=total_font, fill=_GOLD)
             y += person_h
-            for it in g["items"]:
-                amt = it["amount"]
-                aw = _text_w(draw, amt, amount_font)
-                label = _ellipsize(draw, it["label"], item_font, width - pad - (x0 + 24) - aw - 20)
-                draw.text((x0 + 24, y + 4), label, font=item_font, fill=_MUTED)
-                draw.text((width - pad - aw, y + 4), amt, font=amount_font, fill=_WHITE)
+            for item, amount_w, label_lines, detail_lines, item_h in items:
+                for index, line in enumerate(label_lines):
+                    draw.text((x0 + 24, y + 4 + index * 34), line, font=item_font, fill=_WHITE)
+
+                draw.text((width - pad - amount_w, y + 4), item["amount"], font=amount_font, fill=_WHITE)
+                detail_y = y + 4 + len(label_lines) * 34
+                for line in detail_lines:
+                    draw.text((x0 + 24, detail_y), line, font=sub_font, fill=_MUTED)
+                    detail_y += 34
+
                 y += item_h
-            y += group_gap - 6
+
+            y += group_gap
             draw.line([x0, y - group_gap // 2, width - pad, y - group_gap // 2], fill=_BORDER, width=1)
 
     draw.text((x0, height - footer_h), "Дворецкий", font=brand_font, fill=_GOLD)

@@ -2557,14 +2557,15 @@ async def handle_bills_share_image(request: web.Request):
     """POST /api/bills/{id}/share-image — отрисовать итоговую раскидку картинкой и
     подготовить её к нативному шерингу (WebApp.shareMessage).
 
-    Считаем нетто-долги (после платежей), рисуем PNG, грузим в Telegram ради
+    Показываем товары и суммы участников, рисуем PNG, грузим в Telegram ради
     file_id, кладём prepared inline message. Возвращаем prepared_message_id.
     """
     import uuid as _uuid
-    from telegram import InlineQueryResultCachedPhoto
-    from steward.data.models.bill_v2 import UNKNOWN_PERSON_ID
+    from io import BytesIO
+    from PIL import Image
+    from telegram import InlineQueryResultCachedDocument, InlineQueryResultCachedPhoto
     from steward.helpers.bill_image import render_bill_people_png
-    from steward.helpers.bills_money import minor_to_display, split_minor
+    from steward.helpers.bill_share import build_bill_share
 
     repository: Repository = request.app["repository"]
     bot = request.app.get("bot")
@@ -2581,70 +2582,47 @@ async def handle_bills_share_image(request: web.Request):
     if not ok:
         return web.json_response({"error": err}, status=403)
 
-    # «Кто что взял»: для каждого человека — его позиции с долей (без неттинга
-    # платежей — это раскладка потребления, а не итог расчётов).
     names = {p.id: p.display_name for p in repository.db.bill_persons}
-    per_person: dict[str, list[tuple[str, int]]] = {}
-    for tx in bill.transactions:
-        for asg in tx.assignments:
-            debtors = [d for d in asg.debtors if d and d != UNKNOWN_PERSON_ID]
-            if not debtors:
-                continue
-            den = getattr(asg, "denominator", 1) or 1
-            asg_total = (tx.unit_price_minor * asg.unit_count + den // 2) // den
-            shares = split_minor(asg_total, len(asg.debtors))
-            for d, share in zip(asg.debtors, shares):
-                if d and d != UNKNOWN_PERSON_ID:
-                    per_person.setdefault(d, []).append((tx.item_name or "—", share))
-
-    groups: list[dict] = []
-    grand_total = 0
-    for pid, items in sorted(per_person.items(), key=lambda kv: names.get(kv[0], "").lower()):
-        total = sum(s for _, s in items)
-        grand_total += total
-        groups.append({
-            "name": names.get(pid, "?"),
-            "total": minor_to_display(total, bill.currency),
-            "items": [
-                {"label": label, "amount": minor_to_display(share, bill.currency)}
-                for label, share in items
-            ],
-        })
-
-    png = render_bill_people_png(bill.name, groups)
+    share = build_bill_share(bill, names)
+    png = render_bill_people_png(bill.name, share["groups"], summary=share["summary"])
+    with Image.open(BytesIO(png)) as image:
+        as_document = (
+            image.width + image.height > 10000
+            or max(image.size) > 20 * min(image.size)
+            or len(png) > 10 * 1024 * 1024
+        )
 
     uid = int(tg_user["id"])
     try:
-        msg = await bot.send_photo(chat_id=uid, photo=png, disable_notification=True)
+        if as_document:
+            msg = await bot.send_document(
+                chat_id=uid,
+                document=png,
+                filename=f"bill-{bill.id}.png",
+                disable_notification=True,
+            )
+            result = InlineQueryResultCachedDocument(
+                id=_uuid.uuid4().hex,
+                document_file_id=msg.document.file_id,
+                title=bill.name or "Счёт",
+                caption=share["caption"],
+            )
+        else:
+            msg = await bot.send_photo(chat_id=uid, photo=png, disable_notification=True)
+            result = InlineQueryResultCachedPhoto(
+                id=_uuid.uuid4().hex,
+                photo_file_id=msg.photo[-1].file_id,
+                caption=share["caption"],
+            )
     except Exception as e:
-        logger.warning("share-image: send_photo to %s failed: %s", uid, e)
+        logger.warning("share-image: upload to %s failed: %s", uid, e)
         return web.json_response({"error": "не удалось подготовить картинку"}, status=502)
-    file_id = msg.photo[-1].file_id
+
     try:
         await bot.delete_message(chat_id=uid, message_id=msg.message_id)
     except Exception:
         pass
 
-    n = len(groups)
-    if n % 10 == 1 and n % 100 != 11:
-        people_word = "участник"
-    elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
-        people_word = "участника"
-    else:
-        people_word = "участников"
-    if n:
-        caption = (
-            f"🧾 {bill.name} — кто что взял\n"
-            f"{n} {people_word} · итого {minor_to_display(grand_total, bill.currency)}"
-        )
-    else:
-        caption = f"🧾 {bill.name} — кто что взял"
-
-    result = InlineQueryResultCachedPhoto(
-        id=_uuid.uuid4().hex,
-        photo_file_id=file_id,
-        caption=caption,
-    )
     try:
         prepared = await bot.save_prepared_inline_message(
             uid, result,

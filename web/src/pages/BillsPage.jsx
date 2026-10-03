@@ -6,6 +6,7 @@ import Loader from '../components/Loader'
 import Dropdown from '../components/Dropdown'
 import PaymentDetailsDialog from '../components/bills/PaymentDetailsDialog'
 import PaymentDialog from '../components/bills/PaymentDialog'
+import ShareBillButton from '../components/bills/ShareBillButton'
 import { useAuth } from '../context/useAuth'
 import { api } from '../api/client'
 import BillDistribute from './BillDistribute'
@@ -841,6 +842,7 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
             </div>
           )}
         </div>
+        <ShareBillButton billId={bill.id} className="mt-4" />
       </div>
 
       {bill.applied_credit_minor > 0 && (
