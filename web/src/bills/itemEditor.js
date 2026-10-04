@@ -73,8 +73,24 @@ export function getUnassignedPortion(quantity, assignments) {
   return fraction(BigInt(quantity) * assigned.denominator - assigned.numerator, assigned.denominator)
 }
 
-export function retainAssignmentsForQuantity(assignments, previousQuantity, quantity) {
-  return previousQuantity === quantity ? assignments : assignments.filter((assignment) => assignment.debtors?.length)
+export function getUnassignedDraft(transaction) {
+  if (!transaction) {
+    return ''
+  }
+
+  const allocated = (transaction.assignments || []).filter((assignment) => assignment.debtors?.length)
+  return formatPortion(getUnassignedPortion(transaction.quantity, allocated))
+}
+
+export function getUnassignedForPortions(quantityBaseline, portions) {
+  const assignments = assignmentsFromPortions(portions)
+  if (!assignments) {
+    return null
+  }
+
+  const allocated = getAssignmentsTotal(assignments)
+  const result = addPortions(quantityBaseline, { numerator: -allocated.numerator, denominator: allocated.denominator })
+  return result.numerator < 0n ? '0' : formatPortion(result)
 }
 
 export function getPersonPortions(assignments) {
@@ -112,6 +128,39 @@ export function assignmentsFromPortions(portions) {
   }
 
   return assignments
+}
+
+export function deriveItemDistribution({ portions, unassigned, preserved = null, original = null }) {
+  const allocated = preserved
+    ? (preserved.assignments || []).filter((assignment) => assignment.debtors?.length)
+    : assignmentsFromPortions(portions)
+  const remaining = parsePortion(unassigned)
+  if (!allocated || !remaining) {
+    return { assignments: null, quantity: null, total: null, remaining }
+  }
+
+  const total = addPortions(getAssignmentsTotal(allocated), remaining)
+  const quantity = parseQuantity(formatPortion(total))
+  if (original && quantity === original.quantity) {
+    const currentPortions = getPersonPortions(allocated)
+    const originalPortions = getPersonPortions(original.assignments || [])
+    const samePeople = Object.keys(currentPortions).length === Object.keys(originalPortions).length
+      && Object.entries(currentPortions).every(([personId, value]) => originalPortions[personId] === value)
+    if (samePeople && formatPortion(remaining) === getUnassignedDraft(original)) {
+      return { assignments: original.assignments || [], quantity, total, remaining }
+    }
+  }
+
+  if (preserved && quantity === preserved.quantity) {
+    return { assignments: preserved.assignments || [], quantity, total, remaining }
+  }
+
+  const assignments = [...allocated]
+  if (remaining.numerator > 0n) {
+    assignments.push({ unit_count: Number(remaining.numerator), denominator: Number(remaining.denominator), debtors: [] })
+  }
+
+  return { assignments, quantity, total, remaining }
 }
 
 export function getPersonAmounts(assignments, unitPriceMinor, creditor) {

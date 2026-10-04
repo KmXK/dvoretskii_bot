@@ -4,9 +4,9 @@ import { Check, Loader2, Minus, Plus, X } from 'lucide-react'
 
 import { api } from '../../api/client'
 import {
-  addPortions, assignmentsFromPortions, formatItemMoney, formatPortion,
-  getAssignmentsTotal, getDistributionSizeError, getPersonAmounts, getPersonPortions, getUnassignedPortion,
-  parsePortion, parsePriceMinor, parseQuantity, retainAssignmentsForQuantity,
+  addPortions, deriveItemDistribution, formatItemMoney, formatPortion,
+  getDistributionSizeError, getPersonAmounts, getPersonPortions, getUnassignedDraft, getUnassignedForPortions, getUnassignedPortion,
+  parsePortion, parsePriceMinor,
 } from '../../bills/itemEditor'
 
 
@@ -14,12 +14,14 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
   const id = useId()
   const [name, setName] = useState(transaction?.item_name || '')
   const [price, setPrice] = useState(transaction ? (transaction.unit_price_minor / 100).toFixed(2).replace('.', ',') : '')
-  const [quantity, setQuantity] = useState(String(transaction?.quantity ?? 1))
   const [creditor, setCreditor] = useState(transaction?.creditor || defaultCreditor || '')
   const [portions, setPortions] = useState(() => getPersonPortions(transaction?.assignments || []))
-  const [mode, setMode] = useState('units')
-  const [selected, setSelected] = useState(() => Object.keys(getPersonPortions(transaction?.assignments || [])))
-  const [distributionChanged, setDistributionChanged] = useState(false)
+  const [quantityBaseline, setQuantityBaseline] = useState(() => ({ numerator: BigInt(transaction?.quantity || 0), denominator: 1n }))
+  const [unassigned, setUnassigned] = useState(() => getUnassignedDraft(transaction))
+  const [showUnassigned, setShowUnassigned] = useState(!!unassigned && unassigned !== '0')
+  const [preserved, setPreserved] = useState(transaction || null)
+  const [sharing, setSharing] = useState(false)
+  const [selected, setSelected] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
@@ -32,42 +34,52 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
     }
   }
 
-  const members = [...membersById.values()]
-  const quantityValue = parseQuantity(quantity)
-  const priceMinor = parsePriceMinor(price)
-  const totalMinor = quantityValue !== null && priceMinor !== null ? quantityValue * priceMinor : null
-  let assignments = retainAssignmentsForQuantity(transaction?.assignments || [], transaction?.quantity, quantityValue)
-  if (distributionChanged) {
-    assignments = mode === 'equal'
-      ? selected.length > 0 && quantityValue !== null
-        ? [{ unit_count: quantityValue, denominator: 1, debtors: selected }]
-        : []
-      : assignmentsFromPortions(portions)
+  if (transaction?.creditor && !membersById.has(transaction.creditor)) {
+    membersById.set(transaction.creditor, { id: transaction.creditor, display_name: 'Плательщик не указан' })
   }
 
-  const allocatedAssignments = assignments?.filter((assignment) => assignment.debtors?.length)
-  const assigned = allocatedAssignments ? getAssignmentsTotal(allocatedAssignments) : null
-  const remaining = allocatedAssignments && quantityValue !== null ? getUnassignedPortion(quantityValue, allocatedAssignments) : null
+  const members = [...membersById.values()]
+  const distribution = deriveItemDistribution({ portions, unassigned, preserved, original: transaction })
+  const { assignments, quantity: quantityValue, total: totalPortions, remaining } = distribution
+  const priceMinor = parsePriceMinor(price)
+  const totalMinor = quantityValue !== null && priceMinor !== null ? quantityValue * priceMinor : null
   const payloadRemaining = assignments && quantityValue !== null ? getUnassignedPortion(quantityValue, assignments) : null
   const amounts = assignments && priceMinor !== null ? getPersonAmounts(assignments, priceMinor, creditor) : {}
-  const displayedPortions = mode === 'equal' && assignments ? getPersonPortions(assignments) : portions
-  const quantityError = quantityValue === null ? 'Укажи целое количество больше нуля' : null
   const priceError = price && priceMinor === null ? 'Укажи цену больше нуля, до двух знаков после запятой' : null
   const totalError = totalMinor !== null && !Number.isSafeInteger(totalMinor) ? 'Сумма слишком большая' : null
   const distributionSizeError = assignments && quantityValue !== null ? getDistributionSizeError(quantityValue, assignments) : null
   const distributionError = assignments === null
-    ? 'Количество у человека должно быть числом или дробью, например 1/2'
-    : remaining?.numerator < 0n
-      ? `Распределено ${formatPortion(assigned)} шт. при количестве ${quantityValue}. Уменьши доли или измени количество.`
-      : payloadRemaining?.numerator < 0n
-        ? `В сохранённом распределении учтено больше ${quantityValue} шт. Проверь количество или заново укажи доли.`
-        : distributionSizeError
+    ? 'Укажи неотрицательное количество или дробь, например 1/2'
+    : totalPortions.denominator !== 1n
+      ? `В сумме ${formatPortion(totalPortions)} шт. Дополни доли до целого количества или добавь остаток в «Не распределено».`
+      : totalPortions.numerator > 0n && quantityValue === null
+        ? 'Количество слишком большое'
+        : payloadRemaining?.numerator < 0n
+          ? 'В сохранённом распределении есть лишние части. Заново укажи доли.'
+          : distributionSizeError
   const canSave = name.trim() && priceMinor !== null && quantityValue !== null
     && membersById.has(creditor) && !totalError && !distributionError
 
   const updatePortion = (personId, value) => {
-    setDistributionChanged(true)
-    setPortions((current) => ({ ...current, [personId]: value }))
+    const updatedPortions = { ...portions, [personId]: value }
+    const updated = getUnassignedForPortions(quantityBaseline, updatedPortions)
+    if (updated !== null && parsePortion(unassigned)) {
+      setUnassigned(updated)
+      if (updated && updated !== '0') {
+        setShowUnassigned(true)
+      }
+    }
+
+    setPreserved(null)
+    setPortions(updatedPortions)
+  }
+
+  const updateUnassigned = (value) => {
+    setUnassigned(value)
+    const updated = deriveItemDistribution({ portions, unassigned: value })
+    if (updated.total) {
+      setQuantityBaseline(updated.total)
+    }
   }
 
   const changePortion = (personId, delta) => {
@@ -76,20 +88,35 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
     updatePortion(personId, updated.numerator < 0n ? '0' : formatPortion(updated))
   }
 
-  const changeMode = (nextMode) => {
-    if (nextMode === mode) {
+  const applyEqualSplit = (personIds) => {
+    if (personIds.length === 0) {
       return
     }
 
-    if (nextMode === 'units') {
-      setPortions(getPersonPortions(assignments || []))
-    } else {
-      const allocatedPeople = Object.keys(getPersonPortions(assignments || []))
-      setSelected(allocatedPeople.length ? allocatedPeople : members.map((person) => person.id))
+    const equalAssignments = [{ unit_count: 1, denominator: 1, debtors: personIds }]
+    const equalPortions = getPersonPortions(equalAssignments)
+    setPreserved({ quantity: 1, assignments: equalAssignments })
+    setPortions(equalPortions)
+    const retained = getUnassignedForPortions(quantityBaseline, equalPortions)
+    setUnassigned(retained)
+    setShowUnassigned(retained !== '0')
+    setSelected(personIds)
+  }
+
+  const startEqualSplit = () => {
+    const allocatedPeople = Object.keys(getPersonPortions(assignments || [])).filter((personId) => personId !== '__unknown__')
+    const personIds = allocatedPeople.length ? allocatedPeople : members.filter((person) => person.id !== '__unknown__').map((person) => person.id)
+    if (personIds.length === 0) {
+      return
     }
 
-    setDistributionChanged(true)
-    setMode(nextMode)
+    setSharing(true)
+    applyEqualSplit(personIds)
+  }
+
+  const addUnassigned = () => {
+    updateUnassigned('1')
+    setShowUnassigned(true)
   }
 
   const handleSubmit = async (event) => {
@@ -145,7 +172,7 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
             <Dialog.Title className="text-xl font-semibold text-white">{transaction ? 'Изменить позицию' : 'Новая позиция'}</Dialog.Title>
             <button type="button" onClick={close} disabled={saving} aria-label="Закрыть" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-spotify-text hover:bg-white/5 hover:text-white disabled:opacity-40"><X size={21} /></button>
           </div>
-          <Dialog.Description className="sr-only">Цена за штуку, количество и распределение между участниками счёта</Dialog.Description>
+          <Dialog.Description className="sr-only">Цена за штуку и доли участников. Общее количество считается автоматически.</Dialog.Description>
           <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
             <fieldset disabled={saving} className="min-h-0 space-y-5 overflow-y-auto px-5 pb-5 disabled:opacity-70">
               <div>
@@ -153,16 +180,10 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
                 <input id={`${id}-name`} autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, кофе" className={fieldClass} />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor={`${id}-price`} className="mb-1.5 block text-sm text-spotify-text">Цена за штуку</label>
-                  <input id={`${id}-price`} inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="8,50" aria-invalid={!!priceError} className={fieldClass} />
-                </div>
-                <div>
-                  <label htmlFor={`${id}-quantity`} className="mb-1.5 block text-sm text-spotify-text">Количество, шт.</label>
-                  <input id={`${id}-quantity`} inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} aria-invalid={!!quantityError} className={fieldClass} />
-                </div>
-                {(priceError || quantityError || totalError) && <p className="col-span-2 text-sm text-red-400">{priceError || quantityError || totalError}</p>}
+              <div>
+                <label htmlFor={`${id}-price`} className="mb-1.5 block text-sm text-spotify-text">Цена за штуку</label>
+                <input id={`${id}-price`} inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="8,50" aria-invalid={!!priceError} className={fieldClass} />
+                {(priceError || totalError) && <p className="mt-2 text-sm text-red-400">{priceError || totalError}</p>}
               </div>
 
               <div className="rounded-2xl border border-gold/20 bg-gold/5 p-4">
@@ -170,7 +191,9 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
                   <span className="text-sm text-spotify-text">Всего за позицию</span>
                   <span className="text-2xl font-semibold text-gold tabular-nums">{totalMinor !== null && !totalError ? formatItemMoney(totalMinor, currency) : '—'}</span>
                 </div>
-                {totalMinor !== null && !totalError && <div className="mt-1 text-sm text-spotify-text tabular-nums">{formatItemMoney(priceMinor, currency)} × {quantityValue} шт.</div>}
+                <div className="mt-1 text-sm text-spotify-text tabular-nums">
+                  {totalPortions ? `${formatPortion(totalPortions)} шт.` : '— шт.'}{priceMinor !== null ? ` × ${formatItemMoney(priceMinor, currency)}` : ''}
+                </div>
               </div>
 
               <div>
@@ -182,17 +205,25 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
               </div>
 
               <div>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h3 className="text-base font-medium text-white">Кто взял</h3>
-                  <div className="inline-flex rounded-xl bg-spotify-gray p-1">
-                    {[['units', 'По штукам'], ['equal', 'Поровну']].map(([value, label]) => (
-                      <button key={value} type="button" onClick={() => changeMode(value)} aria-pressed={mode === value} className={`min-h-11 rounded-lg px-3 text-sm ${mode === value ? 'bg-gold text-black' : 'text-spotify-text hover:text-white'}`}>{label}</button>
-                    ))}
-                  </div>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="shrink-0 text-base font-medium text-white">Кому сколько</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sharing) {
+                        setSharing(false)
+                      } else {
+                        startEqualSplit()
+                      }
+                    }}
+                    disabled={members.every((person) => person.id === '__unknown__')}
+                    className="min-h-11 rounded-xl bg-white/5 px-3 text-sm font-medium text-gold hover:bg-white/10 disabled:opacity-40"
+                  >{sharing ? 'Указать доли' : 'Одну штуку поровну'}</button>
                 </div>
+                <p className="mt-1 text-sm text-spotify-text">1 — штука; 1/2 — половина</p>
                 <div className="divide-y divide-white/5">
                   {members.map((person) => {
-                    const portion = parsePortion(displayedPortions[person.id] || '')
+                    const portion = parsePortion(portions[person.id] || '')
                     return (
                       <div key={person.id} className="flex items-center justify-between gap-3 py-3">
                         <div className="min-w-0 flex-1">
@@ -200,15 +231,16 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
                           <div className="mt-0.5 text-sm text-spotify-text tabular-nums">
                             {formatItemMoney(amounts[person.id] || 0, currency)}{person.id === creditor ? ' · оплатил' : ''}
                           </div>
-                          {mode === 'equal' && <div className="mt-0.5 text-sm text-spotify-text">{displayedPortions[person.id] || '0'} шт.</div>}
+                          {sharing && <div className="mt-0.5 text-sm text-spotify-text">{portions[person.id] || '0'} шт.</div>}
                         </div>
-                        {mode === 'equal' ? (
+                        {sharing ? (
                           <label className="flex h-11 w-11 shrink-0 items-center justify-center">
                             <input
                               id={`${id}-${person.id}`}
                               type="checkbox"
                               checked={selected.includes(person.id)}
-                              onChange={() => setSelected((current) => current.includes(person.id) ? current.filter((personId) => personId !== person.id) : [...current, person.id])}
+                              disabled={selected.length === 1 && selected.includes(person.id)}
+                              onChange={() => applyEqualSplit(selected.includes(person.id) ? selected.filter((personId) => personId !== person.id) : [...selected, person.id])}
                               className="h-6 w-6 accent-gold"
                             />
                           </label>
@@ -223,13 +255,24 @@ function ItemEditorForm({ onClose, onSaved, billId, currency, persons, defaultCr
                     )
                   })}
                 </div>
-                {mode === 'units' && <p className="mt-2 text-sm text-spotify-text">Для части штуки укажи 0,5 или 1/2.</p>}
+                {showUnassigned ? (
+                  <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor={`${id}-unassigned`} className="text-base font-medium text-white">Не распределено</label>
+                      <div className="flex items-center gap-1">
+                        <input id={`${id}-unassigned`} inputMode="decimal" value={unassigned} onChange={(event) => updateUnassigned(event.target.value)} aria-invalid={!remaining} className="h-11 w-20 rounded-lg bg-spotify-gray px-2 text-center text-base text-white tabular-nums outline-none focus:ring-1 focus:ring-gold/40" />
+                        <button type="button" onClick={() => { updateUnassigned(''); setShowUnassigned(false) }} aria-label="Убрать нераспределённое количество" className="flex h-11 w-11 items-center justify-center rounded-lg text-spotify-text hover:bg-white/5 hover:text-white"><X size={17} /></button>
+                      </div>
+                    </div>
+                    <p className="mt-1 text-sm text-spotify-text">Входит в общую сумму. Можно назначить людям позже.</p>
+                  </div>
+                ) : (
+                  <button type="button" onClick={addUnassigned} className="mt-3 min-h-11 w-full rounded-xl border border-dashed border-white/15 px-3 text-sm text-spotify-text hover:border-white/30 hover:text-white">Распределить позже</button>
+                )}
                 {distributionError ? (
                   <p role="alert" className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{distributionError}</p>
-                ) : remaining && (
-                  <div className={`mt-3 rounded-xl p-3 text-sm ${remaining.numerator === 0n ? 'bg-green-500/10 text-green-300' : 'bg-white/5 text-spotify-text'}`}>
-                    {remaining.numerator === 0n ? `Распределено ${quantityValue} из ${quantityValue} шт.` : `Осталось распределить ${formatPortion(remaining)} шт. Можно сохранить и распределить позже.`}
-                  </div>
+                ) : totalPortions?.numerator === 0n && (
+                  <p className="mt-3 text-sm text-spotify-text">Укажи доли людей или выбери «Распределить позже».</p>
                 )}
               </div>
             </fieldset>
