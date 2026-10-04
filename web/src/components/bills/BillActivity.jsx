@@ -83,6 +83,7 @@ function fieldValue(field, value, currency, personsById, formatMinor) {
 function ActivityChange({ change, currency, personsById, formatMinor }) {
   const item = change.after || change.before
   const isItem = change.kind.startsWith('item_')
+  const itemCurrency = item?.currency || currency
   return (
     <div className="rounded-xl bg-black/15 p-3">
       <div className={`text-sm font-medium ${change.kind === 'item_removed' ? 'text-red-300' : 'text-white'}`}>
@@ -90,7 +91,7 @@ function ActivityChange({ change, currency, personsById, formatMinor }) {
       </div>
       {isItem && item && (
         <div className="mt-1 text-sm text-gold tabular-nums">
-          {item.quantity} × {formatMinor(item.unit_price_minor, currency)} = {formatMinor(item.quantity * item.unit_price_minor, currency)}
+          {item.quantity} × {formatMinor(item.unit_price_minor, itemCurrency)} = {formatMinor(item.quantity * item.unit_price_minor, itemCurrency)}
         </div>
       )}
       {change.fields.length > 0 && (
@@ -99,8 +100,8 @@ function ActivityChange({ change, currency, personsById, formatMinor }) {
             <div key={field}>
               <div className="text-xs text-spotify-text">{FIELD_LABELS[field] || field}</div>
               <div className="mt-0.5 break-words text-white">
-                <span className="text-spotify-text">{fieldValue(field, change.before?.[field], currency, personsById, formatMinor)}</span>
-                {' → '}{fieldValue(field, change.after?.[field], currency, personsById, formatMinor)}
+                <span className="text-spotify-text">{fieldValue(field, change.before?.[field], change.before?.currency || currency, personsById, formatMinor)}</span>
+                {' → '}{fieldValue(field, change.after?.[field], change.after?.currency || currency, personsById, formatMinor)}
               </div>
             </div>
           ))}

@@ -24,6 +24,7 @@ def snapshot_bills(bills):
                 "unit_price_minor": item.unit_price_minor,
                 "quantity": item.quantity,
                 "creditor": item.creditor,
+                "currency": bill.currency,
                 "assignments": [
                     {
                         "unit_count": assignment.unit_count,

@@ -179,6 +179,18 @@ async def test_deleted_bill_id_is_not_reused_with_its_private_history():
     await repository.save()
 
     assert repository.get_next_bill_v2_id() == 8
+
+
+async def test_removed_item_keeps_original_currency_after_receipt_reparse():
+    repository = make_activity_repository()
+    await repository.save()
+    bill = repository.db.bills_v2[0]
+    bill.currency = "USD"
+    bill.transactions.clear()
+    await repository.save()
+
+    removed = next(change for change in repository.db.bill_activity[-1].changes if change.kind == "item_removed")
+    assert removed.before["currency"] == "BYN"
     encoded = json.dumps(serialize_to_dict(repository.db), cls=JsonEncoder)
     repository.db = parse_from_dict(json.loads(encoded))
     assert repository.get_next_bill_v2_id() == 8
