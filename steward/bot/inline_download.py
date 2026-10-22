@@ -347,13 +347,12 @@ async def _upload_threads(url: str, bot: ExtBot) -> list[CachedMedia]:
 
 async def _upload_yandex_audio(url: str, bot: ExtBot) -> list[CachedMedia]:
     with tempfile.TemporaryDirectory(prefix="inline_ym_") as dir:
-        filepath = await download_yandex_audio(url, dir)
-        with open(filepath, "rb") as file:
+        audio = await download_yandex_audio(url, dir)
+        with open(audio.path, "rb") as file:
             msg = await bot.send_audio(
                 _upload_chat_id(),
                 file,
-                filename=Path(filepath).name,
-                title=Path(filepath).stem,
+                **audio.telegram_metadata(),
                 disable_notification=True,
             )
 

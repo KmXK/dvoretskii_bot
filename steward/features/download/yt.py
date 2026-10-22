@@ -7,13 +7,17 @@ import os
 import re
 import tempfile
 import uuid
+from dataclasses import dataclass
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import aiohttp
 import yt_dlp
+from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TIT2, TPE1
+from PIL import Image
 from aiohttp_socks import ProxyConnector
 from pyrate_limiter import BucketFullException
 from telegram import (
@@ -84,6 +88,54 @@ THREADS_MEDIA_HEADERS = {
 
 class YandexMusicDownloadError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class YandexAudio:
+    path: str
+    title: str
+    performer: str | None = None
+    thumbnail: bytes | None = None
+
+    def telegram_metadata(self) -> dict:
+        return {
+            "filename": Path(self.path).name,
+            "title": self.title,
+            "performer": self.performer,
+            "thumbnail": self.thumbnail,
+        }
+
+
+def _music_cover(track) -> bytes | None:
+    if not getattr(track, "cover_uri", None):
+        return None
+    try:
+        with Image.open(BytesIO(track.download_cover_bytes(size="300x300"))) as image:
+            image = image.convert("RGB")
+            image.thumbnail((300, 300))
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=85)
+            cover = output.getvalue()
+            return cover if len(cover) < 200_000 else None
+    except Exception:
+        # A missing/unavailable cover must not prevent downloading the track.
+        logger.warning("Could not prepare Yandex Music cover", exc_info=True)
+        return None
+
+
+def _tag_yandex_audio(audio: YandexAudio) -> None:
+    try:
+        tags = ID3(audio.path)
+    except ID3NoHeaderError:
+        tags = ID3()
+    tags.add(TIT2(encoding=3, text=audio.title))
+    if audio.performer:
+        tags.add(TPE1(encoding=3, text=audio.performer))
+    if audio.thumbnail:
+        tags.delall("APIC")
+        tags.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                      desc="Cover", data=audio.thumbnail))
+    tags.save(audio.path, v2_version=3)
 
 
 def _yandex_music_filename(title: str | None) -> str:
@@ -561,8 +613,8 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
     )
 
 
-async def download_yandex_audio(url: str, dir: str) -> str:
-    """Качает трек Яндекс.Музыки в `dir`, возвращает путь к файлу."""
+async def download_yandex_audio(url: str, dir: str) -> YandexAudio:
+    """Качает трек Яндекс.Музыки в `dir`, возвращает файл и метаданные."""
     token = os.environ.get("YANDEX_MUSIC_TOKEN")
     if not token:
         raise YandexMusicDownloadError("Яндекс Музыка не настроена: нужен OAuth-токен")
@@ -573,7 +625,7 @@ async def download_yandex_audio(url: str, dir: str) -> str:
 
     track_id = match.group(1)
 
-    def _run() -> str:
+    def _run() -> YandexAudio:
         try:
             client = YandexMusicClient(token).init()
             tracks = client.tracks([track_id])
@@ -591,29 +643,37 @@ async def download_yandex_audio(url: str, dir: str) -> str:
                     "Аккаунт Яндекс Музыки не даёт скачать полный трек"
                 )
 
-            filepath = os.path.join(dir, _yandex_music_filename(track.title))
+            title = track.title or "track"
+            artists = [artist.name for artist in (getattr(track, "artists", None) or [])
+                       if artist.name]
+            performer = ", ".join(artists) or None
+            name = f"{performer} - {title}" if performer else title
+            filepath = os.path.join(dir, _yandex_music_filename(name))
             max(download_infos, key=lambda info: info.bitrate_in_kbps).download(filepath)
-            return filepath
+            if not os.path.isfile(filepath) or os.path.getsize(filepath) == 0:
+                raise YandexMusicDownloadError("Яндекс Музыка вернула пустой файл")
+            audio = YandexAudio(filepath, title, performer, _music_cover(track))
+            _tag_yandex_audio(audio)
+            return audio
         except YandexMusicError as error:
             raise YandexMusicDownloadError(
                 "Яндекс Музыка не отдала трек: проверь токен и подписку"
             ) from error
 
     logger.info("Downloading Yandex Music track %s", track_id)
-    filepath = await asyncio.to_thread(_run)
-    if not os.path.isfile(filepath) or os.path.getsize(filepath) == 0:
+    audio = await asyncio.to_thread(_run)
+    if not os.path.isfile(audio.path) or os.path.getsize(audio.path) == 0:
         raise YandexMusicDownloadError("Яндекс Музыка вернула пустой файл")
 
-    return filepath
+    return audio
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
-        filepath = await download_yandex_audio(url, dir)
+        audio = await download_yandex_audio(url, dir)
 
-        with open(filepath, "rb") as file:
-            logger.info(file)
-            await message.reply_audio(file, filename=Path(filepath).name)
+        with open(audio.path, "rb") as file:
+            await message.reply_audio(file, **audio.telegram_metadata())
 
 
 async def download_video_file(

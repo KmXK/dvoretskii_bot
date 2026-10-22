@@ -37,3 +37,7 @@ rembg
 onnxruntime
 ddgs
 modal
+
+# Music metadata and embedded JPEG cover art
+mutagen>=1.47,<2
+Pillow

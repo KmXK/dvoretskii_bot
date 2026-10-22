@@ -123,7 +123,8 @@ async def test_yandex_audio_upload_sets_telegram_title(monkeypatch):
     async def download_yandex_audio(_url, directory):
         filepath = Path(directory) / "Название песни.mp3"
         filepath.write_bytes(b"audio")
-        return str(filepath)
+        from steward.features.download.yt import YandexAudio
+        return YandexAudio(str(filepath), "Название песни", "Исполнитель", b"cover")
 
     message = MagicMock()
     message.audio.file_id = "audio-file"
@@ -144,6 +145,8 @@ async def test_yandex_audio_upload_sets_telegram_title(monkeypatch):
     assert medias == [CachedMedia(file_id="audio-file", kind="audio")]
     assert bot.send_audio.await_args.kwargs["filename"] == "Название песни.mp3"
     assert bot.send_audio.await_args.kwargs["title"] == "Название песни"
+    assert bot.send_audio.await_args.kwargs["performer"] == "Исполнитель"
+    assert bot.send_audio.await_args.kwargs["thumbnail"] == b"cover"
 
 
 async def test_fast_inline_failure_returns_personal_error(monkeypatch):
