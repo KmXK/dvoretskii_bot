@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, ChevronDown, Plus, X, Users, Mic, Square, Image as ImageIcon,
-  Type, Sparkles, Loader2, Check, Trash2, Pencil, Lock,
+  Type, Sparkles, Loader2, Check, Trash2, Pencil, Lock, Crown,
 } from 'lucide-react'
 import { api } from '../api/client'
 import ItemEditorDialog from '../components/bills/ItemEditorDialog'
