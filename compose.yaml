@@ -1,0 +1,123 @@
+name: dvoretskii
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  bot:
+    image: dvoretskii-bot:local
+    build: .
+    user: "1000:1000"
+    init: true
+    command: ["python", "main.py", "--prod"]
+    env_file: .env
+    environment:
+      HOME: /home/app
+      PYTHONUNBUFFERED: "1"
+      TELETHON_SESSION_PATH: /telethon-session/steward
+      TELEGRAM_API_HOST: ""
+      WEB_APP_URL: https://${DOMAIN}
+      METRICS_ENABLED: "true"
+      METRICS_PORT: "9090"
+      PROMETHEUS_DISABLE_CREATED_SERIES: "true"
+      API_PORT: "8080"
+      FUCK_RENDERER_URL: http://fuck-renderer:8091
+      FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      VICTORIAMETRICS_URL: http://victoriametrics:8428
+    volumes:
+      - ./db.json:/app/db.json
+      - ./gkeys.json:/app/gkeys.json:ro
+      - ./data:/app/data
+      - ./state/telethon:/telethon-session
+      - ./state/cache:/home/app
+    depends_on:
+      fuck-renderer:
+        condition: service_healthy
+      flaresolverr:
+        condition: service_started
+      victoriametrics:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9090/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 180s
+      retries: 3
+    mem_limit: 1g
+    memswap_limit: 2g
+    restart: unless-stopped
+    logging: *logging
+
+  fuck-renderer:
+    image: dvoretskii-bot:local
+    build: .
+    user: "1000:1000"
+    init: true
+    command: ["python", "-m", "steward.fuck_worker"]
+    environment:
+      HOME: /tmp
+    volumes:
+      - ./data/fuck:/app/data/fuck:ro
+      - ./data/fuck_jobs:/app/data/fuck_jobs
+    mem_limit: 384m
+    memswap_limit: 768m
+    cpus: 1.0
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8091/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *logging
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      LOG_LEVEL: info
+    mem_limit: 768m
+    memswap_limit: 1g
+    shm_size: 128m
+    restart: unless-stopped
+    logging: *logging
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.96.0
+    user: "1000:1000"
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=18
+      - -promscrape.config=/etc/prometheus/prometheus.yml
+      - -memory.allowedBytes=128MB
+    volumes:
+      - ./state/victoriametrics:/storage
+      - ./monitoring/victoriametrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8428/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    build:
+      context: .
+      dockerfile: web/Dockerfile.vm
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./state/caddy-data:/data
+      - ./state/caddy-config:/config
+    mem_limit: 128m
+    restart: unless-stopped
+    logging: *logging

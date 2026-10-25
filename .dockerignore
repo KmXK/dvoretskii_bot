@@ -9,6 +9,12 @@ __pycache__
 
 # runtime/data
 data
+.env
+.env.*
+gkeys.json
+db.json
+state
+backups
 db.json.bak.*
 db.json.local-backup
 victoria-metrics-data

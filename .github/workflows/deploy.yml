@@ -15,12 +15,15 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests == 'false' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.skip_tests }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,25 +50,47 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: test
     if: |
       github.event_name != 'pull_request' && always() && (
         needs.test.result == 'success' ||
-        needs.test.result == 'skipped'
+        (github.event_name == 'workflow_dispatch' && inputs.skip_tests && needs.test.result == 'skipped')
       )
 
     steps:
       - name: Connect & Deploy
-        uses: appleboy/ssh-action@v1.0.0
         env:
+          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+          REMOTE_USER: ${{ secrets.REMOTE_USER }}
           REMOTE_PATH: ${{ secrets.REMOTE_PATH }}
-        with:
-          host: ${{ secrets.REMOTE_HOST }}
-          username: ${{ secrets.REMOTE_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          envs: REMOTE_PATH
-          script: |
-            cd $REMOTE_PATH
-            git pull
-            sudo make down
-            sudo make prod
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST_KEY: ${{ secrets.SSH_HOST_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REMOTE_HOST:?Missing REMOTE_HOST}" "${REMOTE_USER:?Missing REMOTE_USER}"
+          : "${REMOTE_PATH:?Missing REMOTE_PATH}" "${SSH_KEY:?Missing SSH_KEY}"
+          : "${SSH_HOST_KEY:?Missing SSH_HOST_KEY}"
+          umask 077
+          key_file="$RUNNER_TEMP/dvoretskii_deploy_key"
+          known_hosts="$RUNNER_TEMP/dvoretskii_known_hosts"
+          trap 'rm -f -- "$key_file" "$known_hosts"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key_file"
+          printf '%s %s\n' "$REMOTE_HOST" "$SSH_HOST_KEY" > "$known_hosts"
+          printf -v remote_command 'bash -se -- %q' "$REMOTE_PATH"
+          ssh -i "$key_file" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o HostKeyAlgorithms=ssh-ed25519 \
+            -o UserKnownHostsFile="$known_hosts" \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            "$REMOTE_USER@$REMOTE_HOST" "$remote_command" <<'REMOTE'
+          set -euo pipefail
+          cd -- "$1"
+          git pull --ff-only
+          bash scripts/deploy-vm.sh
+          REMOTE

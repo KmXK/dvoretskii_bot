@@ -54,6 +54,16 @@ ssh-keygen -t ed25519 -N "" -f scripts/tunnel-key/id_ed25519 -C "dvoretskii-bot-
 нет — `make dev` работает как раньше (анонимный режим, случайный URL).
 
 ### Prod
+
+На новой VM используется `compose.yaml`; инструкция — [DEPLOYMENT.md](DEPLOYMENT.md).
+Успешный push в `master` автоматически обновляет `/home/deploy/dvoretskii`.
+
+```bash
+bash scripts/deploy-vm.sh
+```
+
+Для старой конфигурации Yandex Cloud:
+
 ```bash
 make prod         # запустить
 make logs         # логи

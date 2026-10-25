@@ -9,6 +9,8 @@
 
 # data files (only root data folder)
 /data/
+/state/
+/backups/
 
 # test file
 test.py
