@@ -18,7 +18,7 @@ services:
       HOME: /home/app
       PYTHONUNBUFFERED: "1"
       TELETHON_SESSION_PATH: /telethon-session/steward
-      TELEGRAM_API_HOST: ""
+      TELEGRAM_API_HOST: http://telegram-api:8081
       WEB_APP_URL: https://${DOMAIN}
       METRICS_ENABLED: "true"
       METRICS_PORT: "9090"
@@ -33,7 +33,10 @@ services:
       - ./data:/app/data
       - ./state/telethon:/telethon-session
       - ./state/cache:/home/app
+      - ./state/telegram-api:/var/lib/telegram-bot-api:ro
     depends_on:
+      telegram-api:
+        condition: service_healthy
       fuck-renderer:
         condition: service_healthy
       flaresolverr:
@@ -48,6 +51,32 @@ services:
       retries: 3
     mem_limit: 1g
     memswap_limit: 2g
+    restart: unless-stopped
+    logging: *logging
+
+  telegram-api:
+    image: aiogram/telegram-bot-api@sha256:c8b6b2be4368d94558c23fd55dba02e562fd0a3f064c671c7b795461a132a584
+    user: "1000:1000"
+    init: true
+    entrypoint: ["telegram-bot-api"]
+    command:
+      - --local
+      - --http-port=8081
+      - --dir=/var/lib/telegram-bot-api
+      - --temp-dir=/var/lib/telegram-bot-api/tmp
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+    volumes:
+      - ./state/telegram-api:/var/lib/telegram-bot-api
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-w", "3", "127.0.0.1", "8081"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 6
+    mem_limit: 512m
+    memswap_limit: 768m
     restart: unless-stopped
     logging: *logging
 

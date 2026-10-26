@@ -188,7 +188,6 @@ class Bot:
             applicationBuilder = (
                 applicationBuilder.base_url(local_server + "/bot")
                 .base_file_url(local_server + "/file/bot")
-                .local_mode(True)
             )
         else:
             proxy = environ.get("DOWNLOAD_PROXY")

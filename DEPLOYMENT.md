@@ -14,7 +14,8 @@ sudo docker compose restart bot
 sudo docker compose down
 ```
 
-The bot, renderer, VictoriaMetrics, FlareSolverr, and Caddy run in Docker.
+The bot, local Telegram Bot API, renderer, VictoriaMetrics, FlareSolverr,
+and Caddy run in Docker.
 Caddy serves the built Mini App and proxies its API to the bot. Ports 80/443
 are public; metrics and application ports stay on the Docker network.
 The domain from `.env` must point to this VM for HTTPS certificates to work.
@@ -23,6 +24,25 @@ The bot and renderer run as UID/GID 1000, matching the `deploy` account.
 Configuration is in `.env`; Google credentials are mounted from `gkeys.json`.
 Neither file is included in the image or Git. Application state is in
 `db.json`, `data/`, and `state/`; it survives container replacement.
+
+The bot connects to `http://telegram-api:8081`. This service runs with
+`--local`, uses `TELEGRAM_API_ID`/`TELEGRAM_API_HASH`, and keeps its working
+directory in `state/telegram-api`. Port 8081 is not published on the host.
+Both services use UID/GID 1000. The bot mounts that directory read-only at
+the same absolute path so Telegram's downloaded files are accessible.
+The Python client sends uploads as multipart data rather than `file://`
+references to temporary paths that exist only in the bot container.
+
+When moving a bot from public Telegram Bot API to this local server for the
+first time, prepare and check the local service, stop the polling bot, call
+the public API's `logOut` once, then start the bot with the local endpoint.
+Never print the token or run cloud `logOut` during routine local deployments.
+After successful logout, cloud login is unavailable for 10 minutes.
+See https://core.telegram.org/bots/api#logout.
+
+The local API permits uploads up to 2000 MB. Application download limits
+remain separate: yt-dlp currently has a 250 MiB limit. A larger source file
+can still fail before a complete uploadable video is produced.
 
 The restored VictoriaMetrics data is in `state/victoriametrics`.
 The original Grafana and JWT volume backups are retained in
