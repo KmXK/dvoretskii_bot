@@ -7,6 +7,7 @@ or invoke ffmpeg should use these helpers instead of reimplementing them.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -196,6 +197,18 @@ async def has_audio_stream(path: Path) -> bool:
     )
     stdout, _ = await proc.communicate()
     return bool(stdout.decode().strip())
+
+
+async def probe_media_streams(path: Path) -> list[dict]:
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_streams", "-of", "json", str(path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {stderr.decode()}")
+    return json.loads(stdout)["streams"]
 
 
 async def run_ffmpeg(*args: str) -> None:

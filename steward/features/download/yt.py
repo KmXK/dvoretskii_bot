@@ -39,7 +39,12 @@ from steward.features.download.callbacks import (
 from steward.features.transcribe import AutoVideoTranscriptionFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.media import has_audio_stream, is_video_file, run_ffmpeg
+from steward.helpers.media import (
+    has_audio_stream,
+    is_video_file,
+    probe_media_streams,
+    run_ffmpeg,
+)
 
 _TIKTOK_AUTO_LIMIT = "TIKTOK_AUTO_TRANSCRIBE"
 _TIKTOK_AUTO_MAX_DURATION_SEC = 5 * 60
@@ -54,16 +59,11 @@ URL_REGEX = (
 
 YT_LIMIT = "YT_LIMIT_OBJECT"
 
-# Primary: только форматы БЕЗ ватермарки, h264 в приоритете
-# (bytevc1/h265-гиры часто отдаются без аудиодорожки). Водяной
-# download_addr сюда НЕ включаем. После закачки download_video_file
-# пробит аудио ffprobe'ом и, если звука нет, перекачивает
-# fallback'ом — водяным, но гарантированно озвученным.
 TIKTOK_VIDEO_FORMAT = (
-    "play_addr_h264/play_addr/play/"
-    "bv*[vcodec*=h264]+ba/b[vcodec*=h264]/bv*+ba/b"
+    "bv*[vcodec!=bytevc2][format_id!^=download]/b[vcodec!=bytevc2]"
 )
-TIKTOK_FALLBACK_FORMAT = "download_addr/download/b"
+TIKTOK_FALLBACK_FORMAT = "download_addr/download/b[vcodec*=h264]/b[vcodec!=bytevc2]"
+TIKTOK_FORMAT_SORT = ["res:1080", "abr", "asr", "vcodec:h264", "br", "size"]
 
 _CAPTION_LIMIT = 950  # 1024 для caption минус накладные blockquote-тегов
 _IMAGE_POST_CAPTION_LIMIT = 600
@@ -698,19 +698,84 @@ async def download_video_file(
     }
     if get_comments:
         base_opts["getcomments"] = True
+    is_tiktok = video_format == TIKTOK_VIDEO_FORMAT
+    if is_tiktok:
+        base_opts["format_sort"] = TIKTOK_FORMAT_SORT
 
-    def _download(fmt: str) -> tuple[Any, str]:
+    def _download(fmt: str, target_dir: str = dir) -> tuple[Any, str]:
         # Чистим каталог, чтобы повторная закачка не подхватила
         # файл от предыдущей попытки.
-        for f in os.listdir(dir):
-            os.remove(os.path.join(dir, f))
-        opts = {**base_opts, "format": fmt}
+        for f in os.listdir(target_dir):
+            os.remove(os.path.join(target_dir, f))
+        opts = {**base_opts, "format": fmt, "outtmpl": target_dir + "/file"}
         info = yt_dlp.YoutubeDL(opts).extract_info(url)  # type: ignore
-        files = os.listdir(dir)
+        files = [
+            path for path in Path(target_dir).iterdir()
+            if path.is_file() and path.name in {
+                "file", "file.mp4", "file.mkv", "file.webm", "file.mov",
+            }
+        ]
         logging.info(files)
-        return info, dir + "/" + files[0]
+        if len(files) != 1:
+            raise RuntimeError("Скачивание не создало готовый видеофайл")
+        return info, str(files[0])
 
-    info, filepath = await asyncio.to_thread(_download, video_format)
+    try:
+        info, filepath = await asyncio.to_thread(_download, video_format)
+    except yt_dlp.utils.DownloadError:
+        if not is_tiktok or not fallback_format:
+            raise
+        logger.warning("TikTok HD download failed, retrying compatible video")
+        info, filepath = await asyncio.to_thread(_download, fallback_format)
+
+    if (
+        is_tiktok and fallback_format
+        and not str(info.get("format_id", "")).startswith("download")
+    ):
+        try:
+            streams = await probe_media_streams(Path(filepath))
+            video = next(s for s in streams if s["codec_type"] == "video")
+            audio = next((s for s in streams if s["codec_type"] == "audio"), {})
+            duration = float(video.get("duration") or info.get("duration") or 0)
+            with tempfile.TemporaryDirectory(prefix="audio_", dir=dir) as audio_dir:
+                _, audio_path = await asyncio.to_thread(
+                    _download, fallback_format, audio_dir,
+                )
+                donor_streams = await probe_media_streams(Path(audio_path))
+                donor_audio = next(
+                    (s for s in donor_streams if s["codec_type"] == "audio"), {},
+                )
+                source_bitrate = int(audio.get("bit_rate") or 0)
+                donor_bitrate = int(donor_audio.get("bit_rate") or 0)
+                donor_duration = float(donor_audio.get("duration") or 0)
+                if (
+                    donor_audio
+                    and (not audio or donor_bitrate > source_bitrate)
+                    and duration > 0
+                    and donor_duration >= duration - 0.25
+                ):
+                    merged_path = str(Path(dir) / "quality.mp4")
+                    codec_args = (
+                        ["-tag:v", "hvc1"] if video.get("codec_name") == "hevc" else []
+                    )
+                    await run_ffmpeg(
+                        "-i", filepath, "-i", audio_path,
+                        "-map", "0:v:0", "-map", "1:a:0", "-c", "copy",
+                        *codec_args, "-t", str(duration),
+                        "-movflags", "+faststart", merged_path,
+                    )
+                    filepath = merged_path
+                    info.update(
+                        width=video.get("width"), height=video.get("height"),
+                        duration=duration, abr=donor_bitrate / 1000,
+                    )
+                    logger.info(
+                        "TikTok: %sx%s, audio %s -> %s bit/s, streams copied",
+                        video.get("width"), video.get("height"),
+                        source_bitrate, donor_bitrate,
+                    )
+        except (yt_dlp.utils.DownloadError, RuntimeError, OSError, ValueError):
+            logger.warning("TikTok audio upgrade failed; keeping downloaded video", exc_info=True)
 
     # Водяная версия (download_addr) — последний резерв: некоторые
     # форматы без ватермарки помечены acodec=aac, но физически немые.
