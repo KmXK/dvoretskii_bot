@@ -79,7 +79,7 @@ def _stream_hash(path, stream):
 
 def _mock_download(monkeypatch, primary, donor, *, primary_error=None, donor_error=None):
     def factory(opts):
-        def extract(url):
+        def process(info, download=True):
             is_primary = opts["format"] == yt.TIKTOK_VIDEO_FORMAT
             error = primary_error if is_primary else donor_error
             if error:
@@ -89,7 +89,7 @@ def _mock_download(monkeypatch, primary, donor, *, primary_error=None, donor_err
                 "id": "test", "width": 90, "height": 160, "duration": 1,
                 "format_id": "hd" if is_primary else "download",
             }
-        return MagicMock(extract_info=extract)
+        return MagicMock(extract_info=MagicMock(return_value={"id": "test"}), process_ie_result=process)
     monkeypatch.setattr(yt.yt_dlp, "YoutubeDL", factory)
 
 
@@ -167,6 +167,35 @@ async def test_tiktok_falls_back_when_hd_is_unavailable(monkeypatch, tmp_path):
     _, output = await _download(tmp_path / "output")
 
     assert Path(output).read_bytes() == donor.read_bytes()
+
+
+async def test_tiktok_reuses_extracted_formats_for_audio_download(monkeypatch, tmp_path):
+    primary = _video(tmp_path / "primary.mp4", "32k")
+    donor = _video(tmp_path / "donor.mp4", "128k")
+    extracted_urls = []
+    real_downloader = yt_dlp.YoutubeDL
+
+    class LocalDownloader(real_downloader):
+        def __init__(self, opts):
+            super().__init__({**opts, "enable_file_urls": True})
+
+        def extract_info(self, url, download=True, **kwargs):
+            extracted_urls.append(url)
+            return self.process_ie_result({
+                "id": "test", "title": "test", "duration": 1,
+                "formats": [
+                    _format("hd", 1080, url=primary.as_uri()),
+                    _format("download", 576, "h264", url=donor.as_uri(), preference=-2),
+                ],
+            }, download=download)
+
+    monkeypatch.setattr(yt.yt_dlp, "YoutubeDL", LocalDownloader)
+
+    _, output = await _download(tmp_path / "output")
+
+    assert extracted_urls == ["https://www.tiktok.com/@test/video/123"]
+    assert _stream_hash(output, "v") == _stream_hash(primary, "v")
+    assert _stream_hash(output, "a") == _stream_hash(donor, "a")
 
 
 @pytest.mark.parametrize("filenames", [

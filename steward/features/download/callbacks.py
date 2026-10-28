@@ -211,6 +211,7 @@ async def download_and_send_medias(
 
                 await message.reply_video(
                     results[0],
+                    allow_sending_without_reply=True,
                     supports_streaming=True,
                     disable_notification=True,
                     reply_markup=reply_markup,
@@ -220,6 +221,7 @@ async def download_and_send_medias(
             else:
                 await message.reply_photo(
                     results[0],
+                    allow_sending_without_reply=True,
                     disable_notification=True,
                     caption=caption,
                     parse_mode="HTML" if caption else None,
@@ -232,6 +234,7 @@ async def download_and_send_medias(
                     try:
                         await message.reply_media_group(
                             media_group,
+                            allow_sending_without_reply=True,
                             disable_notification=True,
                         )
                         break
@@ -278,6 +281,7 @@ async def send_media_files(
             if is_video_file(media_paths[0]):
                 await message.reply_video(
                     file,
+                    allow_sending_without_reply=True,
                     supports_streaming=True,
                     disable_notification=True,
                     caption=caption,
@@ -286,6 +290,7 @@ async def send_media_files(
             else:
                 await message.reply_photo(
                     file,
+                    allow_sending_without_reply=True,
                     disable_notification=True,
                     caption=caption,
                     parse_mode="HTML" if caption else None,
@@ -322,6 +327,7 @@ async def send_media_files(
                 try:
                     await message.reply_media_group(
                         media_group,
+                        allow_sending_without_reply=True,
                         disable_notification=True,
                     )
                     break

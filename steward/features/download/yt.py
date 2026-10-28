@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import html as _html
 import json
 import logging
@@ -701,14 +702,22 @@ async def download_video_file(
     is_tiktok = video_format == TIKTOK_VIDEO_FORMAT
     if is_tiktok:
         base_opts["format_sort"] = TIKTOK_FORMAT_SORT
+    tiktok_info = None
 
     def _download(fmt: str, target_dir: str = dir) -> tuple[Any, str]:
+        nonlocal tiktok_info
         # Чистим каталог, чтобы повторная закачка не подхватила
         # файл от предыдущей попытки.
         for f in os.listdir(target_dir):
             os.remove(os.path.join(target_dir, f))
         opts = {**base_opts, "format": fmt, "outtmpl": target_dir + "/file"}
-        info = yt_dlp.YoutubeDL(opts).extract_info(url)  # type: ignore
+        downloader = yt_dlp.YoutubeDL(opts)
+        if is_tiktok:
+            if tiktok_info is None:
+                tiktok_info = downloader.extract_info(url, download=False)
+            info = downloader.process_ie_result(copy.deepcopy(tiktok_info), download=True)
+        else:
+            info = downloader.extract_info(url)
         files = [
             path for path in Path(target_dir).iterdir()
             if path.is_file() and path.name in {
@@ -937,6 +946,7 @@ def make_video_loader(
             with open(filepath, "rb") as file:
                 sent_video = await message.reply_video(
                     InputFile(file, filename=f"{type_name} Video"),
+                    allow_sending_without_reply=True,
                     supports_streaming=True,
                     width=int(width) if width is not None else None,
                     height=int(height) if height is not None else None,
@@ -1099,6 +1109,7 @@ def make_images_loader(
                 with open(audios[0], "rb") as file:
                     await message.reply_audio(
                         file,
+                        allow_sending_without_reply=True,
                         filename=_gallery_audio_filename(metadata, audios[0]),
                     )
 
