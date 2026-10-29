@@ -238,9 +238,46 @@ def _credit_totals(
     }
 
 
+def _net_bill_balances(bills, balances):
+    from collections import defaultdict, deque
+
+    debts = defaultdict(deque)
+    for bill in bills:
+        if bill.closed or getattr(bill, "distribution_status", "final") != "final":
+            continue
+        for debtor, creditors in balances[bill.id].items():
+            for creditor, amount in creditors.items():
+                if amount > 0:
+                    debts[debtor, creditor, bill.currency].append(bill.id)
+
+    offsets = []
+    for debtor, creditor, currency in sorted(debts):
+        if debtor >= creditor:
+            continue
+        forward = debts[debtor, creditor, currency]
+        reverse = debts.get((creditor, debtor, currency))
+        while forward and reverse:
+            first, second = forward[0], reverse[0]
+            amount = min(balances[first][debtor][creditor], balances[second][creditor][debtor])
+            balances[first][debtor][creditor] -= amount
+            balances[second][creditor][debtor] -= amount
+            offsets.append((first, second, debtor, creditor, currency, amount))
+            if balances[first][debtor][creditor] == 0:
+                forward.popleft()
+            if balances[second][creditor][debtor] == 0:
+                reverse.popleft()
+
+    for bill in bills:
+        balances[bill.id] = net_debts(balances[bill.id])
+    return offsets
+
+
 def compute_bill_balance_details(
     bills,
     payments,
+    *,
+    offsets: list | None = None,
+    applied_offsets: dict[int, int] | None = None,
 ) -> tuple[
     dict[int, dict[str, dict[str, int]]],
     dict[tuple[str, str, str], int],
@@ -304,8 +341,13 @@ def compute_bill_balance_details(
             if applied:
                 balances[bill_id][payment.debtor][payment.creditor] -= applied
                 remaining -= applied
+                if payment.status == PaymentStatus.OFFSET and applied_offsets is not None:
+                    applied_offsets[bill_id] = applied_offsets.get(bill_id, 0) + applied
             if remaining == 0:
                 break
+
+        if payment.status == PaymentStatus.OFFSET:
+            continue
 
         settled_at = getattr(payment, "settled_at", None) or getattr(payment, "created_at", None)
         _add_credit_lot(
@@ -338,6 +380,14 @@ def compute_bill_balance_details(
                     applied_credits[bill.id] += applied
 
         balances[bill.id] = net_debts(balance)
+
+    netted = _net_bill_balances(ordered_bills, balances)
+    if offsets is not None:
+        offsets.extend(netted)
+    if applied_offsets is not None:
+        for first, second, _, _, _, amount in netted:
+            for bill_id in (first, second):
+                applied_offsets[bill_id] = applied_offsets.get(bill_id, 0) + amount
 
     return balances, _credit_totals(credit_lots), dict(applied_credits)
 

@@ -208,19 +208,23 @@ def _history_operations(bills, payments):
         date = payment.settled_at or payment.created_at
         pair = (payment.debtor, payment.creditor, payment.currency)
         key = (pair, _date(date), _date(payment.created_at), payment.is_refund)
+        is_offset = payment.status == PaymentStatus.OFFSET
+        if is_offset:
+            key = ("offset", _date(date))
         if payment.is_refund and payment.bill_ids:
             pair = (payment.creditor, payment.debtor, payment.currency)
 
         group = grouped_payments.setdefault(key, {
             "id": f"payment:{payment.id}",
-            "type": "adjustment" if payment.is_refund else "payment",
+            "type": "offset" if is_offset else "adjustment" if payment.is_refund else "payment",
             "date": date,
             "payments": [],
-            "amounts": {pair: 0},
+            "amounts": {} if is_offset else {pair: 0},
             "bills": [],
         })
         group["payments"].append(index)
-        group["amounts"][pair] += payment.amount_minor
+        if not is_offset:
+            group["amounts"][pair] += payment.amount_minor
         known_ids = {bill["id"] for bill in group["bills"]}
         group["bills"].extend(
             _bill_reference(bills_by_id[bill_id])
@@ -229,7 +233,7 @@ def _history_operations(bills, payments):
         )
 
     operations.extend(grouped_payments.values())
-    priorities = {"charge": 0, "payment": 1, "adjustment": 1, "close": 2}
+    priorities = {"charge": 0, "offset": 1, "payment": 2, "adjustment": 2, "close": 3}
     return sorted(
         operations,
         key=lambda operation: (

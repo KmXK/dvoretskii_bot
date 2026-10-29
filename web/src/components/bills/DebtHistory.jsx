@@ -22,6 +22,10 @@ function matchesFilters(entry, filters, personId) {
 
 
 function eventTitle(event, personId) {
+  if (event.type === 'offset') {
+    return 'Взаимозачёт'
+  }
+
   if (event.type === 'payment') {
     return event.debtor === personId ? 'Оплата' : 'Получено'
   }

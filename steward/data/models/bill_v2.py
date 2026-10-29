@@ -11,8 +11,9 @@ class PaymentStatus:
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
     AUTO_CONFIRMED = "auto_confirmed"
+    OFFSET = "offset"
 
-    SETTLED = {CONFIRMED, AUTO_CONFIRMED}
+    SETTLED = {CONFIRMED, AUTO_CONFIRMED, OFFSET}
 
 
 class TxSource:

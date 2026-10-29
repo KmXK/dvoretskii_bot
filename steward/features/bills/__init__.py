@@ -1446,6 +1446,8 @@ class BillsFeature(Feature):
         await self._set_closed(ctx, bill_id, close=False)
 
     async def _set_closed(self, ctx: FeatureContext, bill_id: int, close: bool):
+        from steward.features.bills.payments import settle_debt_offsets
+
         bill = self.repository.get_bill_v2(bill_id)
         if not bill:
             await ctx.toast("Счёт не найден.", alert=True)
@@ -1454,6 +1456,8 @@ class BillsFeature(Feature):
         person = self.repository.get_bill_person_by_telegram_id(tid)
         is_admin = self.repository.is_admin(tid)
 
+        if close:
+            settle_debt_offsets(self.repository, bill_id=bill.id)
         bill.closed = close
         bill.closed_at = datetime.now() if close else None
         await self.repository.save()

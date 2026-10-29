@@ -2042,6 +2042,7 @@ def _serialize_bill_v2(
     payments: list,
     debts: dict | None = None,
     applied_credit_minor: int = 0,
+    applied_offset_minor: int = 0,
 ) -> dict:
     bill_payments = [p for p in payments if bill.id in p.bill_ids]
     settled = _settled_pairs(bill_payments)
@@ -2062,6 +2063,7 @@ def _serialize_bill_v2(
         "payments": [_serialize_payment_v2(p) for p in bill_payments],
         "debts": debts,
         "applied_credit_minor": applied_credit_minor,
+        "applied_offset_minor": applied_offset_minor,
     }
 
 
@@ -2146,9 +2148,11 @@ async def handle_bills_list(request: web.Request):
     payments = repository.db.bill_payments_v2
     from steward.helpers.bills_money import compute_bill_balance_details
 
+    applied_offsets = {}
     balances, credits, applied_credits = compute_bill_balance_details(
         repository.db.bills_v2,
         payments,
+        applied_offsets=applied_offsets,
     )
     person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
     person_id = person.id if person else None
@@ -2160,6 +2164,7 @@ async def handle_bills_list(request: web.Request):
                 payments,
                 balances.get(bill.id, {}),
                 applied_credits.get(bill.id, 0),
+                applied_offsets.get(bill.id, 0),
             )
             for bill in bills
         ],
@@ -2222,9 +2227,11 @@ async def handle_bills_get(request: web.Request):
     from steward.helpers.bills_money import compute_bill_balance_details
 
     payments = repository.db.bill_payments_v2
+    applied_offsets = {}
     balances, _, applied_credits = compute_bill_balance_details(
         repository.db.bills_v2,
         payments,
+        applied_offsets=applied_offsets,
     )
     return web.json_response(
         _serialize_bill_v2(
@@ -2232,6 +2239,7 @@ async def handle_bills_get(request: web.Request):
             payments,
             balances.get(bill.id, {}),
             applied_credits.get(bill.id, 0),
+            applied_offsets.get(bill.id, 0),
         )
     )
 
@@ -2896,6 +2904,8 @@ async def handle_bills_set_participants(request: web.Request):
 
 
 async def handle_bills_close(request: web.Request):
+    from steward.features.bills.payments import settle_debt_offsets
+
     repository: Repository = request.app["repository"]
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
@@ -2907,6 +2917,7 @@ async def handle_bills_close(request: web.Request):
     ok, err = _check_bill_access(bill, int(tg_user["id"]), repository, "close")
     if not ok:
         return web.json_response({"error": err}, status=403)
+    settle_debt_offsets(repository, bill_id=bill.id)
     bill.closed = True
     bill.closed_at = datetime.datetime.now()
     bill.updated_at = datetime.datetime.now()

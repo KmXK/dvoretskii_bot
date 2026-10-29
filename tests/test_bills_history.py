@@ -325,7 +325,7 @@ def test_refund_increases_debt_and_writeoff_reduces_credit():
     transition(find_event(history, "adjustment"), -300, 100, -200)
 
 
-def test_reciprocal_pairs_and_currencies_have_independent_running_balances():
+def test_reciprocal_pairs_are_netted_with_currencies_kept_separate():
     bills = [
         make_bill(1, "d", "c", 1000, ts(1), currency="BYN"),
         make_bill(2, "c", "d", 300, ts(2), currency="BYN"),
@@ -339,8 +339,7 @@ def test_reciprocal_pairs_and_currencies_have_independent_running_balances():
     history = build_debt_history(bills, payments, "d")
 
     assert history_balances(history) == {
-        ("d", "c", "BYN", 900),
-        ("c", "d", "BYN", 300),
+        ("d", "c", "BYN", 600),
         ("d", "c", "USD", 300),
     }
     assert {(

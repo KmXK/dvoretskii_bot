@@ -380,9 +380,11 @@ def format_bill_detail(
     if len(bill.transactions) > 20:
         lines.append(f"  … и ещё {len(bill.transactions) - 20}")
 
+    applied_offsets = {}
     balances, _, applied_credits = compute_bill_balance_details(
         all_bills or [bill],
         payments,
+        applied_offsets=applied_offsets,
     )
     after = balances.get(bill.id, {})
     carryover = applied_credits.get(bill.id, 0)
@@ -390,6 +392,9 @@ def format_bill_detail(
 
     if carryover > 0:
         lines.append(f"\n💰 Из переплаты оплачено: {minor_to_display(carryover, bill.currency)}")
+
+    if offset := applied_offsets.get(bill.id, 0):
+        lines.append(f"\n⇄ Взаимозачёт: {minor_to_display(offset, bill.currency)}")
 
     if any_debt:
         lines.append("\n⚖️ Кто кому:")
@@ -533,14 +538,19 @@ def format_bill_detail_rich(
         if len(bill.transactions) > 30:
             parts.append(f"_…и ещё {len(bill.transactions) - 30}_")
 
+    applied_offsets = {}
     balances, _, applied_credits = compute_bill_balance_details(
         all_bills or [bill],
         payments,
+        applied_offsets=applied_offsets,
     )
     after = balances.get(bill.id, {})
     carryover = applied_credits.get(bill.id, 0)
     if carryover > 0:
         parts.append(f"💰 **Из переплаты оплачено:** {minor_to_display(carryover, bill.currency)}")
+
+    if offset := applied_offsets.get(bill.id, 0):
+        parts.append(f"⇄ **Взаимозачёт:** {minor_to_display(offset, bill.currency)}")
 
     drows = _debt_rows(after, by_id, bill.currency)
     if drows:
@@ -1050,6 +1060,7 @@ def _history_status_icon(status: str, is_refund: bool = False) -> str:
     return {
         "confirmed": "✓",
         "auto_confirmed": "✓",
+        "offset": "⇄",
         "pending": "…",
         "rejected": "✗",
     }.get(status, "·")
@@ -1088,6 +1099,8 @@ def render_history_table(
             bill_part = f"#{bid} {bname}"
         elif p.status in ("confirmed", "auto_confirmed"):
             bill_part = "возврат" if getattr(p, "is_refund", False) else "переплата"
+        if p.status == "offset":
+            bill_part = f"взаимозачёт {bill_part}"
         rows.append([d, ico, who, amt, bill_part])
     table = _mono_table(["Дата", "", "Кто", "Сумма", "Счёт"], rows)
     return f"{head}\n{table}" if head else table

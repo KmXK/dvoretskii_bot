@@ -101,7 +101,7 @@ function computeBillDebts(bill) {
   }
   // Apply payments
   for (const p of bill.payments || []) {
-    if (p.status !== 'confirmed' && p.status !== 'auto_confirmed') continue
+    if (!['confirmed', 'auto_confirmed', 'offset'].includes(p.status)) continue
     if (debts[p.debtor] && debts[p.debtor][p.creditor]) {
       debts[p.debtor][p.creditor] -= p.amount_minor
       if (debts[p.debtor][p.creditor] < 0) debts[p.debtor][p.creditor] = 0
@@ -475,6 +475,11 @@ function BillCard({ bill, myPersonId, personsById, onOpen }) {
           Из переплаты оплачено {formatMinor(bill.applied_credit_minor, bill.currency)}
         </div>
       )}
+      {bill.applied_offset_minor > 0 && (
+        <div className="text-xs text-spotify-text mt-1">
+          Взаимозачёт {formatMinor(bill.applied_offset_minor, bill.currency)}
+        </div>
+      )}
       {myNet !== 0 && (
         <div className={`mt-2 text-sm font-semibold ${myNet > 0 ? 'text-red-400' : 'text-green-400'}`}>
           {myNet > 0 ? '−' : '+'}{formatMinor(Math.abs(myNet), bill.currency)}
@@ -684,6 +689,11 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
           Из переплаты оплачено: <span className="font-semibold">{formatMinor(bill.applied_credit_minor, bill.currency)}</span>
         </div>
       )}
+      {bill.applied_offset_minor > 0 && (
+        <div className="bg-spotify-gray text-spotify-text rounded-xl p-3 mb-4 text-sm">
+          Погашено встречными долгами: <span className="font-semibold">{formatMinor(bill.applied_offset_minor, bill.currency)}</span>
+        </div>
+      )}
 
       {suggestions.length > 0 && (
         <div className="bg-yellow-500/10 rounded-xl p-3 mb-4">
@@ -838,9 +848,9 @@ function BillDetail({ bill, persons, myPersonId, isAuthor, onBack, onChange, onP
                 <span className="font-semibold">{formatMinor(p.amount_minor, p.currency)}</span>
               </div>
               <div className={`text-xs mt-1 ${
-                p.status === 'confirmed' || p.status === 'auto_confirmed' ? 'text-green-400' :
+                ['confirmed', 'auto_confirmed', 'offset'].includes(p.status) ? 'text-green-400' :
                 p.status === 'pending' ? 'text-yellow-400' : 'text-red-400'
-              }`}>{p.status}</div>
+              }`}>{p.status === 'offset' ? 'Взаимозачёт' : p.status}</div>
             </div>
           ))}
         </div>
@@ -950,7 +960,7 @@ export default function BillsPage() {
       const net = computeBillDebts(b)
       const iOwe = net[myPerson.id] ? Object.values(net[myPerson.id]).some(a => a > 0) : false
       const owedToMe = Object.entries(net).some(([d, creds]) => d !== myPerson.id && creds[myPerson.id] > 0)
-      if (!iOwe && !owedToMe && !b.applied_credit_minor) return false
+      if (!iOwe && !owedToMe && !b.applied_credit_minor && !b.applied_offset_minor) return false
     }
     return true
   })

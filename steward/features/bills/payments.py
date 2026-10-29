@@ -7,7 +7,7 @@ from steward.data.models.bill_v2 import BillPaymentV2, BillV2, PaymentStatus
 from steward.delayed_action.bill_payment_reminder import schedule_payment_reminder
 from steward.framework import Keyboard
 from steward.framework.callback_route import CallbackFactory, parse_schema
-from steward.helpers.bills_money import compute_bill_balances, distribute_payment_amount
+from steward.helpers.bills_money import compute_bill_balance_details, compute_bill_balances, distribute_payment_amount
 from steward.helpers.bills_notifications import send_bill_notification
 
 from . import fmt
@@ -105,12 +105,50 @@ def payment_bills_phrase(repository, bill_ids: list[int]) -> str:
     return f" по счетам {shown}"
 
 
+def settle_debt_offsets(repository, *, bill_id=None, pair=None, currency=None, payments=None, settled_at=None):
+    offsets = []
+    compute_bill_balance_details(
+        repository.db.bills_v2,
+        repository.db.bill_payments_v2 if payments is None else payments,
+        offsets=offsets,
+    )
+    settled_at = settled_at or datetime.now()
+    records = []
+    for first, second, debtor, creditor, offset_currency, amount in offsets:
+        if bill_id is not None and bill_id not in (first, second):
+            continue
+        if pair is not None and set(pair) != {debtor, creditor}:
+            continue
+        if currency is not None and currency != offset_currency:
+            continue
+        for target_id, payer, receiver in ((first, debtor, creditor), (second, creditor, debtor)):
+            records.append(BillPaymentV2(
+                id=str(uuid4()),
+                debtor=payer,
+                creditor=receiver,
+                amount_minor=amount,
+                currency=offset_currency,
+                status=PaymentStatus.OFFSET,
+                created_at=settled_at,
+                settled_at=settled_at,
+                bill_ids=[target_id],
+            ))
+    repository.db.bill_payments_v2.extend(records)
+    return records
+
+
 def settle_payment(repository, payment: BillPaymentV2) -> PaymentSettlement:
     other_payments = [
         other
         for other in repository.db.bill_payments_v2
         if other.id != payment.id
     ]
+    other_payments.extend(settle_debt_offsets(
+        repository,
+        pair=(payment.debtor, payment.creditor),
+        currency=payment.currency,
+        payments=other_payments,
+    ))
     balances, _ = compute_bill_balances(
         repository.db.bills_v2,
         other_payments,
@@ -190,6 +228,7 @@ def settle_payment(repository, payment: BillPaymentV2) -> PaymentSettlement:
         if any(amount > 0 for creditors in balance.values() for amount in creditors.values()):
             continue
 
+        settle_debt_offsets(repository, bill_id=bill.id, settled_at=settled_at)
         bill.closed = True
         bill.closed_at = settled_at
         bill.updated_at = settled_at
