@@ -52,9 +52,16 @@ function PeopleStep({ onCancel, onNext }) {
   const addManual = () => {
     const raw = manualRaw.trim()
     if (!raw) return
-    if (!manual.includes(raw)) setManual((m) => [...m, raw])
+    const known = circle.find((p) => p.username && p.username.toLowerCase() === raw.replace(/^@/, '').toLowerCase())
+    if (known) setSelected((prev) => new Set([...prev, known.id]))
+    else if (!manual.includes(raw)) setManual((m) => [...m, raw])
     setManualRaw('')
   }
+
+  const query = manualRaw.trim().replace(/^@/, '').toLowerCase()
+  const matchingPeople = circle
+    .filter((p) => `${p.name} ${p.username}`.toLowerCase().includes(query))
+    .sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)))
 
   // pick → confirm: резолвим весь состав в реальные id (автор добавится на бэке).
   const goConfirm = async () => {
@@ -195,15 +202,15 @@ function PeopleStep({ onCancel, onNext }) {
         <Crown size={13} /> Ты <span className="opacity-60 text-[11px]">— уже в счёте</span>
       </div>
 
-      {circle.length > 0 && (
+      {matchingPeople.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
-          {circle.slice(0, 24).map((p) => {
+          {matchingPeople.slice(0, 24).map((p) => {
             const active = selected.has(p.id)
             return (
               <motion.button
                 key={p.id}
                 whileTap={{ scale: 0.94 }}
-                onClick={() => toggle(p.id)}
+                onClick={() => { toggle(p.id); setManualRaw('') }}
                 className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                   active
                     ? 'bg-gold text-black border-gold font-medium'
@@ -211,6 +218,7 @@ function PeopleStep({ onCancel, onNext }) {
                 }`}
               >
                 {p.name}
+                {p.username && p.username !== p.name && <span className="ml-1 opacity-70">@{p.username}</span>}
                 {p.count > 0 && <span className="ml-1 text-[10px] opacity-60">·{p.count}</span>}
               </motion.button>
             )
@@ -812,6 +820,8 @@ export function PeopleManage({ bill, onDone, onBack }) {
   })()
 
   const inRoster = (id) => roster.some((r) => r.id === id)
+  const query = manualRaw.trim().replace(/^@/, '').toLowerCase()
+  const matchingPeople = circle.filter((p) => !inRoster(p.id) && `${p.name} ${p.username}`.toLowerCase().includes(query))
   const addChip = (p) => { if (!inRoster(p.id)) setRoster((r) => [...r, { id: p.id, display_name: p.name, username: p.username || '' }]) }
   const removeId = (id) => { if (!lockedPeople.has(id)) setRoster((r) => r.filter((p) => p.id !== id)) }
 
@@ -820,7 +830,8 @@ export function PeopleManage({ bill, onDone, onBack }) {
     if (!raw) return
     setManualRaw('')
     try {
-      const entry = raw.startsWith('@') ? { username: raw } : { name: raw }
+      const known = circle.find((p) => p.username && p.username.toLowerCase() === raw.replace(/^@/, '').toLowerCase())
+      const entry = known ? { person_id: known.id } : raw.startsWith('@') ? { username: raw } : { name: raw }
       const data = await api.post('/api/bills/resolve-people', { participants: [entry] })
       const np = (data.people || []).find((p) => p.id !== bill.author_person_id && !inRoster(p.id))
       if (np) setRoster((r) => [...r, np])
@@ -863,12 +874,13 @@ export function PeopleManage({ bill, onDone, onBack }) {
         ))}
       </div>
 
-      {circle.filter((p) => !inRoster(p.id)).length > 0 && (
+      {matchingPeople.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
-          {circle.filter((p) => !inRoster(p.id)).slice(0, 24).map((p) => (
-            <motion.button key={p.id} whileTap={{ scale: 0.94 }} onClick={() => addChip(p)}
+          {matchingPeople.slice(0, 24).map((p) => (
+            <motion.button key={p.id} whileTap={{ scale: 0.94 }} onClick={() => { addChip(p); setManualRaw('') }}
               className="px-3 py-1.5 rounded-full text-sm border bg-white/5 border-white/10 text-spotify-text hover:bg-white/10 transition inline-flex items-center gap-1">
               <Plus size={13} /> {p.name}
+              {p.username && p.username !== p.name && <span className="opacity-70">@{p.username}</span>}
             </motion.button>
           ))}
         </div>

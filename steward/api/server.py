@@ -2273,6 +2273,20 @@ async def handle_bill_activity(request: web.Request):
     })
 
 
+async def _ensure_visible_bill_people(repository: Repository, user_id: int):
+    changed = False
+    for user in repository.users_visible_to_user(user_id):
+        existing = repository.get_bill_person_by_telegram_id(user.id)
+        _, updated = repository.get_or_create_bill_person(
+            telegram_id=user.id,
+            display_name=existing.display_name if existing else user.first_name or user.username or str(user.id),
+            username=user.username,
+        )
+        changed |= updated
+    if changed:
+        await repository.save()
+
+
 def _resolve_bill_participants(
     repository: "Repository",
     caller,
@@ -2331,6 +2345,7 @@ async def handle_bills_resolve_people(request: web.Request):
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
+    await _ensure_visible_bill_people(repository, int(tg_user["id"]))
     caller, _ = repository.get_or_create_bill_person(
         telegram_id=int(tg_user["id"]),
         display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
@@ -2356,6 +2371,7 @@ async def handle_bills_resolve_people(request: web.Request):
                 "display_name": p.display_name,
                 "username": p.telegram_username or "",
             })
+    await repository.save()
     return web.json_response({"people": people})
 
 
@@ -2390,6 +2406,7 @@ async def handle_bills_create(request: web.Request):
     ):
         return web.json_response({"error": "origin chat is not available"}, status=403)
 
+    await _ensure_visible_bill_people(repository, int(tg_user["id"]))
     if origin_chat_id is not None and origin_chat_id != int(tg_user["id"]):
         visible_persons = repository.bill_persons_for_chat(origin_chat_id)
     else:
@@ -2429,6 +2446,7 @@ async def handle_bills_circle(request: web.Request):
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
     me_tid = int(tg_user["id"])
+    await _ensure_visible_bill_people(repository, me_tid)
     me_person = repository.get_bill_person_by_telegram_id(me_tid)
     my_person_id = me_person.id if me_person else None
     my_user = next((u for u in repository.db.users if u.id == me_tid), None)
@@ -2862,6 +2880,7 @@ async def handle_bills_set_participants(request: web.Request):
     if bill.closed:
         return web.json_response({"error": "bill closed"}, status=400)
 
+    await _ensure_visible_bill_people(repository, int(tg_user["id"]))
     caller, _ = repository.get_or_create_bill_person(
         telegram_id=int(tg_user["id"]),
         display_name=tg_user.get("first_name") or tg_user.get("username") or str(tg_user["id"]),
@@ -3681,6 +3700,7 @@ async def handle_bills_persons(request: web.Request):
     tg_user = _get_tg_user_from_request(request)
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
+    await _ensure_visible_bill_people(repository, int(tg_user["id"]))
     people = repository.bill_persons_visible_to_user(int(tg_user["id"]))
     return web.json_response([_serialize_bill_person(person) for person in people])
 
