@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from PIL import Image
+from telegram.error import BadRequest
 
 import steward.features.download.callbacks as download_callbacks
 from steward.features.download.callbacks import (
@@ -218,6 +219,7 @@ async def test_send_media_files_splits_eleven_items_into_valid_groups(
     monkeypatch.setattr("steward.features.download.callbacks.asyncio.sleep", sleep)
     message = MagicMock()
     message.reply_media_group = AsyncMock()
+    message.get_bot.return_value.do_api_request = AsyncMock(side_effect=BadRequest("unsupported"))
 
     await send_media_files(
         message,
@@ -369,6 +371,7 @@ async def test_remote_media_sender_splits_eleven_items_into_valid_groups(
     monkeypatch.setattr("steward.features.download.callbacks.asyncio.sleep", sleep)
     message = MagicMock()
     message.reply_media_group = AsyncMock()
+    message.get_bot.return_value.do_api_request = AsyncMock(side_effect=BadRequest("unsupported"))
     medias = [
         (f"https://cdn.example/{index}.jpg", False)
         for index in range(11)

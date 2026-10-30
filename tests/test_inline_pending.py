@@ -333,7 +333,7 @@ async def test_pending_result_uses_first_carousel_item_and_links_remaining():
     )
 
 
-async def test_pending_channel_carousel_omits_unsupported_switch_button():
+async def test_pending_channel_carousel_sends_all_photos():
     task = asyncio.create_task(asyncio.sleep(
         0,
         result=[
@@ -348,6 +348,7 @@ async def test_pending_channel_carousel_omits_unsupported_switch_button():
     )
     bot = MagicMock()
     bot.edit_message_media = AsyncMock()
+    bot.edit_message_text = AsyncMock()
 
     await inline_download._finish_pending_result(
         pending,
@@ -355,7 +356,11 @@ async def test_pending_channel_carousel_omits_unsupported_switch_button():
         bot,
     )
 
-    markup = bot.edit_message_media.await_args.kwargs["reply_markup"]
+    bot.edit_message_media.assert_not_awaited()
+    params = bot.edit_message_text.await_args.kwargs
+    rich = params["api_kwargs"]["rich_message"]
+    assert [item["media"]["media"] for item in rich["media"]] == ["first", "second"]
+    markup = params["reply_markup"]
     assert len(markup.inline_keyboard[0]) == 1
     assert markup.inline_keyboard[0][0].url == pending.url
 

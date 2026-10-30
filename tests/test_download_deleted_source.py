@@ -13,7 +13,7 @@ from tests.conftest import CHAT_ID, MockRequest, make_bot, make_repository
 class DeletedSourceRequest(MockRequest):
     async def do_request(self, url, method, request_data=None, **kwargs):
         endpoint = url.split("/")[-1]
-        if endpoint not in {"sendVideo", "sendPhoto", "sendMediaGroup", "sendAudio"}:
+        if endpoint not in {"sendVideo", "sendPhoto", "sendMediaGroup", "sendAudio", "sendRichMessage"}:
             return await super().do_request(url, method, request_data=request_data, **kwargs)
 
         params = dict(request_data.parameters)
@@ -34,7 +34,7 @@ class DeletedSourceRequest(MockRequest):
         return 200, json.dumps({"ok": True, "result": result}).encode()
 
 
-@pytest.mark.parametrize("loader", ["instagram", "tiktok", "video", "photo", "album"])
+@pytest.mark.parametrize("loader", ["instagram", "tiktok", "video", "photo", "album", "slideshow"])
 async def test_download_delivers_each_video_after_sources_are_deleted(
     monkeypatch, tmp_path, loader,
 ):
@@ -74,6 +74,7 @@ async def test_download_delivers_each_video_after_sources_are_deleted(
                 paths = {
                     "video": [str(video_path)], "photo": [str(image_path)],
                     "album": [str(image_path), str(video_path)],
+                    "slideshow": [str(image_path), str(image_path)],
                 }
                 await callbacks.send_media_files(message, paths[loader], retries_count=1)
 

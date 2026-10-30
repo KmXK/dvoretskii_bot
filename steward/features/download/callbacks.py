@@ -20,6 +20,7 @@ from steward.features.download.image_description import (
     append_image_description,
     describe_image_files,
 )
+from steward.features.download.slideshow import try_send_photo_slideshow
 from steward.helpers import morphy
 from steward.helpers.media import is_video_file
 
@@ -226,7 +227,7 @@ async def download_and_send_medias(
                     caption=caption,
                     parse_mode="HTML" if caption else None,
                 )
-        else:
+        elif not await try_send_photo_slideshow(message, medias, caption):
             media_groups = _media_group_chunks(medias)
             for index, media_group in enumerate(media_groups):
                 retry = 0
@@ -319,6 +320,9 @@ async def send_media_files(
                 )
 
             medias.append(media)
+
+        if await try_send_photo_slideshow(message, medias, caption):
+            return
 
         media_groups = _media_group_chunks(medias)
         for index, media_group in enumerate(media_groups):

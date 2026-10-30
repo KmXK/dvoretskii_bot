@@ -42,6 +42,7 @@ from telegram import (
     InputMediaAudio,
     InputMediaPhoto,
     InputMediaVideo,
+    InputMessageContent,
     InputTextMessageContent,
     Message,
 )
@@ -61,6 +62,7 @@ from steward.features.download.image_description import (
     describe_image_files,
 )
 from steward.features.download.video_cache import CachedMedia
+from steward.features.download.slideshow import build_photo_slideshow
 from steward.features.download.yt import (
     _TIKTOK_AUTO_LIMIT,
     _IMAGE_POST_CAPTION_LIMIT,
@@ -542,6 +544,15 @@ def _to_results(
     key: str,
 ) -> list[InlineQueryResult]:
     results: list[InlineQueryResult] = []
+    slideshow = _cached_photo_slideshow(medias)
+    if slideshow:
+        results.append(InlineQueryResultArticle(
+            id=uuid4().hex,
+            title=f"Карусель · {sum(media.kind == 'photo' for media in medias)} фото",
+            description="Все фотографии одним сообщением",
+            input_message_content=InputMessageContent(api_kwargs={"rich_message": slideshow}),
+            reply_markup=_source_markup(url),
+        ))
     for m in medias:
         rid = uuid4().hex
         if m.kind == "video":
@@ -578,6 +589,17 @@ def _to_results(
                 parse_mode="HTML" if m.caption else None,
             ))
     return results
+
+
+def _cached_photo_slideshow(medias: list[CachedMedia]) -> dict | None:
+    photos = [media for media in medias if media.kind == "photo"]
+    if len(photos) < 2 or any(media.kind not in {"photo", "audio"} for media in medias):
+        return None
+    return build_photo_slideshow(
+        [media.file_id for media in photos],
+        photos[0].caption,
+        [media.file_id for media in medias if media.kind == "audio"],
+    )
 
 
 async def _safe_answer(
@@ -732,6 +754,16 @@ async def _finish_pending_result(
         await bot.edit_message_text(
             inline_message_id=inline_message_id,
             text="❌ Загрузчик не вернул медиа",
+            reply_markup=_source_markup(pending.url),
+        )
+        return
+
+    slideshow = _cached_photo_slideshow(medias)
+    if slideshow:
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text="",
+            api_kwargs={"rich_message": slideshow},
             reply_markup=_source_markup(pending.url),
         )
         return
