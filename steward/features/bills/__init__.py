@@ -217,7 +217,7 @@ class BillsFeature(Feature):
                         username=user.username,
                     )
                 else:
-                    person, _ = self.repository.get_or_create_anonymous_person(f"@{username}")
+                    person, _ = self.repository.get_or_create_anonymous_person(f"@{username}", created_by_telegram_id=ctx.user_id)
             return person, None
 
         person, candidates = match_name(
@@ -233,7 +233,7 @@ class BillsFeature(Feature):
         if candidates:
             names = ", ".join(p.display_name for p in candidates[:5])
             return None, f"«{target}» неоднозначно: {names}. Уточни через @username."
-        person, _ = self.repository.get_or_create_anonymous_person(target)
+        person, _ = self.repository.get_or_create_anonymous_person(target, created_by_telegram_id=ctx.user_id)
         return person, None
 
     async def _nick_set(self, ctx: FeatureContext, nick: str, target: str):
@@ -1458,6 +1458,8 @@ class BillsFeature(Feature):
 
         if close:
             settle_debt_offsets(self.repository, bill_id=bill.id)
+        else:
+            self.repository.restore_bill_people(bill)
         bill.closed = close
         bill.closed_at = datetime.now() if close else None
         await self.repository.save()

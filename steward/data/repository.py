@@ -1001,7 +1001,7 @@ class Repository:
                 return p
         return None
 
-    def bill_persons_for_chat(self, chat_id: int):
+    def bill_persons_for_chat(self, chat_id: int, include_deleted: bool = False):
         human_ids = {user.id for user in self.users_in_chat(chat_id)}
         person_ids = {
             person.id
@@ -1022,16 +1022,21 @@ class Repository:
             person
             for person in self.db.bill_persons
             if person.id in person_ids
+            and (include_deleted or person.deleted_at is None)
         ]
 
-    def bill_persons_visible_to_user(self, user_id: int):
+    def bill_persons_visible_to_user(self, user_id: int, include_deleted: bool = False):
         user = next((user for user in self.db.users if user.id == user_id), None)
         chat_ids = set(user.chat_ids or []) if user and not user.is_bot else set()
         person_ids = {
             person.id
             for chat_id in chat_ids
-            for person in self.bill_persons_for_chat(chat_id)
+            for person in self.bill_persons_for_chat(chat_id, include_deleted=include_deleted)
         }
+        person_ids.update(
+            person.id for person in self.db.bill_persons
+            if person.created_by_telegram_id == user_id
+        )
         caller = self.get_bill_person_by_telegram_id(user_id)
         if caller is not None:
             person_ids.add(caller.id)
@@ -1046,6 +1051,7 @@ class Repository:
             person
             for person in self.db.bill_persons
             if person.id in person_ids
+            and (include_deleted or person.deleted_at is None)
         ]
 
     def get_or_create_bill_person(
@@ -1078,17 +1084,31 @@ class Repository:
         self.db.bill_persons.append(person)
         return person, True
 
-    def get_or_create_anonymous_person(self, name: str):
+    def get_or_create_anonymous_person(self, name: str, created_by_telegram_id: int | None = None):
         import uuid
         from steward.data.models.bill_v2 import BillPerson
 
         name_lower = name.lower()
         for p in self.db.bill_persons:
-            if p.telegram_id is None and p.display_name.lower() == name_lower:
+            if (
+                p.telegram_id is None and p.deleted_at is None
+                and p.created_by_telegram_id == created_by_telegram_id
+                and p.display_name.lower() == name_lower
+            ):
                 return p, False
-        person = BillPerson(id=str(uuid.uuid4()), display_name=name)
+        person = BillPerson(id=str(uuid.uuid4()), display_name=name, created_by_telegram_id=created_by_telegram_id)
         self.db.bill_persons.append(person)
         return person, True
+
+    def restore_bill_people(self, bill):
+        person_ids = {bill.author_person_id, *bill.participants}
+        for transaction in bill.transactions:
+            person_ids.add(transaction.creditor)
+            for assignment in transaction.assignments:
+                person_ids.update(assignment.debtors)
+        for person in self.db.bill_persons:
+            if person.id in person_ids:
+                person.deleted_at = None
 
     def merge_person(self, src_id: str, dst_id: str) -> bool:
         """Reassign all bill/payment/nick references from src_id → dst_id and drop src.
@@ -1160,7 +1180,7 @@ class Repository:
         from steward.data.models.bill_v2 import BillPerson
 
         users_by_id = {u.id: u for u in self.db.users}
-        anon_persons = [p for p in self.db.bill_persons if p.telegram_id is None]
+        anon_persons = [p for p in self.db.bill_persons if p.telegram_id is None and p.deleted_at is None]
         real_persons = [p for p in self.db.bill_persons if p.telegram_id is not None]
         merged_ids: list[str] = []
 

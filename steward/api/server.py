@@ -1867,7 +1867,31 @@ def _get_tg_user_from_request(request: web.Request) -> dict | None:
 
 # ── /api/bills ──────────────────────────────────────────────────────────────────
 
-def _serialize_bill_person(p) -> dict:
+def _bill_person_delete_error(repository: Repository, person, user_id: int) -> str | None:
+    from steward.data.models.bill_v2 import PaymentStatus
+
+    if person.telegram_id is not None:
+        return "Участник привязан к Telegram"
+    if person.created_by_telegram_id != user_id:
+        return "Удалить можно только созданного тобой участника"
+    for bill in repository.db.bills_v2:
+        if bill.closed:
+            continue
+        if person.id in {bill.author_person_id, *bill.participants} or any(
+            person.id == tx.creditor or any(person.id in assignment.debtors for assignment in tx.assignments)
+            for tx in bill.transactions
+        ):
+            return "Участник есть в открытом счёте"
+    if any(
+        payment.status == PaymentStatus.PENDING and person.id in (payment.debtor, payment.creditor)
+        for payment in repository.db.bill_payments_v2
+    ):
+        return "У участника есть неподтверждённый платёж"
+    return None
+
+
+def _serialize_bill_person(p, repository=None, user_id=None) -> dict:
+    delete_error = _bill_person_delete_error(repository, p, user_id) if repository is not None and user_id is not None else None
     return {
         "id": p.id,
         "display_name": p.display_name,
@@ -1875,6 +1899,10 @@ def _serialize_bill_person(p) -> dict:
         "telegram_username": p.telegram_username,
         "aliases": list(p.aliases),
         "has_payment_details": bool(p.description),
+        "created_by_me": user_id is not None and p.created_by_telegram_id == user_id,
+        "deleted": p.deleted_at is not None,
+        "can_delete": repository is not None and user_id is not None and p.deleted_at is None and delete_error is None,
+        "delete_block_reason": delete_error,
     }
 
 
@@ -2156,7 +2184,7 @@ async def handle_bills_list(request: web.Request):
     )
     person = repository.get_bill_person_by_telegram_id(int(tg_user["id"]))
     person_id = person.id if person else None
-    visible_persons = repository.bill_persons_visible_to_user(int(tg_user["id"]))
+    visible_persons = repository.bill_persons_visible_to_user(int(tg_user["id"]), include_deleted=True)
     return web.json_response({
         "bills": [
             _serialize_bill_v2(
@@ -2309,7 +2337,11 @@ def _resolve_bill_participants(
             continue
         if entry.get("person_id"):
             p = repository.get_bill_person(entry["person_id"])
-            _add(p.id if p and p.id in visible_person_ids else None)
+            allowed = p and p.deleted_at is None and (
+                p.id in visible_person_ids
+                or (p.telegram_id is None and p.created_by_telegram_id == caller.telegram_id)
+            )
+            _add(p.id if allowed else None)
         elif entry.get("username"):
             uname = str(entry["username"]).lstrip("@").strip()
             if not uname:
@@ -2325,10 +2357,13 @@ def _resolve_bill_participants(
                 None,
             )
             if not person:
-                person, _ = repository.get_or_create_anonymous_person(f"@{uname}")
+                person, _ = repository.get_or_create_anonymous_person(f"@{uname}", created_by_telegram_id=caller.telegram_id)
             _add(person.id)
         elif entry.get("name"):
-            person, _ = repository.get_or_create_anonymous_person(str(entry["name"]).strip())
+            name = str(entry["name"]).strip()
+            if not name:
+                continue
+            person, _ = repository.get_or_create_anonymous_person(name, created_by_telegram_id=caller.telegram_id)
             _add(person.id)
 
     return participant_ids
@@ -2367,6 +2402,7 @@ async def handle_bills_resolve_people(request: web.Request):
         p = repository.get_bill_person(pid)
         if p:
             people.append({
+                **_serialize_bill_person(p, repository, int(tg_user["id"])),
                 "id": p.id,
                 "display_name": p.display_name,
                 "username": p.telegram_username or "",
@@ -2461,6 +2497,7 @@ async def handle_bills_circle(request: web.Request):
         c = cand.get(p.id)
         if c is None:
             c = {
+                **_serialize_bill_person(p, repository, me_tid),
                 "id": p.id,
                 "name": p.display_name,
                 "username": p.telegram_username or "",
@@ -2470,6 +2507,8 @@ async def handle_bills_circle(request: web.Request):
         return c
 
     for p in repository.bill_persons_visible_to_user(me_tid):
+        if p.created_by_telegram_id == me_tid:
+            _ensure(p)
         if not p.telegram_id:
             continue
         u = users_by_id.get(p.telegram_id)
@@ -2487,7 +2526,7 @@ async def handle_bills_circle(request: web.Request):
                 if pid == my_person_id:
                     continue
                 p = repository.get_bill_person(pid)
-                if p:
+                if p and p.deleted_at is None:
                     c = _ensure(p)
                     if c:
                         c["count"] += 1
@@ -2958,6 +2997,7 @@ async def handle_bills_reopen(request: web.Request):
         return web.json_response({"error": err}, status=403)
     bill.closed = False
     bill.closed_at = None
+    repository.restore_bill_people(bill)
     bill.updated_at = datetime.datetime.now()
     await repository.save()
     return web.json_response(_serialize_bill_v2(bill, repository.db.bill_payments_v2))
@@ -3701,8 +3741,27 @@ async def handle_bills_persons(request: web.Request):
     if not tg_user:
         return web.json_response({"error": "auth required"}, status=401)
     await _ensure_visible_bill_people(repository, int(tg_user["id"]))
-    people = repository.bill_persons_visible_to_user(int(tg_user["id"]))
-    return web.json_response([_serialize_bill_person(person) for person in people])
+    people = repository.bill_persons_visible_to_user(int(tg_user["id"]), include_deleted=True)
+    return web.json_response([_serialize_bill_person(person, repository, int(tg_user["id"])) for person in people])
+
+
+async def handle_bills_person_delete(request: web.Request):
+    repository: Repository = request.app["repository"]
+    tg_user = _get_tg_user_from_request(request)
+    if not tg_user:
+        return web.json_response({"error": "auth required"}, status=401)
+    person = repository.get_bill_person(request.match_info["person_id"])
+    if person is None:
+        return web.json_response({"error": "not found"}, status=404)
+    user_id = int(tg_user["id"])
+    if person.created_by_telegram_id != user_id:
+        return web.json_response({"error": "Удалить можно только созданного тобой участника"}, status=403)
+    error = _bill_person_delete_error(repository, person, user_id)
+    if error:
+        return web.json_response({"error": error}, status=409)
+    person.deleted_at = person.deleted_at or datetime.datetime.now()
+    await repository.save()
+    return web.json_response({"deleted": True, "id": person.id})
 
 
 async def handle_bills_diff_get(request: web.Request):
@@ -3788,6 +3847,7 @@ async def start_api_server(repository: Repository, metrics: MetricsEngine, port:
     app.router.add_get("/api/bills", handle_bills_list)
     app.router.add_post("/api/bills", handle_bills_create)
     app.router.add_get("/api/bills/persons", handle_bills_persons)
+    app.router.add_delete("/api/bills/persons/{person_id}", handle_bills_person_delete)
     app.router.add_get("/api/bills/history", handle_bills_history)
     app.router.add_get("/api/bills/circle", handle_bills_circle)
     app.router.add_get("/api/bills/diff/{token}", handle_bills_diff_get)

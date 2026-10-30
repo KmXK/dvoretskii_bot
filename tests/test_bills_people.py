@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from steward.api import server
-from steward.data.models.bill_v2 import BillPerson
+from steward.data.models.bill_v2 import BillItemAssignment, BillPaymentV2, BillPerson, BillTransaction, BillV2, PaymentStatus
 from steward.data.models.user import User
 from tests.conftest import make_repository
 
@@ -128,3 +128,105 @@ async def test_unauthenticated_lookup_does_not_create_people(monkeypatch):
     assert (await server.handle_bills_circle(request_for(repository))).status == 401
     assert repository.get_bill_person_by_telegram_id(2) is None
     repository._storage.write_dict.assert_not_awaited()
+
+
+async def test_temporary_person_has_owner_and_survives_resolve_create_handoff(monkeypatch):
+    repository = setup_people(monkeypatch)
+    response = await server.handle_bills_resolve_people(request_for(repository, {
+        "participants": [{"name": "Новый гость"}],
+    }))
+    guest = json.loads(response.text)["people"][1]
+    person = repository.get_bill_person(guest["id"])
+    assert person.created_by_telegram_id == 1
+    assert guest["created_by_me"] and guest["can_delete"]
+    circle = json.loads((await server.handle_bills_circle(request_for(repository))).text)["people"]
+    assert any(p["id"] == person.id for p in circle)
+
+    response = await server.handle_bills_create(request_for(repository, {
+        "name": "Ужин", "origin_chat_id": -10,
+        "participants": [{"person_id": person.id}],
+    }))
+    assert person.id in json.loads(response.text)["participants"]
+    request = request_for(repository)
+    request.match_info = {"person_id": person.id}
+    assert (await server.handle_bills_person_delete(request)).status == 409
+    assert person.deleted_at is None
+
+
+async def test_delete_own_guest_hides_picker_entry_and_preserves_closed_bill_names(monkeypatch):
+    repository = setup_people(monkeypatch)
+    person, _ = repository.get_or_create_anonymous_person("Мой гость", created_by_telegram_id=1)
+    bill = BillV2(id=1, name="Прошлый ужин", author_person_id="caller", participants=["caller", person.id], transactions=[], closed=True)
+    repository.db.bills_v2.append(bill)
+    request = request_for(repository)
+    request.match_info = {"person_id": person.id}
+
+    assert (await server.handle_bills_person_delete(request)).status == 200
+    assert repository.get_bill_person(person.id) is person
+    assert person.deleted_at is not None
+    assert person.id in bill.participants
+    assert person not in repository.bill_persons_visible_to_user(1)
+    circle = json.loads((await server.handle_bills_circle(request_for(repository))).text)["people"]
+    assert person.id not in {p["id"] for p in circle}
+    people = json.loads((await server.handle_bills_persons(request_for(repository))).text)
+    archived = next(p for p in people if p["id"] == person.id)
+    assert archived["display_name"] == "Мой гость"
+    assert archived["deleted"] and not archived["can_delete"]
+    resolved = json.loads((await server.handle_bills_resolve_people(request_for(repository, {
+        "participants": [{"person_id": person.id}],
+    }))).text)["people"]
+    assert person.id not in {p["id"] for p in resolved}
+    reopened = await server.handle_bills_reopen(request_for(repository, bill_id=bill.id))
+    assert reopened.status == 200
+    assert person.deleted_at is None
+    assert person in repository.bill_persons_visible_to_user(1)
+
+
+@pytest.mark.parametrize("creator,telegram_id,expected", [(2, None, 403), (None, None, 403), (1, 2, 409)])
+async def test_delete_requires_creator_and_no_telegram_binding(monkeypatch, creator, telegram_id, expected):
+    repository = setup_people(monkeypatch)
+    person = BillPerson(id="protected", display_name="Участник", telegram_id=telegram_id, created_by_telegram_id=creator)
+    repository.db.bill_persons.append(person)
+    request = request_for(repository)
+    request.match_info = {"person_id": person.id}
+
+    assert (await server.handle_bills_person_delete(request)).status == expected
+    assert person.deleted_at is None
+    repository._storage.write_dict.assert_not_awaited()
+
+
+@pytest.mark.parametrize("reference", ["draft", "author", "transaction", "pending_payment"])
+async def test_delete_rejects_active_references(monkeypatch, reference):
+    repository = setup_people(monkeypatch)
+    person, _ = repository.get_or_create_anonymous_person("Гость", created_by_telegram_id=1)
+    bill = BillV2(id=1, name="Ужин", author_person_id="caller", participants=["caller"], transactions=[])
+    if reference == "draft":
+        bill.distribution_status = "draft"
+        bill.participants.append(person.id)
+    elif reference == "author":
+        bill.author_person_id = person.id
+    elif reference == "transaction":
+        bill.transactions = [BillTransaction(id="tx", item_name="Ужин", creditor="caller", assignments=[BillItemAssignment(1, [person.id])])]
+    else:
+        repository.db.bill_payments_v2.append(BillPaymentV2(id="p", debtor=person.id, creditor="caller", amount_minor=100, status=PaymentStatus.PENDING))
+    repository.db.bills_v2.append(bill)
+    request = request_for(repository)
+    request.match_info = {"person_id": person.id}
+
+    assert (await server.handle_bills_person_delete(request)).status == 409
+    assert person.deleted_at is None
+
+
+def test_same_named_guests_keep_separate_owners_and_deleted_guests_stay_deleted():
+    from datetime import datetime
+
+    repository = make_repository()
+    legacy, _ = repository.get_or_create_anonymous_person("Саша")
+    first, _ = repository.get_or_create_anonymous_person("Саша", created_by_telegram_id=1)
+    second, _ = repository.get_or_create_anonymous_person("Саша", created_by_telegram_id=2)
+    assert len({legacy.id, first.id, second.id}) == 3
+    assert repository.get_or_create_anonymous_person("саша", created_by_telegram_id=1) == (first, False)
+    first.deleted_at = datetime.now()
+    fresh, created = repository.get_or_create_anonymous_person("Саша", created_by_telegram_id=1)
+    assert created and fresh.id != first.id
+    assert first.deleted_at is not None

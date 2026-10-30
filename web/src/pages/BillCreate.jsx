@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import ItemEditorDialog from '../components/bills/ItemEditorDialog'
+import PersonPicker from '../components/bills/PersonPicker'
 import { formatItemMoney, formatPortion, getUnassignedPortion } from '../bills/itemEditor'
 
 // Создание счёта с нуля прямо в мини-аппе: шаг «люди» (собрать → подтвердить
@@ -27,9 +28,8 @@ function PeopleStep({ onCancel, onNext }) {
   const [stage, setStage] = useState('pick') // 'pick' | 'confirm'
   const [name, setName] = useState('')
   const [circle, setCircle] = useState([])
+  const [peopleLoading, setPeopleLoading] = useState(true)
   const [selected, setSelected] = useState(() => new Set())
-  const [manual, setManual] = useState([])
-  const [manualRaw, setManualRaw] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -40,37 +40,21 @@ function PeopleStep({ onCancel, onNext }) {
   useEffect(() => {
     api.get('/api/bills/circle')
       .then((d) => setCircle(d.people || []))
-      .catch(() => { /* окружение не критично */ })
+      .catch((requestError) => setError(requestError.message || 'Не удалось загрузить участников'))
+      .finally(() => setPeopleLoading(false))
   }, [])
 
-  const toggle = (id) => setSelected((prev) => {
-    const next = new Set(prev)
-    next.has(id) ? next.delete(id) : next.add(id)
+  const removeSelected = (id) => setSelected((previous) => {
+    const next = new Set(previous)
+    next.delete(id)
     return next
   })
-
-  const addManual = () => {
-    const raw = manualRaw.trim()
-    if (!raw) return
-    const known = circle.find((p) => p.username && p.username.toLowerCase() === raw.replace(/^@/, '').toLowerCase())
-    if (known) setSelected((prev) => new Set([...prev, known.id]))
-    else if (!manual.includes(raw)) setManual((m) => [...m, raw])
-    setManualRaw('')
-  }
-
-  const query = manualRaw.trim().replace(/^@/, '').toLowerCase()
-  const matchingPeople = circle
-    .filter((p) => `${p.name} ${p.username}`.toLowerCase().includes(query))
-    .sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)))
 
   // pick → confirm: резолвим весь состав в реальные id (автор добавится на бэке).
   const goConfirm = async () => {
     setError(null)
     if (!name.trim()) { setError('Дай счёту название'); return }
-    const participants = [
-      ...[...selected].map((id) => ({ person_id: id })),
-      ...manual.map((raw) => (raw.startsWith('@') ? { username: raw } : { name: raw })),
-    ]
+    const participants = [...selected].map((id) => ({ person_id: id }))
     setBusy(true)
     try {
       const data = await api.post('/api/bills/resolve-people', { participants })
@@ -202,56 +186,22 @@ function PeopleStep({ onCancel, onNext }) {
         <Crown size={13} /> Ты <span className="opacity-60 text-[11px]">— уже в счёте</span>
       </div>
 
-      {matchingPeople.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-3">
-          {matchingPeople.slice(0, 24).map((p) => {
-            const active = selected.has(p.id)
-            return (
-              <motion.button
-                key={p.id}
-                whileTap={{ scale: 0.94 }}
-                onClick={() => { toggle(p.id); setManualRaw('') }}
-                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                  active
-                    ? 'bg-gold text-black border-gold font-medium'
-                    : 'bg-white/5 border-white/10 text-spotify-text hover:bg-white/10'
-                }`}
-              >
-                {p.name}
-                {p.username && p.username !== p.name && <span className="ml-1 opacity-70">@{p.username}</span>}
-                {p.count > 0 && <span className="ml-1 text-[10px] opacity-60">·{p.count}</span>}
-              </motion.button>
-            )
-          })}
-        </div>
-      )}
-
-      <AnimatePresence>
-        {manual.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            className="flex flex-wrap gap-2 mb-3"
-          >
-            {manual.map((raw) => (
-              <span key={raw} className="px-3 py-1.5 rounded-full text-sm bg-indigo-soft border border-indigo/50 text-indigo inline-flex items-center gap-1">
-                {raw}
-                <button onClick={() => setManual((m) => m.filter((x) => x !== raw))} className="opacity-70 hover:opacity-100"><X size={13} /></button>
-              </span>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="flex gap-2 mb-2">
-        <input
-          placeholder="Имя или @username…"
-          value={manualRaw}
-          onChange={(e) => setManualRaw(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addManual()}
-          className="flex-1 rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/60 outline-none focus:bg-white/10 transition"
-        />
-        <button onClick={addManual} className="px-3 rounded-lg bg-white/5 text-spotify-text hover:bg-white/10 transition"><Plus size={18} /></button>
+      <div className="space-y-2 mb-3">
+        {circle.filter((person) => selected.has(person.id)).map((person) => (
+          <div key={person.id} className="flex items-center gap-2 rounded-xl bg-spotify-dark border border-white/10 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm text-white">{person.name || person.display_name}</div>
+              <div className="truncate text-xs text-spotify-text">{person.username ? `@${person.username}` : person.telegram_id ? 'Без username в Telegram' : 'Временный участник'}</div>
+            </div>
+            <button type="button" onClick={() => removeSelected(person.id)} aria-label={`Убрать ${person.name || person.display_name} из счёта`}
+              className="p-1 text-spotify-text hover:text-red-400"><X size={16} /></button>
+          </div>
+        ))}
       </div>
+      <PersonPicker people={circle} selectedIds={[...selected]} disabled={busy || peopleLoading}
+        onSelect={(person) => setSelected((previous) => new Set([...previous, person.id]))}
+        onCreated={(person) => setCircle((previous) => previous.some((p) => p.id === person.id) ? previous : [...previous, person])}
+        onDeleted={(id) => { setCircle((previous) => previous.filter((person) => person.id !== id)); removeSelected(id) }} />
       <p className="text-spotify-text/70 text-[11px] mb-5">На следующем шаге проверишь состав и выберешь, кто платил.</p>
 
       {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
@@ -792,8 +742,8 @@ export function PositionsStep({ bill, defaultPayer, onBack, onReady, onDeleted, 
 
 export function PeopleManage({ bill, onDone, onBack }) {
   const [circle, setCircle] = useState([])
+  const [peopleLoading, setPeopleLoading] = useState(true)
   const [roster, setRoster] = useState([])
-  const [manualRaw, setManualRaw] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -805,7 +755,9 @@ export function PeopleManage({ bill, onDone, onBack }) {
         .filter(Boolean)
         .map((p) => ({ id: p.id, display_name: p.display_name, username: p.username || p.telegram_username || '' })))
     }).catch(() => { /* noop */ })
-    api.get('/api/bills/circle').then((d) => setCircle(d.people || [])).catch(() => { /* noop */ })
+    api.get('/api/bills/circle').then((d) => setCircle(d.people || []))
+      .catch((requestError) => setError(requestError.message || 'Не удалось загрузить участников'))
+      .finally(() => setPeopleLoading(false))
   }, [bill.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Люди, завязанные на оплаченные позиции — их нельзя убрать из состава.
@@ -820,23 +772,8 @@ export function PeopleManage({ bill, onDone, onBack }) {
   })()
 
   const inRoster = (id) => roster.some((r) => r.id === id)
-  const query = manualRaw.trim().replace(/^@/, '').toLowerCase()
-  const matchingPeople = circle.filter((p) => !inRoster(p.id) && `${p.name} ${p.username}`.toLowerCase().includes(query))
   const addChip = (p) => { if (!inRoster(p.id)) setRoster((r) => [...r, { id: p.id, display_name: p.name, username: p.username || '' }]) }
   const removeId = (id) => { if (!lockedPeople.has(id)) setRoster((r) => r.filter((p) => p.id !== id)) }
-
-  const addManual = async () => {
-    const raw = manualRaw.trim()
-    if (!raw) return
-    setManualRaw('')
-    try {
-      const known = circle.find((p) => p.username && p.username.toLowerCase() === raw.replace(/^@/, '').toLowerCase())
-      const entry = known ? { person_id: known.id } : raw.startsWith('@') ? { username: raw } : { name: raw }
-      const data = await api.post('/api/bills/resolve-people', { participants: [entry] })
-      const np = (data.people || []).find((p) => p.id !== bill.author_person_id && !inRoster(p.id))
-      if (np) setRoster((r) => [...r, np])
-    } catch (e) { setError(e.message || 'Не удалось добавить') }
-  }
 
   const save = async () => {
     setBusy(true); setError(null)
@@ -874,28 +811,10 @@ export function PeopleManage({ bill, onDone, onBack }) {
         ))}
       </div>
 
-      {matchingPeople.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-3">
-          {matchingPeople.slice(0, 24).map((p) => (
-            <motion.button key={p.id} whileTap={{ scale: 0.94 }} onClick={() => { addChip(p); setManualRaw('') }}
-              className="px-3 py-1.5 rounded-full text-sm border bg-white/5 border-white/10 text-spotify-text hover:bg-white/10 transition inline-flex items-center gap-1">
-              <Plus size={13} /> {p.name}
-              {p.username && p.username !== p.name && <span className="opacity-70">@{p.username}</span>}
-            </motion.button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex gap-2 mb-5">
-        <input
-          placeholder="Имя или @username…"
-          value={manualRaw}
-          onChange={(e) => setManualRaw(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addManual()}
-          className="flex-1 rounded-lg bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-spotify-text/60 outline-none focus:bg-white/10 transition"
-        />
-        <button onClick={addManual} className="px-3 rounded-lg bg-white/5 text-spotify-text hover:bg-white/10 transition"><Plus size={18} /></button>
-      </div>
+      <PersonPicker people={circle} selectedIds={roster.map((person) => person.id)} disabled={busy || peopleLoading}
+        onSelect={addChip}
+        onCreated={(person) => setCircle((previous) => previous.some((p) => p.id === person.id) ? previous : [...previous, person])}
+        onDeleted={(id) => { setCircle((previous) => previous.filter((person) => person.id !== id)); removeId(id) }} />
 
       {error && <div className="text-red-400 text-sm mb-3">{error}</div>}
 

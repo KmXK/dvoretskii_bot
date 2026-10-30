@@ -44,6 +44,8 @@ class BillPerson:
     chat_last_seen: dict[str, str] = field(default_factory=dict)
     # chat_id (str) -> ISO datetime of last bill activity in that chat.
     # Used only for ranking in person matching, never for ACL.
+    created_by_telegram_id: int | None = None
+    deleted_at: datetime | None = None
 
 
 @dataclass

@@ -448,7 +448,7 @@ class _BillCollectStep(Step):
                         username=username,
                     )
             if not person:
-                person, _ = repo.get_or_create_anonymous_person(f"@{username}")
+                person, _ = repo.get_or_create_anonymous_person(f"@{username}", created_by_telegram_id=st.caller_tid)
         else:
             all_persons = feature._visible_persons(
                 st.origin_chat_id,
@@ -464,7 +464,7 @@ class _BillCollectStep(Step):
                 **feature._match_kwargs(st.caller_tid, st.origin_chat_id),
             )
             if not person:
-                person, _ = repo.get_or_create_anonymous_person(text)
+                person, _ = repo.get_or_create_anonymous_person(text, created_by_telegram_id=st.caller_tid)
 
         st.resolve_queue.pop(0)
         st.resolved_map[key] = person.id
@@ -812,7 +812,7 @@ class _BillCollectStep(Step):
         for name in st.new_person_names:
             key = parse.norm_name_key(name)
             if key not in st.resolved_map or st.resolved_map[key] == UNKNOWN_PERSON_ID:
-                person, _ = repo.get_or_create_anonymous_person(name)
+                person, _ = repo.get_or_create_anonymous_person(name, created_by_telegram_id=st.caller_tid)
                 st.resolved_map[key] = person.id
 
         st.phase = "confirm"
@@ -935,7 +935,7 @@ class _BillCollectStep(Step):
         if not st.resolve_queue:
             return
         raw_name = st.resolve_queue.pop(0)[0]
-        person, _ = feature.repository.get_or_create_anonymous_person(raw_name)
+        person, _ = feature.repository.get_or_create_anonymous_person(raw_name, created_by_telegram_id=st.caller_tid)
         st.resolved_map[parse.norm_name_key(raw_name)] = person.id
         if st.resolve_queue:
             await self._next_disambiguation(context, st, feature)
@@ -1050,7 +1050,7 @@ class _BillCollectStep(Step):
         if idx < 0 or idx >= len(sorted_keys):
             return
         raw_key = sorted_keys[idx]
-        person, _ = feature.repository.get_or_create_anonymous_person(raw_key.title())
+        person, _ = feature.repository.get_or_create_anonymous_person(raw_key.title(), created_by_telegram_id=st.caller_tid)
         st.resolved_map[raw_key] = person.id
         st.parsed_transactions = parse.rows_to_transactions(st.parsed_rows, st.resolved_map)
         by_id = feature._persons()
