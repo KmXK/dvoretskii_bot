@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 T = TypeVar("T")
-_COOLDOWN_SECONDS = 12 * 60 * 60
+_COOLDOWN_SECONDS = 60 * 60
 _current: dict[tuple[str, ...], int] = {}
 _exhausted_until: dict[str, float] = {}
 

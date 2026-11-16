@@ -13,7 +13,7 @@ from steward.helpers.eleven_pool import call_with_eleven_keys
 logger = logging.getLogger(__name__)
 
 _ELEVEN_FAIL_THRESHOLD = 3
-_ELEVEN_OPEN_DURATION_SEC = 12 * 60 * 60
+_ELEVEN_OPEN_DURATION_SEC = 60 * 60
 
 _ELEVEN_QUOTA_PATTERNS = (
     "quota",
