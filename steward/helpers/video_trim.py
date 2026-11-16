@@ -11,7 +11,8 @@ from telethon import TelegramClient
 
 from steward.helpers.media import fetch_tg_file_to, ffprobe_duration, run_ffmpeg
 
-_TIME_RANGE = re.compile(r"([0-9]+(?:\.[0-9]+)?)(?:\s*-\s*|\s+)([0-9]+(?:\.[0-9]+)?)")
+_TIME = r"(?:[0-9]+:[0-5]?[0-9](?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)"
+_TIME_RANGE = re.compile(rf"({_TIME})(?:\s*-\s*|\s+)({_TIME})")
 _TRIM_SLOTS = asyncio.Semaphore(2)
 _VIDEO_MAX_BYTES = 50 * 1024 * 1024
 
@@ -21,7 +22,13 @@ def parse_trim_range(text: str) -> tuple[float, float] | None:
     if match is None:
         return None
 
-    return float(match[1]), float(match[2])
+    def seconds(value: str) -> float:
+        minutes, separator, remainder = value.partition(":")
+        if separator:
+            return int(minutes) * 60 + float(remainder)
+        return float(minutes)
+
+    return seconds(match[1]), seconds(match[2])
 
 
 def validate_trim_range(start: float, end: float) -> None:

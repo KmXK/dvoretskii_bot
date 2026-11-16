@@ -31,6 +31,10 @@ def disable_download_rate_limit(monkeypatch):
         ("1.25 5.8", (1.25, 5.8)),
         ("  1.25 - 5.8  ", (1.25, 5.8)),
         ("1.25\t 5.8", (1.25, 5.8)),
+        ("1:20-2:50", (80.0, 170.0)),
+        ("0:05.5 1:02.25", (5.5, 62.25)),
+        ("30-1:05", (30.0, 65.0)),
+        ("1:5-90", (65.0, 90.0)),
     ],
 )
 def test_parse_trim_range(text, expected):
@@ -39,7 +43,7 @@ def test_parse_trim_range(text, expected):
 
 @pytest.mark.parametrize(
     "text",
-    ["", "1", "1.25", "-1-5", "1--5", "1,25-5,8", "1:25-5:8", "1-5 extra", "1-5-9"],
+    ["", "1", "1.25", "-1-5", "1--5", "1,25-5,8", "1:60-2:00", "1:100-2:00", "1-5 extra", "1-5-9"],
 )
 def test_unrelated_text_is_not_a_trim_range(text):
     assert parse_trim_range(text) is None
