@@ -17,7 +17,7 @@ from steward.framework import (
     on_message,
 )
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.video_trim import create_trimmed_audio_reply, create_trimmed_video_reply, parse_trim_range
+from steward.helpers.video_trim import create_trimmed_audio_reply, create_trimmed_video_reply, parse_trim_range, range_from_link_message
 
 logger = logging.getLogger("download_controller")
 
@@ -83,9 +83,16 @@ class DownloadFeature(Feature):
 
         dispatch = build_dispatch(self.repository)
         for url, handler_path in found:
+            try:
+                range_from_link_message(ctx.message, url)
+            except ValueError as error:
+                await ctx.reply(str(error), markdown=False)
+                continue
             check_limit(YT_LIMIT, 15, Duration.MINUTE)
             logger.info(f"Получен url: {url}")
             success = False
+            error_reported = False
+            trim_error = None
             for handler in dispatch[handler_path]:
                 try:
                     await handler(url, ctx.message)
@@ -94,15 +101,22 @@ class DownloadFeature(Feature):
                 except YandexMusicDownloadError as error:
                     logger.warning("Yandex Music download failed: %s", error)
                     await ctx.reply(str(error), markdown=False)
+                    error_reported = True
                     break
                 except ValueError as error:
-                    if handler_path != "music.yandex":
+                    if handler_path == "music.yandex":
+                        await ctx.reply(str(error), markdown=False)
+                        error_reported = True
+                        break
+                    if range_from_link_message(ctx.message, url) is not None:
+                        trim_error = str(error)
+                    else:
                         logger.exception(error)
-                        continue
-                    await ctx.reply(str(error), markdown=False)
-                    break
+                    continue
                 except Exception as e:
                     logger.exception(e)
+            if not success and not error_reported and range_from_link_message(ctx.message, url) is not None:
+                await ctx.reply(trim_error or "Не удалось скачать и обрезать медиа. Попробуй ещё раз.", markdown=False)
             if success:
                 download_type = DOWNLOAD_TYPE_MAP.get(handler_path, handler_path)
                 ctx.metrics.inc(

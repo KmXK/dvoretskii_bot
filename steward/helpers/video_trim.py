@@ -31,6 +31,19 @@ def parse_trim_range(text: str) -> tuple[float, float] | None:
     return seconds(match[1]), seconds(match[2])
 
 
+def range_from_link_message(message: Message, url: str) -> tuple[float, float] | None:
+    text = getattr(message, "text", None)
+    if not isinstance(text, str):
+        return None
+    remainder = text.replace(url, "", 1).strip()
+    result = parse_trim_range(remainder)
+    if result is not None:
+        validate_trim_range(*result)
+    elif remainder and re.fullmatch(r"[0-9:.\s-]+", remainder):
+        raise ValueError("Не удалось понять диапазон. Например: 5-10 или 1:20-2:50.")
+    return result
+
+
 def validate_trim_range(start: float, end: float) -> None:
     if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
         raise ValueError("Конец фрагмента должен быть больше начала. Например: 1.25-5.8")

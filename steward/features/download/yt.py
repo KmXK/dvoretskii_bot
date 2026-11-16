@@ -40,7 +40,7 @@ from steward.features.download.callbacks import (
 from steward.features.transcribe import AutoVideoTranscriptionFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.video_trim import parse_trim_range, trim_audio, validate_trim_range
+from steward.helpers.video_trim import range_from_link_message, trim_audio, trim_video
 from steward.helpers.media import (
     has_audio_stream,
     is_video_file,
@@ -557,6 +557,7 @@ async def load_threads(repository: Repository, url: str, message: Message) -> No
         describe_images=True,
         request_headers=THREADS_MEDIA_HEADERS,
         transcription_enabled=False,
+        time_range=range_from_link_message(message, url),
     )
 
 
@@ -612,6 +613,7 @@ async def load_instagram(repository: Repository, url: str, message: Message) -> 
         use_proxy=True,
         caption=caption,
         describe_images=True,
+        time_range=range_from_link_message(message, url),
     )
 
 
@@ -671,10 +673,7 @@ async def download_yandex_audio(url: str, dir: str) -> YandexAudio:
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
-    text = getattr(message, "text", None)
-    time_range = parse_trim_range(text.replace(url, "", 1)) if isinstance(text, str) else None
-    if time_range is not None:
-        validate_trim_range(*time_range)
+    time_range = range_from_link_message(message, url)
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
         audio = await download_yandex_audio(url, dir)
         path = Path(audio.path)
@@ -891,7 +890,8 @@ def make_video_loader(
     async def wrapper(repository: Repository, url: str, message: Message) -> None:
         pre_call()
 
-        auto_transcription_enabled = _auto_video_transcription_enabled(
+        time_range = range_from_link_message(message, url)
+        auto_transcription_enabled = time_range is None and _auto_video_transcription_enabled(
             repository,
             message,
             auto_transcribe_short,
@@ -909,6 +909,11 @@ def make_video_loader(
                 fallback_format=fallback_format,
                 get_comments=auto_transcription_enabled,
             )
+
+            if time_range is not None:
+                clip_path = Path(dir) / "clip.mp4"
+                await trim_video(Path(filepath), clip_path, *time_range)
+                filepath = str(clip_path)
 
             width: Any = None
             height: Any = None
@@ -932,7 +937,8 @@ def make_video_loader(
 
             reply_markup = None
             if (
-                not will_auto_transcribe
+                time_range is None
+                and not will_auto_transcribe
                 and duration is not None
                 and duration < 3 * 60
             ):
@@ -964,7 +970,7 @@ def make_video_loader(
                     parse_mode="HTML" if caption else None,
                 )
 
-            if sent_video is not None and sent_video.video is not None:
+            if time_range is None and sent_video is not None and sent_video.video is not None:
                 video_cache.put(
                     url,
                     [video_cache.CachedMedia(
@@ -1106,6 +1112,25 @@ def make_images_loader(
                 dir,
                 cookie_file,
             )
+
+            time_range = range_from_link_message(message, url)
+            if time_range is not None:
+                videos = [path for path in images if is_video_file(path)]
+                if videos:
+                    clips = []
+                    for index, path in enumerate(videos):
+                        output = Path(dir) / f"clip_{index}.mp4"
+                        await trim_video(Path(path), output, *time_range)
+                        clips.append(str(output))
+                    await send_media_files(message, clips, caption=_make_caption(metadata, _IMAGE_POST_CAPTION_LIMIT))
+                elif audios:
+                    output = Path(dir) / "clip.mp3"
+                    await trim_audio(Path(audios[0]), output, *time_range)
+                    with output.open("rb") as file:
+                        await message.reply_audio(file, filename="clip.mp3", allow_sending_without_reply=True)
+                else:
+                    raise ValueError("По ссылке нет видео или аудио для обрезки.")
+                return
 
             await send_media_files(
                 message,

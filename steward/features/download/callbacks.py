@@ -23,6 +23,7 @@ from steward.features.download.image_description import (
 from steward.features.download.slideshow import try_send_photo_slideshow
 from steward.helpers import morphy
 from steward.helpers.media import is_video_file
+from steward.helpers.video_trim import trim_video
 
 logger = logging.getLogger("download_controller")
 
@@ -141,6 +142,7 @@ async def download_and_send_medias(
     describe_images: bool = False,
     request_headers: dict[str, str] | None = None,
     transcription_enabled: bool = True,
+    time_range: tuple[float, float] | None = None,
 ):
     import uuid
 
@@ -169,6 +171,20 @@ async def download_and_send_medias(
         exceptions = [exc for exc in results if isinstance(exc, Exception)]
         if len(exceptions) > 0:
             raise ExceptionGroup("", exceptions)  # noqa: F821
+
+        if time_range is not None:
+            videos = [file for index, file in enumerate(results) if videos_or_images[index][1]]
+            if not videos:
+                raise ValueError("По ссылке нет видео для обрезки.")
+            with tempfile.TemporaryDirectory(prefix="link_clip_") as directory:
+                paths = []
+                for index, file in enumerate(videos):
+                    file.flush()
+                    output = Path(directory) / f"clip_{index}.mp4"
+                    await trim_video(Path(file.name), output, *time_range)
+                    paths.append(str(output))
+                await send_media_files(message, paths, caption=caption)
+            return
 
         if describe_images:
             image_paths = [
