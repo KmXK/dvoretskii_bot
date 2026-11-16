@@ -154,3 +154,25 @@ def test_tagging_preserves_other_tags_and_replaces_old_metadata(tmp_path):
     # Unavailable source artwork must not remove an existing embedded cover.
     yt._tag_yandex_audio(yt.YandexAudio(str(path), "New title", "New artist"))
     assert ID3(path).getall("APIC")[0].data == b"new cover"
+
+
+async def test_chat_music_with_range_sends_trimmed_track(monkeypatch):
+    async def download(url, directory):
+        path = Path(directory) / "song.mp3"
+        path.write_bytes(b"full")
+        return yt.YandexAudio(str(path), "Song", "Artist")
+
+    async def trim(source, output, start, end):
+        assert source.read_bytes() == b"full"
+        assert (start, end) == (5, 10)
+        output.write_bytes(b"clip")
+
+    async def send(file, **kwargs):
+        assert file.read() == b"clip"
+        assert kwargs["title"] == "Song"
+
+    monkeypatch.setattr(yt, "download_yandex_audio", download)
+    monkeypatch.setattr(yt, "trim_audio", trim)
+    message = SimpleNamespace(text="https://music.yandex.ru/track/1 5-10", reply_audio=AsyncMock(side_effect=send))
+    await yt.load_yandex_music(None, "https://music.yandex.ru/track/1", message)
+    message.reply_audio.assert_awaited_once()

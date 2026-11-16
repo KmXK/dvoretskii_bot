@@ -56,6 +56,7 @@ def _trim_context(text: str):
     reply.from_user.id = 99
     reply.via_bot = None
     reply.video.file_id = "source-video"
+    reply.audio = None
     ctx.message.reply_to_message = reply
     return ctx
 
@@ -322,3 +323,24 @@ async def test_trim_video_rejects_start_after_video_end(tmp_path):
         await trim_video(source, output, 3, 5)
 
     assert not output.exists()
+
+
+async def test_reply_range_is_dispatched_to_audio_trim(monkeypatch):
+    create_reply = AsyncMock()
+    monkeypatch.setattr("steward.features.download.create_trimmed_audio_reply", create_reply)
+    ctx = _trim_context("5-10")
+    ctx.message.reply_to_message.video = None
+    ctx.message.reply_to_message.audio = MagicMock()
+
+    assert await DownloadFeature().chat(ctx) is True
+    create_reply.assert_awaited_once_with(ctx.bot, ctx.message, ctx.message.reply_to_message, 5, 10)
+
+
+async def test_trim_audio_produces_requested_fragment(tmp_path):
+    from steward.helpers.video_trim import trim_audio
+    source = tmp_path / "source.mp3"
+    output = tmp_path / "clip.mp3"
+    await run_ffmpeg("-f", "lavfi", "-i", "sine=frequency=1000:duration=3", str(source))
+    await trim_audio(source, output, 1, 2)
+    assert await ffprobe_duration(output) == pytest.approx(1, abs=0.1)
+    assert await has_audio_stream(output)

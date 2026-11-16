@@ -140,3 +140,29 @@ async def fetch_video_to(
 
     if destination.stat().st_size > _VIDEO_MAX_BYTES:
         raise ValueError("Для обрезки подходит видео размером до 50 МБ.")
+
+
+async def trim_audio(source: Path, output: Path, start: float, end: float) -> None:
+    validate_trim_range(start, end)
+    duration = await ffprobe_duration(source)
+    if start >= duration:
+        raise ValueError(f"Начало фрагмента должно быть меньше длины аудио ({duration:g} с).")
+    await run_ffmpeg("-ss", str(start), "-i", str(source), "-t", str(min(end, duration) - start),
+                     "-map", "0:a:0", "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(output))
+
+
+async def create_trimmed_audio_reply(bot: ExtBot, message: Message, source_message: Message,
+                                     start: float, end: float) -> None:
+    validate_trim_range(start, end)
+    audio = source_message.audio
+    if audio.file_size is not None and audio.file_size > _VIDEO_MAX_BYTES:
+        raise ValueError("Для обрезки подходит аудио размером до 50 МБ.")
+    async with _TRIM_SLOTS:
+        with tempfile.TemporaryDirectory(prefix="audio_trim_") as directory:
+            source = Path(directory) / "source"
+            output = Path(directory) / "clip.mp3"
+            await fetch_tg_file_to(bot, audio.file_id, source, max_bytes=_VIDEO_MAX_BYTES)
+            await trim_audio(source, output, start, end)
+            with output.open("rb") as file:
+                await message.reply_audio(file, filename="clip.mp3", title=audio.title,
+                                          performer=audio.performer)

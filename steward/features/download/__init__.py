@@ -17,7 +17,7 @@ from steward.framework import (
     on_message,
 )
 from steward.helpers.limiter import Duration, check_limit
-from steward.helpers.video_trim import create_trimmed_video_reply, parse_trim_range
+from steward.helpers.video_trim import create_trimmed_audio_reply, create_trimmed_video_reply, parse_trim_range
 
 logger = logging.getLogger("download_controller")
 
@@ -34,7 +34,7 @@ class DownloadFeature(Feature):
             return False
 
         reply = message.reply_to_message
-        if reply is None or reply.video is None:
+        if reply is None or (reply.video is None and reply.audio is None):
             return False
 
         sender = reply.from_user
@@ -51,20 +51,18 @@ class DownloadFeature(Feature):
 
         try:
             check_limit(YT_LIMIT, 15, Duration.MINUTE)
-            await create_trimmed_video_reply(
-                ctx.bot,
-                ctx.client,
-                message,
-                reply,
-                *time_range,
-            )
+            if reply.video is not None:
+                await create_trimmed_video_reply(ctx.bot, ctx.client, message, reply, *time_range)
+            else:
+                await create_trimmed_audio_reply(ctx.bot, message, reply, *time_range)
         except BucketFullException:
             await ctx.reply("Слишком много запросов на видео. Попробуй через минуту.", markdown=False)
         except ValueError as error:
             await ctx.reply(str(error), markdown=False)
         except Exception:
-            logger.exception("Video trim failed")
-            await ctx.reply("Не удалось обрезать видео. Попробуй ещё раз.", markdown=False)
+            logger.exception("Media trim failed")
+            kind = "видео" if reply.video is not None else "аудио"
+            await ctx.reply(f"Не удалось обрезать {kind}. Попробуй ещё раз.", markdown=False)
 
         return True
 
@@ -95,6 +93,12 @@ class DownloadFeature(Feature):
                     break
                 except YandexMusicDownloadError as error:
                     logger.warning("Yandex Music download failed: %s", error)
+                    await ctx.reply(str(error), markdown=False)
+                    break
+                except ValueError as error:
+                    if handler_path != "music.yandex":
+                        logger.exception(error)
+                        continue
                     await ctx.reply(str(error), markdown=False)
                     break
                 except Exception as e:

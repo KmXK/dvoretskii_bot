@@ -40,6 +40,7 @@ from steward.features.download.callbacks import (
 from steward.features.transcribe import AutoVideoTranscriptionFeature
 from steward.features.voice_video.transcription import create_transcription_reply
 from steward.helpers.limiter import Duration, check_limit
+from steward.helpers.video_trim import parse_trim_range, trim_audio, validate_trim_range
 from steward.helpers.media import (
     has_audio_stream,
     is_video_file,
@@ -670,10 +671,18 @@ async def download_yandex_audio(url: str, dir: str) -> YandexAudio:
 
 
 async def load_yandex_music(_repository: Repository, url: str, message: Message) -> None:
+    text = getattr(message, "text", None)
+    time_range = parse_trim_range(text.replace(url, "", 1)) if isinstance(text, str) else None
+    if time_range is not None:
+        validate_trim_range(*time_range)
     with tempfile.TemporaryDirectory(prefix="ym_") as dir:
         audio = await download_yandex_audio(url, dir)
+        path = Path(audio.path)
+        if time_range is not None:
+            path = Path(dir) / "clip.mp3"
+            await trim_audio(Path(audio.path), path, *time_range)
 
-        with open(audio.path, "rb") as file:
+        with path.open("rb") as file:
             await message.reply_audio(file, **audio.telegram_metadata())
 
 
