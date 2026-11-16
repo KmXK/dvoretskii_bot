@@ -84,8 +84,8 @@ async def fetch_tg_file_to(
     started = False
     try:
         rel = _strip_file_url(file_path)
-        local_path = Path(f"/data/{bot.token}/{rel}")
-        if local_path.exists():
+        local_path = Path(file_path) if Path(file_path).is_absolute() else Path(f"/data/{bot.token}/{rel}")
+        if local_path.is_file():
             with local_path.open("rb") as source, dest.open("wb") as output:
                 started = True
                 copied = 0

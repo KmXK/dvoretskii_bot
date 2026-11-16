@@ -99,3 +99,26 @@ async def test_fetch_tg_file_to_removes_partial_file_on_cancellation(tmp_path):
             await task
 
         assert not dest.exists()
+
+
+@pytest.mark.asyncio
+async def test_fetch_tg_file_to_copies_local_bot_api_file(tmp_path):
+    source = tmp_path / "local-video.mp4"
+    source.write_bytes(b"video")
+    dest = tmp_path / "output.mp4"
+
+    await fetch_tg_file_to(_Bot(str(source)), "file-id", dest, max_bytes=5)
+
+    assert dest.read_bytes() == b"video"
+
+
+@pytest.mark.asyncio
+async def test_fetch_tg_file_to_limits_local_bot_api_file(tmp_path):
+    source = tmp_path / "local-video.mp4"
+    source.write_bytes(b"video")
+    dest = tmp_path / "output.mp4"
+
+    with pytest.raises(ValueError, match="Размер файла Telegram"):
+        await fetch_tg_file_to(_Bot(str(source)), "file-id", dest, max_bytes=4)
+
+    assert not dest.exists()
