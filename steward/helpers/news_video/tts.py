@@ -83,10 +83,13 @@ def _split_into_chunks(text: str, limit: int = _CHUNK_LIMIT) -> list[str]:
 
 
 def _eleven_key() -> str | None:
-    return (
+    from steward.helpers.eleven_pool import eleven_keys
+
+    keys = eleven_keys(
         os.environ.get("ELEVENLABS_API_KEY")
-        or os.environ.get("EVELEN_LABS_STT")  # name used elsewhere in the project
+        or os.environ.get("EVELEN_LABS_STT")
     )
+    return keys[0] if keys else None
 
 
 def _provider() -> str:
@@ -102,14 +105,24 @@ def _tts_one_eleven_sync(text: str, voice_id: str, model_id: str, api_key: str) 
         api_key=api_key,
         httpx_client=httpx.Client(timeout=120, proxy=os.environ.get("DOWNLOAD_PROXY")),
     )
+    stream = client.text_to_speech.convert(
+        text=text,
+        voice_id=voice_id,
+        model_id=model_id,
+        output_format="mp3_44100_128",
+    )
+    return b"".join(stream)
+
+
+async def _synthesize_with_keys(text: str, voice_id: str, model_id: str) -> bytes | None:
+    from steward.helpers.eleven_pool import call_with_eleven_keys
+
+    fallback = os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("EVELEN_LABS_STT")
     try:
-        stream = client.text_to_speech.convert(
-            text=text,
-            voice_id=voice_id,
-            model_id=model_id,
-            output_format="mp3_44100_128",
+        return await call_with_eleven_keys(
+            lambda key: asyncio.to_thread(_tts_one_eleven_sync, text, voice_id, model_id, key),
+            fallback,
         )
-        return b"".join(stream)
     except Exception:
         logger.exception("ElevenLabs TTS call failed")
         return None
@@ -128,7 +141,7 @@ async def list_eleven_voices() -> list[dict] | None:
         logger.warning("ElevenLabs list: no API key set")
         return None
 
-    def _fetch() -> list[dict]:
+    def _fetch(api_key: str) -> list[dict]:
         from elevenlabs.client import ElevenLabs
 
         client = ElevenLabs(
@@ -150,7 +163,10 @@ async def list_eleven_voices() -> list[dict] | None:
         return out
 
     try:
-        return await asyncio.to_thread(_fetch)
+        from steward.helpers.eleven_pool import call_with_eleven_keys
+
+        fallback = os.environ.get("ELEVENLABS_API_KEY") or os.environ.get("EVELEN_LABS_STT")
+        return await call_with_eleven_keys(lambda key: asyncio.to_thread(_fetch, key), fallback)
     except Exception:
         logger.exception("ElevenLabs voice list failed")
         return None
@@ -169,7 +185,7 @@ async def synthesize_eleven_test(text: str, voice_id: str, out_path: Path) -> Pa
     if not text.strip() or not voice_id.strip():
         return None
     model_id = os.environ.get("NEWS_TTS_ELEVEN_MODEL", _ELEVEN_DEFAULT_MODEL)
-    mp3 = await asyncio.to_thread(_tts_one_eleven_sync, text, voice_id, model_id, api_key)
+    mp3 = await _synthesize_with_keys(text, voice_id, model_id)
     if mp3 is None:
         return None
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +203,7 @@ async def _tts_one_eleven(text: str) -> bytes | None:
         logger.warning("ElevenLabs TTS: NEWS_TTS_ELEVEN_VOICE_ID not set")
         return None
     model_id = os.environ.get("NEWS_TTS_ELEVEN_MODEL", _ELEVEN_DEFAULT_MODEL)
-    return await asyncio.to_thread(_tts_one_eleven_sync, text, voice_id, model_id, api_key)
+    return await _synthesize_with_keys(text, voice_id, model_id)
 
 
 async def _tts_one(text: str, api_key: str, voice: str, folder_id: str) -> bytes | None:

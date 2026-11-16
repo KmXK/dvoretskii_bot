@@ -8,6 +8,8 @@ from typing import cast
 
 import httpx
 
+from steward.helpers.eleven_pool import call_with_eleven_keys
+
 logger = logging.getLogger(__name__)
 
 _ELEVEN_FAIL_THRESHOLD = 3
@@ -62,10 +64,13 @@ def _eleven_record_success() -> None:
 
 
 async def _elevenlabs_transcribe(audio: bytes):
-    stt_key = os.environ.get("EVELEN_LABS_STT")
-    if not stt_key:
-        return None
+    return await call_with_eleven_keys(
+        lambda key: _elevenlabs_transcribe_with_key(audio, key),
+        os.environ.get("EVELEN_LABS_STT"),
+    )
 
+
+async def _elevenlabs_transcribe_with_key(audio: bytes, stt_key: str):
     from elevenlabs.client import ElevenLabs
 
     client = ElevenLabs(
